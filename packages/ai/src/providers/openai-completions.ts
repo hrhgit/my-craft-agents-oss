@@ -37,6 +37,7 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import { createOpenAIProxyAwareFetch } from "./openai-proxy-fetch.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -497,6 +498,10 @@ function createClient(
 		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders,
+		fetch:
+			model.baseUrl === "https://api.openai.com/v1" || model.baseUrl.endsWith(".openai.com/v1")
+				? undefined
+				: createOpenAIProxyAwareFetch(),
 	});
 }
 
