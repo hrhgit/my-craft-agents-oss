@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
+const shellToolName = process.platform === "win32" ? "pwsh" : "bash";
+const printWorkingDirectoryCommand = process.platform === "win32" ? "(Get-Location).Path" : "pwd";
+
 describe("createAgentSession session manager defaults", () => {
 	let tempDir: string;
 	let cwd: string;
@@ -39,9 +42,11 @@ describe("createAgentSession session manager defaults", () => {
 		const expectedSessionDir = join(agentDir, "sessions", safePath);
 		const sessionDir = session.sessionManager.getSessionDir();
 		const sessionFile = session.sessionManager.getSessionFile();
+		const normalizedSessionDir = expectedSessionDir.replace(/\\/g, "/");
+		const normalizedSessionFile = sessionFile?.replace(/\\/g, "/");
 
 		expect(sessionDir).toBe(expectedSessionDir);
-		expect(sessionFile?.startsWith(`${expectedSessionDir}/`)).toBe(true);
+		expect(normalizedSessionFile?.startsWith(`${normalizedSessionDir}/`) ?? false).toBe(true);
 
 		session.dispose();
 	});
@@ -78,11 +83,11 @@ describe("createAgentSession session manager defaults", () => {
 		});
 
 		expect(session.sessionManager).toBe(sessionManager);
-		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd}`);
+		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd.replace(/\\/g, "/")}`);
 
-		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
-		expect(bashTool).toBeTruthy();
-		const result = await bashTool!.execute("test", { command: "pwd" });
+		const shellTool = session.agent.state.tools.find((tool) => tool.name === shellToolName);
+		expect(shellTool).toBeTruthy();
+		const result = await shellTool!.execute("test", { command: printWorkingDirectoryCommand });
 		const output = result.content
 			.filter((item): item is { type: "text"; text: string } => item.type === "text")
 			.map((item) => item.text)

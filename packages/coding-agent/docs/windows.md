@@ -1,17 +1,20 @@
 # Windows Setup
 
-Pi requires a bash shell on Windows. Checked locations (in order):
+Pi uses PowerShell 7 (`pwsh`) by default on Windows. Checked locations (in order):
 
-1. Custom path from `~/.pi/agent/settings.json`
-2. Git Bash (`C:\Program Files\Git\bin\bash.exe`)
-3. `bash.exe` on PATH (Cygwin, MSYS2, WSL)
+1. Custom shell from `~/.pi/agent/settings.json`
+2. `C:\Program Files\PowerShell\7\pwsh.exe`
+3. `C:\Program Files (x86)\PowerShell\7\pwsh.exe`
+4. `pwsh` on PATH
 
-For most users, [Git for Windows](https://git-scm.com/download/win) is sufficient.
+For most users, installing [PowerShell 7](https://aka.ms/powershell-release?tag=stable) is sufficient.
 
 ## Custom Shell Path
 
 ```json
 {
-  "shellPath": "C:\\cygwin64\\bin\\bash.exe"
+  "shellPath": "pwsh"
 }
 ```
+
+You can also point `shellPath` at another shell executable, such as `C:\\cygwin64\\bin\\bash.exe`.

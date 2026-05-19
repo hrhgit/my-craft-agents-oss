@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Changed the default Windows shell in `NodeExecutionEnv` from Git Bash to PowerShell (`pwsh`) when no custom shell path is configured.
+
 ## [0.76.0] - 2026-05-27
 
 ### Fixed
@@ -11,8 +15,6 @@
 ## [0.75.5] - 2026-05-23
 
 ## [0.75.4] - 2026-05-20
-
-### Changed
 
 - Changed source syntax to avoid TypeScript constructs that require JavaScript emit, keeping the package compatible with Node.js strip-only TypeScript checks.
 - Removed the package-level development watch script now that the root TypeScript check validates strip-only-compatible sources.

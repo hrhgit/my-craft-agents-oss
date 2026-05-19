@@ -72,6 +72,8 @@ export {
 	type ToolResultEvent,
 	type TurnEndEvent,
 	type TurnStartEvent,
+	type WebFetchToolCallEvent,
+	type WebFetchToolResultEvent,
 	type WorkingIndicatorOptions,
 } from "./extensions/index.ts";
 export { createSyntheticSourceInfo } from "./source-info.ts";

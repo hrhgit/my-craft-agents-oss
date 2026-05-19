@@ -15,6 +15,7 @@ import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
+import { getShellToolName } from "./shell-tool-name.ts";
 import { isInstallTelemetryEnabled } from "./telemetry.ts";
 import { time } from "./timings.ts";
 import {
@@ -26,6 +27,7 @@ import {
 	createLsTool,
 	createReadOnlyTools,
 	createReadTool,
+	createWebFetchTool,
 	createWriteTool,
 	type ToolName,
 	withFileMutationQueue,
@@ -46,6 +48,8 @@ export interface CreateAgentSessionOptions {
 	model?: Model<any>;
 	/** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
 	thinkingLevel?: ThinkingLevel;
+	/** Override builtin web_search capability for this session. Default: settings value, else false. */
+	webSearch?: boolean;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 
@@ -53,14 +57,14 @@ export interface CreateAgentSessionOptions {
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
 	 *
 	 * - "all": start with no tools enabled
-	 * - "builtin": disable the default built-in tools (read, bash, edit, write)
+	 * - "builtin": disable the default built-in tools (read, shell, edit, write, web_fetch)
 	 *   but keep extension/custom tools enabled
 	 */
 	noTools?: "all" | "builtin";
 	/**
 	 * Optional allowlist of tool names.
 	 *
-	 * When omitted, pi enables the default built-in tools (read, bash, edit, write)
+	 * When omitted, pi enables the default built-in tools (read, shell, edit, write, web_fetch)
 	 * and leaves extension/custom tools enabled unless `noTools` changes that default.
 	 * When provided, only the listed tool names are enabled.
 	 */
@@ -118,6 +122,7 @@ export {
 	createGrepTool,
 	createFindTool,
 	createLsTool,
+	createWebFetchTool,
 };
 
 // Helper Functions
@@ -193,7 +198,7 @@ function getAttributionHeaders(
  * await loader.reload();
  * const { session } = await createAgentSession({
  *   model: myModel,
- *   tools: ["read", "bash"],
+ *   tools: ["read", "pwsh"],
  *   resourceLoader: loader,
  *   sessionManager: SessionManager.inMemory(),
  * });
@@ -277,13 +282,20 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
 	}
 
-	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
+	const defaultActiveToolNames: ToolName[] = [
+		"read",
+		getShellToolName(settingsManager.getShellPath()),
+		"edit",
+		"write",
+		"web_fetch",
+	];
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const initialActiveToolNames: string[] = options.tools
 		? [...options.tools]
 		: options.noTools
 			? []
 			: defaultActiveToolNames;
+	const webSearchOverride = options.webSearch;
 
 	let agent: Agent;
 
@@ -334,29 +346,31 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
-		streamFn: async (model, context, options) => {
+		streamFn: async (model, context, streamOptions) => {
 			const auth = await modelRegistry.getApiKeyAndHeaders(model);
 			if (!auth.ok) {
 				throw new Error(auth.error);
 			}
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const timeoutMs =
-				options?.timeoutMs ??
+				streamOptions?.timeoutMs ??
 				providerRetrySettings.timeoutMs ??
 				(model.api === "openai-codex-responses" ? settingsManager.getHttpIdleTimeoutMs() : undefined);
 			const websocketConnectTimeoutMs =
-				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
-			const attributionHeaders = getAttributionHeaders(model, settingsManager, options?.sessionId);
+				streamOptions?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
+			const attributionHeaders = getAttributionHeaders(model, settingsManager, streamOptions?.sessionId);
+			const effectiveWebSearch = webSearchOverride ?? settingsManager.getWebSearch();
 			return streamSimple(model, context, {
-				...options,
+				...streamOptions,
 				apiKey: auth.apiKey,
 				timeoutMs,
 				websocketConnectTimeoutMs,
-				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
-				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
+				webSearch: effectiveWebSearch,
+				maxRetries: streamOptions?.maxRetries ?? providerRetrySettings.maxRetries,
+				maxRetryDelayMs: streamOptions?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 				headers:
-					attributionHeaders || auth.headers || options?.headers
-						? { ...attributionHeaders, ...auth.headers, ...options?.headers }
+					attributionHeaders || auth.headers || streamOptions?.headers
+						? { ...attributionHeaders, ...auth.headers, ...streamOptions?.headers }
 						: undefined,
 			});
 		},
@@ -416,6 +430,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRegistry,
 		initialActiveToolNames,
 		allowedToolNames,
+		webSearchOverride,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 	});

@@ -73,6 +73,8 @@ import type {
 	LsToolInput,
 	ReadToolDetails,
 	ReadToolInput,
+	WebFetchToolDetails,
+	WebFetchToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
 
@@ -776,7 +778,7 @@ interface ToolCallEventBase {
 }
 
 export interface BashToolCallEvent extends ToolCallEventBase {
-	toolName: "bash";
+	toolName: "bash" | "pwsh";
 	input: BashToolInput;
 }
 
@@ -810,6 +812,11 @@ export interface LsToolCallEvent extends ToolCallEventBase {
 	input: LsToolInput;
 }
 
+export interface WebFetchToolCallEvent extends ToolCallEventBase {
+	toolName: "web_fetch";
+	input: WebFetchToolInput;
+}
+
 export interface CustomToolCallEvent extends ToolCallEventBase {
 	toolName: string;
 	input: Record<string, unknown>;
@@ -829,6 +836,7 @@ export type ToolCallEvent =
 	| GrepToolCallEvent
 	| FindToolCallEvent
 	| LsToolCallEvent
+	| WebFetchToolCallEvent
 	| CustomToolCallEvent;
 
 interface ToolResultEventBase {
@@ -840,7 +848,7 @@ interface ToolResultEventBase {
 }
 
 export interface BashToolResultEvent extends ToolResultEventBase {
-	toolName: "bash";
+	toolName: "bash" | "pwsh";
 	details: BashToolDetails | undefined;
 }
 
@@ -874,6 +882,11 @@ export interface LsToolResultEvent extends ToolResultEventBase {
 	details: LsToolDetails | undefined;
 }
 
+export interface WebFetchToolResultEvent extends ToolResultEventBase {
+	toolName: "web_fetch";
+	details: WebFetchToolDetails | undefined;
+}
+
 export interface CustomToolResultEvent extends ToolResultEventBase {
 	toolName: string;
 	details: unknown;
@@ -888,11 +901,12 @@ export type ToolResultEvent =
 	| GrepToolResultEvent
 	| FindToolResultEvent
 	| LsToolResultEvent
+	| WebFetchToolResultEvent
 	| CustomToolResultEvent;
 
 // Type guards for ToolResultEvent
 export function isBashToolResult(e: ToolResultEvent): e is BashToolResultEvent {
-	return e.toolName === "bash";
+	return e.toolName === "bash" || e.toolName === "pwsh";
 }
 export function isReadToolResult(e: ToolResultEvent): e is ReadToolResultEvent {
 	return e.toolName === "read";
@@ -911,6 +925,9 @@ export function isFindToolResult(e: ToolResultEvent): e is FindToolResultEvent {
 }
 export function isLsToolResult(e: ToolResultEvent): e is LsToolResultEvent {
 	return e.toolName === "ls";
+}
+export function isWebFetchToolResult(e: ToolResultEvent): e is WebFetchToolResultEvent {
+	return e.toolName === "web_fetch";
 }
 
 /**
@@ -934,12 +951,14 @@ export function isLsToolResult(e: ToolResultEvent): e is LsToolResultEvent {
  * CustomToolCallEvent.toolName is `string` which overlaps with all literals.
  */
 export function isToolCallEventType(toolName: "bash", event: ToolCallEvent): event is BashToolCallEvent;
+export function isToolCallEventType(toolName: "pwsh", event: ToolCallEvent): event is BashToolCallEvent;
 export function isToolCallEventType(toolName: "read", event: ToolCallEvent): event is ReadToolCallEvent;
 export function isToolCallEventType(toolName: "edit", event: ToolCallEvent): event is EditToolCallEvent;
 export function isToolCallEventType(toolName: "write", event: ToolCallEvent): event is WriteToolCallEvent;
 export function isToolCallEventType(toolName: "grep", event: ToolCallEvent): event is GrepToolCallEvent;
 export function isToolCallEventType(toolName: "find", event: ToolCallEvent): event is FindToolCallEvent;
 export function isToolCallEventType(toolName: "ls", event: ToolCallEvent): event is LsToolCallEvent;
+export function isToolCallEventType(toolName: "web_fetch", event: ToolCallEvent): event is WebFetchToolCallEvent;
 export function isToolCallEventType<TName extends string, TInput extends Record<string, unknown>>(
 	toolName: TName,
 	event: ToolCallEvent,

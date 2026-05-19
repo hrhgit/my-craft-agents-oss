@@ -439,10 +439,11 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
+	const tools = convertTools(context.tools ?? [], false, options.webSearch ?? false);
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
+		...(tools && { tools }),
 	};
 
 	if (context.tools && context.tools.length > 0 && options.toolChoice) {

@@ -276,6 +276,21 @@ export function convertResponsesTools(tools: Tool[], options?: ConvertResponsesT
 	}));
 }
 
+const RESPONSES_WEB_SEARCH_TOOL = {
+	type: "web_search",
+} as NonNullable<ResponseCreateParamsStreaming["tools"]>[number];
+
+export function appendResponsesWebSearchTool(
+	tools: ResponseCreateParamsStreaming["tools"] | undefined,
+	webSearch: boolean | undefined,
+): ResponseCreateParamsStreaming["tools"] | undefined {
+	if (!webSearch) {
+		return tools;
+	}
+
+	return tools ? [...tools, RESPONSES_WEB_SEARCH_TOOL] : [RESPONSES_WEB_SEARCH_TOOL];
+}
+
 // =============================================================================
 // Stream processing
 // =============================================================================

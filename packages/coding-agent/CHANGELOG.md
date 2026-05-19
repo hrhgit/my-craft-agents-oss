@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the local `web_fetch` built-in tool and a persisted `webSearch` setting for supported provider built-in web search.
+
 ### Fixed
 
 - Fixed Windows startup crashes under MSYS2 ucrt64 Node.js by updating the native clipboard addon to napi-rs 3.x ([#5028](https://github.com/earendil-works/pi/issues/5028)).
@@ -122,6 +126,9 @@
 - Fixed OpenAI-compatible default output token requests inherited from `@earendil-works/pi-ai` to avoid reserving impossible context windows on servers such as vLLM ([#4675](https://github.com/earendil-works/pi/issues/4675)).
 - Fixed OpenAI prompt cache keys inherited from `@earendil-works/pi-ai` to stay within the 64-character provider limit ([#4720](https://github.com/earendil-works/pi/issues/4720)).
 - Fixed Windows npm-family package commands for fnm-managed Node.js installs that expose both extensionless Unix scripts and `.cmd` shims ([#4793](https://github.com/earendil-works/pi/issues/4793)).
+### Changed
+
+- Changed the default Windows shell for coding-agent command execution from Git Bash to PowerShell (`pwsh`) when no custom `shellPath` is configured.
 
 ## [0.75.3] - 2026-05-18
 

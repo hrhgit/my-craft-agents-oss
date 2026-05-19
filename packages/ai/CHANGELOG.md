@@ -5,6 +5,7 @@
 ### Added
 
 - Added OpenAI Codex subscription device-code login as a selectable headless alternative while keeping browser login as the default.
+- Added `webSearch` stream options and provider built-in web search injection for OpenAI Responses, Anthropic, Google Gemini, and Google Vertex.
 
 ### Fixed
 

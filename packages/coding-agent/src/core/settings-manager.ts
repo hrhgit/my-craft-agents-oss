@@ -79,6 +79,7 @@ export interface Settings {
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	webSearch?: boolean;
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
@@ -664,6 +665,16 @@ export class SettingsManager {
 
 	getTransport(): TransportSetting {
 		return this.settings.transport ?? "auto";
+	}
+
+	getWebSearch(): boolean {
+		return this.settings.webSearch ?? false;
+	}
+
+	setWebSearch(enabled: boolean): void {
+		this.globalSettings.webSearch = enabled;
+		this.markModified("webSearch");
+		this.save();
 	}
 
 	setTransport(transport: TransportSetting): void {

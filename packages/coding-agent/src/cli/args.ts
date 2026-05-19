@@ -9,6 +9,8 @@ import type { ExtensionFlag } from "../core/extensions/types.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
+const DEFAULT_SHELL_TOOL_NAME = process.platform === "win32" ? "pwsh" : "bash";
+
 export interface Args {
 	provider?: string;
 	model?: string;
@@ -202,7 +204,7 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 					})
 					.join("\n")}\n`
 			: "";
-	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
+	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, ${DEFAULT_SHELL_TOOL_NAME}, edit, write, web_fetch tools
 
 ${chalk.bold("Usage:")}
   ${APP_NAME} [options] [@files...] [messages...]
@@ -347,12 +349,13 @@ ${chalk.bold("Environment Variables:")}
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 
 ${chalk.bold("Built-in Tool Names:")}
-  read   - Read file contents
-  bash   - Execute bash commands
-  edit   - Edit files with find/replace
-  write  - Write files (creates/overwrites)
-  grep   - Search file contents (read-only, off by default)
-  find   - Find files by glob pattern (read-only, off by default)
-  ls     - List directory contents (read-only, off by default)
+  read      - Read file contents
+  ${DEFAULT_SHELL_TOOL_NAME.padEnd(9)} - Execute ${DEFAULT_SHELL_TOOL_NAME} commands
+  edit      - Edit files with find/replace
+  write     - Write files (creates/overwrites)
+  web_fetch - Fetch and extract text from public URLs
+  grep      - Search file contents (read-only, off by default)
+  find      - Find files by glob pattern (read-only, off by default)
+  ls        - List directory contents (read-only, off by default)
 `);
 }

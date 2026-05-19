@@ -6,6 +6,7 @@ import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from
 import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { transformMessages } from "./transform-messages.ts";
+import type { Tool as GoogleApiTool } from "@google/genai";
 
 type GoogleApiType = "google-generative-ai" | "google-vertex";
 
@@ -272,19 +273,33 @@ function sanitizeForOpenApi(schema: unknown): unknown {
 export function convertTools(
 	tools: Tool[],
 	useParameters = false,
-): { functionDeclarations: Record<string, unknown>[] }[] | undefined {
-	if (tools.length === 0) return undefined;
-	return [
-		{
-			functionDeclarations: tools.map((tool) => ({
-				name: tool.name,
-				description: tool.description,
-				...(useParameters
-					? { parameters: sanitizeForOpenApi(tool.parameters as unknown) }
-					: { parametersJsonSchema: tool.parameters }),
-			})),
-		},
-	];
+	enableGoogleSearch = false,
+): GoogleApiTool[] | undefined {
+	if (tools.length === 0 && !enableGoogleSearch) return undefined;
+
+	const convertedTools: GoogleApiTool[] = [];
+	if (tools.length > 0) {
+		convertedTools.push({
+			functionDeclarations: tools.map((tool) => {
+				const declaration = {
+					name: tool.name,
+					description: tool.description,
+					...(useParameters
+						? { parameters: sanitizeForOpenApi(tool.parameters as unknown) }
+						: { parametersJsonSchema: tool.parameters }),
+				};
+				return declaration as NonNullable<GoogleApiTool["functionDeclarations"]>[number];
+			}),
+		});
+	}
+
+	if (enableGoogleSearch) {
+		convertedTools.push({
+			googleSearch: {},
+		});
+	}
+
+	return convertedTools;
 }
 
 /**

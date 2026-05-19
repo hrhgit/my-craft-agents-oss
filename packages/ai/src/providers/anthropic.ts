@@ -941,10 +941,18 @@ function buildParams(
 
 	if (context.tools && context.tools.length > 0) {
 		const compat = getAnthropicCompat(model);
-		params.tools = convertTools(
-			context.tools,
-			isOAuthToken,
-			compat.supportsEagerToolInputStreaming,
+		const convertedTools = convertTools(context.tools, isOAuthToken, compat.supportsEagerToolInputStreaming);
+		params.tools = convertedTools;
+	}
+
+	if (options?.webSearch) {
+		params.tools = [...(params.tools ?? []), createAnthropicWebSearchTool()];
+	}
+
+	if (params.tools?.length) {
+		const compat = getAnthropicCompat(model);
+		params.tools = applyAnthropicToolCacheControl(
+			params.tools,
 			compat.supportsCacheControlOnTools ? cacheControl : undefined,
 		);
 	}
@@ -1184,11 +1192,10 @@ function convertTools(
 	tools: Tool[],
 	isOAuthToken: boolean,
 	supportsEagerToolInputStreaming: boolean,
-	cacheControl?: CacheControlEphemeral,
-): Anthropic.Messages.Tool[] {
+): Anthropic.Messages.ToolUnion[] {
 	if (!tools) return [];
 
-	return tools.map((tool, index) => {
+	return tools.map((tool) => {
 		const schema = tool.parameters as { properties?: unknown; required?: string[] };
 
 		return {
@@ -1200,9 +1207,26 @@ function convertTools(
 				properties: schema.properties ?? {},
 				required: schema.required ?? [],
 			},
-			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});
+}
+
+function createAnthropicWebSearchTool(): Anthropic.Messages.WebSearchTool20250305 {
+	return {
+		name: "web_search",
+		type: "web_search_20250305",
+	};
+}
+
+function applyAnthropicToolCacheControl(
+	tools: Anthropic.Messages.ToolUnion[],
+	cacheControl?: CacheControlEphemeral,
+): Anthropic.Messages.ToolUnion[] {
+	if (!cacheControl || tools.length === 0) {
+		return tools;
+	}
+
+	return tools.map((tool, index) => (index === tools.length - 1 ? { ...tool, cache_control: cacheControl } : tool));
 }
 
 function mapStopReason(reason: Anthropic.Messages.StopReason | string): StopReason {

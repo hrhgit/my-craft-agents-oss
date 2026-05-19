@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { buildSystemPrompt } from "../src/core/system-prompt.ts";
 
+const shellToolName = process.platform === "win32" ? "pwsh" : "bash";
+
 describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {
 		test("shows (none) for empty tools list", () => {
@@ -31,7 +33,7 @@ describe("buildSystemPrompt", () => {
 			const prompt = buildSystemPrompt({
 				toolSnippets: {
 					read: "Read file contents",
-					bash: "Execute bash commands",
+					[shellToolName]: shellToolName === "pwsh" ? "Execute pwsh commands" : "Execute bash commands",
 					edit: "Make surgical edits",
 					write: "Create or overwrite files",
 				},
@@ -41,7 +43,7 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).toContain("- read:");
-			expect(prompt).toContain("- bash:");
+			expect(prompt).toContain(`- ${shellToolName}:`);
 			expect(prompt).toContain("- edit:");
 			expect(prompt).toContain("- write:");
 		});

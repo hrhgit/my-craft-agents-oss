@@ -32,6 +32,7 @@ import {
 	modelsAreEqual,
 	resetApiProviders,
 	streamSimple,
+	supportsBuiltinWebSearch,
 } from "@earendil-works/pi-ai";
 import { theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
@@ -85,6 +86,7 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
+import { getAlternateShellToolName, getShellToolName, isShellToolName } from "./shell-tool-name.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
@@ -160,13 +162,15 @@ export interface AgentSessionConfig {
 	cwd: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Session-level override for builtin web_search capability. */
+	webSearchOverride?: boolean;
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
 	/** Model registry for API key resolution and model discovery */
 	modelRegistry: ModelRegistry;
-	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
+	/** Initial active built-in tool names. Default: [read, shell, edit, write, web_fetch] */
 	initialActiveToolNames?: string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
 	allowedToolNames?: string[];
@@ -294,6 +298,7 @@ export class AgentSession {
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
+	private _webSearchOverride?: boolean;
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
@@ -328,6 +333,7 @@ export class AgentSession {
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
+		this._webSearchOverride = config.webSearchOverride;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 
@@ -795,17 +801,48 @@ export class AgentSession {
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
 		for (const name of toolNames) {
-			const tool = this._toolRegistry.get(name);
+			const resolvedName = this._resolveRequestedToolName(name);
+			const tool = this._toolRegistry.get(resolvedName);
 			if (tool) {
 				tools.push(tool);
-				validToolNames.push(name);
+				validToolNames.push(resolvedName);
 			}
 		}
 		this.agent.state.tools = tools;
 
 		// Rebuild base system prompt with new tool set
-		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
+		this.refreshSystemPrompt();
+	}
+
+	refreshSystemPrompt(): void {
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 		this.agent.state.systemPrompt = this._baseSystemPrompt;
+	}
+
+	private _matchesAllowedToolName(name: string, allowedToolNames: Set<string> | undefined): boolean {
+		if (!allowedToolNames) {
+			return true;
+		}
+		if (allowedToolNames.has(name)) {
+			return true;
+		}
+		if (isShellToolName(name)) {
+			return allowedToolNames.has(getAlternateShellToolName(name));
+		}
+		return false;
+	}
+
+	private _resolveRequestedToolName(name: string): string {
+		if (this._toolRegistry.has(name)) {
+			return name;
+		}
+		if (isShellToolName(name)) {
+			const alternate = getAlternateShellToolName(name);
+			if (this._toolRegistry.has(alternate)) {
+				return alternate;
+			}
+		}
+		return name;
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -886,6 +923,24 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
+	private _getEffectiveWebSearchEnabled(): boolean {
+		return this._webSearchOverride ?? this.settingsManager.getWebSearch();
+	}
+
+	private _getWebSearchPromptGuidelines(): string[] {
+		if (!this._getEffectiveWebSearchEnabled()) {
+			return [];
+		}
+
+		if (this.model && supportsBuiltinWebSearch(this.model)) {
+			return ["Use the model's built-in web_search capability when you need current public web information."];
+		}
+
+		return [
+			"Built-in web search is unavailable for the current model/provider. If the user asks for live web information, say web search is unavailable instead of pretending to have it.",
+		];
+	}
+
 	private _rebuildSystemPrompt(toolNames: string[]): string {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
@@ -901,6 +956,7 @@ export class AgentSession {
 				promptGuidelines.push(...toolGuidelines);
 			}
 		}
+		promptGuidelines.push(...this._getWebSearchPromptGuidelines());
 
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
@@ -1445,6 +1501,7 @@ export class AgentSession {
 
 		// Re-clamp thinking level for new model's capabilities
 		this.setThinkingLevel(thinkingLevel);
+		this.refreshSystemPrompt();
 
 		await this._emitModelSelect(model, previousModel, "set");
 	}
@@ -1485,6 +1542,7 @@ export class AgentSession {
 		// - Undefined scoped model thinking level inherits the current session preference
 		// setThinkingLevel clamps to model capabilities.
 		this.setThinkingLevel(thinkingLevel);
+		this.refreshSystemPrompt();
 
 		await this._emitModelSelect(next.model, currentModel, "cycle");
 
@@ -1510,6 +1568,7 @@ export class AgentSession {
 
 		// Re-clamp thinking level for new model's capabilities
 		this.setThinkingLevel(thinkingLevel);
+		this.refreshSystemPrompt();
 
 		await this._emitModelSelect(nextModel, currentModel, "cycle");
 
@@ -2099,8 +2158,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
-		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		this.refreshSystemPrompt();
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -2153,6 +2211,7 @@ export class AgentSession {
 		}
 
 		this.agent.state.model = refreshedModel;
+		this.refreshSystemPrompt();
 	}
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
@@ -2272,7 +2331,7 @@ export class AgentSession {
 		const previousRegistryNames = new Set(this._toolRegistry.keys());
 		const previousActiveToolNames = this.getActiveToolNames();
 		const allowedToolNames = this._allowedToolNames;
-		const isAllowedTool = (name: string): boolean => !allowedToolNames || allowedToolNames.has(name);
+		const isAllowedTool = (name: string): boolean => this._matchesAllowedToolName(name, allowedToolNames);
 
 		const registeredTools = this._extensionRunner.getAllRegisteredTools();
 		const allCustomTools = [
@@ -2340,7 +2399,7 @@ export class AgentSession {
 
 		if (allowedToolNames) {
 			for (const toolName of this._toolRegistry.keys()) {
-				if (allowedToolNames.has(toolName)) {
+				if (isAllowedTool(toolName)) {
 					nextActiveToolNames.push(toolName);
 				}
 			}
@@ -2367,6 +2426,7 @@ export class AgentSession {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
+		const shellToolName = getShellToolName(shellPath);
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -2405,7 +2465,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: ["read", shellToolName, "edit", "write"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,

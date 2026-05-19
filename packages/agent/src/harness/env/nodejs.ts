@@ -14,7 +14,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { extname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
 	type ExecutionEnv,
@@ -134,51 +134,84 @@ async function runCommand(
 	});
 }
 
-async function findBashOnPath(): Promise<string | null> {
+async function findCommandOnPath(command: string): Promise<string | null> {
+	const executable = process.platform === "win32" && extname(command) === "" ? `${command}.exe` : command;
 	const result =
 		process.platform === "win32"
-			? await runCommand("where", ["bash.exe"], 5000)
-			: await runCommand("which", ["bash"], 5000);
+			? await runCommand("where", [executable], 5000)
+			: await runCommand("which", [command], 5000);
 	if (result.status !== 0 || !result.stdout) return null;
 	const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
 	return firstMatch && (await pathExists(firstMatch)) ? firstMatch : null;
+}
+
+function isPathLike(shell: string): boolean {
+	return shell.includes("/") || shell.includes("\\");
+}
+
+function getShellArgs(shell: string): string[] {
+	const executableName = shell.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? shell.toLowerCase();
+	if (
+		executableName === "pwsh" ||
+		executableName === "pwsh.exe" ||
+		executableName === "powershell" ||
+		executableName === "powershell.exe"
+	) {
+		return ["-NoLogo", "-NoProfile", "-Command"];
+	}
+	return ["-c"];
+}
+
+async function resolveCustomShell(customShellPath: string): Promise<string | null> {
+	if (await pathExists(customShellPath)) {
+		return customShellPath;
+	}
+	if (!isPathLike(customShellPath)) {
+		return await findCommandOnPath(customShellPath);
+	}
+	return null;
 }
 
 async function getShellConfig(
 	customShellPath?: string,
 ): Promise<Result<{ shell: string; args: string[] }, ExecutionError>> {
 	if (customShellPath) {
-		if (await pathExists(customShellPath)) {
-			return ok({ shell: customShellPath, args: ["-c"] });
+		const resolvedShell = await resolveCustomShell(customShellPath);
+		if (resolvedShell) {
+			return ok({ shell: resolvedShell, args: getShellArgs(resolvedShell) });
 		}
 		return err(new ExecutionError("shell_unavailable", `Custom shell path not found: ${customShellPath}`));
 	}
 	if (process.platform === "win32") {
 		const candidates: string[] = [];
 		const programFiles = process.env.ProgramFiles;
-		if (programFiles) candidates.push(`${programFiles}\\Git\\bin\\bash.exe`);
+		if (programFiles) {
+			candidates.push(`${programFiles}\\PowerShell\\7\\pwsh.exe`);
+		}
 		const programFilesX86 = process.env["ProgramFiles(x86)"];
-		if (programFilesX86) candidates.push(`${programFilesX86}\\Git\\bin\\bash.exe`);
+		if (programFilesX86) {
+			candidates.push(`${programFilesX86}\\PowerShell\\7\\pwsh.exe`);
+		}
 		for (const candidate of candidates) {
 			if (await pathExists(candidate)) {
-				return ok({ shell: candidate, args: ["-c"] });
+				return ok({ shell: candidate, args: getShellArgs(candidate) });
 			}
 		}
-		const bashOnPath = await findBashOnPath();
-		if (bashOnPath) {
-			return ok({ shell: bashOnPath, args: ["-c"] });
+		const pwshOnPath = await findCommandOnPath("pwsh");
+		if (pwshOnPath) {
+			return ok({ shell: pwshOnPath, args: getShellArgs(pwshOnPath) });
 		}
-		return err(new ExecutionError("shell_unavailable", "No bash shell found"));
+		return err(new ExecutionError("shell_unavailable", "No pwsh shell found"));
 	}
 
 	if (await pathExists("/bin/bash")) {
-		return ok({ shell: "/bin/bash", args: ["-c"] });
+		return ok({ shell: "/bin/bash", args: getShellArgs("/bin/bash") });
 	}
-	const bashOnPath = await findBashOnPath();
+	const bashOnPath = await findCommandOnPath("bash");
 	if (bashOnPath) {
-		return ok({ shell: bashOnPath, args: ["-c"] });
+		return ok({ shell: bashOnPath, args: getShellArgs(bashOnPath) });
 	}
-	return ok({ shell: "sh", args: ["-c"] });
+	return ok({ shell: "sh", args: getShellArgs("sh") });
 }
 
 function getShellEnv(baseEnv?: NodeJS.ProcessEnv, extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
