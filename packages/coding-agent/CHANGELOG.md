@@ -128,6 +128,7 @@
 - Fixed Windows npm-family package commands for fnm-managed Node.js installs that expose both extensionless Unix scripts and `.cmd` shims ([#4793](https://github.com/earendil-works/pi/issues/4793)).
 ### Changed
 
+- Changed the default `webSearch` setting to enabled, so provider built-in web search is on by default when the active model supports it.
 - Changed the default Windows shell for coding-agent command execution from Git Bash to PowerShell (`pwsh`) when no custom `shellPath` is configured.
 
 ## [0.75.3] - 2026-05-18

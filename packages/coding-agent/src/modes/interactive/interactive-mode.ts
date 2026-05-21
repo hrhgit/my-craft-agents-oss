@@ -65,6 +65,7 @@ import type {
 	EditorFactory,
 	ExtensionCommandContext,
 	ExtensionContext,
+	ExtensionError,
 	ExtensionRunner,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
@@ -1546,7 +1547,7 @@ export class InteractiveMode {
 					void this.shutdown();
 				}
 			},
-			onError: (error) => {
+			onError: (error: ExtensionError) => {
 				this.showExtensionError(error.extensionPath, error.error, error.stack);
 			},
 		});

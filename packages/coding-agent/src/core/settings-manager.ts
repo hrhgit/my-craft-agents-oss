@@ -668,7 +668,7 @@ export class SettingsManager {
 	}
 
 	getWebSearch(): boolean {
-		return this.settings.webSearch ?? false;
+		return this.settings.webSearch ?? true;
 	}
 
 	setWebSearch(enabled: boolean): void {

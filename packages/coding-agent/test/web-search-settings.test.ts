@@ -55,15 +55,15 @@ describe("web search settings", () => {
 		return { session, settingsManager };
 	}
 
-	it("persists and reloads webSearch", async () => {
+	it("defaults webSearch to enabled and persists explicit changes", async () => {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
-		expect(settingsManager.getWebSearch()).toBe(false);
+		expect(settingsManager.getWebSearch()).toBe(true);
 
-		settingsManager.setWebSearch(true);
+		settingsManager.setWebSearch(false);
 		await settingsManager.flush();
 
 		const reloaded = SettingsManager.create(tempDir, agentDir);
-		expect(reloaded.getWebSearch()).toBe(true);
+		expect(reloaded.getWebSearch()).toBe(false);
 	});
 
 	it("adds supported builtin web_search guidance when enabled", async () => {

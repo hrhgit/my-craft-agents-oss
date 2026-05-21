@@ -8,6 +8,7 @@
 
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
+import type { ExtensionError } from "../core/extensions/types.ts";
 import { flushRawStdout, writeRawStdout } from "../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 
@@ -94,7 +95,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					await session.reload();
 				},
 			},
-			onError: (err) => {
+			onError: (err: ExtensionError) => {
 				console.error(`Extension error (${err.extensionPath}): ${err.error}`);
 			},
 		});

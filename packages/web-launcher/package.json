@@ -1,0 +1,23 @@
+{
+	"name": "@earendil-works/pi-web-launcher",
+	"version": "0.75.3",
+	"private": true,
+	"description": "Global launcher for the local Pi web example",
+	"type": "module",
+	"bin": {
+		"pi-web": "dist/cli.js"
+	},
+	"files": ["dist", "README.md"],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"devDependencies": {
+		"shx": "^0.4.0",
+		"typescript": "^5.7.3"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}
