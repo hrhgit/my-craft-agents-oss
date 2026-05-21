@@ -3,6 +3,7 @@
     "./extensions/prompt-url-widget.ts",
     "./extensions/redraws.ts",
     "./extensions/tps.ts",
-    "./extensions/web-search-footer.ts"
+    "-extensions/web-search-footer.ts",
+    "-extensions/pi-remote/index.ts"
   ]
 }
