@@ -210,6 +210,7 @@ export class SettingsSelectorComponent extends Container {
 		super();
 
 		const supportsImages = getCapabilities().images;
+		const steerKey = keyDisplayText("app.message.steer");
 		const followUpKey = keyDisplayText("app.message.followUp");
 		let currentWarnings = { ...config.warnings };
 
@@ -224,15 +225,14 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "steering-mode",
 				label: "Steering mode",
-				description:
-					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
+				description: `${steerKey} queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.`,
 				currentValue: config.steeringMode,
 				values: ["one-at-a-time", "all"],
 			},
 			{
 				id: "follow-up-mode",
 				label: "Follow-up mode",
-				description: `${followUpKey} queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.`,
+				description: `${followUpKey} or Enter while streaming queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.`,
 				currentValue: config.followUpMode,
 				values: ["one-at-a-time", "all"],
 			},

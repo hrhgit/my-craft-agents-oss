@@ -12,14 +12,16 @@ import {
 	type Edit,
 	type EditDiffError,
 	type EditDiffResult,
+	EditFailure,
 	generateDiffString,
 	generateUnifiedPatch,
 	normalizeToLF,
+	resolveEditPathWithHistory,
 	restoreLineEndings,
 	stripBom,
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
-import { resolveToCwd } from "./path-utils.ts";
+import type { ReadHistoryStore } from "./read-history.ts";
 import { invalidArgText, shortenPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
@@ -57,13 +59,53 @@ type LegacyEditToolInput = EditToolInput & {
 	newText?: unknown;
 };
 
+export interface EditToolErrorDetails {
+	kind:
+		| "path_not_found"
+		| "exact_not_found"
+		| "already_applied"
+		| "duplicate_old_text"
+		| "overlap"
+		| "empty_old_text"
+		| "no_change"
+		| "invalid_edit_input";
+	editIndex?: number;
+	totalEdits?: number;
+	occurrences?: number;
+	approximateCandidate?: {
+		startLine: number;
+		endLine: number;
+		score: number;
+		lineScore: number;
+		charScore: number;
+		matchedText: string;
+		reasons: string[];
+	};
+	readEvidence?: Array<{
+		requestedPath: string;
+		canonicalPath: string;
+		startLine: number;
+		endLine: number;
+		toolCallId: string;
+		timestamp: number;
+	}>;
+	pathCandidates?: Array<{
+		canonicalPath: string;
+		score: number;
+		reasons: string[];
+		lastReadTimestamp: number;
+	}>;
+}
+
 export interface EditToolDetails {
 	/** Display-oriented diff of the changes made */
-	diff: string;
+	diff?: string;
 	/** Standard unified patch of the changes made */
-	patch: string;
+	patch?: string;
 	/** Line number of the first change in the new file (for editor navigation) */
 	firstChangedLine?: number;
+	/** Structured error details for machine/UI consumption. */
+	error?: EditToolErrorDetails;
 }
 
 /**
@@ -88,6 +130,8 @@ const defaultEditOperations: EditOperations = {
 export interface EditToolOptions {
 	/** Custom operations for file editing. Default: local filesystem */
 	operations?: EditOperations;
+	/** Session-scoped successful text reads used for conservative recovery. */
+	readHistoryStore?: ReadHistoryStore;
 }
 
 function prepareEditArguments(input: unknown): EditToolInput {
@@ -117,8 +161,29 @@ function prepareEditArguments(input: unknown): EditToolInput {
 }
 
 function validateEditInput(input: EditToolInput): { path: string; edits: Edit[] } {
+	if (typeof input?.path !== "string" || input.path.length === 0) {
+		throw new EditFailure("invalid_edit_input", "Edit tool input is invalid. path must be a non-empty string.");
+	}
 	if (!Array.isArray(input.edits) || input.edits.length === 0) {
-		throw new Error("Edit tool input is invalid. edits must contain at least one replacement.");
+		throw new EditFailure(
+			"invalid_edit_input",
+			"Edit tool input is invalid. edits must contain at least one replacement.",
+		);
+	}
+	for (let i = 0; i < input.edits.length; i++) {
+		const edit = input.edits[i] as Partial<Edit> | undefined;
+		if (!edit || typeof edit.oldText !== "string") {
+			throw new EditFailure("invalid_edit_input", `edits[${i}].oldText must be a string.`, {
+				editIndex: i,
+				totalEdits: input.edits.length,
+			});
+		}
+		if (typeof edit.newText !== "string") {
+			throw new EditFailure("invalid_edit_input", `edits[${i}].newText must be a string.`, {
+				editIndex: i,
+				totalEdits: input.edits.length,
+			});
+		}
 	}
 	return { path: input.path, edits: input.edits };
 }
@@ -288,11 +353,62 @@ function setEditPreview(
 	return changed;
 }
 
+function createEditToolError(
+	errorMessage: string,
+	details: EditToolDetails,
+): Error & {
+	toolResult: { content: Array<{ type: "text"; text: string }>; details: EditToolDetails };
+} {
+	const error = new Error(errorMessage) as Error & {
+		toolResult: { content: Array<{ type: "text"; text: string }>; details: EditToolDetails };
+	};
+	error.toolResult = {
+		content: [{ type: "text", text: errorMessage }],
+		details,
+	};
+	return error;
+}
+
+function createEditErrorDetailsFromFailure(error: EditFailure): EditToolErrorDetails {
+	return {
+		kind: error.kind,
+		editIndex: error.details?.editIndex,
+		totalEdits: error.details?.totalEdits,
+		occurrences: error.details?.occurrences,
+		approximateCandidate: error.details?.approximateCandidate
+			? {
+					startLine: error.details.approximateCandidate.startLine,
+					endLine: error.details.approximateCandidate.endLine,
+					score: error.details.approximateCandidate.score,
+					lineScore: error.details.approximateCandidate.lineScore,
+					charScore: error.details.approximateCandidate.charScore,
+					matchedText: error.details.approximateCandidate.matchedText,
+					reasons: [...error.details.approximateCandidate.reasons],
+				}
+			: undefined,
+		readEvidence: error.details?.readEvidence?.map((entry) => ({
+			requestedPath: entry.requestedPath,
+			canonicalPath: entry.canonicalPath,
+			startLine: entry.startLine,
+			endLine: entry.endLine,
+			toolCallId: entry.toolCallId,
+			timestamp: entry.timestamp,
+		})),
+		pathCandidates: error.details?.pathCandidates?.map((candidate) => ({
+			canonicalPath: candidate.canonicalPath,
+			score: candidate.score,
+			reasons: [...candidate.reasons],
+			lastReadTimestamp: candidate.lastReadTimestamp,
+		})),
+	};
+}
+
 export function createEditToolDefinition(
 	cwd: string,
 	options?: EditToolOptions,
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
 	const ops = options?.operations ?? defaultEditOperations;
+	const readHistoryStore = options?.readHistoryStore;
 	return {
 		name: "edit",
 		label: "edit",
@@ -310,41 +426,84 @@ export function createEditToolDefinition(
 		renderShell: "self",
 		prepareArguments: prepareEditArguments,
 		async execute(_toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, _ctx?) {
-			const { path, edits } = validateEditInput(input);
-			const absolutePath = resolveToCwd(path, cwd);
+			let path: string;
+			let edits: Edit[];
+			try {
+				({ path, edits } = validateEditInput(input));
+			} catch (error: unknown) {
+				if (error instanceof EditFailure) {
+					throw createEditToolError(error.message, {
+						error: createEditErrorDetailsFromFailure(error),
+					});
+				}
+				throw error;
+			}
+			const recovery = resolveEditPathWithHistory(path, cwd, readHistoryStore);
+			const absolutePath = recovery.resolvedPath;
 
 			return withFileMutationQueue(absolutePath, async () => {
-				// Do not reject from an abort event listener here: that would release the
-				// mutation queue while an in-flight filesystem operation may still finish.
-				// Checking signal.aborted after each await observes the same aborts while
-				// keeping the queue locked until the current operation has settled.
 				const throwIfAborted = (): void => {
-					if (signal?.aborted) throw new Error("Operation aborted");
+					if (signal?.aborted) {
+						throw new Error("Operation aborted");
+					}
 				};
 
 				throwIfAborted();
 
-				// Check if file exists.
 				try {
 					await ops.access(absolutePath);
 				} catch (error: unknown) {
 					throwIfAborted();
+					const errorCode = error instanceof Error && "code" in error ? String(error.code) : undefined;
+					if (errorCode === "ENOENT") {
+						const suggestions = recovery.candidates.slice(0, 3).map((candidate) => candidate.canonicalPath);
+						const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
+						throw createEditToolError(`Could not edit file: ${path}. Error code: ENOENT.${suggestionText}`, {
+							error: {
+								kind: "path_not_found",
+								pathCandidates: recovery.candidates.slice(0, 3).map((candidate) => ({
+									canonicalPath: candidate.canonicalPath,
+									score: candidate.score,
+									reasons: [...candidate.reasons],
+									lastReadTimestamp: candidate.lastReadTimestamp,
+								})),
+							},
+						});
+					}
+
 					const errorMessage =
 						error instanceof Error && "code" in error ? `Error code: ${error.code}` : String(error);
 					throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
 				}
 				throwIfAborted();
 
-				// Read the file.
 				const buffer = await ops.readFile(absolutePath);
 				const rawContent = buffer.toString("utf-8");
 				throwIfAborted();
 
-				// Strip BOM before matching. The model will not include an invisible BOM in oldText.
 				const { bom, text: content } = stripBom(rawContent);
 				const originalEnding = detectLineEnding(content);
 				const normalizedContent = normalizeToLF(content);
-				const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
+
+				let baseContent: string;
+				let newContent: string;
+				let appliedViaApproximateMatch = false;
+				try {
+					({ baseContent, newContent, appliedViaApproximateMatch } = applyEditsToNormalizedContent(
+						normalizedContent,
+						edits,
+						absolutePath,
+						readHistoryStore,
+					));
+				} catch (error: unknown) {
+					throwIfAborted();
+					if (error instanceof EditFailure) {
+						throw createEditToolError(error.message, {
+							error: createEditErrorDetailsFromFailure(error),
+						});
+					}
+					throw error;
+				}
 				throwIfAborted();
 
 				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
@@ -357,7 +516,9 @@ export function createEditToolDefinition(
 					content: [
 						{
 							type: "text",
-							text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
+							text: appliedViaApproximateMatch
+								? `Successfully replaced ${edits.length} block(s) in ${path} using a unique high-confidence approximate match.`
+								: `Successfully replaced ${edits.length} block(s) in ${path}.`,
 						},
 					],
 					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
@@ -381,12 +542,14 @@ export function createEditToolDefinition(
 			if (context.argsComplete && previewInput && !component.preview && !component.previewPending) {
 				component.previewPending = true;
 				const requestKey = argsKey;
-				void computeEditsDiff(previewInput.path, previewInput.edits, context.cwd).then((preview) => {
-					if (component.previewArgsKey === requestKey) {
-						setEditPreview(component, preview, requestKey);
-						context.invalidate();
-					}
-				});
+				void computeEditsDiff(previewInput.path, previewInput.edits, context.cwd, readHistoryStore).then(
+					(preview) => {
+						if (component.previewArgsKey === requestKey) {
+							setEditPreview(component, preview, requestKey);
+							context.invalidate();
+						}
+					},
+				);
 			}
 
 			return buildEditCallComponent(component, args, theme);

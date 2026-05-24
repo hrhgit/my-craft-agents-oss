@@ -23,6 +23,7 @@ export interface AppKeybindings {
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
 	"app.editor.external": true;
+	"app.message.steer": true;
 	"app.message.followUp": true;
 	"app.message.dequeue": true;
 	"app.clipboard.pasteImage": true;
@@ -94,6 +95,10 @@ export const KEYBINDINGS = {
 	"app.editor.external": {
 		defaultKeys: "ctrl+g",
 		description: "Open external editor",
+	},
+	"app.message.steer": {
+		defaultKeys: "ctrl+enter",
+		description: "Queue steering message",
 	},
 	"app.message.followUp": {
 		defaultKeys: "alt+enter",
@@ -223,6 +228,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	yank: "tui.editor.yank",
 	yankPop: "tui.editor.yankPop",
 	undo: "tui.editor.undo",
+	redo: "tui.editor.redo",
 	newLine: "tui.input.newLine",
 	submit: "tui.input.submit",
 	tab: "tui.input.tab",
@@ -245,6 +251,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	toggleThinking: "app.thinking.toggle",
 	toggleSessionNamedFilter: "app.session.toggleNamedFilter",
 	externalEditor: "app.editor.external",
+	steer: "app.message.steer",
 	followUp: "app.message.followUp",
 	dequeue: "app.message.dequeue",
 	pasteImage: "app.clipboard.pasteImage",

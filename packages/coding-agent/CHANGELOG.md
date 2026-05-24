@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added a dedicated `app.message.steer` shortcut for queuing steering messages without changing editor submit behavior.
+- Added `ctrl+y` redo support for the interactive editor.
 - Added the local `web_fetch` built-in tool and a persisted `webSearch` setting for supported provider built-in web search.
 
 ### Fixed
@@ -128,6 +130,7 @@
 - Fixed Windows npm-family package commands for fnm-managed Node.js installs that expose both extensionless Unix scripts and `.cmd` shims ([#4793](https://github.com/earendil-works/pi/issues/4793)).
 ### Changed
 
+- Changed Enter during interactive streaming to queue follow-up messages instead of steering messages; use the dedicated `app.message.steer` shortcut for steering.
 - Changed the default `webSearch` setting to enabled, so provider built-in web search is on by default when the active model supports it.
 - Changed the default Windows shell for coding-agent command execution from Git Bash to PowerShell (`pwsh`) when no custom `shellPath` is configured.
 

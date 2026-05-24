@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added editor redo support with `tui.editor.redo` bound to `ctrl+y` by default.
+
 ## [0.76.0] - 2026-05-27
 
 ### Added

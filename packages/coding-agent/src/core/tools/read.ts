@@ -13,6 +13,7 @@ import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
+import { buildReadHistoryEntry, type ReadHistoryStore } from "./read-history.ts";
 import { getTextOutput, invalidArgText, replaceTabs, shortenPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
@@ -60,6 +61,8 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
+	/** Session-scoped history of successful text reads for later edit recovery. */
+	readHistoryStore?: ReadHistoryStore;
 }
 
 type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
@@ -209,6 +212,7 @@ export function createReadToolDefinition(
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const ops = options?.operations ?? defaultReadOperations;
+	const readHistoryStore = options?.readHistoryStore;
 	return {
 		name: "read",
 		label: "read",
@@ -217,7 +221,7 @@ export function createReadToolDefinition(
 		promptGuidelines: ["Use read to examine files instead of cat or sed."],
 		parameters: readSchema,
 		async execute(
-			_toolCallId,
+			toolCallId,
 			{ path, offset, limit }: { path: string; offset?: number; limit?: number },
 			signal?: AbortSignal,
 			_onUpdate?,
@@ -327,6 +331,21 @@ export function createReadToolDefinition(
 									outputText = truncation.content;
 								}
 								content = [{ type: "text", text: outputText }];
+
+								if (readHistoryStore) {
+									const endLine =
+										userLimitedLines !== undefined ? startLineDisplay + userLimitedLines - 1 : totalFileLines;
+									readHistoryStore.record(
+										buildReadHistoryEntry({
+											toolCallId,
+											requestedPath: path,
+											canonicalPath: absolutePath,
+											text: selectedContent,
+											startLine: startLineDisplay,
+											endLine,
+										}),
+									);
+								}
 							}
 
 							if (aborted) return;

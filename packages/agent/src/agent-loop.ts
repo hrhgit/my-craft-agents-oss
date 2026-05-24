@@ -619,7 +619,7 @@ async function prepareToolCall(
 	} catch (error) {
 		return {
 			kind: "immediate",
-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			result: createErrorToolResultFromUnknown(error),
 			isError: true,
 		};
 	}
@@ -656,7 +656,7 @@ async function executePreparedToolCall(
 	} catch (error) {
 		await Promise.all(updateEvents);
 		return {
-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			result: createErrorToolResultFromUnknown(error),
 			isError: true,
 		};
 	}
@@ -695,7 +695,7 @@ async function finalizeExecutedToolCall(
 				isError = afterResult.isError ?? isError;
 			}
 		} catch (error) {
-			result = createErrorToolResult(error instanceof Error ? error.message : String(error));
+			result = createErrorToolResultFromUnknown(error);
 			isError = true;
 		}
 	}
@@ -707,11 +707,27 @@ async function finalizeExecutedToolCall(
 	};
 }
 
-function createErrorToolResult(message: string): AgentToolResult<any> {
+function createErrorToolResult(message: string, details: unknown = {}): AgentToolResult<any> {
 	return {
 		content: [{ type: "text", text: message }],
-		details: {},
+		details,
 	};
+}
+
+function createErrorToolResultFromUnknown(error: unknown): AgentToolResult<any> {
+	if (error instanceof Error) {
+		const maybeToolResult = error as Error & {
+			toolResult?: { content?: AgentToolResult<any>["content"]; details?: unknown };
+		};
+		if (maybeToolResult.toolResult) {
+			return {
+				content: maybeToolResult.toolResult.content ?? [{ type: "text", text: error.message }],
+				details: maybeToolResult.toolResult.details ?? {},
+			};
+		}
+		return createErrorToolResult(error.message);
+	}
+	return createErrorToolResult(String(error));
 }
 
 async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: AgentEventSink): Promise<void> {

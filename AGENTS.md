@@ -8,6 +8,7 @@
 - Technical prose only, be direct
 - When the user asks a question, answer it first before making edits or running implementation commands.
 - When responding to user feedback or an analysis, explicitly say whether you agree or disagree before saying what you changed.
+- When modifying or adding Pi extensions for the user's active environment, prefer the global `~/.pi/agent/extensions` directory first unless the user explicitly asks to change repository examples or core code.
 - When a user wants to modify Pi functionality, prefer recommending an extension-based implementation instead of changing Pi core directly, unless the request is clearly about a core bug, core architecture, or built-in behavior that should be changed at the source.
 
 ## Code Quality

@@ -84,7 +84,7 @@ describe("Input component", () => {
 	});
 
 	describe("Kill ring", () => {
-		it("Ctrl+W saves deleted text to kill ring and Ctrl+Y yanks it", () => {
+		it("Ctrl+W saves deleted text to kill ring and Ctrl+Alt+Y yanks it", () => {
 			const input = new Input();
 
 			input.setValue("foo bar baz");
@@ -96,7 +96,7 @@ describe("Input component", () => {
 
 			// Move to beginning and yank
 			input.handleInput("\x01"); // Ctrl+A
-			input.handleInput("\x19"); // Ctrl+Y
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y
 			assert.strictEqual(input.getValue(), "bazfoo bar ");
 		});
 
@@ -145,7 +145,7 @@ describe("Input component", () => {
 			input.handleInput("\x15"); // Ctrl+U - deletes "hello "
 			assert.strictEqual(input.getValue(), "world");
 
-			input.handleInput("\x19"); // Ctrl+Y
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y
 			assert.strictEqual(input.getValue(), "hello world");
 		});
 
@@ -158,20 +158,20 @@ describe("Input component", () => {
 
 			assert.strictEqual(input.getValue(), "");
 
-			input.handleInput("\x19"); // Ctrl+Y
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y
 			assert.strictEqual(input.getValue(), "hello world");
 		});
 
-		it("Ctrl+Y does nothing when kill ring is empty", () => {
+		it("Ctrl+Alt+Y does nothing when kill ring is empty", () => {
 			const input = new Input();
 
 			input.setValue("test");
 			input.handleInput("\x05"); // Ctrl+E
-			input.handleInput("\x19"); // Ctrl+Y
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y
 			assert.strictEqual(input.getValue(), "test");
 		});
 
-		it("Alt+Y cycles through kill ring after Ctrl+Y", () => {
+		it("Alt+Y cycles through kill ring after Ctrl+Alt+Y", () => {
 			const input = new Input();
 
 			// Create kill ring with multiple entries
@@ -187,7 +187,7 @@ describe("Input component", () => {
 
 			assert.strictEqual(input.getValue(), "");
 
-			input.handleInput("\x19"); // Ctrl+Y - yanks "third"
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y - yanks "third"
 			assert.strictEqual(input.getValue(), "third");
 
 			input.handleInput("\x1by"); // Alt+Y - cycles to "second"
@@ -224,7 +224,7 @@ describe("Input component", () => {
 			input.handleInput("\x05"); // Ctrl+E
 			input.handleInput("\x17"); // Ctrl+W - deletes "only"
 
-			input.handleInput("\x19"); // Ctrl+Y - yanks "only"
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y - yanks "only"
 			assert.strictEqual(input.getValue(), "only");
 
 			input.handleInput("\x1by"); // Alt+Y - should do nothing
@@ -242,7 +242,7 @@ describe("Input component", () => {
 
 			assert.strictEqual(input.getValue(), "");
 
-			input.handleInput("\x19"); // Ctrl+Y
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y
 			assert.strictEqual(input.getValue(), "one two three");
 		});
 
@@ -260,7 +260,7 @@ describe("Input component", () => {
 			input.handleInput("\x17"); // Ctrl+W - deletes "x" (separate entry)
 			assert.strictEqual(input.getValue(), "foo bar ");
 
-			input.handleInput("\x19"); // Ctrl+Y - most recent is "x"
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y - most recent is "x"
 			assert.strictEqual(input.getValue(), "foo bar x");
 
 			input.handleInput("\x1by"); // Alt+Y - cycle to "baz"
@@ -278,7 +278,7 @@ describe("Input component", () => {
 			input.handleInput("\x17"); // Ctrl+W
 			input.setValue("");
 
-			input.handleInput("\x19"); // Ctrl+Y - yanks "second"
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y - yanks "second"
 			assert.strictEqual(input.getValue(), "second");
 
 			input.handleInput("x"); // Breaks yank chain
@@ -302,7 +302,7 @@ describe("Input component", () => {
 			input.handleInput("\x17"); // deletes "third"
 			input.setValue("");
 
-			input.handleInput("\x19"); // Ctrl+Y - yanks "third"
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y - yanks "third"
 			input.handleInput("\x1by"); // Alt+Y - cycles to "second"
 			assert.strictEqual(input.getValue(), "second");
 
@@ -311,7 +311,7 @@ describe("Input component", () => {
 			input.setValue("");
 
 			// New yank should get "second" (now at end after rotation)
-			input.handleInput("\x19"); // Ctrl+Y
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y
 			assert.strictEqual(input.getValue(), "second");
 		});
 
@@ -326,7 +326,7 @@ describe("Input component", () => {
 			input.handleInput("\x0b"); // Ctrl+K - deletes "|suffix" (forward)
 			assert.strictEqual(input.getValue(), "prefix");
 
-			input.handleInput("\x19"); // Ctrl+Y
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y
 			assert.strictEqual(input.getValue(), "prefix|suffix");
 		});
 
@@ -343,7 +343,7 @@ describe("Input component", () => {
 			assert.strictEqual(input.getValue(), " test");
 
 			// Yank should get accumulated text
-			input.handleInput("\x19"); // Ctrl+Y
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y
 			assert.strictEqual(input.getValue(), "hello world test");
 		});
 
@@ -391,7 +391,7 @@ describe("Input component", () => {
 			input.handleInput("\x01"); // Ctrl+A
 			for (let i = 0; i < 6; i++) input.handleInput("\x1b[C");
 
-			input.handleInput("\x19"); // Ctrl+Y
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y
 			assert.strictEqual(input.getValue(), "hello wordworld");
 		});
 
@@ -411,7 +411,7 @@ describe("Input component", () => {
 			input.handleInput("\x01"); // Ctrl+A
 			for (let i = 0; i < 6; i++) input.handleInput("\x1b[C");
 
-			input.handleInput("\x19"); // Ctrl+Y - yanks "SECOND"
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y - yanks "SECOND"
 			assert.strictEqual(input.getValue(), "hello SECONDworld");
 
 			input.handleInput("\x1by"); // Alt+Y - replaces with "FIRST"
@@ -587,11 +587,42 @@ describe("Input component", () => {
 			input.handleInput("o");
 			input.handleInput(" ");
 			input.handleInput("\x17"); // Ctrl+W - delete "hello "
-			input.handleInput("\x19"); // Ctrl+Y - yank
+			input.handleInput("\x1b\x19"); // Ctrl+Alt+Y - yank
 			assert.strictEqual(input.getValue(), "hello ");
 
 			input.handleInput("\x1b[45;5u"); // Ctrl+- (undo)
 			assert.strictEqual(input.getValue(), "");
+		});
+
+		it("redoes after undo", () => {
+			const input = new Input();
+
+			input.handleInput("h");
+			input.handleInput("e");
+			input.handleInput("l");
+			input.handleInput("l");
+			input.handleInput("o");
+			assert.strictEqual(input.getValue(), "hello");
+
+			input.handleInput("\x1b[45;5u"); // Ctrl+- (undo)
+			assert.strictEqual(input.getValue(), "");
+
+			input.handleInput("\x19"); // Ctrl+Y (redo)
+			assert.strictEqual(input.getValue(), "hello");
+		});
+
+		it("clears redo stack after a new edit", () => {
+			const input = new Input();
+
+			input.handleInput("a");
+			input.handleInput("b");
+			input.handleInput("c");
+			input.handleInput("\x1b[45;5u"); // Ctrl+- (undo)
+			assert.strictEqual(input.getValue(), "");
+
+			input.handleInput("x");
+			input.handleInput("\x19"); // Ctrl+Y (redo)
+			assert.strictEqual(input.getValue(), "x");
 		});
 
 		it("undoes paste atomically", () => {

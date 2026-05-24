@@ -284,8 +284,9 @@ export class Editor implements Component, Focusable {
 	// to.
 	private snappedFromCursorCol: number | null = null;
 
-	// Undo support
+	// Undo/redo support
 	private undoStack = new UndoStack<EditorState>();
+	private redoStack = new UndoStack<EditorState>();
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
@@ -592,9 +593,13 @@ export class Editor implements Component, Focusable {
 			return;
 		}
 
-		// Undo
+		// Undo / redo
 		if (kb.matches(data, "tui.editor.undo")) {
 			this.undo();
+			return;
+		}
+		if (kb.matches(data, "tui.editor.redo")) {
+			this.redo();
 			return;
 		}
 
@@ -1201,6 +1206,7 @@ export class Editor implements Component, Focusable {
 		this.historyIndex = -1;
 		this.scrollOffset = 0;
 		this.undoStack.clear();
+		this.redoStack.clear();
 		this.lastAction = null;
 
 		if (this.onChange) this.onChange("");
@@ -1905,18 +1911,33 @@ export class Editor implements Component, Focusable {
 
 	private pushUndoSnapshot(): void {
 		this.undoStack.push(this.state);
+		this.redoStack.clear();
+	}
+
+	private restoreSnapshot(snapshot: EditorState): void {
+		Object.assign(this.state, snapshot);
+		this.lastAction = null;
+		this.preferredVisualCol = null;
+		this.snappedFromCursorCol = null;
+		if (this.onChange) {
+			this.onChange(this.getText());
+		}
 	}
 
 	private undo(): void {
 		this.historyIndex = -1; // Exit history browsing mode
 		const snapshot = this.undoStack.pop();
 		if (!snapshot) return;
-		Object.assign(this.state, snapshot);
-		this.lastAction = null;
-		this.preferredVisualCol = null;
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
+		this.redoStack.push(this.state);
+		this.restoreSnapshot(snapshot);
+	}
+
+	private redo(): void {
+		this.historyIndex = -1; // Exit history browsing mode
+		const snapshot = this.redoStack.pop();
+		if (!snapshot) return;
+		this.undoStack.push(this.state);
+		this.restoreSnapshot(snapshot);
 	}
 
 	/**

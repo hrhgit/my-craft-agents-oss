@@ -66,6 +66,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 ## Reference
 
 - [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
+- [Errors and troubleshooting](errors/README.md) - common user-facing errors grouped by subsystem.
 
 ## Platform setup
 

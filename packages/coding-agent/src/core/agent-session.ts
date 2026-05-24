@@ -92,6 +92,7 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
+import { cleanupReadHistoryStore, getReadHistoryStore } from "./tools/read-history.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
@@ -730,6 +731,7 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
+		cleanupReadHistoryStore(this.sessionId);
 	}
 
 	// =========================================================================
@@ -2427,6 +2429,7 @@ export class AgentSession {
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
 		const shellToolName = getShellToolName(shellPath);
+		const readHistoryStore = getReadHistoryStore(this.sessionId);
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -2435,7 +2438,8 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
+					read: { autoResizeImages, readHistoryStore },
+					edit: { readHistoryStore },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
 				});
 
