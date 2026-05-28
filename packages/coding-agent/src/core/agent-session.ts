@@ -147,7 +147,8 @@ export type AgentSessionEvent =
 			errorMessage?: string;
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
+	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
+	| { type: "agent_settled" };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -264,6 +265,8 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
+	private _logicalRunPromise: Promise<void> | undefined = undefined;
+	private _logicalRunResolve: (() => void) | undefined = undefined;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -283,6 +286,8 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	private _retryPromise: Promise<void> | undefined = undefined;
+	private _retryResolve: (() => void) | undefined = undefined;
 
 	// Bash execution state
 	private _bashAbortController: AbortController | undefined = undefined;
@@ -469,11 +474,52 @@ export class AgentSession {
 		});
 	}
 
+	private _ensureLogicalRunPromise(): void {
+		if (this._logicalRunPromise) {
+			return;
+		}
+
+		this._logicalRunPromise = new Promise((resolve) => {
+			this._logicalRunResolve = resolve;
+		});
+	}
+
+	private _resolveLogicalRun(): void {
+		if (!this._logicalRunResolve) {
+			return;
+		}
+
+		const resolve = this._logicalRunResolve;
+		this._logicalRunResolve = undefined;
+		this._logicalRunPromise = undefined;
+		resolve();
+	}
+
+	private async _emitAgentSettled(): Promise<void> {
+		await this._extensionRunner.emit({ type: "agent_settled" });
+		this._emit({ type: "agent_settled" });
+	}
+
+	/** Resolve the pending retry promise */
+	private _resolveRetry(): void {
+		if (!this._retryResolve) {
+			return;
+		}
+
+		this._retryResolve();
+		this._retryResolve = undefined;
+		this._retryPromise = undefined;
+	}
+
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+		if (event.type === "agent_start") {
+			this._ensureLogicalRunPromise();
+		}
+
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
@@ -541,6 +587,7 @@ export class AgentSession {
 						attempt: this._retryAttempt,
 					});
 					this._retryAttempt = 0;
+					this._resolveRetry();
 				}
 			}
 		}
@@ -991,7 +1038,12 @@ export class AgentSession {
 				await this.agent.continue();
 			}
 		} finally {
-			this._flushPendingBashMessages();
+			try {
+				await this._emitAgentSettled();
+			} finally {
+				this._flushPendingBashMessages();
+				this._resolveLogicalRun();
+			}
 		}
 	}
 
@@ -1014,6 +1066,7 @@ export class AgentSession {
 				finalError: msg.errorMessage,
 			});
 			this._retryAttempt = 0;
+			this._resolveRetry();
 		}
 
 		if (await this._checkCompaction(msg)) {
@@ -1185,6 +1238,7 @@ export class AgentSession {
 
 		preflightResult?.(true);
 		await this._runAgentPrompt(messages);
+		await this.waitForRetry();
 	}
 
 	/**
@@ -2539,6 +2593,12 @@ export class AgentSession {
 			return false;
 		}
 
+		if (!this._retryPromise) {
+			this._retryPromise = new Promise((resolve) => {
+				this._retryResolve = resolve;
+			});
+		}
+
 		this._retryAttempt++;
 
 		if (this._retryAttempt > settings.maxRetries) {
@@ -2590,6 +2650,17 @@ export class AgentSession {
 	 */
 	abortRetry(): void {
 		this._retryAbortController?.abort();
+		this._resolveRetry();
+	}
+
+	/**
+	 * Wait for any in-progress retry to complete.
+	 * Returns immediately if no retry is in progress.
+	 */
+	private async waitForRetry(): Promise<void> {
+		if (this._logicalRunPromise) {
+			await this._logicalRunPromise;
+		}
 	}
 
 	/** Whether auto-retry is currently in progress */

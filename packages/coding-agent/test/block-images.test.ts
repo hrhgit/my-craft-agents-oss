@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { processFileArguments } from "../src/cli/file-processor.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createReadTool } from "../src/core/tools/read.ts";
+import { extractImageAttachmentsFromText } from "../src/cli/file-processor.ts";
 
 // 1x1 red PNG image as base64 (smallest valid PNG)
 const TINY_PNG_BASE64 =
@@ -115,6 +116,27 @@ describe("blockImages setting", () => {
 
 			expect(result.images).toHaveLength(0);
 			expect(result.text).toContain("Hello, world!");
+		});
+
+		it("should extract inline absolute image paths as attachments for interactive mode", async () => {
+			const imagePath = join(testDir, "interactive.png");
+			writeFileSync(imagePath, Buffer.from(TINY_PNG_BASE64, "base64"));
+
+			const result = await extractImageAttachmentsFromText(`Please inspect "${imagePath}"`, {
+				cwd: testDir,
+			});
+
+			expect(result.images).toHaveLength(1);
+			expect(result.images[0].type).toBe("image");
+			expect(result.text).toBe(`Please inspect <file name="${imagePath}"></file>`);
+		});
+
+		it("should leave plain text untouched when no image path is present", async () => {
+			const text = "Please inspect this later";
+			const result = await extractImageAttachmentsFromText(text, { cwd: testDir });
+
+			expect(result.images).toHaveLength(0);
+			expect(result.text).toBe(text);
 		});
 	});
 });

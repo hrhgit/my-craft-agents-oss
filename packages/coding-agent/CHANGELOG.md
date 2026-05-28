@@ -134,6 +134,10 @@
 - Changed the default `webSearch` setting to enabled, so provider built-in web search is on by default when the active model supports it.
 - Changed the default Windows shell for coding-agent command execution from Git Bash to PowerShell (`pwsh`) when no custom `shellPath` is configured.
 
+### Fixed
+
+- Fixed extension notifications and similar idle-triggered behaviors to distinguish transient `agent_end` events from fully settled runs by adding an `agent_settled` extension/session event after retries and automatic continuations finish.
+
 ### Removed
 
 - Removed the plan mode example extension from the coding-agent examples.

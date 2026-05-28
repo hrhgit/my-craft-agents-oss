@@ -290,6 +290,7 @@ export class Editor implements Component, Focusable {
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
+	public onPastedText?: (text: string) => void;
 	public disableSubmit: boolean = false;
 
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
@@ -1153,11 +1154,13 @@ export class Editor implements Component, Focusable {
 		if (pastedLines.length === 1) {
 			// Single line - insert atomically (do not trigger autocomplete during paste)
 			this.insertTextAtCursorInternal(filteredText);
+			this.onPastedText?.(filteredText);
 			return;
 		}
 
 		// Multi-line paste - use direct state manipulation
 		this.insertTextAtCursorInternal(filteredText);
+		this.onPastedText?.(filteredText);
 	}
 
 	private addNewLine(): void {

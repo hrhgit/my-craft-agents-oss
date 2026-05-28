@@ -253,6 +253,7 @@ describe("AgentSession retry and event characterization", () => {
 			"message_end:assistant",
 			"turn_end",
 			"agent_end",
+			"agent_settled",
 		]);
 	});
 
@@ -298,6 +299,7 @@ describe("AgentSession retry and event characterization", () => {
 			"message_end:assistant",
 			"turn_end",
 			"agent_end",
+			"agent_settled",
 		]);
 	});
 
@@ -321,17 +323,18 @@ describe("AgentSession retry and event characterization", () => {
 		expect(updateTypes).toContain("toolcall_delta");
 	});
 
-	it("emits agent_end for error responses", async () => {
+	it("emits agent_settled after error responses finish post-processing", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "broken" })]);
 
 		await harness.session.prompt("hi");
 
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_end");
+		expect(harness.events[harness.events.length - 2]?.type).toBe("agent_end");
+		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_settled");
 	});
 
-	it("emits agent_end for aborted runs and persists the aborted assistant message", async () => {
+	it("emits agent_settled for aborted runs and persists the aborted assistant message", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("x".repeat(20_000))]);
@@ -350,11 +353,53 @@ describe("AgentSession retry and event characterization", () => {
 		await harness.session.abort();
 		await promptPromise;
 
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_end");
+		expect(harness.events[harness.events.length - 2]?.type).toBe("agent_end");
+		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_settled");
 		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
 		expect(lastMessage?.role).toBe("assistant");
 		if (lastMessage?.role === "assistant") {
 			expect(lastMessage.stopReason).toBe("aborted");
 		}
+	});
+
+	it("emits agent_settled only after transient retry recovery completes", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "Network connection lost." }),
+			fauxAssistantMessage("recovered"),
+		]);
+
+		await harness.session.prompt("test");
+
+		expect(harness.eventsOfType("agent_end")).toHaveLength(2);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
+		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_settled");
+	});
+
+	it("emits agent_settled to extensions exactly once for a retried run", async () => {
+		const extensionEvents: string[] = [];
+		const harness = await createHarness({
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_end", async () => {
+						extensionEvents.push("agent_end");
+					});
+					pi.on("agent_settled", async () => {
+						extensionEvents.push("agent_settled");
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "Network connection lost." }),
+			fauxAssistantMessage("recovered"),
+		]);
+
+		await harness.session.prompt("test");
+
+		expect(extensionEvents).toEqual(["agent_end", "agent_end", "agent_settled"]);
 	});
 });
