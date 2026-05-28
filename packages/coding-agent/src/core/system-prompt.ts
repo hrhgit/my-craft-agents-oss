@@ -3,8 +3,8 @@
  */
 
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
-import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 import { getShellToolName } from "./shell-tool-name.ts";
+import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */

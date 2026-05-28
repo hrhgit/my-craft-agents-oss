@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { acquireLock, getYourselfOutputDir, homeRelative, releaseLock, resetYourselfOutputDir } from "./state.js";
-import { isMimoAvailable } from "./summarizer.js";
-import { STATUS_SPINNER_FRAMES, YOURSELF_MODEL_REF, YOURSELF_STATUS_KEY, type YourselfRuntimeStatus } from "./types.js";
-import { runYourselfWorker } from "./worker.js";
+import { acquireLock, getYourselfOutputDir, homeRelative, releaseLock, resetYourselfOutputDir } from "./state.ts";
+import { isMimoAvailable } from "./summarizer.ts";
+import { STATUS_SPINNER_FRAMES, YOURSELF_MODEL_REF, YOURSELF_STATUS_KEY, type YourselfRuntimeStatus } from "./types.ts";
+import { runYourselfWorker } from "./worker.ts";
 
 function createInitialStatus(outputDir: string): YourselfRuntimeStatus {
 	const now = new Date().toISOString();

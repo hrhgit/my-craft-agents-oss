@@ -14,8 +14,8 @@ import {
 	shortHash,
 	touchLock,
 	writeSummary,
-} from "./state.js";
-import { summarizeDigest } from "./summarizer.js";
+} from "./state.ts";
+import { summarizeDigest } from "./summarizer.ts";
 import {
 	type NormalizedSession,
 	type SessionDigest,
@@ -25,7 +25,7 @@ import {
 	type YourselfRuntimeStatus,
 	type YourselfStats,
 	type YourselfSummary,
-} from "./types.js";
+} from "./types.ts";
 
 const MAX_TEXT_CHARS = 40_000;
 const MAX_TOOL_RESULT_CHARS = 2_000;

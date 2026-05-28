@@ -17,9 +17,9 @@ vi.mock("node:child_process", () => ({
 	spawn: mocks.spawn,
 }));
 
-import { NodeExecutionEnv } from "../../src/harness/env/nodejs.js";
-import { getOrThrow } from "../../src/harness/types.js";
-import { createTempDir } from "./session-test-utils.js";
+import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
+import { getOrThrow } from "../../src/harness/types.ts";
+import { createTempDir } from "./session-test-utils.ts";
 
 type MockSpawnCall = {
 	command: string;

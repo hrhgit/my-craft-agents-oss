@@ -49,7 +49,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { spawn, spawnSync } from "child_process";
-import { extractImageAttachmentsFromText } from "../../cli/file-processor.js";
+import { extractImageAttachmentsFromText } from "../../cli/file-processor.ts";
 import {
 	APP_NAME,
 	APP_TITLE,

@@ -2,11 +2,11 @@
  * Shared utilities for Google Generative AI and Google Vertex providers.
  */
 
+import type { Tool as GoogleApiTool } from "@google/genai";
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
 import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { transformMessages } from "./transform-messages.ts";
-import type { Tool as GoogleApiTool } from "@google/genai";
 
 type GoogleApiType = "google-generative-ai" | "google-vertex";
 

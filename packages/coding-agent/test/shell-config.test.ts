@@ -23,7 +23,7 @@ vi.mock("../src/config.js", () => ({
 	getBinDir: () => "C:\\pi\\bin",
 }));
 
-import { getShellConfig } from "../src/utils/shell.js";
+import { getShellConfig } from "../src/utils/shell.ts";
 
 function withPlatform<T>(platform: NodeJS.Platform, callback: () => T): T {
 	const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");

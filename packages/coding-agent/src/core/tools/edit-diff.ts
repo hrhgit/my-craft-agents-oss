@@ -54,7 +54,7 @@ interface MatchedEdit {
 export interface AppliedEditsResult {
 	baseContent: string;
 	newContent: string;
-	appliedViaApproximateMatch?: boolean;
+	appliedViaApproximateMatch: boolean;
 }
 
 export interface ApproximateMatchCandidate {

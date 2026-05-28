@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createWebFetchToolDefinition, type WebFetchOperations } from "../src/core/tools/web-fetch.js";
+import { createWebFetchToolDefinition, type WebFetchOperations } from "../src/core/tools/web-fetch.ts";
 
 function response(body: string, init?: ResponseInit): Response {
 	return new Response(body, init);

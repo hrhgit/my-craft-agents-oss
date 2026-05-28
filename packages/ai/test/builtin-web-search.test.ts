@@ -1,11 +1,11 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { streamAnthropic } from "../src/providers/anthropic.js";
-import { streamAzureOpenAIResponses } from "../src/providers/azure-openai-responses.js";
-import { convertTools } from "../src/providers/google-shared.js";
-import { streamOpenAIResponses } from "../src/providers/openai-responses.js";
-import type { Context, Model, Tool } from "../src/types.js";
-import { supportsBuiltinWebSearchApi } from "../src/web-search.js";
+import { streamAnthropic } from "../src/providers/anthropic.ts";
+import { streamAzureOpenAIResponses } from "../src/providers/azure-openai-responses.ts";
+import { convertTools } from "../src/providers/google-shared.ts";
+import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
+import type { Context, Model, Tool } from "../src/types.ts";
+import { supportsBuiltinWebSearchApi } from "../src/web-search.ts";
 
 const stop = new Error("stop");
 

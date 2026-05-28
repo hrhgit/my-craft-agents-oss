@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
-import { getModel, getModels } from "../src/models.ts";
+import { getModel } from "../src/models.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 

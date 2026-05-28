@@ -5,8 +5,8 @@ import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-a
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
-	createAgentSessionRuntime,
 	createAgentSessionFromServices,
+	createAgentSessionRuntime,
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";

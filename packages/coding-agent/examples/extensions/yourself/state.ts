@@ -15,7 +15,7 @@ import {
 	type YourselfCheckpoint,
 	type YourselfLock,
 	type YourselfSummary,
-} from "./types.js";
+} from "./types.ts";
 
 export function getYourselfOutputDir(): string {
 	return path.join(getAgentDir(), YOURSELF_OUTPUT_DIR_NAME);

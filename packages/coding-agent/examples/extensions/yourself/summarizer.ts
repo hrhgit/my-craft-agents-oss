@@ -4,14 +4,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { complete, type Message, parseJsonWithRepair } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { hashText, writeFileAtomic } from "./state.js";
+import { hashText, writeFileAtomic } from "./state.ts";
 import {
 	type SessionDigest,
 	type SummarizerResult,
 	YOURSELF_MODEL_ID,
 	YOURSELF_MODEL_PROVIDER,
 	YOURSELF_MODEL_REF,
-} from "./types.js";
+} from "./types.ts";
 
 const SUMMARY_AGENT_PROMPT = `你是 Pi 的私有记忆整理子代理。请总结一段历史 Pi 会话，方便未来的人类查阅。
 

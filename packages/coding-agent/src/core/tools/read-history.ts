@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { normalizeForApproximateMatch, normalizeForFuzzyMatch } from "./text-match-utils.js";
+import { normalizeForApproximateMatch, normalizeForFuzzyMatch } from "./text-match-utils.ts";
 
 export interface ReadHistoryEntry {
 	toolCallId: string;

@@ -41,13 +41,13 @@ import {
 } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
 	appendResponsesWebSearchTool,
 	convertResponsesMessages,
 	convertResponsesTools,
 	processResponsesStream,
 } from "./openai-responses-shared.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 // ============================================================================

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createOpenAIProxyAwareFetch } from "../src/providers/openai-proxy-fetch.js";
+import { createOpenAIProxyAwareFetch } from "../src/providers/openai-proxy-fetch.ts";
 
 describe("openai proxy fetch", () => {
 	it("strips OpenAI SDK fingerprint headers for non-OpenAI hosts", async () => {

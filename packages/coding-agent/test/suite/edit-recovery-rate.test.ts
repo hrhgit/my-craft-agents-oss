@@ -18,9 +18,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createEditToolDefinition } from "../../src/core/tools/edit.js";
-import type { ReadHistoryStore } from "../../src/core/tools/read-history.js";
-import { buildReadHistoryEntry, getReadHistoryStore } from "../../src/core/tools/read-history.js";
+import { createEditToolDefinition } from "../../src/core/tools/edit.ts";
+import type { ReadHistoryStore } from "../../src/core/tools/read-history.ts";
+import { buildReadHistoryEntry, getReadHistoryStore } from "../../src/core/tools/read-history.ts";
 
 const SESSION_ID = "test-recovery-rate";
 const tempDirs: string[] = [];
