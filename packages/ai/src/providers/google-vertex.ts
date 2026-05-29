@@ -8,6 +8,7 @@ import {
 	ThinkingLevel,
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { appendSdkTransportDiagnostic, formatSdkTransportError } from "../transport/sdk-request.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -283,7 +284,8 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 				}
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = formatSdkTransportError(error);
+			appendSdkTransportDiagnostic(output, error, { provider: model.provider });
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

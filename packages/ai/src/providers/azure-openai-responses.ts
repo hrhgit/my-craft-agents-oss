@@ -2,6 +2,11 @@ import { AzureOpenAI } from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { getEnvApiKey } from "../env-api-keys.ts";
 import { clampThinkingLevel } from "../models.ts";
+import {
+	appendSdkTransportDiagnostic,
+	createSdkRequestOptions,
+	formatSdkTransportError,
+} from "../transport/sdk-request.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -44,22 +49,6 @@ function resolveDeploymentName(model: Model<"azure-openai-responses">, options?:
 	}
 	const mappedDeployment = parseDeploymentNameMap(process.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP).get(model.id);
 	return mappedDeployment || model.id;
-}
-
-function formatAzureOpenAIError(error: unknown): string {
-	if (error instanceof Error) {
-		const status = (error as Error & { status?: unknown }).status;
-		const statusCode = typeof status === "number" ? status : undefined;
-		if (statusCode !== undefined) {
-			return `Azure OpenAI API error (${statusCode}): ${error.message}`;
-		}
-		return error.message;
-	}
-	try {
-		return JSON.stringify(error);
-	} catch {
-		return String(error);
-	}
 }
 
 // Azure OpenAI Responses-specific options
@@ -113,11 +102,7 @@ export const streamAzureOpenAIResponses: StreamFunction<"azure-openai-responses"
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
 			}
-			const requestOptions = {
-				...(options?.signal ? { signal: options.signal } : {}),
-				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
-			};
+			const requestOptions = createSdkRequestOptions(options);
 			const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
@@ -141,7 +126,8 @@ export const streamAzureOpenAIResponses: StreamFunction<"azure-openai-responses"
 				delete (block as { partialJson?: string }).partialJson;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatAzureOpenAIError(error);
+			output.errorMessage = formatSdkTransportError(error, "Azure OpenAI API error");
+			appendSdkTransportDiagnostic(output, error, { provider: model.provider });
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

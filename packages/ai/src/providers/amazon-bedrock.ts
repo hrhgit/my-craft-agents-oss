@@ -23,6 +23,7 @@ import {
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { DocumentType } from "@smithy/types";
 import { calculateCost } from "../models.ts";
+import { appendSdkTransportDiagnostic, formatSdkTransportError } from "../transport/sdk-request.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -116,6 +117,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 
 		const config: BedrockRuntimeClientConfig = {
 			profile: options.profile,
+			...(options.maxRetries !== undefined ? { maxAttempts: options.maxRetries + 1 } : {}),
 		};
 		const configuredRegion = getConfiguredBedrockRegion(options);
 		const hasConfiguredProfile = hasConfiguredBedrockProfile();
@@ -163,10 +165,19 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
 				// on `http2` module and has no support for http agent.
 				// Use NodeHttpHandler to support HTTP(S) proxy agents.
-				config.requestHandler = new NodeHttpHandler(proxyAgents);
+				config.requestHandler = new NodeHttpHandler({
+					...proxyAgents,
+					...(options.timeoutMs !== undefined
+						? { requestTimeout: options.timeoutMs, throwOnRequestTimeout: true }
+						: {}),
+				});
 			} else if (process.env.AWS_BEDROCK_FORCE_HTTP1 === "1") {
 				// Some custom endpoints require HTTP/1.1 instead of HTTP/2
-				config.requestHandler = new NodeHttpHandler();
+				config.requestHandler = new NodeHttpHandler(
+					options.timeoutMs !== undefined
+						? { requestTimeout: options.timeoutMs, throwOnRequestTimeout: true }
+						: undefined,
+				);
 			}
 		} else {
 			// Non-Node environment (browser): fall back to us-east-1 since
@@ -258,6 +269,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
+			appendSdkTransportDiagnostic(output, error, { provider: model.provider });
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -288,7 +300,7 @@ const BEDROCK_ERROR_PREFIXES: Record<string, string> = {
  * detection) can distinguish error categories via simple string matching.
  */
 function formatBedrockError(error: unknown): string {
-	const message = error instanceof Error ? error.message : JSON.stringify(error);
+	const message = formatSdkTransportError(error);
 	if (error instanceof BedrockRuntimeServiceException) {
 		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
 		return `${prefix}: ${message}`;

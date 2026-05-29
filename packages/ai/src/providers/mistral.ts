@@ -8,6 +8,8 @@ import type {
 } from "@mistralai/mistralai/models/components";
 import { getEnvApiKey } from "../env-api-keys.ts";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { DEFAULT_MAX_RETRY_DELAY_MS } from "../transport/retry.ts";
+import { appendSdkTransportDiagnostic, formatSdkTransportError } from "../transport/sdk-request.ts";
 import type {
 	AssistantMessage,
 	Context,
@@ -36,6 +38,13 @@ const MAX_MISTRAL_ERROR_BODY_CHARS = 4000;
  * Provider-specific options for the Mistral API.
  */
 type MistralReasoningEffort = "none" | "high";
+type MistralRetryConfig =
+	| { strategy: "none" }
+	| {
+			strategy: "backoff";
+			backoff: { initialInterval: number; maxInterval: number; exponent: number; maxElapsedTime: number };
+			retryConnectionErrors: boolean;
+	  };
 
 export interface MistralOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "any" | "required" | { type: "function"; function: { name: string } };
@@ -97,6 +106,7 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatMistralError(error);
+			appendSdkTransportDiagnostic(output, error, { provider: model.provider });
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -192,7 +202,7 @@ function formatMistralError(error: unknown): string {
 			return `Mistral API error (${statusCode}): ${truncateErrorText(bodyText, MAX_MISTRAL_ERROR_BODY_CHARS)}`;
 		}
 		if (statusCode !== undefined) return `Mistral API error (${statusCode}): ${error.message}`;
-		return error.message;
+		return formatSdkTransportError(error);
 	}
 	return safeJsonStringify(error);
 }
@@ -214,12 +224,26 @@ function safeJsonStringify(value: unknown): string {
 function buildRequestOptions(model: Model<"mistral-conversations">, options?: MistralOptions) {
 	const requestOptions: {
 		signal?: AbortSignal;
-		retries: { strategy: "none" };
+		retries: MistralRetryConfig;
+		timeoutMs?: number;
 		headers?: Record<string, string>;
 	} = {
-		retries: { strategy: "none" },
+		retries:
+			options?.maxRetries && options.maxRetries > 0
+				? {
+						strategy: "backoff",
+						backoff: {
+							initialInterval: 1000,
+							maxInterval: options.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS,
+							exponent: 2,
+							maxElapsedTime: (options.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS) * options.maxRetries,
+						},
+						retryConnectionErrors: true,
+					}
+				: { strategy: "none" },
 	};
 	if (options?.signal) requestOptions.signal = options.signal;
+	if (options?.timeoutMs !== undefined) requestOptions.timeoutMs = options.timeoutMs;
 
 	const headers: Record<string, string> = {};
 	if (model.headers) Object.assign(headers, model.headers);

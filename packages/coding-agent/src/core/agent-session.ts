@@ -2564,6 +2564,33 @@ export class AgentSession {
 		);
 	}
 
+	private _isRetryableTransportDiagnostic(message: AssistantMessage): boolean | undefined {
+		for (const diagnostic of message.diagnostics ?? []) {
+			const code = diagnostic.details?.transportErrorCode;
+			if (typeof code !== "string") continue;
+			switch (code) {
+				case "timeout":
+				case "header_timeout":
+				case "idle_timeout":
+				case "rate_limit":
+				case "server_error":
+				case "network_error":
+				case "websocket_closed":
+				case "websocket_error":
+					return true;
+				case "aborted":
+				case "terminal_rate_limit":
+				case "auth_error":
+				case "client_error":
+				case "protocol_error":
+					return false;
+				default:
+					continue;
+			}
+		}
+		return undefined;
+	}
+
 	/**
 	 * Check if an error is retryable (overloaded, rate limit, server errors).
 	 * Context overflow errors are NOT retryable (handled by compaction instead).
@@ -2574,6 +2601,9 @@ export class AgentSession {
 		// Context overflow is handled by compaction, not retry
 		const contextWindow = this.model?.contextWindow ?? 0;
 		if (isContextOverflow(message, contextWindow)) return false;
+
+		const transportRetryable = this._isRetryableTransportDiagnostic(message);
+		if (transportRetryable !== undefined) return transportRetryable;
 
 		const err = message.errorMessage;
 		if (this._isNonRetryableProviderLimitError(err)) return false;
