@@ -5,6 +5,7 @@ import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import type { NetworkSettings } from "./network-types.ts";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -114,6 +115,7 @@ export interface Settings {
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	network?: NetworkSettings;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -769,6 +771,26 @@ export class SettingsManager {
 		return parseTimeoutSetting(this.settings.websocketConnectTimeoutMs, "websocketConnectTimeoutMs");
 	}
 
+	getNetworkSettings(): NetworkSettings | undefined {
+		const network = this.settings.network ? structuredClone(this.settings.network) : undefined;
+		if (!network) {
+			return this.deriveLegacyNetworkSettings();
+		}
+		const legacy = this.deriveLegacyNetworkSettings();
+		return {
+			...legacy,
+			...network,
+			timeouts: { ...(legacy?.timeouts ?? {}), ...(network.timeouts ?? {}) },
+			retry: { ...(legacy?.retry ?? {}), ...(network.retry ?? {}) },
+		};
+	}
+
+	setNetworkSettings(network: NetworkSettings): void {
+		this.globalSettings.network = structuredClone(network);
+		this.markModified("network");
+		this.save();
+	}
+
 	getHideThinkingBlock(): boolean {
 		return this.settings.hideThinkingBlock ?? false;
 	}
@@ -1098,5 +1120,27 @@ export class SettingsManager {
 		this.globalSettings.warnings = { ...warnings };
 		this.markModified("warnings");
 		this.save();
+	}
+
+	private deriveLegacyNetworkSettings(): NetworkSettings | undefined {
+		const idleTimeoutMs = this.getHttpIdleTimeoutMs();
+		const retry = this.getRetrySettings();
+		const providerRetry = this.getProviderRetrySettings();
+		const websocketConnectTimeoutMs = this.getWebSocketConnectTimeoutMs();
+		return {
+			timeouts: {
+				connectMs: websocketConnectTimeoutMs ?? 15_000,
+				tlsMs: websocketConnectTimeoutMs ?? 15_000,
+				firstByteMs: providerRetry.timeoutMs ?? idleTimeoutMs,
+				idleStreamMs: idleTimeoutMs,
+				totalMs: providerRetry.timeoutMs ?? Math.max(idleTimeoutMs, DEFAULT_HTTP_IDLE_TIMEOUT_MS),
+			},
+			retry: {
+				maxAttempts: retry.maxRetries,
+				baseDelayMs: retry.baseDelayMs,
+				maxDelayMs: providerRetry.maxRetryDelayMs,
+				jitter: true,
+			},
+		};
 	}
 }

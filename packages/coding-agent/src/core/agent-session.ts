@@ -81,6 +81,7 @@ import {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import type { NetworkManager } from "./network-manager.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
@@ -187,6 +188,8 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Unified network manager for dispatcher lifecycle and retry preparation. */
+	networkManager?: NetworkManager;
 }
 
 export interface ExtensionBindings {
@@ -307,6 +310,7 @@ export class AgentSession {
 	private _webSearchOverride?: boolean;
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
+	private _networkManager?: NetworkManager;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionAbortHandler?: () => void;
@@ -342,6 +346,7 @@ export class AgentSession {
 		this._webSearchOverride = config.webSearchOverride;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._networkManager = config.networkManager;
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -574,6 +579,9 @@ export class AgentSession {
 				this._lastAssistantMessage = event.message;
 
 				const assistantMsg = event.message as AssistantMessage;
+				if (assistantMsg.stopReason === "error") {
+					this._networkManager?.annotateAssistantFailure(assistantMsg);
+				}
 				if (assistantMsg.stopReason !== "error") {
 					this._overflowRecoveryAttempted = false;
 				}
@@ -2535,6 +2543,7 @@ export class AgentSession {
 		const previousFlagValues = this._extensionRunner.getFlagValues();
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
+		await this._networkManager?.applySettings();
 		resetApiProviders();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
@@ -2637,12 +2646,21 @@ export class AgentSession {
 			return false;
 		}
 
-		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		const networkDecision = await this._networkManager?.prepareRetry({
+			message,
+			attempt: this._retryAttempt,
+		});
+		if (networkDecision && !networkDecision.shouldRetry) {
+			this._retryAttempt--;
+			return false;
+		}
+
+		const delayMs = networkDecision?.delayMs ?? settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
 
 		this._emit({
 			type: "auto_retry_start",
 			attempt: this._retryAttempt,
-			maxAttempts: settings.maxRetries,
+			maxAttempts: networkDecision?.maxAttempts ?? settings.maxRetries,
 			delayMs,
 			errorMessage: message.errorMessage || "Unknown error",
 		});

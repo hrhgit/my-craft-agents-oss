@@ -1,4 +1,4 @@
-import { Mistral } from "@mistralai/mistralai";
+import { HTTPClient, Mistral } from "@mistralai/mistralai";
 import type {
 	ChatCompletionStreamRequest,
 	ChatCompletionStreamRequestMessage,
@@ -75,6 +75,7 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			const mistral = new Mistral({
 				apiKey,
 				serverURL: model.baseUrl,
+				httpClient: options?.httpFetch ? new HTTPClient({ fetcher: options.httpFetch }) : undefined,
 			});
 
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();
@@ -93,8 +94,12 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 				throw new Error("Request was aborted");
 			}
 
-			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unknown error occurred");
+			if (output.stopReason === "aborted") {
+				throw new Error("Request was aborted");
+			}
+
+			if (output.stopReason === "error") {
+				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });

@@ -146,7 +146,15 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			const compat = getCompat(model);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat);
+			const client = createClient(
+				model,
+				context,
+				apiKey,
+				options?.headers,
+				cacheSessionId,
+				compat,
+				options?.httpFetch,
+			);
 			let params = buildParams(model, context, options, compat, cacheRetention);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -455,6 +463,7 @@ function createClient(
 	optionsHeaders?: Record<string, string>,
 	sessionId?: string,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
+	httpFetch?: typeof fetch,
 ) {
 	if (!apiKey) {
 		if (!process.env.OPENAI_API_KEY) {
@@ -501,9 +510,10 @@ function createClient(
 		dangerouslyAllowBrowser: true,
 		defaultHeaders,
 		fetch:
-			model.baseUrl === "https://api.openai.com/v1" || model.baseUrl.endsWith(".openai.com/v1")
+			httpFetch ??
+			(model.baseUrl === "https://api.openai.com/v1" || model.baseUrl.endsWith(".openai.com/v1")
 				? undefined
-				: createOpenAIProxyAwareFetch(),
+				: createOpenAIProxyAwareFetch()),
 	});
 }
 
@@ -1058,9 +1068,16 @@ function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | str
 		case "tool_calls":
 			return { stopReason: "toolUse" };
 		case "content_filter":
-			return { stopReason: "error", errorMessage: "Provider finish_reason: content_filter" };
+			return {
+				stopReason: "error",
+				errorMessage: "Provider finish_reason: content_filter (request blocked by content filter)",
+			};
 		case "network_error":
-			return { stopReason: "error", errorMessage: "Provider finish_reason: network_error" };
+			return {
+				stopReason: "error",
+				errorMessage:
+					"Provider finish_reason: network_error (provider reported a network or upstream transport failure)",
+			};
 		default:
 			return {
 				stopReason: "error",

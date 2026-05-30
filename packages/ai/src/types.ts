@@ -81,6 +81,8 @@ export interface ProviderResponse {
 	headers: Record<string, string>;
 }
 
+export type HttpFetch = typeof fetch;
+
 export interface StreamOptions {
 	temperature?: number;
 	maxTokens?: number;
@@ -135,6 +137,13 @@ export interface StreamOptions {
 	 * For example, OpenAI and Anthropic SDK clients default to 2.
 	 */
 	maxRetries?: number;
+	/**
+	 * Optional HTTP fetch implementation used by providers/SDKs that support
+	 * request execution injection. This lets callers provide a lower-level
+	 * network stability layer while providers keep protocol-specific payload
+	 * construction and response parsing in TypeScript.
+	 */
+	httpFetch?: HttpFetch;
 	/**
 	 * Maximum delay in milliseconds to wait for a retry when the server requests a long wait.
 	 * If the server's requested delay exceeds this value, the request fails immediately

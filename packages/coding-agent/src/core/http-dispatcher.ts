@@ -1,5 +1,3 @@
-import * as undici from "undici";
-
 export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000;
 
 export const HTTP_IDLE_TIMEOUT_CHOICES = [
@@ -41,15 +39,4 @@ export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TI
 	if (normalizedTimeoutMs === undefined) {
 		throw new Error(`Invalid HTTP idle timeout: ${String(timeoutMs)}`);
 	}
-	undici.setGlobalDispatcher(
-		new undici.EnvHttpProxyAgent({
-			allowH2: false,
-			bodyTimeout: normalizedTimeoutMs,
-			headersTimeout: normalizedTimeoutMs,
-		}),
-	);
-	// Keep fetch and the dispatcher on the same undici implementation. Node 26.0's
-	// bundled fetch can otherwise consume compressed responses through npm undici's
-	// dispatcher without decompressing them, causing response.json() failures.
-	undici.install?.();
 }

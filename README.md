@@ -72,8 +72,8 @@ npm run check        # Lint, format, and type check
 
 ## Local install helpers
 
-- `./pi-install.ps1` or `pi-install.bat`: build the workspace and link both `pi` and `pi-web`
-- `./pi-install.ps1 -CliOnly`: build the workspace and link only `pi`
+- `./pi-install.ps1` or `pi-install.bat`: build the workspace and link `pi`
+- `./pi-install.ps1 -CliOnly`: same as the default CLI-only install
 - `./pi-web-install.ps1` or `pi-web-install.bat`: build the workspace and link only `pi-web`
 
 ## Supply-chain hardening

@@ -1,6 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai";
+import {
+	clampThinkingLevel,
+	createAssistantMessageEventStream,
+	type Message,
+	type Model,
+	streamSimple,
+} from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -11,6 +18,7 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
+import { createRequestIdempotencyKey, type NetworkManager } from "./network-manager.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
@@ -80,6 +88,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
+	/** Network manager. Default: created by createAgentSessionServices() */
+	networkManager?: NetworkManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
 }
@@ -216,6 +226,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	const networkManager = options.networkManager;
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 
 	if (!resourceLoader) {
@@ -360,7 +371,22 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				streamOptions?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const attributionHeaders = getAttributionHeaders(model, settingsManager, streamOptions?.sessionId);
 			const effectiveWebSearch = webSearchOverride ?? settingsManager.getWebSearch();
-			return streamSimple(model, context, {
+			const requestUrl = model.baseUrl;
+			const requestClass = "model_pre_first_byte";
+			const requestId = randomUUID();
+			const idempotencyKey = createRequestIdempotencyKey(requestClass, "POST", requestUrl, undefined);
+			const requestContext = networkManager?.beginRequest(requestUrl, {
+				requestClass,
+				method: "POST",
+				requestId,
+				traceId: requestId,
+				idempotencyKey,
+			});
+			const httpFetch = networkManager?.createHttpFetch(requestContext, {
+				timeoutMs,
+				maxAttempts: streamOptions?.maxRetries ?? providerRetrySettings.maxRetries,
+			});
+			const upstream = streamSimple(model, context, {
 				...streamOptions,
 				apiKey: auth.apiKey,
 				timeoutMs,
@@ -368,11 +394,57 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				webSearch: effectiveWebSearch,
 				maxRetries: streamOptions?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: streamOptions?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
+				httpFetch,
 				headers:
 					attributionHeaders || auth.headers || streamOptions?.headers
-						? { ...attributionHeaders, ...auth.headers, ...streamOptions?.headers }
+						? {
+								...attributionHeaders,
+								...auth.headers,
+								...streamOptions?.headers,
+								...(requestContext
+									? {
+											"x-pi-request-id": requestContext.requestId,
+											"x-pi-trace-id": requestContext.traceId,
+											"x-pi-network-path": requestContext.path,
+											...(requestContext.idempotencyKey
+												? { "Idempotency-Key": requestContext.idempotencyKey }
+												: {}),
+										}
+									: {}),
+							}
 						: undefined,
 			});
+			if (!requestContext) {
+				return upstream;
+			}
+			const wrapped = createAssistantMessageEventStream();
+			void (async () => {
+				try {
+					for await (const event of upstream) {
+						if (event.type !== "error") {
+							requestContext.firstByteReceived = true;
+							networkManager?.markFirstByte(requestContext.requestId);
+						}
+						if (event.type === "done") {
+							networkManager?.attachRequestContext(event.message, requestContext);
+							networkManager?.completeRequest(requestContext.requestId, true);
+						}
+						if (event.type === "error") {
+							networkManager?.attachRequestContext(event.error, requestContext);
+							networkManager?.annotateAssistantFailure(event.error, requestContext);
+							networkManager?.completeRequest(requestContext.requestId, false);
+						}
+						wrapped.push(event);
+					}
+				} catch {
+					networkManager?.completeRequest(requestContext.requestId, false);
+					const finalMessage = await upstream.result();
+					networkManager?.attachRequestContext(finalMessage, requestContext);
+					networkManager?.annotateAssistantFailure(finalMessage, requestContext);
+					wrapped.push({ type: "error", reason: "error", error: finalMessage });
+				}
+			})();
+			return wrapped;
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;
@@ -433,6 +505,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		webSearchOverride,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
+		networkManager,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

@@ -1,5 +1,0 @@
-This is a test file for edit tool.
-Line 1: Hello World - EDITED
-Line 2: This is a test
-Line 3: Edit tool should work
-Line 4: End of file

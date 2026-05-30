@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
+import type { NetworkManager } from "../src/core/network-manager.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createTestResourceLoader } from "./utilities.ts";
@@ -314,5 +315,65 @@ describe("AgentSession retry", () => {
 		// A follow-up prompt must work (no "Agent is already processing" error)
 		await session.prompt("Follow-up");
 		expect(callCount).toBe(4);
+	});
+
+	it("stops auto retry when network manager suppresses replay", async () => {
+		const created = createSession({ failCount: 99, maxRetries: 3 });
+		let prepareRetryCalls = 0;
+		const networkManager: Pick<NetworkManager, "prepareRetry" | "annotateAssistantFailure" | "applySettings"> = {
+			prepareRetry: async () => {
+				prepareRetryCalls++;
+				return {
+					shouldRetry: false,
+					delayMs: 0,
+					attempt: 1,
+					maxAttempts: 1,
+					errorMessage: "suppressed",
+					replaySuppressedReason: "after_first_byte",
+				};
+			},
+			annotateAssistantFailure: () => {},
+			applySettings: async () => {},
+		};
+
+		created.session.dispose();
+
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: { model, systemPrompt: "Test", tools: [] },
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const msg = createAssistantMessage("", {
+						stopReason: "error",
+						errorMessage: "connection reset before headers",
+					});
+					stream.push({ type: "start", partial: msg });
+					stream.push({ type: "error", reason: "error", error: msg });
+				});
+				return stream;
+			},
+		});
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		authStorage.setRuntimeApiKey("anthropic", "test-key");
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRegistry,
+			resourceLoader: createTestResourceLoader(),
+			networkManager: networkManager as NetworkManager,
+		});
+
+		await session.prompt("Test");
+
+		expect(prepareRetryCalls).toBe(1);
+		expect(session.retryAttempt).toBe(0);
 	});
 });

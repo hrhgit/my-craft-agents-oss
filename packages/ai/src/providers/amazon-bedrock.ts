@@ -20,6 +20,7 @@ import {
 	type ToolConfiguration,
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
+import { type HttpHandler, type HttpHandlerOptions, type HttpRequest, HttpResponse } from "@smithy/core/protocols";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { DocumentType } from "@smithy/types";
 import { calculateCost } from "../models.ts";
@@ -42,7 +43,9 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { createHttpProxyAgentsForTarget } from "../utils/node-http-proxy.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -86,6 +89,78 @@ export interface BedrockOptions extends StreamOptions {
 }
 
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
+
+class FetchHttpHandler implements HttpHandler {
+	readonly metadata = { handlerProtocol: "h1" };
+	private readonly fetchImpl: typeof fetch;
+	private readonly timeoutMs: number | undefined;
+
+	constructor(fetchImpl: typeof fetch, timeoutMs: number | undefined) {
+		this.fetchImpl = fetchImpl;
+		this.timeoutMs = timeoutMs;
+	}
+
+	async handle(
+		request: HttpRequest,
+		{ abortSignal, requestTimeout }: HttpHandlerOptions = {},
+	): Promise<{ response: HttpResponse }> {
+		const url = buildFetchUrl(request);
+		const timeout = requestTimeout ?? this.timeoutMs;
+		const timeoutController = timeout === undefined ? undefined : new AbortController();
+		const timeoutId =
+			timeoutController === undefined ? undefined : setTimeout(() => timeoutController.abort(), timeout);
+		const combinedSignal = combineAbortSignals([abortSignal as AbortSignal | undefined, timeoutController?.signal]);
+		try {
+			const response = await this.fetchImpl(url, {
+				method: request.method,
+				headers: request.headers,
+				body: request.body,
+				signal: combinedSignal.signal,
+				duplex: request.body === undefined ? undefined : "half",
+			} as RequestInit);
+			return { response: responseToSmithy(response) };
+		} finally {
+			clearTimeout(timeoutId);
+			combinedSignal.cleanup();
+		}
+	}
+
+	httpHandlerConfigs(): { requestTimeout?: number } {
+		return this.timeoutMs === undefined ? {} : { requestTimeout: this.timeoutMs };
+	}
+
+	updateHttpClientConfig(): void {}
+
+	destroy(): void {}
+}
+
+function responseToSmithy(response: Response): HttpResponse {
+	return new HttpResponse({
+		statusCode: response.status,
+		reason: response.statusText,
+		headers: headersToRecord(response.headers),
+		body: response.body,
+	});
+}
+
+function buildFetchUrl(request: HttpRequest): string {
+	const port = request.port === undefined ? "" : `:${request.port}`;
+	const url = new URL(`${request.protocol}//${request.hostname}${port}${request.path}`);
+	for (const [key, value] of Object.entries(request.query ?? {})) {
+		if (value === null) {
+			url.searchParams.append(key, "");
+			continue;
+		}
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				url.searchParams.append(key, item);
+			}
+			continue;
+		}
+		url.searchParams.append(key, value);
+	}
+	return url.toString();
+}
 
 export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
@@ -160,24 +235,28 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				};
 			}
 
-			const proxyAgents = createHttpProxyAgentsForTarget(model.baseUrl);
-			if (proxyAgents) {
-				// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
-				// on `http2` module and has no support for http agent.
-				// Use NodeHttpHandler to support HTTP(S) proxy agents.
-				config.requestHandler = new NodeHttpHandler({
-					...proxyAgents,
-					...(options.timeoutMs !== undefined
-						? { requestTimeout: options.timeoutMs, throwOnRequestTimeout: true }
-						: {}),
-				});
-			} else if (process.env.AWS_BEDROCK_FORCE_HTTP1 === "1") {
-				// Some custom endpoints require HTTP/1.1 instead of HTTP/2
-				config.requestHandler = new NodeHttpHandler(
-					options.timeoutMs !== undefined
-						? { requestTimeout: options.timeoutMs, throwOnRequestTimeout: true }
-						: undefined,
-				);
+			if (options.httpFetch) {
+				config.requestHandler = new FetchHttpHandler(options.httpFetch, options.timeoutMs);
+			} else {
+				const proxyAgents = createHttpProxyAgentsForTarget(model.baseUrl);
+				if (proxyAgents) {
+					// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
+					// on `http2` module and has no support for http agent.
+					// Use NodeHttpHandler to support HTTP(S) proxy agents.
+					config.requestHandler = new NodeHttpHandler({
+						...proxyAgents,
+						...(options.timeoutMs !== undefined
+							? { requestTimeout: options.timeoutMs, throwOnRequestTimeout: true }
+							: {}),
+					});
+				} else if (process.env.AWS_BEDROCK_FORCE_HTTP1 === "1") {
+					// Some custom endpoints require HTTP/1.1 instead of HTTP/2
+					config.requestHandler = new NodeHttpHandler(
+						options.timeoutMs !== undefined
+							? { requestTimeout: options.timeoutMs, throwOnRequestTimeout: true }
+							: undefined,
+					);
+				}
 			}
 		} else {
 			// Non-Node environment (browser): fall back to us-east-1 since
@@ -255,8 +334,12 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				throw new Error("Request was aborted");
 			}
 
-			if (output.stopReason === "error" || output.stopReason === "aborted") {
-				throw new Error("An unknown error occurred");
+			if (output.stopReason === "aborted") {
+				throw new Error("Request was aborted");
+			}
+
+			if (output.stopReason === "error") {
+				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });

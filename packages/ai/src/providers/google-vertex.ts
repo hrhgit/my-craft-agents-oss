@@ -91,8 +91,14 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 			const apiKey = resolveApiKey(options);
 			// Create the client using either a Vertex API key, if provided, or ADC with project and location
 			const client = apiKey
-				? createClientWithApiKey(model, apiKey, options?.headers)
-				: createClient(model, resolveProject(options), resolveLocation(options), options?.headers);
+				? createClientWithApiKey(model, apiKey, options?.headers, options?.httpFetch)
+				: createClient(
+						model,
+						resolveProject(options),
+						resolveLocation(options),
+						options?.headers,
+						options?.httpFetch,
+					);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -270,8 +276,12 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 				throw new Error("Request was aborted");
 			}
 
-			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unknown error occurred");
+			if (output.stopReason === "aborted") {
+				throw new Error("Request was aborted");
+			}
+
+			if (output.stopReason === "error") {
+				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -335,27 +345,50 @@ function createClient(
 	project: string,
 	location: string,
 	optionsHeaders?: Record<string, string>,
+	httpFetch?: typeof fetch,
 ): GoogleGenAI {
-	return new GoogleGenAI({
+	const client = new GoogleGenAI({
 		vertexai: true,
 		project,
 		location,
 		apiVersion: API_VERSION,
 		httpOptions: buildHttpOptions(model, optionsHeaders),
 	});
+	applyGoogleHttpFetch(client, httpFetch);
+	return client;
 }
 
 function createClientWithApiKey(
 	model: Model<"google-vertex">,
 	apiKey: string,
 	optionsHeaders?: Record<string, string>,
+	httpFetch?: typeof fetch,
 ): GoogleGenAI {
-	return new GoogleGenAI({
+	const client = new GoogleGenAI({
 		vertexai: true,
 		apiKey,
 		apiVersion: API_VERSION,
 		httpOptions: buildHttpOptions(model, optionsHeaders),
 	});
+	applyGoogleHttpFetch(client, httpFetch);
+	return client;
+}
+
+interface GoogleApiClientWithFetchPatch {
+	apiClient?: {
+		apiCall?: (url: string, requestInit: RequestInit) => Promise<Response>;
+	};
+}
+
+function applyGoogleHttpFetch(client: GoogleGenAI, httpFetch?: typeof fetch): void {
+	if (!httpFetch) {
+		return;
+	}
+	const apiClient = (client as unknown as GoogleApiClientWithFetchPatch).apiClient;
+	if (typeof apiClient?.apiCall !== "function") {
+		return;
+	}
+	apiClient.apiCall = (url, requestInit) => httpFetch(url, requestInit);
 }
 
 function buildHttpOptions(

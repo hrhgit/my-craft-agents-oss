@@ -43,6 +43,19 @@ export interface TransportErrorClassificationContext {
 	forcePhase?: boolean;
 }
 
+export interface TransportErrorCauseEntry {
+	name?: string;
+	message: string;
+	code?: string | number;
+	status?: number;
+	errno?: string | number;
+	syscall?: string;
+	hostname?: string;
+	address?: string;
+	port?: number;
+	type?: string;
+}
+
 export class TransportError extends Error {
 	readonly code: TransportErrorCode;
 	readonly status?: number;
@@ -111,7 +124,7 @@ export function classifyTransportError(
 
 	const status = context.status ?? extractStatus(error);
 	const retryAfterMs = context.retryAfterMs ?? extractRetryAfterMs(error);
-	const message = formatUnknownError(error);
+	const message = detailTransportErrorMessage(error, formatUnknownError(error));
 	const phase = context.phase ?? "unknown";
 
 	if (isAbortLikeError(error)) {
@@ -242,8 +255,10 @@ export function classifyTransportError(
 export function formatTransportError(error: unknown, prefix?: string): string {
 	const transportError = classifyTransportError(error);
 	const message = transportError.message || transportError.code;
-	if (prefix && transportError.status !== undefined) {
-		return `${prefix} (${transportError.status}): ${message}`;
+	if (prefix) {
+		return transportError.status !== undefined
+			? `${prefix} (${transportError.status}): ${message}`
+			: `${prefix}: ${message}`;
 	}
 	return message;
 }
@@ -251,6 +266,15 @@ export function formatTransportError(error: unknown, prefix?: string): string {
 export function formatUnknownError(error: unknown): string {
 	if (error instanceof Error) return error.message || error.name;
 	if (typeof error === "string") return error;
+	if (isObjectLike(error)) {
+		const status = extractStatusValue(error);
+		const statusText = getStringProperty(error, "statusText");
+		if (status !== undefined || statusText) {
+			return [status, statusText].filter((value) => value !== undefined && value !== "").join(" ") || "HTTP error";
+		}
+		const message = getStringProperty(error, "message");
+		if (message) return message;
+	}
 	try {
 		const serialized = JSON.stringify(error);
 		return serialized === undefined ? String(error) : serialized;
@@ -324,24 +348,11 @@ function classifyStatusError(
 }
 
 function extractStatus(error: unknown): number | undefined {
-	if (!error || typeof error !== "object") return undefined;
-	const candidates = [
-		(error as { status?: unknown }).status,
-		(error as { statusCode?: unknown }).statusCode,
-		(error as { $metadata?: { httpStatusCode?: unknown } }).$metadata?.httpStatusCode,
-	];
-	for (const candidate of candidates) {
-		if (typeof candidate === "number" && Number.isInteger(candidate)) {
-			return candidate;
-		}
-	}
-	return undefined;
+	return findInErrorCauseChain(error, extractStatusValue);
 }
 
 function extractRetryAfterMs(error: unknown): number | undefined {
-	if (!error || typeof error !== "object") return undefined;
-	const value = (error as { retryAfterMs?: unknown }).retryAfterMs;
-	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+	return findInErrorCauseChain(error, extractRetryAfterMsValue);
 }
 
 function normalizedAbortMessage(message: string): string {
@@ -352,4 +363,210 @@ function isTerminalRateLimitMessage(message: string): boolean {
 	return /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i.test(
 		message,
 	);
+}
+
+export function getTransportErrorCauseChain(error: unknown): TransportErrorCauseEntry[] {
+	const chain: TransportErrorCauseEntry[] = [];
+	const seen = new Set<unknown>();
+	let current: unknown = error;
+
+	while (current !== undefined && current !== null && chain.length < 10) {
+		if (isObjectLike(current)) {
+			if (seen.has(current)) break;
+			seen.add(current);
+		}
+
+		chain.push({
+			name: getErrorName(current),
+			message: formatUnknownError(current),
+			code: getCodeProperty(current),
+			status: extractStatusValue(current),
+			errno: getErrnoProperty(current),
+			syscall: getStringProperty(current, "syscall"),
+			hostname: getStringProperty(current, "hostname"),
+			address: getStringProperty(current, "address"),
+			port: getNumberProperty(current, "port"),
+			type: getStringProperty(current, "type"),
+		});
+
+		current = getCause(current);
+	}
+
+	return chain;
+}
+
+export function getTransportSpecificCause(error: unknown): TransportErrorCauseEntry | undefined {
+	const chain = getTransportErrorCauseChain(error);
+	for (let index = 1; index < chain.length; index++) {
+		const entry = chain[index];
+		if (
+			!isGenericTransportMessage(entry.message) ||
+			entry.code !== undefined ||
+			entry.status !== undefined ||
+			entry.errno !== undefined ||
+			entry.syscall !== undefined ||
+			entry.hostname !== undefined ||
+			entry.address !== undefined ||
+			entry.port !== undefined
+		) {
+			return entry;
+		}
+	}
+	return undefined;
+}
+
+export function formatTransportCauseEntry(entry: TransportErrorCauseEntry): string {
+	const annotations: string[] = [];
+	const message = entry.message.trim();
+	const status = entry.status;
+	const code = entry.code ?? entry.errno;
+
+	if (status !== undefined && !message.includes(String(status))) {
+		annotations.push(`status=${status}`);
+	}
+	if (code !== undefined && !message.toLowerCase().includes(String(code).toLowerCase())) {
+		annotations.push(`code=${String(code)}`);
+	}
+	if (entry.syscall && !message.includes(entry.syscall)) {
+		annotations.push(`syscall=${entry.syscall}`);
+	}
+	if (entry.hostname && !message.includes(entry.hostname)) {
+		annotations.push(`hostname=${entry.hostname}`);
+	}
+	if (entry.address && !message.includes(entry.address)) {
+		annotations.push(`address=${entry.address}`);
+	}
+	if (entry.port !== undefined && !message.includes(String(entry.port))) {
+		annotations.push(`port=${entry.port}`);
+	}
+	if (annotations.length === 0) return message;
+	return `${message} (${annotations.join(", ")})`;
+}
+
+function detailTransportErrorMessage(error: unknown, rawMessage: string): string {
+	const specificCause = getTransportSpecificCause(error);
+	if (!specificCause) return rawMessage;
+
+	const specificMessage = formatTransportCauseEntry(specificCause);
+	if (specificMessage.length === 0 || specificMessage === rawMessage) {
+		return rawMessage;
+	}
+
+	if (isGenericTransportMessage(rawMessage)) {
+		return `${rawMessage} Cause: ${specificMessage}`;
+	}
+
+	return rawMessage;
+}
+
+function isGenericTransportMessage(message: string): boolean {
+	const trimmed = message.trim();
+	if (trimmed.length === 0) return true;
+
+	return [
+		/^connection error\.?$/i,
+		/^network error\.?$/i,
+		/^fetch failed\.?$/i,
+		/^request failed\.?$/i,
+		/^request timed out\.?$/i,
+		/^websocket error\.?$/i,
+		/^websocket closed\.?$/i,
+		/^an unknown error occurred\.?$/i,
+		/^failed after retries\.?$/i,
+		/^\d{3} status code \(no body\)$/i,
+	].some((pattern) => pattern.test(trimmed));
+}
+
+function findInErrorCauseChain<T>(error: unknown, extractor: (value: unknown) => T | undefined): T | undefined {
+	const seen = new Set<unknown>();
+	let current: unknown = error;
+
+	while (current !== undefined && current !== null) {
+		const value = extractor(current);
+		if (value !== undefined) {
+			return value;
+		}
+
+		if (isObjectLike(current)) {
+			if (seen.has(current)) break;
+			seen.add(current);
+		}
+
+		current = getCause(current);
+	}
+
+	return undefined;
+}
+
+function getCause(value: unknown): unknown {
+	if (!isObjectLike(value)) return undefined;
+	return value.cause;
+}
+
+function extractStatusValue(error: unknown): number | undefined {
+	if (!isObjectLike(error)) return undefined;
+	const candidates = [
+		error.status,
+		error.statusCode,
+		(error.$metadata as { httpStatusCode?: unknown } | undefined)?.httpStatusCode,
+		(error.response as { status?: unknown } | undefined)?.status,
+	];
+	for (const candidate of candidates) {
+		if (typeof candidate === "number" && Number.isInteger(candidate)) {
+			return candidate;
+		}
+	}
+	return undefined;
+}
+
+function extractRetryAfterMsValue(error: unknown): number | undefined {
+	if (!isObjectLike(error)) return undefined;
+	const candidates = [error.retryAfterMs, (error.response as { retryAfterMs?: unknown } | undefined)?.retryAfterMs];
+	for (const candidate of candidates) {
+		if (typeof candidate === "number" && Number.isFinite(candidate)) {
+			return candidate;
+		}
+	}
+	return undefined;
+}
+
+function getErrorName(value: unknown): string | undefined {
+	if (value instanceof Error) {
+		return value.name || undefined;
+	}
+	if (!isObjectLike(value)) return undefined;
+
+	const explicitName = getStringProperty(value, "name");
+	if (explicitName) return explicitName;
+
+	const ctorName = value.constructor?.name;
+	return typeof ctorName === "string" && ctorName !== "Object" ? ctorName : undefined;
+}
+
+function getCodeProperty(value: unknown): string | number | undefined {
+	if (!isObjectLike(value)) return undefined;
+	const code = value.code;
+	return typeof code === "string" || typeof code === "number" ? code : undefined;
+}
+
+function getErrnoProperty(value: unknown): string | number | undefined {
+	if (!isObjectLike(value)) return undefined;
+	const errno = value.errno;
+	return typeof errno === "string" || typeof errno === "number" ? errno : undefined;
+}
+
+function getStringProperty(value: unknown, key: string): string | undefined {
+	if (!isObjectLike(value)) return undefined;
+	const candidate = value[key];
+	return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
+}
+
+function getNumberProperty(value: unknown, key: string): number | undefined {
+	if (!isObjectLike(value)) return undefined;
+	const candidate = value[key];
+	return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
+}
+
+function isObjectLike(value: unknown): value is Record<string, any> {
+	return typeof value === "object" && value !== null;
 }

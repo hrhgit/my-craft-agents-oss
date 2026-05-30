@@ -7,6 +7,7 @@ export interface FetchWithHeaderTimeoutOptions {
 	signal?: AbortSignal;
 	headerTimeoutMs?: number;
 	headerTimeoutMessage?: string;
+	fetch?: typeof fetch;
 }
 
 export interface FetchWithRetryOptions extends FetchWithHeaderTimeoutOptions {
@@ -19,15 +20,18 @@ export interface FetchWithRetryOptions extends FetchWithHeaderTimeoutOptions {
 	shouldRetryError?: (error: unknown) => boolean;
 }
 
+type FetchInput = Parameters<typeof fetch>[0];
+
 export async function fetchWithHeaderTimeout(
-	input: RequestInfo | URL,
+	input: FetchInput,
 	init: RequestInit,
 	options: FetchWithHeaderTimeoutOptions = {},
 ): Promise<Response> {
 	const headerTimeout = createHeaderTimeout(options.headerTimeoutMs, options.headerTimeoutMessage);
 	const combinedSignal = combineAbortSignals([options.signal, headerTimeout.signal]);
+	const fetchImpl = options.fetch ?? fetch;
 	try {
-		return await fetch(input, { ...init, signal: combinedSignal.signal });
+		return await fetchImpl(input, { ...init, signal: combinedSignal.signal });
 	} catch (error) {
 		const timeoutError = headerTimeout.error();
 		if (timeoutError && !options.signal?.aborted) {
@@ -41,7 +45,7 @@ export async function fetchWithHeaderTimeout(
 }
 
 export async function fetchWithRetry(
-	input: RequestInfo | URL,
+	input: FetchInput,
 	init: RequestInit,
 	options: FetchWithRetryOptions = {},
 ): Promise<Response> {
@@ -106,7 +110,15 @@ export async function fetchWithRetry(
 		}
 	}
 
-	throw lastError ?? new TransportError({ code: "unknown", message: "Failed after retries", phase: "request" });
+	throw (
+		lastError ??
+		new TransportError({
+			code: "unknown",
+			message: `Request failed after ${maxRetries + 1} attempt${maxRetries === 0 ? "" : "s"}`,
+			phase: "request",
+			retryable: false,
+		})
+	);
 }
 
 export function providerResponseFromFetchResponse(response: Response): {

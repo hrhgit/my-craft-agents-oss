@@ -16,6 +16,7 @@ export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptio
 		timeoutMs: options?.timeoutMs,
 		websocketConnectTimeoutMs: options?.websocketConnectTimeoutMs,
 		maxRetries: options?.maxRetries,
+		httpFetch: options?.httpFetch,
 		maxRetryDelayMs: options?.maxRetryDelayMs,
 		metadata: options?.metadata,
 	};

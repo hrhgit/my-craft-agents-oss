@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { classifyTransportError, isRetryableTransportError, TransportError } from "../src/transport/errors.ts";
+import {
+	classifyTransportError,
+	formatTransportError,
+	getTransportErrorCauseChain,
+	getTransportSpecificCause,
+	isRetryableTransportError,
+	TransportError,
+} from "../src/transport/errors.ts";
+import { fetchWithHeaderTimeout } from "../src/transport/http.ts";
 import { capRetryDelayMs, getRetryDelayMs, parseRetryAfterMs } from "../src/transport/retry.ts";
 import { iterateSseMessages } from "../src/transport/sse.ts";
 import {
@@ -61,6 +69,27 @@ describe("transport SSE parser", () => {
 			{ event: "update", data: "one\ntwo", raw: [": keepalive", "event: update", "data: one", "data: two"] },
 			{ event: null, data: "trailing", raw: ["data: trailing"] },
 		]);
+	});
+});
+
+describe("transport fetch helpers", () => {
+	it("uses the injected fetch implementation for header-timeout requests", async () => {
+		const calls: string[] = [];
+		const injectedFetch: typeof fetch = async (input, init) => {
+			const request = new Request(input, init);
+			calls.push(`${request.method} ${request.url}`);
+			return new Response("ok", { status: 200 });
+		};
+
+		const response = await fetchWithHeaderTimeout(
+			"https://api.example.test/v1/messages",
+			{ method: "POST", body: "{}" },
+			{ fetch: injectedFetch },
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.text()).toBe("ok");
+		expect(calls).toEqual(["POST https://api.example.test/v1/messages"]);
 	});
 });
 
@@ -145,5 +174,48 @@ describe("transport websocket helpers", () => {
 		expect(error.code).toBe("aborted");
 		expect(error.retryable).toBe(false);
 		expect(isRetryableTransportError(explicit)).toBe(false);
+	});
+
+	it("surfaces specific cause details for generic connection errors", () => {
+		const rootCause = Object.assign(new Error("getaddrinfo ENOTFOUND api.example.test"), {
+			code: "ENOTFOUND",
+			errno: "ENOTFOUND",
+			syscall: "getaddrinfo",
+			hostname: "api.example.test",
+		});
+		const wrapped = Object.assign(new Error("Connection error."), { cause: rootCause });
+
+		const error = classifyTransportError(wrapped, { phase: "sdk" });
+		const specificCause = getTransportSpecificCause(wrapped);
+		const causeChain = getTransportErrorCauseChain(wrapped);
+
+		expect(error.code).toBe("network_error");
+		expect(error.message).toContain("Connection error.");
+		expect(error.message).toContain("ENOTFOUND");
+		expect(error.message).toContain("api.example.test");
+		expect(formatTransportError(wrapped, "OpenAI API error")).toContain("OpenAI API error:");
+		expect(specificCause).toMatchObject({
+			code: "ENOTFOUND",
+			hostname: "api.example.test",
+			syscall: "getaddrinfo",
+		});
+		expect(causeChain).toHaveLength(2);
+		expect(causeChain[1]).toMatchObject({
+			code: "ENOTFOUND",
+			hostname: "api.example.test",
+		});
+	});
+
+	it("extracts HTTP status text from response-like causes", () => {
+		const responseLike = {
+			status: 503,
+			statusText: "Service Unavailable",
+		};
+		const wrapped = Object.assign(new Error("Connection error."), { cause: responseLike });
+		const error = classifyTransportError(wrapped, { phase: "sdk" });
+
+		expect(error.code).toBe("server_error");
+		expect(error.status).toBe(503);
+		expect(error.message).toContain("503 Service Unavailable");
 	});
 });

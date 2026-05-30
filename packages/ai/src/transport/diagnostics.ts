@@ -1,6 +1,13 @@
 import type { AssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
-import { classifyTransportError, type TransportError, type TransportPhase } from "./errors.ts";
+import {
+	classifyTransportError,
+	formatTransportCauseEntry,
+	getTransportErrorCauseChain,
+	getTransportSpecificCause,
+	type TransportError,
+	type TransportPhase,
+} from "./errors.ts";
 
 export interface TransportDiagnosticDetails {
 	provider?: string;
@@ -29,16 +36,25 @@ export function createTransportDiagnostic(
 		transportPhase: transportError.phase ?? details.phase,
 		transportStatus: transportError.status,
 		transportRetryAfterMs: transportError.retryAfterMs,
+		transportSpecificCause: getTransportSpecificCause(error),
+		transportSpecificCauseMessage: getTransportSpecificCause(error)
+			? formatTransportCauseEntry(getTransportSpecificCause(error)!)
+			: undefined,
+		transportCauseChain: getTransportErrorCauseChain(error),
 	});
 }
 
 export function transportErrorDetails(error: unknown): Record<string, unknown> {
 	const transportError: TransportError = classifyTransportError(error);
+	const specificCause = getTransportSpecificCause(error);
 	return {
 		transportErrorCode: transportError.code,
 		transportRetryable: transportError.retryable,
 		transportPhase: transportError.phase,
 		transportStatus: transportError.status,
 		transportRetryAfterMs: transportError.retryAfterMs,
+		transportSpecificCause: specificCause,
+		transportSpecificCauseMessage: specificCause ? formatTransportCauseEntry(specificCause) : undefined,
+		transportCauseChain: getTransportErrorCauseChain(error),
 	};
 }

@@ -51,13 +51,32 @@ function Invoke-NpmCommandInDirectory {
 	}
 }
 
+function Invoke-NpmBuildInDirectory {
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$Directory
+	)
+
+	Invoke-NpmCommandInDirectory -Directory $Directory -Arguments @("run", "build")
+}
+
 $installCli = -not $WebOnly
-$installWeb = -not $CliOnly
+$installWeb = $WebOnly
 
 Push-Location $repoRoot
 try {
-	Write-Host "Building pi packages..."
-	Invoke-NpmCommand -Arguments @("run", "build")
+	if ($installCli) {
+		Write-Host "Building pi CLI packages..."
+		Invoke-NpmBuildInDirectory -Directory "packages/tui"
+		Invoke-NpmBuildInDirectory -Directory "packages/ai"
+		Invoke-NpmBuildInDirectory -Directory "packages/agent"
+		Invoke-NpmBuildInDirectory -Directory "packages/coding-agent"
+	}
+
+	if ($installWeb) {
+		Write-Host "Building pi-web launcher..."
+		Invoke-NpmBuildInDirectory -Directory "packages/web-launcher"
+	}
 
 	if ($installCli) {
 		Write-Host "Linking pi globally..."

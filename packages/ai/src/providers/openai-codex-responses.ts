@@ -277,6 +277,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 							signal: options?.signal,
 							headerTimeoutMs: DEFAULT_SSE_HEADER_TIMEOUT_MS,
 							headerTimeoutMessage: `Codex SSE response headers timed out after ${DEFAULT_SSE_HEADER_TIMEOUT_MS}ms`,
+							fetch: options?.httpFetch,
 						},
 					);
 					await options?.onResponse?.(providerResponseFromFetchResponse(response), model);

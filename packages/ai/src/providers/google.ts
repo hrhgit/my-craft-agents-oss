@@ -74,7 +74,7 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 
 		try {
 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
-			const client = createClient(model, apiKey, options?.headers);
+			const client = createClient(model, apiKey, options?.headers, options?.httpFetch);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -253,8 +253,12 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 				throw new Error("Request was aborted");
 			}
 
-			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unknown error occurred");
+			if (output.stopReason === "aborted") {
+				throw new Error("Request was aborted");
+			}
+
+			if (output.stopReason === "error") {
+				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -319,6 +323,7 @@ function createClient(
 	model: Model<"google-generative-ai">,
 	apiKey?: string,
 	optionsHeaders?: Record<string, string>,
+	httpFetch?: typeof fetch,
 ): GoogleGenAI {
 	const httpOptions: { baseUrl?: string; apiVersion?: string; headers?: Record<string, string> } = {};
 	if (model.baseUrl) {
@@ -329,10 +334,29 @@ function createClient(
 		httpOptions.headers = { ...model.headers, ...optionsHeaders };
 	}
 
-	return new GoogleGenAI({
+	const client = new GoogleGenAI({
 		apiKey,
 		httpOptions: Object.keys(httpOptions).length > 0 ? httpOptions : undefined,
 	});
+	applyGoogleHttpFetch(client, httpFetch);
+	return client;
+}
+
+interface GoogleApiClientWithFetchPatch {
+	apiClient?: {
+		apiCall?: (url: string, requestInit: RequestInit) => Promise<Response>;
+	};
+}
+
+function applyGoogleHttpFetch(client: GoogleGenAI, httpFetch?: typeof fetch): void {
+	if (!httpFetch) {
+		return;
+	}
+	const apiClient = (client as unknown as GoogleApiClientWithFetchPatch).apiClient;
+	if (typeof apiClient?.apiCall !== "function") {
+		return;
+	}
+	apiClient.apiCall = (url, requestInit) => httpFetch(url, requestInit);
 }
 
 function buildParams(
