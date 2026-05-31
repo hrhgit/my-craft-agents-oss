@@ -43,3 +43,12 @@ export function createOpenAIProxyAwareFetch(fetchImpl: typeof fetch = globalThis
 		);
 	};
 }
+
+export function createOpenAICompatibleFetch(baseUrl: string, fetchImpl?: typeof fetch): typeof fetch | undefined {
+	const url = new URL(baseUrl);
+	if (isOpenAIHost(url)) {
+		return fetchImpl;
+	}
+
+	return createOpenAIProxyAwareFetch(fetchImpl ?? globalThis.fetch);
+}

@@ -75,7 +75,7 @@ export class NetworkManager {
 	}
 
 	async initialize(): Promise<void> {
-		await this.refreshSidecar();
+		await this.refreshSidecarIfPreferred();
 	}
 
 	async dispose(): Promise<void> {
@@ -87,7 +87,7 @@ export class NetworkManager {
 		this.settings = this.mergeSettings(settings ?? this.settingsManager.getNetworkSettings());
 		this.dispatcher.applySettings(this.settings);
 		this.sidecarManager.applySettings(this.settings);
-		await this.refreshSidecar();
+		await this.refreshSidecarIfPreferred();
 	}
 
 	getEffectiveSettings(): EffectiveNetworkSettings {
@@ -304,6 +304,14 @@ export class NetworkManager {
 		}
 	}
 
+	async refreshSidecarIfPreferred(): Promise<void> {
+		if (!this.shouldPrestartSidecar()) {
+			this.dispatcher.setSidecarAvailable(false);
+			return;
+		}
+		await this.refreshSidecar();
+	}
+
 	private mergeSettings(settings?: NetworkSettings): EffectiveNetworkSettings {
 		return {
 			...DEFAULT_NETWORK_SETTINGS,
@@ -326,6 +334,16 @@ export class NetworkManager {
 			return ["direct"];
 		}
 		return requestClass === "never_replay" ? ["direct"] : undefined;
+	}
+
+	private shouldPrestartSidecar(): boolean {
+		if (!this.settings.sidecar.enabled) {
+			return false;
+		}
+		if (this.settings.mode === "proxy") {
+			return true;
+		}
+		return this.settings.routeRules.some((rule) => rule.policy === "proxy" || rule.policy === "proxy-preferred");
 	}
 
 	private findContextFromDiagnostics(message: AssistantMessage): NetworkRequestContext | undefined {

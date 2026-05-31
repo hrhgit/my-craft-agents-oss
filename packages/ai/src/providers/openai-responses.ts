@@ -24,7 +24,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { createOpenAIProxyAwareFetch } from "./openai-proxy-fetch.ts";
+import { createOpenAICompatibleFetch } from "./openai-proxy-fetch.ts";
 import {
 	appendResponsesWebSearchTool,
 	convertResponsesMessages,
@@ -226,11 +226,7 @@ function createClient(
 		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders,
-		fetch:
-			httpFetch ??
-			(model.baseUrl === "https://api.openai.com/v1" || model.baseUrl.endsWith(".openai.com/v1")
-				? undefined
-				: createOpenAIProxyAwareFetch()),
+		fetch: createOpenAICompatibleFetch(model.baseUrl, httpFetch),
 	});
 }
 

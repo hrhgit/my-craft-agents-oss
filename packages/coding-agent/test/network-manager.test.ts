@@ -9,6 +9,8 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 interface TestSidecarManager {
 	getState(): SidecarState;
 	createFetch(options?: { timeoutMs?: number; maxAttempts?: number }): typeof fetch;
+	refreshHealth?(): Promise<unknown>;
+	ensureStarted?(): Promise<SidecarState>;
 	stop(): Promise<void>;
 }
 
@@ -77,8 +79,58 @@ describe("NetworkManager", () => {
 		await manager.dispose();
 	});
 
+	it("does not prestart sidecar for default auto mode", async () => {
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const manager = new NetworkManager(settingsManager);
+		let ensureStartedCalls = 0;
+		const fakeSidecar: TestSidecarManager = {
+			getState: () => ({
+				enabled: true,
+				ready: false,
+			}),
+			createFetch: () => async () => new Response("ok", { status: 200 }),
+			refreshHealth: async () => undefined,
+			ensureStarted: async () => {
+				ensureStartedCalls++;
+				return {
+					enabled: true,
+					ready: true,
+					baseUrl: "http://127.0.0.1:45678",
+					healthState: "ready",
+				};
+			},
+			stop: async () => {},
+		};
+		const internals = manager as unknown as TestNetworkManagerInternals;
+		internals.sidecarManager = fakeSidecar;
+
+		await manager.initialize();
+
+		expect(ensureStartedCalls).toBe(0);
+
+		await manager.dispose();
+	});
+
+	it("prefers direct route in auto mode when sidecar is available", async () => {
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const manager = new NetworkManager(settingsManager);
+		const internals = manager as unknown as TestNetworkManagerInternals;
+		internals.dispatcher.setSidecarAvailable(true);
+
+		const context = manager.beginRequest("https://api.example.com/v1/test", {
+			requestClass: "safe",
+			method: "POST",
+		});
+
+		expect(context.path).toBe("direct");
+		expect(manager.createHttpFetch(context)).toBeUndefined();
+
+		await manager.dispose();
+	});
+
 	it("creates a sidecar-backed fetch when the sidecar route is selected", async () => {
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		settingsManager.applyOverrides({ network: { mode: "proxy" } });
 		const manager = new NetworkManager(settingsManager);
 		const calls: Array<{ url: string; method: string }> = [];
 		let receivedOptions: { timeoutMs?: number; maxAttempts?: number } | undefined;

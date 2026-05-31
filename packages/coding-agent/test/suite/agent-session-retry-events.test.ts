@@ -73,6 +73,23 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.faux.state.callCount).toBe(3);
 	});
 
+	it("retries OpenAI-compatible stream_read_error failures", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "OpenAI API error: stream_read_error" }),
+			fauxAssistantMessage("recovered"),
+		]);
+
+		await harness.session.prompt("test");
+
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.errorMessage)).toEqual([
+			"OpenAI API error: stream_read_error",
+		]);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
+	});
+
 	it("exhausts max retries and emits a failure event", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } } });
 		harnesses.push(harness);

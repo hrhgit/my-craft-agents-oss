@@ -223,7 +223,7 @@ export class NetworkRouteDispatcher implements NetworkDispatcherController {
 		if (options.fallbackPaths && options.fallbackPaths.length > 0) {
 			return options.fallbackPaths;
 		}
-		return this.sidecarAvailable ? ["sidecar", "direct"] : ["direct"];
+		return this.sidecarAvailable ? ["direct", "sidecar"] : ["direct"];
 	}
 
 	private isBypassedHost(host: string): boolean {
