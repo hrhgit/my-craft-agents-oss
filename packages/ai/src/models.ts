@@ -1,5 +1,5 @@
 import { MODELS } from "./models.generated.ts";
-import type { Api, KnownProvider, Model, ModelThinkingLevel, Usage } from "./types.ts";
+import type { Api, KnownProvider, Model, ModelThinkingLevel, Provider, Usage } from "./types.ts";
 
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
 
@@ -12,28 +12,49 @@ for (const [provider, models] of Object.entries(MODELS)) {
 	modelRegistry.set(provider, providerModels);
 }
 
-type ModelApi<
-	TProvider extends KnownProvider,
-	TModelId extends keyof (typeof MODELS)[TProvider],
-> = (typeof MODELS)[TProvider][TModelId] extends { api: infer TApi } ? (TApi extends Api ? TApi : never) : never;
+type ProviderApi<TProvider extends Provider, TModelId extends string> = TProvider extends "amazon-bedrock"
+	? "bedrock-converse-stream"
+	: TProvider extends "anthropic" | "fireworks" | "vercel-ai-gateway"
+		? "anthropic-messages"
+		: TProvider extends "github-copilot"
+			? TModelId extends `claude-${string}-4${string}`
+				? "anthropic-messages"
+				: TModelId extends `gpt-5${string}` | `oswe${string}`
+					? "openai-responses"
+					: "openai-completions"
+			: TProvider extends "xiaomi" | `xiaomi-token-plan-${string}`
+				? "openai-completions"
+				: TProvider extends "google"
+					? "google-generative-ai"
+					: TProvider extends "google-vertex"
+						? "google-vertex"
+						: TProvider extends "openai"
+							? "openai-responses"
+							: TProvider extends "azure-openai-responses"
+								? "azure-openai-responses"
+								: TProvider extends "openai-codex"
+									? "openai-codex-responses"
+									: TProvider extends "mistral"
+										? "mistral-conversations"
+										: TProvider extends KnownProvider
+											? "openai-completions"
+											: Api;
 
-export function getModel<TProvider extends KnownProvider, TModelId extends keyof (typeof MODELS)[TProvider]>(
+export function getModel<TProvider extends Provider, TModelId extends string>(
 	provider: TProvider,
 	modelId: TModelId,
-): Model<ModelApi<TProvider, TModelId>> {
+): Model<ProviderApi<TProvider, TModelId>> {
 	const providerModels = modelRegistry.get(provider);
-	return providerModels?.get(modelId as string) as Model<ModelApi<TProvider, TModelId>>;
+	return providerModels?.get(modelId) as Model<ProviderApi<TProvider, TModelId>>;
 }
 
 export function getProviders(): KnownProvider[] {
 	return Array.from(modelRegistry.keys()) as KnownProvider[];
 }
 
-export function getModels<TProvider extends KnownProvider>(
-	provider: TProvider,
-): Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[] {
+export function getModels<TProvider extends Provider>(provider: TProvider): Model<ProviderApi<TProvider, string>>[] {
 	const models = modelRegistry.get(provider);
-	return models ? (Array.from(models.values()) as Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[]) : [];
+	return models ? (Array.from(models.values()) as Model<ProviderApi<TProvider, string>>[]) : [];
 }
 
 export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage): Usage["cost"] {

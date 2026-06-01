@@ -1,11 +1,16 @@
 import type { AssistantMessage, AssistantMessageDiagnostic } from "@earendil-works/pi-ai";
 
 export type NetworkMode = "auto" | "proxy" | "direct";
-export type NetworkRequestClass = "safe" | "model_pre_first_byte" | "requires_idempotency_key" | "never_replay";
+export type NetworkRequestClass = "safe" | "model_pre_first_byte" | "never_replay";
 export type NetworkRoutePath = "direct" | "sidecar";
+export type NetworkRoutePolicy = "direct" | "proxy" | "direct-preferred" | "proxy-preferred";
 export type CircuitState = "closed" | "open" | "half-open";
 export type SidecarHealthState = "ready" | "degraded" | "down";
 export type SidecarFailureStage = "dns" | "connect" | "tls" | "upstream" | "stream" | "unknown";
+export type SidecarTimeoutKind = "connect" | "tls" | "response_headers" | "idle_stream" | "total" | "unknown";
+export type SidecarTransportFinalStatus = "success" | "transport_error" | "stream_error";
+export type NetworkFallbackReason = "sidecar_unavailable" | "retry_route_failover";
+export type SidecarProxyMode = "preferred" | "required";
 
 export interface NetworkProxySettings {
 	enabled?: boolean;
@@ -28,13 +33,13 @@ export interface NetworkBypassSettings {
 
 export interface NetworkRouteRule {
 	match: string;
-	policy: "direct" | "proxy" | "direct-preferred" | "proxy-preferred";
+	policy: NetworkRoutePolicy;
 }
 
 export interface NetworkTimeoutSettings {
 	connectMs?: number;
 	tlsMs?: number;
-	firstByteMs?: number;
+	responseHeaderTimeoutMs?: number;
 	idleStreamMs?: number;
 	totalMs?: number;
 }
@@ -97,29 +102,28 @@ export interface NetworkRequestOptions extends RequestInit {
 	requestClass: NetworkRequestClass;
 	requestId?: string;
 	traceId?: string;
-	idempotencyKey?: string;
-	allowReplay?: boolean;
 	fallbackPaths?: NetworkRoutePath[];
 	sessionId?: string;
 }
 
-export interface NetworkAttemptRecord {
-	requestId: string;
-	traceId: string;
-	idempotencyKey?: string;
-	requestClass: NetworkRequestClass;
-	attempt: number;
-	path: NetworkRoutePath;
-	host: string;
-	startedAt: number;
-	firstByteReceived: boolean;
-	replayed: boolean;
+export interface SidecarTransportOutcome {
+	owner: "sidecar";
+	requestId?: string;
+	traceId?: string;
+	responseStatus?: number;
+	attemptCount: number;
+	retryCount: number;
+	streamingResponse: boolean;
+	streamStarted: boolean;
+	finalStatus: SidecarTransportFinalStatus;
+	failureStage?: SidecarFailureStage;
+	timeoutKind?: SidecarTimeoutKind;
+	errorMessage?: string;
 }
 
 export interface NetworkRequestContext {
 	requestId: string;
 	traceId: string;
-	idempotencyKey?: string;
 	requestClass: NetworkRequestClass;
 	attempt: number;
 	host: string;
@@ -129,8 +133,14 @@ export interface NetworkRequestContext {
 	firstByteReceived: boolean;
 	poolRebuilt: boolean;
 	fallbackUsed: boolean;
+	fallbackReason?: NetworkFallbackReason;
+	matchedRoutePolicy?: NetworkRoutePolicy;
+	sidecarRequired: boolean;
+	sidecarAvailable: boolean;
+	sidecarProxyMode?: SidecarProxyMode;
 	replaySuppressedReason?: string;
 	sidecarBaseUrl?: string;
+	transportOutcome?: SidecarTransportOutcome;
 	circuitState: CircuitState;
 	startedAt: number;
 }
@@ -190,6 +200,11 @@ export interface NetworkDiagnosticsDetails {
 	durationMs: number;
 	poolRebuilt: boolean;
 	fallbackUsed: boolean;
+	fallbackReason?: NetworkFallbackReason;
+	matchedRoutePolicy?: NetworkRoutePolicy;
+	sidecarRequired?: boolean;
+	sidecarAvailable?: boolean;
+	sidecarProxyMode?: SidecarProxyMode;
 	circuitState: CircuitState;
 	sidecarBaseUrl?: string;
 	replaySuppressedReason?: string;
@@ -197,6 +212,15 @@ export interface NetworkDiagnosticsDetails {
 	sidecarLastErrorStage?: SidecarFailureStage;
 	sidecarLastErrorTarget?: string;
 	sidecarLastErrorCount?: number;
+	sidecarFinalStatus?: SidecarTransportFinalStatus;
+	sidecarResponseStatus?: number;
+	sidecarAttemptCount?: number;
+	sidecarRetryCount?: number;
+	sidecarStreamingResponse?: boolean;
+	sidecarStreamStarted?: boolean;
+	sidecarFailureStage?: SidecarFailureStage;
+	sidecarTimeoutKind?: SidecarTimeoutKind;
+	sidecarErrorMessage?: string;
 }
 
 export interface AssistantNetworkDiagnostic extends AssistantMessageDiagnostic {

@@ -90,17 +90,19 @@ fi
 
 if [[ "$SKIP_DEPS" == "false" ]]; then
     echo "==> Installing cross-platform native bindings..."
+    CLIPBOARD_VERSION=$(node -p "require('./packages/coding-agent/package.json').optionalDependencies['@mariozechner/clipboard']")
     # npm ci only installs optional deps for the current platform
-    # We need all platform bindings for bun cross-compilation
+    # We need the base clipboard package and all platform bindings for bun cross-compilation
     # Use --force to bypass platform checks (os/cpu restrictions in package.json)
     # Install all in one command to avoid npm removing packages from previous installs
-    npm install --no-save --package-lock=false --force --ignore-scripts \
-        @mariozechner/clipboard-darwin-arm64@0.3.6 \
-        @mariozechner/clipboard-darwin-x64@0.3.6 \
-        @mariozechner/clipboard-linux-x64-gnu@0.3.6 \
-        @mariozechner/clipboard-linux-arm64-gnu@0.3.6 \
-        @mariozechner/clipboard-win32-x64-msvc@0.3.6 \
-        @mariozechner/clipboard-win32-arm64-msvc@0.3.6
+    npm install --include=optional --no-save --package-lock=false --force --ignore-scripts \
+        @mariozechner/clipboard@"$CLIPBOARD_VERSION" \
+        @mariozechner/clipboard-darwin-arm64@"$CLIPBOARD_VERSION" \
+        @mariozechner/clipboard-darwin-x64@"$CLIPBOARD_VERSION" \
+        @mariozechner/clipboard-linux-x64-gnu@"$CLIPBOARD_VERSION" \
+        @mariozechner/clipboard-linux-arm64-gnu@"$CLIPBOARD_VERSION" \
+        @mariozechner/clipboard-win32-x64-msvc@"$CLIPBOARD_VERSION" \
+        @mariozechner/clipboard-win32-arm64-msvc@"$CLIPBOARD_VERSION"
 else
     echo "==> Skipping cross-platform native bindings (--skip-deps)"
 fi
@@ -110,6 +112,11 @@ if [[ "$SKIP_BUILD" == "false" ]]; then
     npm run build
 else
     echo "==> Skipping package build (--skip-build)"
+fi
+
+if [[ "$SKIP_BUILD" == "true" ]]; then
+    echo "==> Building sidecar binaries..."
+    node packages/coding-agent/scripts/build-sidecar.mjs
 fi
 
 echo "==> Building binaries..."
@@ -146,6 +153,8 @@ for platform in "${PLATFORMS[@]}"; do
     cp README.md "$OUTPUT_DIR/$platform/"
     cp CHANGELOG.md "$OUTPUT_DIR/$platform/"
     cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm "$OUTPUT_DIR/$platform/"
+    mkdir -p "$OUTPUT_DIR/$platform/sidecar/bin/$platform"
+    cp "sidecar/bin/$platform/"* "$OUTPUT_DIR/$platform/sidecar/bin/$platform/"
     mkdir -p "$OUTPUT_DIR/$platform/theme"
     cp dist/modes/interactive/theme/*.json "$OUTPUT_DIR/$platform/theme/"
     mkdir -p "$OUTPUT_DIR/$platform/assets"

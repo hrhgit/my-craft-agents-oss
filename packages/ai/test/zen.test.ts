@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MODELS } from "../src/models.generated.ts";
+import { getModels } from "../src/models.ts";
 import { complete } from "../src/stream.ts";
 import type { Model } from "../src/types.ts";
 
@@ -10,7 +10,7 @@ describe.skipIf(!process.env.OPENCODE_API_KEY)("OpenCode Models Smoke Test", () 
 	] as const;
 
 	providers.forEach(({ key, label }) => {
-		const providerModels = Object.values(MODELS[key]);
+		const providerModels = getModels(key);
 		providerModels.forEach((model) => {
 			it(`${label}: ${model.id}`, async () => {
 				const response = await complete(model as Model<any>, {

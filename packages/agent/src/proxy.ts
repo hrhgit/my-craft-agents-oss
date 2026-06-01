@@ -9,6 +9,7 @@ import {
 	type AssistantMessageEvent,
 	type Context,
 	EventStream,
+	iterateSseMessages,
 	type Model,
 	parseStreamingJson,
 	type SimpleStreamOptions,
@@ -136,18 +137,6 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 			timestamp: Date.now(),
 		};
 
-		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-
-		const abortHandler = () => {
-			if (reader) {
-				reader.cancel("Request aborted by user").catch(() => {});
-			}
-		};
-
-		if (options.signal) {
-			options.signal.addEventListener("abort", abortHandler);
-		}
-
 		try {
 			const response = await fetch(`${options.proxyUrl}/api/stream`, {
 				method: "POST",
@@ -176,40 +165,32 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 				throw new Error(errorMessage);
 			}
 
-			reader = response.body!.getReader();
-			const decoder = new TextDecoder();
-			let buffer = "";
+			if (!response.body) {
+				throw new Error("Proxy stream response body is missing");
+			}
 
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-
-				if (options.signal?.aborted) {
-					throw new Error("Request aborted by user");
+			let sawTerminalEvent = false;
+			for await (const sse of iterateSseMessages(response.body, {
+				signal: options.signal,
+				cancelOnReturn: false,
+			})) {
+				const data = sse.data.trim();
+				if (!data || data === "[DONE]") {
+					continue;
 				}
-
-				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-
-				for (const line of lines) {
-					if (line.startsWith("data: ")) {
-						const data = line.slice(6).trim();
-						if (data) {
-							const proxyEvent = JSON.parse(data) as ProxyAssistantMessageEvent;
-							const event = processProxyEvent(proxyEvent, partial);
-							if (event) {
-								stream.push(event);
-							}
-						}
+				const proxyEvent = JSON.parse(data) as ProxyAssistantMessageEvent;
+				const event = processProxyEvent(proxyEvent, partial);
+				if (event) {
+					if (event.type === "done" || event.type === "error") {
+						sawTerminalEvent = true;
 					}
+					stream.push(event);
 				}
 			}
 
-			if (options.signal?.aborted) {
-				throw new Error("Request aborted by user");
+			if (!sawTerminalEvent) {
+				throw new Error("Proxy stream ended before terminal event");
 			}
-
 			stream.end();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
@@ -222,10 +203,6 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 				error: partial,
 			});
 			stream.end();
-		} finally {
-			if (options.signal) {
-				options.signal.removeEventListener("abort", abortHandler);
-			}
 		}
 	})();
 

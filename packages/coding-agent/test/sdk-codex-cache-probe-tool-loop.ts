@@ -299,7 +299,6 @@ async function main(): Promise<void> {
 	const settingsManager = SettingsManager.inMemory({
 		compaction: { enabled: false },
 		retry: { enabled: false },
-		transport: args.transport,
 	});
 
 	const resourceLoader = createMinimalResourceLoader(

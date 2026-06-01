@@ -90,6 +90,41 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
 	});
 
+	it("includes retry reason metadata for pre-TLS network failures", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		const tlsErrorMessage =
+			"OpenAI API error: Connection error. Cause: Client network socket disconnected before secure TLS connection was established (code=ECONNRESET, port=443)";
+		const tlsError = fauxAssistantMessage("", {
+			stopReason: "error",
+			errorMessage: tlsErrorMessage,
+		});
+		tlsError.diagnostics = [
+			{
+				type: "provider_transport_failure",
+				timestamp: Date.now(),
+				details: {
+					transportErrorCode: "network_error",
+					transportSpecificCauseMessage:
+						"Client network socket disconnected before secure TLS connection was established (code=ECONNRESET, port=443)",
+				},
+			},
+		];
+		harness.setResponses([tlsError, fauxAssistantMessage("recovered")]);
+
+		await harness.session.prompt("test");
+
+		expect(
+			harness.eventsOfType("auto_retry_start").map((event) => ({ reason: event.reason, details: event.details })),
+		).toEqual([
+			{
+				reason: "network",
+				details:
+					"Client network socket disconnected before secure TLS connection was established (code=ECONNRESET, port=443)",
+			},
+		]);
+	});
+
 	it("exhausts max retries and emits a failure event", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } } });
 		harnesses.push(harness);

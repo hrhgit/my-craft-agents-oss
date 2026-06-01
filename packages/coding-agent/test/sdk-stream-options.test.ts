@@ -117,6 +117,7 @@ describe("createAgentSession stream options", () => {
 		const options = await captureStreamOptions("openai-codex-responses", { httpIdleTimeoutMs: 1234 });
 
 		expect(options?.timeoutMs).toBe(1234);
+		expect(options?.transport).toBe("sse");
 	});
 
 	it("does not default timeoutMs from httpIdleTimeoutMs for other providers", async () => {
@@ -135,19 +136,13 @@ describe("createAgentSession stream options", () => {
 		expect(options?.timeoutMs).toBe(0);
 	});
 
-	it("forwards websocketConnectTimeoutMs from settings", async () => {
-		const options = await captureStreamOptions("openai-codex-responses", { websocketConnectTimeoutMs: 1234 });
-
-		expect(options?.websocketConnectTimeoutMs).toBe(1234);
-	});
-
-	it("lets request websocketConnectTimeoutMs override settings", async () => {
+	it("forces SSE transport even when request options ask for auto", async () => {
 		const options = await captureStreamOptions(
 			"openai-codex-responses",
-			{ websocketConnectTimeoutMs: 1234 },
-			{ websocketConnectTimeoutMs: 0 },
+			{ httpIdleTimeoutMs: 1234 },
+			{ transport: "auto" },
 		);
 
-		expect(options?.websocketConnectTimeoutMs).toBe(0);
+		expect(options?.transport).toBe("sse");
 	});
 });

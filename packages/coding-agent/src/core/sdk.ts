@@ -18,7 +18,7 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
-import { createRequestIdempotencyKey, type NetworkManager } from "./network-manager.ts";
+import type { NetworkManager } from "./network-manager.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
@@ -77,6 +77,8 @@ export interface CreateAgentSessionOptions {
 	 * When provided, only the listed tool names are enabled.
 	 */
 	tools?: string[];
+	/** Optional denylist of tool names to disable. Applies after `tools` when both are provided. */
+	excludeTools?: string[];
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
 
@@ -301,12 +303,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		"web_fetch",
 	];
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
-	const initialActiveToolNames: string[] = options.tools
-		? [...options.tools]
-		: options.noTools
-			? []
-			: defaultActiveToolNames;
 	const webSearchOverride = options.webSearch;
+	const excludedToolNames = options.excludeTools;
+	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
+	const initialActiveToolNames: string[] = (
+		options.tools ? [...options.tools] : options.noTools ? [] : defaultActiveToolNames
+	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;
 
@@ -367,20 +369,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				streamOptions?.timeoutMs ??
 				providerRetrySettings.timeoutMs ??
 				(model.api === "openai-codex-responses" ? settingsManager.getHttpIdleTimeoutMs() : undefined);
-			const websocketConnectTimeoutMs =
-				streamOptions?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const attributionHeaders = getAttributionHeaders(model, settingsManager, streamOptions?.sessionId);
 			const effectiveWebSearch = webSearchOverride ?? settingsManager.getWebSearch();
 			const requestUrl = model.baseUrl;
 			const requestClass = "model_pre_first_byte";
 			const requestId = randomUUID();
-			const idempotencyKey = createRequestIdempotencyKey(requestClass, "POST", requestUrl, undefined);
 			const requestContext = networkManager?.beginRequest(requestUrl, {
 				requestClass,
 				method: "POST",
 				requestId,
 				traceId: requestId,
-				idempotencyKey,
 			});
 			const httpFetch = networkManager?.createHttpFetch(requestContext, {
 				timeoutMs,
@@ -390,7 +388,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				...streamOptions,
 				apiKey: auth.apiKey,
 				timeoutMs,
-				websocketConnectTimeoutMs,
+				transport: "sse",
 				webSearch: effectiveWebSearch,
 				maxRetries: streamOptions?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: streamOptions?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
@@ -406,9 +404,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 											"x-pi-request-id": requestContext.requestId,
 											"x-pi-trace-id": requestContext.traceId,
 											"x-pi-network-path": requestContext.path,
-											...(requestContext.idempotencyKey
-												? { "Idempotency-Key": requestContext.idempotencyKey }
-												: {}),
 										}
 									: {}),
 							}
@@ -472,7 +467,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		steeringMode: settingsManager.getSteeringMode(),
 		followUpMode: settingsManager.getFollowUpMode(),
-		transport: settingsManager.getTransport(),
+		transport: "sse",
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 	});
@@ -503,6 +498,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		initialActiveToolNames,
 		allowedToolNames,
 		webSearchOverride,
+		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 		networkManager,

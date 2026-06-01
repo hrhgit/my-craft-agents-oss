@@ -30,4 +30,36 @@ describe("issue #3317 network connection lost retry", () => {
 		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
 		expect(getAssistantTexts(harness)).toContain("recovered after reconnect");
 	});
+
+	it("retries pre-TLS ECONNRESET failures until the configured retry limit", async () => {
+		const harness = await createHarness({
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage:
+					"OpenAI API error: Connection error. Cause: Client network socket disconnected before secure TLS connection was established (code=ECONNRESET, port=443)",
+			}),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage:
+					"OpenAI API error: Connection error. Cause: Client network socket disconnected before secure TLS connection was established (code=ECONNRESET, port=443)",
+			}),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage:
+					"OpenAI API error: Connection error. Cause: Client network socket disconnected before secure TLS connection was established (code=ECONNRESET, port=443)",
+			}),
+			fauxAssistantMessage("recovered after TLS reconnect"),
+		]);
+
+		await harness.session.prompt("test");
+
+		expect(harness.faux.state.callCount).toBe(4);
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.attempt)).toEqual([1, 2, 3]);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
+		expect(getAssistantTexts(harness)).toContain("recovered after TLS reconnect");
+	});
 });

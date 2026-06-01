@@ -147,7 +147,15 @@ export type AgentSessionEvent =
 			willRetry: boolean;
 			errorMessage?: string;
 	  }
-	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
+	| {
+			type: "auto_retry_start";
+			attempt: number;
+			maxAttempts: number;
+			delayMs: number;
+			errorMessage: string;
+			reason?: "network" | "rate_limit" | "server" | "timeout" | "unknown";
+			details?: string;
+	  }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
 	| { type: "agent_settled" };
 
@@ -177,6 +185,8 @@ export interface AgentSessionConfig {
 	initialActiveToolNames?: string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
 	allowedToolNames?: string[];
+	/** Optional denylist of tool names. When provided, these tool names are not exposed. */
+	excludedToolNames?: string[];
 	/**
 	 * Override base tools (useful for custom runtimes).
 	 *
@@ -308,6 +318,7 @@ export class AgentSession {
 	private _initialActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
 	private _webSearchOverride?: boolean;
+	private _excludedToolNames?: Set<string>;
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
 	private _networkManager?: NetworkManager;
@@ -344,6 +355,7 @@ export class AgentSession {
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._webSearchOverride = config.webSearchOverride;
+		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 		this._networkManager = config.networkManager;
@@ -2395,7 +2407,9 @@ export class AgentSession {
 		const previousRegistryNames = new Set(this._toolRegistry.keys());
 		const previousActiveToolNames = this.getActiveToolNames();
 		const allowedToolNames = this._allowedToolNames;
-		const isAllowedTool = (name: string): boolean => this._matchesAllowedToolName(name, allowedToolNames);
+		const excludedToolNames = this._excludedToolNames;
+		const isAllowedTool = (name: string): boolean =>
+			this._matchesAllowedToolName(name, allowedToolNames) && !excludedToolNames?.has(name);
 
 		const registeredTools = this._extensionRunner.getAllRegisteredTools();
 		const allCustomTools = [
@@ -2573,6 +2587,66 @@ export class AgentSession {
 		);
 	}
 
+	private _getRetryDisplayContext(message: AssistantMessage): {
+		reason: "network" | "rate_limit" | "server" | "timeout" | "unknown";
+		details?: string;
+	} {
+		const errorMessage = message.errorMessage ?? "";
+		for (const diagnostic of message.diagnostics ?? []) {
+			const code = diagnostic.details?.transportErrorCode;
+			if (typeof code !== "string") continue;
+			switch (code) {
+				case "network_error":
+				case "websocket_closed":
+				case "websocket_error": {
+					const details =
+						typeof diagnostic.details?.transportSpecificCauseMessage === "string"
+							? diagnostic.details.transportSpecificCauseMessage
+							: this._extractRetryDetailFromErrorMessage(errorMessage);
+					return { reason: "network", details };
+				}
+				case "rate_limit":
+					return { reason: "rate_limit" };
+				case "server_error":
+					return { reason: "server" };
+				case "timeout":
+				case "header_timeout":
+				case "idle_timeout":
+					return { reason: "timeout" };
+			}
+		}
+
+		if (/rate.?limit|too many requests|429/i.test(errorMessage)) {
+			return { reason: "rate_limit" };
+		}
+		if (/500|502|503|504|service.?unavailable|server.?error|internal.?error/i.test(errorMessage)) {
+			return { reason: "server" };
+		}
+		if (/timed? out|timeout/i.test(errorMessage)) {
+			return { reason: "timeout", details: this._extractRetryDetailFromErrorMessage(errorMessage) };
+		}
+		if (
+			/network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|econnreset|tls|websocket.?closed|websocket.?error|other side closed/i.test(
+				errorMessage,
+			)
+		) {
+			return { reason: "network", details: this._extractRetryDetailFromErrorMessage(errorMessage) };
+		}
+		return { reason: "unknown" };
+	}
+
+	private _extractRetryDetailFromErrorMessage(errorMessage: string): string | undefined {
+		const causeMatch = errorMessage.match(/Cause:\s*(.+)$/i);
+		if (causeMatch?.[1]) {
+			return causeMatch[1].trim();
+		}
+		const timeoutMatch = errorMessage.match(/((?:headers? timed out|idle timeout|timed? out|timeout).*)$/i);
+		if (timeoutMatch?.[1]) {
+			return timeoutMatch[1].trim();
+		}
+		return undefined;
+	}
+
 	private _isRetryableTransportDiagnostic(message: AssistantMessage): boolean | undefined {
 		for (const diagnostic of message.diagnostics ?? []) {
 			const code = diagnostic.details?.transportErrorCode;
@@ -2617,7 +2691,7 @@ export class AgentSession {
 		const err = message.errorMessage;
 		if (this._isNonRetryableProviderLimitError(err)) return false;
 		// Match: overloaded_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, stream_read_error, HTTP/2 closed before response, terminated, retry delay exceeded
-		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|stream_read_error|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
+		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|stream_read_error|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
 			err,
 		);
 	}
@@ -2656,6 +2730,7 @@ export class AgentSession {
 		}
 
 		const delayMs = networkDecision?.delayMs ?? settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		const retryDisplay = this._getRetryDisplayContext(message);
 
 		this._emit({
 			type: "auto_retry_start",
@@ -2663,6 +2738,8 @@ export class AgentSession {
 			maxAttempts: networkDecision?.maxAttempts ?? settings.maxRetries,
 			delayMs,
 			errorMessage: message.errorMessage || "Unknown error",
+			reason: retryDisplay.reason,
+			details: retryDisplay.details,
 		});
 
 		// Remove error message from agent state (keep in session for history)

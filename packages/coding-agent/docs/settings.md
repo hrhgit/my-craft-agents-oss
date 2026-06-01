@@ -47,7 +47,7 @@ Edit directly or use `/settings` for common options.
 | `treeFilterMode` | string | `"default"` | Default filter for `/tree`: `"default"`, `"no-tools"`, `"user-only"`, `"labeled-only"`, `"all"` |
 | `editorPaddingX` | number | `0` | Horizontal padding for input editor (0-3) |
 | `autocompleteMaxVisible` | number | `5` | Max visible items in autocomplete dropdown (3-20) |
-| `showHardwareCursor` | boolean | `false` | Show terminal cursor |
+| `showHardwareCursor` | boolean | `false` | Show the terminal cursor while TUI positions it for IME support |
 
 ### Telemetry and update checks
 
@@ -130,9 +130,39 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 |---------|------|---------|-------------|
 | `steeringMode` | string | `"one-at-a-time"` | How steering messages are sent: `"all"` or `"one-at-a-time"` |
 | `followUpMode` | string | `"one-at-a-time"` | How follow-up messages are sent: `"all"` or `"one-at-a-time"` |
-| `transport` | string | `"auto"` | Preferred transport for providers that support multiple transports: `"sse"`, `"websocket"`, `"websocket-cached"`, or `"auto"` |
 | `httpIdleTimeoutMs` | number | `300000` | HTTP header/body idle timeout in milliseconds, also used by providers with explicit stream idle timeouts. Set to `0` to disable. |
-| `websocketConnectTimeoutMs` | number | `15000` | WebSocket connect/open handshake timeout in milliseconds for providers that support WebSocket transports. Set to `0` to disable. |
+
+Pi no longer exposes a user-selectable WebSocket transport mode. Streaming model HTTP/SSE requests use Pi's bundled sidecar when it is available. Use `network.mode: "proxy"` when sidecar/proxy egress is required; it fails closed if the sidecar is unavailable.
+
+### Network
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `network.mode` | string | `"auto"` | Route provider requests with `"auto"`, `"proxy"` (sidecar/proxy required), or `"direct"` |
+| `network.proxy.enabled` | boolean | `true` | Enable configured proxy candidates for sidecar requests |
+| `network.proxy.candidates` | string[] | `["http://127.0.0.1:7890", "http://127.0.0.1:7897", "http://127.0.0.1:7899"]` | Proxy URLs the sidecar can use for proxied egress |
+| `network.proxy.probeTimeoutMs` | number | `500` | Reserved proxy health probe timeout |
+| `network.proxy.statusCacheMs` | number | `15000` | Reserved proxy health cache duration |
+| `network.sidecar.enabled` | boolean | `true` | Enable the bundled sidecar transport |
+| `network.sidecar.binaryPath` | string | `""` | Override the sidecar executable path |
+| `network.sidecar.restartBackoffMs` | number | `2000` | Delay before restarting a crashed sidecar |
+| `network.sidecar.healthCheckIntervalMs` | number | `15000` | Sidecar health polling interval |
+| `network.bypass.hosts` | string[] | `["localhost", "127.0.0.1", "::1", "*.local"]` | Hosts that route direct in `auto` mode unless a route rule or strict proxy mode overrides them |
+| `network.bypass.cidrs` | string[] | `["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]` | CIDR ranges that route direct in `auto` mode unless a route rule or strict proxy mode overrides them |
+| `network.routeRules` | array | `[]` | Per-host policy overrides: `"direct"`, `"proxy"` (required), `"direct-preferred"`, `"proxy-preferred"` |
+| `network.timeouts.connectMs` | number | `15000` | TCP connect timeout for sidecar requests |
+| `network.timeouts.tlsMs` | number | `15000` | TLS handshake timeout for sidecar requests |
+| `network.timeouts.responseHeaderTimeoutMs` | number | `60000` | Time to wait for upstream response headers |
+| `network.timeouts.idleStreamMs` | number | `90000` | Idle timeout once a response body starts streaming |
+| `network.timeouts.totalMs` | number | `300000` | Total per-request timeout enforced by the sidecar |
+| `network.retry.maxAttempts` | number | `2` | Sidecar transport retry attempts before surfacing a failure |
+| `network.retry.baseDelayMs` | number | `500` | Base backoff delay between sidecar transport retries |
+| `network.retry.maxDelayMs` | number | `3000` | Maximum backoff delay between sidecar transport retries |
+| `network.retry.jitter` | boolean | `true` | Add jitter to sidecar transport retry backoff |
+| `network.circuitBreaker.failureThreshold` | number | `3` | Consecutive failures before a route is marked open |
+| `network.circuitBreaker.cooldownMs` | number | `60000` | Cooldown before retrying an open route |
+
+`network.mode: "proxy"` and route rules with `policy: "proxy"` are hard egress boundaries: they do not fall back to direct connections. Use `proxy-preferred` when direct fallback is acceptable. Explicit route rules take precedence over default bypasses; use `policy: "direct"` for intentional direct exceptions.
 
 ### Terminal & Images
 

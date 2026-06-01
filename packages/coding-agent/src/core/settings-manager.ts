@@ -1,4 +1,3 @@
-import type { Transport } from "@earendil-works/pi-ai";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -58,8 +57,6 @@ export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
 }
 
-export type TransportSetting = Transport;
-
 /**
  * Package source for npm/git packages.
  * - String form: load all resources from the package
@@ -81,7 +78,6 @@ export interface Settings {
 	defaultModel?: string;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 	webSearch?: boolean;
-	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
@@ -114,7 +110,7 @@ export interface Settings {
 	warnings?: WarningSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
-	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	websocketConnectTimeoutMs?: number; // Legacy transport connect/open timeout in milliseconds; 0 disables it
 	network?: NetworkSettings;
 }
 
@@ -357,10 +353,12 @@ export class SettingsManager {
 			delete settings.queueMode;
 		}
 
-		// Migrate legacy websockets boolean -> transport enum
-		if (!("transport" in settings) && typeof settings.websockets === "boolean") {
-			settings.transport = settings.websockets ? "websocket" : "sse";
+		// Drop legacy transport selectors; coding-agent always uses sidecar-backed HTTP/SSE.
+		if ("websockets" in settings) {
 			delete settings.websockets;
+		}
+		if ("transport" in settings) {
+			delete settings.transport;
 		}
 
 		// Migrate old skills object format to new array format
@@ -406,6 +404,29 @@ export class SettingsManager {
 				};
 			}
 			delete retrySettings.maxDelayMs;
+		}
+
+		if (
+			"network" in settings &&
+			typeof settings.network === "object" &&
+			settings.network !== null &&
+			!Array.isArray(settings.network)
+		) {
+			const networkSettings = settings.network as Record<string, unknown>;
+			if (
+				"timeouts" in networkSettings &&
+				typeof networkSettings.timeouts === "object" &&
+				networkSettings.timeouts !== null &&
+				!Array.isArray(networkSettings.timeouts)
+			) {
+				const timeoutSettings = networkSettings.timeouts as Record<string, unknown>;
+				if (!("responseHeaderTimeoutMs" in timeoutSettings) && typeof timeoutSettings.firstByteMs === "number") {
+					timeoutSettings.responseHeaderTimeoutMs = timeoutSettings.firstByteMs;
+				}
+				if ("firstByteMs" in timeoutSettings) {
+					delete timeoutSettings.firstByteMs;
+				}
+			}
 		}
 
 		return settings as Settings;
@@ -665,10 +686,6 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getTransport(): TransportSetting {
-		return this.settings.transport ?? "auto";
-	}
-
 	getWebSearch(): boolean {
 		return this.settings.webSearch ?? true;
 	}
@@ -676,12 +693,6 @@ export class SettingsManager {
 	setWebSearch(enabled: boolean): void {
 		this.globalSettings.webSearch = enabled;
 		this.markModified("webSearch");
-		this.save();
-	}
-
-	setTransport(transport: TransportSetting): void {
-		this.globalSettings.transport = transport;
-		this.markModified("transport");
 		this.save();
 	}
 
@@ -767,7 +778,7 @@ export class SettingsManager {
 		};
 	}
 
-	getWebSocketConnectTimeoutMs(): number | undefined {
+	private getLegacyTransportConnectTimeoutMs(): number | undefined {
 		return parseTimeoutSetting(this.settings.websocketConnectTimeoutMs, "websocketConnectTimeoutMs");
 	}
 
@@ -1126,12 +1137,12 @@ export class SettingsManager {
 		const idleTimeoutMs = this.getHttpIdleTimeoutMs();
 		const retry = this.getRetrySettings();
 		const providerRetry = this.getProviderRetrySettings();
-		const websocketConnectTimeoutMs = this.getWebSocketConnectTimeoutMs();
+		const legacyConnectTimeoutMs = this.getLegacyTransportConnectTimeoutMs();
 		return {
 			timeouts: {
-				connectMs: websocketConnectTimeoutMs ?? 15_000,
-				tlsMs: websocketConnectTimeoutMs ?? 15_000,
-				firstByteMs: providerRetry.timeoutMs ?? idleTimeoutMs,
+				connectMs: legacyConnectTimeoutMs ?? 15_000,
+				tlsMs: legacyConnectTimeoutMs ?? 15_000,
+				responseHeaderTimeoutMs: providerRetry.timeoutMs ?? idleTimeoutMs,
 				idleStreamMs: idleTimeoutMs,
 				totalMs: providerRetry.timeoutMs ?? Math.max(idleTimeoutMs, DEFAULT_HTTP_IDLE_TIMEOUT_MS),
 			},

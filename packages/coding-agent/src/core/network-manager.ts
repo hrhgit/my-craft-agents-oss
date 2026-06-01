@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { createAssistantMessageDiagnostic } from "@earendil-works/pi-ai";
 import { NetworkRouteDispatcher } from "./network-dispatcher.ts";
@@ -12,6 +12,7 @@ import type {
 	NetworkRetryDecision,
 	NetworkRoutePath,
 	NetworkSettings,
+	SidecarTransportOutcome,
 } from "./network-types.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 
@@ -37,7 +38,7 @@ const DEFAULT_NETWORK_SETTINGS: EffectiveNetworkSettings = {
 	timeouts: {
 		connectMs: 15_000,
 		tlsMs: 15_000,
-		firstByteMs: 60_000,
+		responseHeaderTimeoutMs: 60_000,
 		idleStreamMs: 90_000,
 		totalMs: 300_000,
 	},
@@ -106,11 +107,17 @@ export class NetworkManager {
 			traceId,
 			fallbackPaths: forcedPath ? [forcedPath] : fallbackPaths,
 		});
-		const context = {
+		if (!decision) {
+			throw this.createStrictProxyUnavailableError(resolvedUrl, requestId, traceId);
+		}
+		const fallbackReason: NetworkRequestContext["fallbackReason"] =
+			decision.context.path === "direct" && decision.context.fallbackUsed ? "sidecar_unavailable" : undefined;
+		const context: NetworkRequestContext = {
 			...decision.context,
 			requestId,
 			traceId,
 			attempt: 1,
+			fallbackReason,
 			sidecarBaseUrl: decision.context.path === "sidecar" ? this.sidecarManager.getState().baseUrl : undefined,
 		};
 		this.lastKnownPath = context.path;
@@ -128,9 +135,16 @@ export class NetworkManager {
 		if (!requestContext || requestContext.path !== "sidecar") {
 			return undefined;
 		}
-		return this.sidecarManager.createFetch({
-			timeoutMs: options?.timeoutMs ?? this.settings.timeouts.totalMs,
+		return this.sidecarManager.createFetch(requestContext, {
+			totalTimeoutMs: options?.timeoutMs ?? this.settings.timeouts.totalMs,
+			connectTimeoutMs: this.settings.timeouts.connectMs,
+			tlsTimeoutMs: this.settings.timeouts.tlsMs,
+			responseHeaderTimeoutMs: this.settings.timeouts.responseHeaderTimeoutMs,
+			idleStreamTimeoutMs: this.settings.timeouts.idleStreamMs,
 			maxAttempts: options?.maxAttempts ?? this.settings.retry.maxAttempts,
+			retryBaseDelayMs: this.settings.retry.baseDelayMs,
+			retryMaxDelayMs: this.settings.retry.maxDelayMs,
+			proxyMode: requestContext.sidecarProxyMode,
 		});
 	}
 
@@ -164,8 +178,21 @@ export class NetworkManager {
 				requestClass: requestContext.requestClass,
 				method: requestContext.method,
 				firstByteReceived: requestContext.firstByteReceived,
+				matchedRoutePolicy: requestContext.matchedRoutePolicy,
+				sidecarRequired: requestContext.sidecarRequired,
+				sidecarAvailable: requestContext.sidecarAvailable,
+				sidecarProxyMode: requestContext.sidecarProxyMode,
 				sidecarBaseUrl: requestContext.sidecarBaseUrl,
 				circuitState: requestContext.circuitState,
+				sidecarFinalStatus: requestContext.transportOutcome?.finalStatus,
+				sidecarResponseStatus: requestContext.transportOutcome?.responseStatus,
+				sidecarAttemptCount: requestContext.transportOutcome?.attemptCount,
+				sidecarRetryCount: requestContext.transportOutcome?.retryCount,
+				sidecarStreamingResponse: requestContext.transportOutcome?.streamingResponse,
+				sidecarStreamStarted: requestContext.transportOutcome?.streamStarted,
+				sidecarFailureStage: requestContext.transportOutcome?.failureStage,
+				sidecarTimeoutKind: requestContext.transportOutcome?.timeoutKind,
+				sidecarErrorMessage: requestContext.transportOutcome?.errorMessage,
 			}),
 		];
 	}
@@ -186,6 +213,9 @@ export class NetworkManager {
 				firstByteReceived: false,
 				poolRebuilt: false,
 				fallbackUsed: false,
+				sidecarRequired: this.settings.mode === "proxy",
+				sidecarAvailable: this.dispatcher.getSidecarAvailable(),
+				sidecarProxyMode: this.settings.mode === "proxy" ? "required" : undefined,
 				circuitState: this.dispatcher.getCircuitState(this.lastKnownPath),
 				startedAt: Date.now(),
 			} satisfies NetworkRequestContext);
@@ -206,7 +236,22 @@ export class NetworkManager {
 					durationMs,
 					poolRebuilt: fallbackContext.poolRebuilt,
 					fallbackUsed: fallbackContext.fallbackUsed,
+					fallbackReason: fallbackContext.fallbackReason,
+					matchedRoutePolicy: fallbackContext.matchedRoutePolicy,
+					sidecarRequired: fallbackContext.sidecarRequired,
+					sidecarAvailable: fallbackContext.sidecarAvailable,
+					sidecarProxyMode: fallbackContext.sidecarProxyMode,
 					sidecarBaseUrl: fallbackContext.sidecarBaseUrl,
+					sidecarFinalStatus: fallbackContext.transportOutcome?.finalStatus,
+					sidecarResponseStatus: fallbackContext.transportOutcome?.responseStatus,
+					sidecarAttemptCount: fallbackContext.transportOutcome?.attemptCount,
+					sidecarRetryCount: fallbackContext.transportOutcome?.retryCount,
+					sidecarStreamingResponse: fallbackContext.transportOutcome?.streamingResponse,
+					sidecarStreamStarted: fallbackContext.transportOutcome?.streamStarted,
+					sidecarFailureStage: fallbackContext.transportOutcome?.failureStage,
+					sidecarTimeoutKind: fallbackContext.transportOutcome?.timeoutKind,
+					sidecarErrorMessage: fallbackContext.transportOutcome?.errorMessage,
+
 					replaySuppressedReason: fallbackContext.replaySuppressedReason,
 					circuitState: fallbackContext.circuitState,
 					sidecarState: sidecarHealth?.state ?? this.sidecarManager.getState().healthState,
@@ -233,6 +278,9 @@ export class NetworkManager {
 				firstByteReceived: false,
 				poolRebuilt: false,
 				fallbackUsed: false,
+				sidecarRequired: this.settings.mode === "proxy",
+				sidecarAvailable: this.dispatcher.getSidecarAvailable(),
+				sidecarProxyMode: this.settings.mode === "proxy" ? "required" : undefined,
 				circuitState: this.dispatcher.getCircuitState(this.lastKnownPath),
 				startedAt: Date.now(),
 			} satisfies NetworkRequestContext);
@@ -241,8 +289,8 @@ export class NetworkManager {
 			requestContext,
 			this.findTransportErrorCode(context.message),
 		);
-		const allowedAttempts = this.maxAttemptsForClass(requestContext.requestClass, !!requestContext.idempotencyKey);
-		if (suppressedReason || context.attempt >= allowedAttempts) {
+		const allowedAttempts = this.maxAttemptsForClass(requestContext.requestClass);
+		if (suppressedReason || context.attempt > allowedAttempts) {
 			return {
 				shouldRetry: false,
 				delayMs: 0,
@@ -257,15 +305,15 @@ export class NetworkManager {
 			};
 		}
 
-		const alternatePath = requestContext.path === "direct" ? "sidecar" : "direct";
-		const canFallback = alternatePath === "sidecar" ? await this.ensureSidecarAvailable() : true;
-		if (canFallback) {
+		const alternatePath = requestContext.path === "direct" && !requestContext.sidecarRequired ? "sidecar" : undefined;
+		const canFallback = alternatePath === "sidecar" ? await this.ensureSidecarAvailable() : false;
+		if (alternatePath && canFallback) {
 			await this.dispatcher.rebuild(requestContext.path);
 			requestContext.path = alternatePath;
 			this.lastKnownPath = alternatePath;
 			requestContext.fallbackUsed = true;
-			requestContext.sidecarBaseUrl =
-				alternatePath === "sidecar" ? this.sidecarManager.getState().baseUrl : undefined;
+			requestContext.fallbackReason = "retry_route_failover";
+			requestContext.sidecarBaseUrl = this.sidecarManager.getState().baseUrl;
 			this.pendingRetryPaths.set(
 				this.retryRouteKey(requestContext.host, requestContext.requestClass),
 				alternatePath,
@@ -314,8 +362,7 @@ export class NetworkManager {
 
 	private mergeSettings(settings?: NetworkSettings): EffectiveNetworkSettings {
 		return {
-			...DEFAULT_NETWORK_SETTINGS,
-			...settings,
+			mode: settings?.mode ?? DEFAULT_NETWORK_SETTINGS.mode,
 			proxy: { ...DEFAULT_NETWORK_SETTINGS.proxy, ...(settings?.proxy ?? {}) },
 			sidecar: { ...DEFAULT_NETWORK_SETTINGS.sidecar, ...(settings?.sidecar ?? {}) },
 			bypass: { ...DEFAULT_NETWORK_SETTINGS.bypass, ...(settings?.bypass ?? {}) },
@@ -359,17 +406,65 @@ export class NetworkManager {
 				return {
 					requestId,
 					traceId: typeof details.traceId === "string" ? details.traceId : requestId,
-					idempotencyKey: typeof details.idempotencyKey === "string" ? details.idempotencyKey : undefined,
 					requestClass: (details.requestClass as NetworkRequestClass | undefined) ?? "model_pre_first_byte",
 					attempt: typeof details.attemptCount === "number" ? details.attemptCount : 1,
 					host: details.targetHost,
 					method: typeof details.method === "string" ? details.method : "POST",
 					path: (details.selectedPath as NetworkRoutePath | undefined) ?? "direct",
 					routeMode: (details.routeMode as EffectiveNetworkSettings["mode"] | undefined) ?? this.settings.mode,
-					firstByteReceived: details.firstByteReceived === true,
+					firstByteReceived: details.firstByteReceived === true || details.sidecarStreamStarted === true,
 					poolRebuilt: details.poolRebuilt === true,
 					fallbackUsed: details.fallbackUsed === true,
+					fallbackReason:
+						typeof details.fallbackReason === "string"
+							? (details.fallbackReason as NetworkRequestContext["fallbackReason"])
+							: undefined,
+					matchedRoutePolicy:
+						typeof details.matchedRoutePolicy === "string"
+							? (details.matchedRoutePolicy as NetworkRequestContext["matchedRoutePolicy"])
+							: undefined,
+					sidecarRequired: details.sidecarRequired === true,
+					sidecarAvailable: details.sidecarAvailable === true,
+					sidecarProxyMode:
+						details.sidecarProxyMode === "required" || details.sidecarProxyMode === "preferred"
+							? details.sidecarProxyMode
+							: undefined,
 					sidecarBaseUrl: typeof details.sidecarBaseUrl === "string" ? details.sidecarBaseUrl : undefined,
+					transportOutcome:
+						typeof details.sidecarAttemptCount === "number" ||
+						typeof details.sidecarFinalStatus === "string" ||
+						typeof details.sidecarStreamStarted === "boolean"
+							? {
+									owner: "sidecar",
+									requestId,
+									traceId: typeof details.traceId === "string" ? details.traceId : requestId,
+									responseStatus:
+										typeof details.sidecarResponseStatus === "number"
+											? details.sidecarResponseStatus
+											: undefined,
+									attemptCount:
+										typeof details.sidecarAttemptCount === "number" ? details.sidecarAttemptCount : 0,
+									retryCount: typeof details.sidecarRetryCount === "number" ? details.sidecarRetryCount : 0,
+									streamingResponse: details.sidecarStreamingResponse === true,
+									streamStarted: details.sidecarStreamStarted === true,
+									finalStatus:
+										details.sidecarFinalStatus === "success" ||
+										details.sidecarFinalStatus === "transport_error" ||
+										details.sidecarFinalStatus === "stream_error"
+											? details.sidecarFinalStatus
+											: "success",
+									failureStage:
+										typeof details.sidecarFailureStage === "string"
+											? (details.sidecarFailureStage as SidecarTransportOutcome["failureStage"])
+											: undefined,
+									timeoutKind:
+										typeof details.sidecarTimeoutKind === "string"
+											? (details.sidecarTimeoutKind as SidecarTransportOutcome["timeoutKind"])
+											: undefined,
+									errorMessage:
+										typeof details.sidecarErrorMessage === "string" ? details.sidecarErrorMessage : undefined,
+								}
+							: undefined,
 					circuitState: (details.circuitState as NetworkRequestContext["circuitState"] | undefined) ?? "closed",
 					startedAt: Date.now() - (typeof details.durationMs === "number" ? details.durationMs : 0),
 					replaySuppressedReason:
@@ -393,10 +488,7 @@ export class NetworkManager {
 		if (context.requestClass === "never_replay") {
 			return "request_class_never_replay";
 		}
-		if (context.requestClass === "requires_idempotency_key" && !context.idempotencyKey) {
-			return "missing_idempotency_key";
-		}
-		if (context.firstByteReceived) {
+		if (context.firstByteReceived || context.transportOutcome?.streamStarted) {
 			return "after_first_byte";
 		}
 		if (typeof transportErrorCode === "string" && transportErrorCode === "client_error") {
@@ -405,14 +497,12 @@ export class NetworkManager {
 		return undefined;
 	}
 
-	private maxAttemptsForClass(requestClass: NetworkRequestClass, hasIdempotencyKey: boolean): number {
+	private maxAttemptsForClass(requestClass: NetworkRequestClass): number {
+		const configuredMaxAttempts = Math.max(0, this.settings.retry.maxAttempts);
 		switch (requestClass) {
 			case "safe":
-				return 2;
 			case "model_pre_first_byte":
-				return 1;
-			case "requires_idempotency_key":
-				return hasIdempotencyKey ? 1 : 0;
+				return configuredMaxAttempts;
 			case "never_replay":
 				return 0;
 		}
@@ -442,22 +532,50 @@ export class NetworkManager {
 	private retryRouteKey(host: string, requestClass: NetworkRequestClass): string {
 		return `${host.toLowerCase()}:${requestClass}`;
 	}
-}
 
-export function createRequestIdempotencyKey(
-	requestClass: NetworkRequestClass,
-	method: string,
-	url: string,
-	body: BodyInit | null | undefined,
-): string | undefined {
-	if (requestClass !== "requires_idempotency_key") {
-		return undefined;
+	private createStrictProxyUnavailableError(url: URL, requestId: string, traceId: string): Error {
+		const message = "Network proxy sidecar is required but unavailable";
+		const error = new Error(message);
+		const sidecarHealth = this.sidecarManager.getState().health;
+		const context: NetworkRequestContext = {
+			requestId,
+			traceId,
+			requestClass: "model_pre_first_byte",
+			attempt: 1,
+			host: url.hostname,
+			method: "POST",
+			path: "sidecar",
+			routeMode: this.settings.mode,
+			firstByteReceived: false,
+			poolRebuilt: false,
+			fallbackUsed: false,
+			sidecarRequired: true,
+			sidecarAvailable: false,
+			sidecarProxyMode: "required",
+			sidecarBaseUrl: this.sidecarManager.getState().baseUrl,
+			circuitState: this.dispatcher.getCircuitState("sidecar"),
+			startedAt: Date.now(),
+		};
+		Object.assign(error, {
+			code: "strict_proxy_unavailable",
+			networkContext: context,
+			networkSummary: {
+				targetHost: url.hostname,
+				routeMode: this.settings.mode,
+				selectedPath: "sidecar",
+				fallbackUsed: false,
+				durationMs: 0,
+				poolRebuilt: false,
+				sidecarBaseUrl: context.sidecarBaseUrl,
+				failures: [
+					{
+						path: "sidecar",
+						errorCode: "strict_proxy_unavailable",
+						errorMessage: sidecarHealth?.lastError?.message ?? message,
+					},
+				],
+			},
+		});
+		return error;
 	}
-	const bodyDescriptor =
-		typeof body === "string"
-			? body
-			: body && "byteLength" in body && typeof body.byteLength === "number"
-				? String(body.byteLength)
-				: "";
-	return createHash("sha256").update(`${method.toUpperCase()} ${url}\n${bodyDescriptor}`).digest("hex");
 }

@@ -6,11 +6,12 @@ import type {
 	NetworkRequestOptions,
 	NetworkRetrySettings,
 	NetworkRoutePath,
+	NetworkRoutePolicy,
 	RouteDispatcherDecision,
+	SidecarProxyMode,
 } from "./network-types.ts";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
-const PRIVATE_CIDR_PATTERNS = [/^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[0-1])\./];
 
 interface ManagedDispatcherState {
 	circuitState: CircuitState;
@@ -21,7 +22,7 @@ interface ManagedDispatcherState {
 
 export interface NetworkDispatcherController {
 	applySettings(settings: EffectiveNetworkSettings): void;
-	select(url: URL, options: NetworkRequestOptions): RouteDispatcherDecision;
+	select(url: URL, options: NetworkRequestOptions): RouteDispatcherDecision | undefined;
 	noteSuccess(context: NetworkRequestContext): void;
 	noteFailure(context: NetworkRequestContext): void;
 	rebuild(path: NetworkRoutePath): Promise<boolean>;
@@ -38,15 +39,52 @@ function normalizeHost(host: string): string {
 	return host.trim().toLowerCase();
 }
 
-function isPrivateHost(host: string): boolean {
-	const normalized = normalizeHost(host);
-	if (LOOPBACK_HOSTS.has(normalized) || normalized.endsWith(".local")) {
-		return true;
+function parseIpv4Address(value: string): number | undefined {
+	const octets = value.split(".");
+	if (octets.length !== 4) return undefined;
+
+	let result = 0;
+	for (const octet of octets) {
+		if (!/^\d+$/.test(octet)) return undefined;
+		const parsed = Number.parseInt(octet, 10);
+		if (parsed < 0 || parsed > 255) return undefined;
+		result = (result << 8) | parsed;
 	}
-	if (isIP(normalized) === 4) {
-		return PRIVATE_CIDR_PATTERNS.some((pattern) => pattern.test(normalized));
+	return result >>> 0;
+}
+
+function parseIpv4Cidr(cidr: string): { network: number; mask: number } | undefined {
+	const [addressText, prefixText] = cidr.trim().split("/");
+	if (!addressText || prefixText === undefined || prefixText.trim() === "") {
+		return undefined;
 	}
-	return false;
+
+	const prefix = Number.parseInt(prefixText, 10);
+	if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+		return undefined;
+	}
+
+	const address = parseIpv4Address(addressText);
+	if (address === undefined) {
+		return undefined;
+	}
+
+	const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+	return { network: address & mask, mask };
+}
+
+function matchesCidr(host: string, cidr: string): boolean {
+	if (isIP(host) !== 4) {
+		return false;
+	}
+
+	const address = parseIpv4Address(host);
+	const parsedCidr = parseIpv4Cidr(cidr);
+	if (address === undefined || !parsedCidr) {
+		return false;
+	}
+
+	return (address & parsedCidr.mask) === parsedCidr.network;
 }
 
 function matchesRule(host: string, match: string): boolean {
@@ -99,9 +137,9 @@ export class NetworkRouteDispatcher implements NetworkDispatcherController {
 		return this.states[path].circuitState;
 	}
 
-	select(url: URL, options: NetworkRequestOptions): RouteDispatcherDecision {
-		const preferredPaths = this.resolvePreferredPaths(url, options);
-		for (const path of preferredPaths) {
+	select(url: URL, options: NetworkRequestOptions): RouteDispatcherDecision | undefined {
+		const route = this.resolvePreferredRoute(url, options);
+		for (const path of route.paths) {
 			const state = this.states[path];
 			this.maybeTransitionHalfOpen(path);
 			if (state.circuitState === "open") {
@@ -112,7 +150,6 @@ export class NetworkRouteDispatcher implements NetworkDispatcherController {
 				context: {
 					requestId: options.requestId ?? crypto.randomUUID(),
 					traceId: options.traceId ?? crypto.randomUUID(),
-					idempotencyKey: options.idempotencyKey,
 					requestClass: options.requestClass,
 					attempt: 0,
 					host: url.hostname,
@@ -121,34 +158,18 @@ export class NetworkRouteDispatcher implements NetworkDispatcherController {
 					routeMode: this.settings.mode,
 					firstByteReceived: false,
 					poolRebuilt: false,
-					fallbackUsed: path !== preferredPaths[0],
+					fallbackUsed: path !== route.paths[0],
+					matchedRoutePolicy: route.matchedRoutePolicy,
+					sidecarRequired: route.sidecarRequired,
+					sidecarAvailable: this.sidecarAvailable,
+					sidecarProxyMode: path === "sidecar" ? route.sidecarProxyMode : undefined,
 					circuitState: state.circuitState,
 					startedAt: now(),
 				},
 			};
 		}
 
-		const fallbackPath = preferredPaths[0] ?? "direct";
-		const fallbackState = this.states[fallbackPath];
-		return {
-			path: fallbackPath,
-			context: {
-				requestId: options.requestId ?? crypto.randomUUID(),
-				traceId: options.traceId ?? crypto.randomUUID(),
-				idempotencyKey: options.idempotencyKey,
-				requestClass: options.requestClass,
-				attempt: 0,
-				host: url.hostname,
-				method: (options.method ?? "GET").toUpperCase(),
-				path: fallbackPath,
-				routeMode: this.settings.mode,
-				firstByteReceived: false,
-				poolRebuilt: false,
-				fallbackUsed: false,
-				circuitState: fallbackState.circuitState,
-				startedAt: now(),
-			},
-		};
+		return undefined;
 	}
 
 	noteSuccess(context: NetworkRequestContext): void {
@@ -203,42 +224,102 @@ export class NetworkRouteDispatcher implements NetworkDispatcherController {
 		}
 	}
 
-	private resolvePreferredPaths(url: URL, options: NetworkRequestOptions): NetworkRoutePath[] {
+	private resolvePreferredRoute(
+		url: URL,
+		options: NetworkRequestOptions,
+	): {
+		paths: NetworkRoutePath[];
+		matchedRoutePolicy?: NetworkRoutePolicy;
+		sidecarRequired: boolean;
+		sidecarProxyMode?: SidecarProxyMode;
+	} {
 		const host = normalizeHost(url.hostname);
-		if (this.isBypassedHost(host)) {
-			return ["direct"];
-		}
 		const explicit = this.resolveExplicitRule(host);
-		if (explicit === "direct") return ["direct"];
-		if (explicit === "proxy") return this.sidecarAvailable ? ["sidecar"] : ["direct"];
-		if (explicit === "proxy-preferred") return this.sidecarAvailable ? ["sidecar", "direct"] : ["direct"];
-		if (explicit === "direct-preferred") return this.sidecarAvailable ? ["direct", "sidecar"] : ["direct"];
+		if (explicit) {
+			return this.routeForPolicy(explicit);
+		}
 
 		if (this.settings.mode === "direct") {
-			return ["direct"];
+			return { paths: ["direct"], sidecarRequired: false };
 		}
 		if (this.settings.mode === "proxy") {
-			return this.sidecarAvailable ? ["sidecar"] : ["direct"];
+			return {
+				paths: this.sidecarAvailable ? ["sidecar"] : [],
+				sidecarRequired: true,
+				sidecarProxyMode: "required",
+			};
+		}
+		if (this.isBypassedHost(host)) {
+			return { paths: ["direct"], sidecarRequired: false };
 		}
 		if (options.fallbackPaths && options.fallbackPaths.length > 0) {
-			return options.fallbackPaths;
+			return {
+				paths: options.fallbackPaths,
+				sidecarRequired: false,
+				sidecarProxyMode: options.fallbackPaths[0] === "sidecar" ? "preferred" : undefined,
+			};
 		}
-		return this.sidecarAvailable ? ["direct", "sidecar"] : ["direct"];
+		return {
+			paths: this.sidecarAvailable ? ["sidecar", "direct"] : ["direct"],
+			sidecarRequired: false,
+			sidecarProxyMode: this.sidecarAvailable ? "preferred" : undefined,
+		};
 	}
 
 	private isBypassedHost(host: string): boolean {
-		if (isPrivateHost(host)) {
+		if (this.isBypassedSpecialHost(host)) {
 			return true;
 		}
-		return this.settings.bypass.hosts.some((entry) => matchesRule(host, entry));
+		return (
+			this.settings.bypass.hosts.some((entry) => matchesRule(host, entry)) ||
+			this.settings.bypass.cidrs.some((entry) => matchesCidr(host, entry))
+		);
 	}
 
-	private resolveExplicitRule(host: string): "direct" | "proxy" | "direct-preferred" | "proxy-preferred" | undefined {
+	private resolveExplicitRule(host: string): NetworkRoutePolicy | undefined {
 		for (const rule of this.settings.routeRules) {
 			if (matchesRule(host, rule.match)) {
 				return rule.policy;
 			}
 		}
 		return undefined;
+	}
+
+	private routeForPolicy(policy: NetworkRoutePolicy): {
+		paths: NetworkRoutePath[];
+		matchedRoutePolicy: NetworkRoutePolicy;
+		sidecarRequired: boolean;
+		sidecarProxyMode?: SidecarProxyMode;
+	} {
+		switch (policy) {
+			case "direct":
+				return { paths: ["direct"], matchedRoutePolicy: policy, sidecarRequired: false };
+			case "proxy":
+				return {
+					paths: this.sidecarAvailable ? ["sidecar"] : [],
+					matchedRoutePolicy: policy,
+					sidecarRequired: true,
+					sidecarProxyMode: "required",
+				};
+			case "proxy-preferred":
+				return {
+					paths: this.sidecarAvailable ? ["sidecar", "direct"] : ["direct"],
+					matchedRoutePolicy: policy,
+					sidecarRequired: false,
+					sidecarProxyMode: this.sidecarAvailable ? "preferred" : undefined,
+				};
+			case "direct-preferred":
+				return {
+					paths: this.sidecarAvailable ? ["direct", "sidecar"] : ["direct"],
+					matchedRoutePolicy: policy,
+					sidecarRequired: false,
+					sidecarProxyMode: this.sidecarAvailable ? "preferred" : undefined,
+				};
+		}
+	}
+
+	private isBypassedSpecialHost(host: string): boolean {
+		const normalized = normalizeHost(host);
+		return LOOPBACK_HOSTS.has(normalized) || normalized.endsWith(".local");
 	}
 }
