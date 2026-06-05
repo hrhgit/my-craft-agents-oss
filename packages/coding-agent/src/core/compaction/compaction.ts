@@ -5,8 +5,9 @@
  * and after compaction the session is reloaded.
  */
 
+import { createHash } from "node:crypto";
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
 import {
 	convertToLlm,
@@ -106,6 +107,54 @@ export interface CompactionResult<T = unknown> {
 	tokensBefore: number;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
+}
+
+export type CompactionSummaryMode = "serialized" | "append";
+
+export interface CompactionSummaryRequestDebug {
+	mode: CompactionSummaryMode;
+	systemPromptSource: "summary" | "session" | "none";
+	systemPromptHash?: string;
+	systemPromptLength: number;
+	messageCount: number;
+	messageHash: string;
+	firstRoles: Message["role"][];
+	lastRoles: Message["role"][];
+	promptTextHash: string;
+	promptTextLength: number;
+	previousSummaryPresent: boolean;
+	prefixMessageCount?: number;
+	prefixMessageHash?: string;
+	prefixFirstRoles?: Message["role"][];
+	prefixLastRoles?: Message["role"][];
+	sessionIdPresent?: boolean;
+	cacheRetention?: "short";
+}
+
+export interface CompactionSummaryRequestRecord {
+	purpose: "history" | "turnPrefix";
+	context: Context;
+	options: Omit<SimpleStreamOptions, "apiKey" | "headers" | "signal">;
+	durationMs: number;
+	usage?: Usage;
+}
+
+export interface CompactionSummaryStats {
+	durationMs: number;
+	usage?: Usage;
+	request?: CompactionSummaryRequestDebug;
+	requestRecord?: CompactionSummaryRequestRecord;
+	requestRecords?: CompactionSummaryRequestRecord[];
+}
+
+export interface CompactionSummaryVariant<T = unknown> extends CompactionResult<T> {
+	mode: CompactionSummaryMode;
+	stats: CompactionSummaryStats;
+}
+
+export interface CompactionComparisonResult<T = unknown> {
+	selected: CompactionSummaryVariant<T>;
+	variants: Record<CompactionSummaryMode, CompactionSummaryVariant<T>>;
 }
 
 // ============================================================================
@@ -530,8 +579,16 @@ function createSummarizationOptions(
 	headers: Record<string, string> | undefined,
 	signal: AbortSignal | undefined,
 	thinkingLevel: ThinkingLevel | undefined,
+	extra?: Pick<SimpleStreamOptions, "sessionId" | "cacheRetention">,
 ): SimpleStreamOptions {
-	const options: SimpleStreamOptions = { maxTokens, signal, apiKey, headers };
+	const options: SimpleStreamOptions = {
+		maxTokens,
+		signal,
+		apiKey,
+		headers,
+		sessionId: extra?.sessionId,
+		cacheRetention: extra?.cacheRetention,
+	};
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		options.reasoning = thinkingLevel;
 	}
@@ -549,6 +606,55 @@ async function completeSummarization(
 	}
 	const stream = await streamFn(model, context, options);
 	return stream.result();
+}
+
+async function completeSummarizationWithStats(
+	model: Model<any>,
+	context: Context,
+	options: SimpleStreamOptions,
+	streamFn?: StreamFn,
+): Promise<{ response: AssistantMessage; stats: CompactionSummaryStats }> {
+	const startedAt = Date.now();
+	const response = await completeSummarization(model, context, options, streamFn);
+	return {
+		response,
+		stats: {
+			durationMs: Date.now() - startedAt,
+			usage: response.usage,
+		},
+	};
+}
+
+function buildRequestRecord(
+	purpose: CompactionSummaryRequestRecord["purpose"],
+	context: Context,
+	options: SimpleStreamOptions,
+	durationMs: number,
+	usage?: Usage,
+): CompactionSummaryRequestRecord {
+	return {
+		purpose,
+		context,
+		options: {
+			maxTokens: options.maxTokens,
+			reasoning: options.reasoning,
+			sessionId: options.sessionId,
+			cacheRetention: options.cacheRetention,
+		},
+		durationMs,
+		usage,
+	};
+}
+
+function extractAssistantText(response: AssistantMessage, errorPrefix: string): string {
+	if (response.stopReason === "error") {
+		throw new Error(`${errorPrefix}: ${response.errorMessage || "Unknown error"}`);
+	}
+
+	return response.content
+		.filter((c): c is { type: "text"; text: string } => c.type === "text")
+		.map((c) => c.text)
+		.join("\n");
 }
 
 /**
@@ -572,23 +678,11 @@ export async function generateSummary(
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
 
-	// Use update prompt if we have a previous summary, otherwise initial prompt
-	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
-	if (customInstructions) {
-		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
-	}
-
 	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
 	const llmMessages = convertToLlm(currentMessages);
 	const conversationText = serializeConversation(llmMessages);
-
-	// Build the prompt with conversation wrapped in tags
-	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-	if (previousSummary) {
-		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
-	}
-	promptText += basePrompt;
+	const promptText = buildSerializedSummaryPromptText(conversationText, customInstructions, previousSummary);
 
 	const summarizationMessages = [
 		{
@@ -599,24 +693,262 @@ export async function generateSummary(
 	];
 
 	const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel);
+	const context: Context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
 
-	const response = await completeSummarization(
-		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		completionOptions,
-		streamFn,
-	);
+	const response = await completeSummarization(model, context, completionOptions, streamFn);
 
-	if (response.stopReason === "error") {
-		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
+	return extractAssistantText(response, "Summarization failed");
+}
+
+const APPEND_SUMMARIZATION_PROMPT = `Do NOT continue this conversation.
+Do NOT answer the user's requests.
+Do NOT call tools.
+Only produce a structured summary of the conversation so far using the exact format below.
+
+Use this EXACT format:
+
+## Goal
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
+
+## Constraints & Preferences
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+### Done
+- [x] [Completed tasks/changes]
+
+### In Progress
+- [ ] [Current work]
+
+### Blocked
+- [Issues preventing progress, if any]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Ordered list of what should happen next]
+
+## Critical Context
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+
+const APPEND_UPDATE_SUMMARIZATION_PROMPT = `Do NOT continue this conversation.
+Do NOT answer the user's requests.
+Do NOT call tools.
+Only update the structured summary using the conversation above and the previous summary below.
+
+<previous-summary>
+{previousSummary}
+</previous-summary>
+
+Rules:
+- Preserve all still-relevant information from the previous summary
+- Add newly completed work, decisions, and context
+- Move items from In Progress to Done when completed
+- Update Next Steps to reflect the current state
+- Preserve exact file paths, function names, and error messages
+
+Use the exact same summary format as before.`;
+
+function stableHash(value: unknown): string {
+	return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+}
+
+function normalizeMessageForDebug(message: Message): Record<string, unknown> {
+	const normalized: Record<string, unknown> = { role: message.role };
+	if ("content" in message) {
+		normalized.content = message.content;
+	}
+	if ("toolCallId" in message) {
+		normalized.toolCallId = message.toolCallId;
+	}
+	if ("isError" in message) {
+		normalized.isError = message.isError;
+	}
+	return normalized;
+}
+
+function summarizeRoles(messages: Message[]): {
+	firstRoles: Message["role"][];
+	lastRoles: Message["role"][];
+} {
+	const roles = messages.map((message) => message.role);
+	return {
+		firstRoles: roles.slice(0, 3),
+		lastRoles: roles.slice(-3),
+	};
+}
+
+function buildSerializedSummaryPromptText(
+	conversationText: string,
+	customInstructions?: string,
+	previousSummary?: string,
+): string {
+	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+	if (customInstructions) {
+		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
-	const textContent = response.content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join("\n");
+	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+	if (previousSummary) {
+		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
+	}
+	promptText += basePrompt;
+	return promptText;
+}
 
-	return textContent;
+function buildAppendSummaryPromptText(customInstructions?: string, previousSummary?: string): string {
+	let promptText = previousSummary
+		? APPEND_UPDATE_SUMMARIZATION_PROMPT.replace("{previousSummary}", previousSummary)
+		: APPEND_SUMMARIZATION_PROMPT;
+	if (customInstructions) {
+		promptText = `${promptText}\n\nAdditional focus: ${customInstructions}`;
+	}
+	return promptText;
+}
+
+function buildSummaryRequestDebug(args: {
+	mode: CompactionSummaryMode;
+	systemPrompt?: string;
+	systemPromptSource: "summary" | "session" | "none";
+	requestMessages: Message[];
+	promptText: string;
+	previousSummary?: string;
+	prefixMessages?: Message[];
+	sessionId?: string;
+	cacheRetention?: "short";
+}): CompactionSummaryRequestDebug {
+	const { firstRoles, lastRoles } = summarizeRoles(args.requestMessages);
+	const prefixRoles = args.prefixMessages ? summarizeRoles(args.prefixMessages) : undefined;
+	return {
+		mode: args.mode,
+		systemPromptSource: args.systemPromptSource,
+		systemPromptHash: args.systemPrompt ? stableHash(args.systemPrompt) : undefined,
+		systemPromptLength: args.systemPrompt?.length ?? 0,
+		messageCount: args.requestMessages.length,
+		messageHash: stableHash(args.requestMessages.map((message) => normalizeMessageForDebug(message))),
+		firstRoles,
+		lastRoles,
+		promptTextHash: stableHash(args.promptText),
+		promptTextLength: args.promptText.length,
+		previousSummaryPresent: !!args.previousSummary,
+		prefixMessageCount: args.prefixMessages?.length,
+		prefixMessageHash: args.prefixMessages
+			? stableHash(args.prefixMessages.map((message) => normalizeMessageForDebug(message)))
+			: undefined,
+		prefixFirstRoles: prefixRoles?.firstRoles,
+		prefixLastRoles: prefixRoles?.lastRoles,
+		sessionIdPresent: args.sessionId ? true : undefined,
+		cacheRetention: args.cacheRetention,
+	};
+}
+
+function buildSerializedSummaryRequestDebug(
+	currentMessages: AgentMessage[],
+	customInstructions?: string,
+	previousSummary?: string,
+): CompactionSummaryRequestDebug {
+	const llmMessages = convertToLlm(currentMessages);
+	const conversationText = serializeConversation(llmMessages);
+	const promptText = buildSerializedSummaryPromptText(conversationText, customInstructions, previousSummary);
+	const requestMessages: Message[] = [
+		{
+			role: "user",
+			content: [{ type: "text", text: promptText }],
+			timestamp: 0,
+		},
+	];
+	return buildSummaryRequestDebug({
+		mode: "serialized",
+		systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
+		systemPromptSource: "summary",
+		requestMessages,
+		promptText,
+		previousSummary,
+	});
+}
+
+function buildAppendSummaryRequestDebug(
+	prefixMessages: Message[],
+	customInstructions?: string,
+	previousSummary?: string,
+	options?: { systemPrompt?: string; sessionId?: string; cacheRetention?: "short" },
+): CompactionSummaryRequestDebug {
+	const promptText = buildAppendSummaryPromptText(customInstructions, previousSummary);
+	const requestMessages: Message[] = [
+		...prefixMessages,
+		{
+			role: "user",
+			content: [{ type: "text", text: promptText }],
+			timestamp: 0,
+		},
+	];
+	return buildSummaryRequestDebug({
+		mode: "append",
+		systemPrompt: options?.systemPrompt,
+		systemPromptSource: options?.systemPrompt ? "session" : "none",
+		requestMessages,
+		promptText,
+		previousSummary,
+		prefixMessages,
+		sessionId: options?.sessionId,
+		cacheRetention: options?.cacheRetention,
+	});
+}
+
+export async function generateSummaryViaAppendPrompt(
+	prefixMessages: Message[],
+	model: Model<any>,
+	reserveTokens: number,
+	apiKey: string | undefined,
+	headers?: Record<string, string>,
+	signal?: AbortSignal,
+	customInstructions?: string,
+	previousSummary?: string,
+	thinkingLevel?: ThinkingLevel,
+	streamFn?: StreamFn,
+	options?: { systemPrompt?: string; sessionId?: string; cacheRetention?: "short"; tools?: Context["tools"] },
+): Promise<{ summary: string; stats: CompactionSummaryStats }> {
+	const maxTokens = Math.min(
+		Math.floor(0.8 * reserveTokens),
+		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+	);
+
+	const promptText = buildAppendSummaryPromptText(customInstructions, previousSummary);
+
+	const summarizationMessages = [
+		...prefixMessages,
+		{
+			role: "user" as const,
+			content: [{ type: "text" as const, text: promptText }],
+			timestamp: Date.now(),
+		},
+	];
+
+	const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel, {
+		sessionId: options?.sessionId,
+		cacheRetention: options?.cacheRetention,
+	});
+	const context: Context = {
+		systemPrompt: options?.systemPrompt,
+		messages: summarizationMessages,
+		tools: options?.tools,
+	};
+
+	const { response, stats } = await completeSummarizationWithStats(model, context, completionOptions, streamFn);
+
+	return {
+		summary: extractAssistantText(response, "Append summarization failed"),
+		stats: {
+			...stats,
+			requestRecord: buildRequestRecord("history", context, completionOptions, stats.durationMs, stats.usage),
+			requestRecords: [buildRequestRecord("history", context, completionOptions, stats.durationMs, stats.usage)],
+		},
+	};
 }
 
 // ============================================================================
@@ -626,6 +958,8 @@ export async function generateSummary(
 export interface CompactionPreparation {
 	/** UUID of first entry to keep */
 	firstKeptEntryId: string;
+	/** Latest compaction summary message that normal session context would prefix, if any */
+	previousSummaryMessage?: AgentMessage;
 	/** Messages that will be summarized and discarded */
 	messagesToSummarize: AgentMessage[];
 	/** Messages that will be turned into turn prefix summary (if splitting) */
@@ -658,10 +992,16 @@ export function prepareCompaction(
 	}
 
 	let previousSummary: string | undefined;
+	let previousSummaryMessage: AgentMessage | undefined;
 	let boundaryStart = 0;
 	if (prevCompactionIndex >= 0) {
 		const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
 		previousSummary = prevCompaction.summary;
+		previousSummaryMessage = createCompactionSummaryMessage(
+			prevCompaction.summary,
+			prevCompaction.tokensBefore,
+			prevCompaction.timestamp,
+		);
 		const firstKeptEntryIndex = pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId);
 		boundaryStart = firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : prevCompactionIndex + 1;
 	}
@@ -708,6 +1048,7 @@ export function prepareCompaction(
 
 	return {
 		firstKeptEntryId,
+		previousSummaryMessage,
 		messagesToSummarize,
 		turnPrefixMessages,
 		isSplitTurn: cutPoint.isSplitTurn,
@@ -744,8 +1085,9 @@ Be concise. Focus on what's needed to understand the kept suffix.`;
  * @param preparation - Pre-calculated preparation from prepareCompaction()
  * @param customInstructions - Optional custom focus for the summary
  */
-export async function compact(
+async function compactWithMode(
 	preparation: CompactionPreparation,
+	mode: CompactionSummaryMode,
 	model: Model<any>,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
@@ -753,9 +1095,17 @@ export async function compact(
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
-): Promise<CompactionResult> {
+	options?: {
+		systemPrompt?: string;
+		sessionId?: string;
+		cacheRetention?: "short";
+		tools?: Context["tools"];
+		convertMessages?: (messages: AgentMessage[]) => Promise<Message[]> | Message[];
+	},
+): Promise<CompactionSummaryVariant> {
 	const {
 		firstKeptEntryId,
+		previousSummaryMessage,
 		messagesToSummarize,
 		turnPrefixMessages,
 		isSplitTurn,
@@ -765,53 +1115,133 @@ export async function compact(
 		settings,
 	} = preparation;
 
-	// Generate summaries (can be parallel if both needed) and merge into one
-	let summary: string;
-
-	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		// Generate both summaries in parallel
-		const [historyResult, turnPrefixResult] = await Promise.all([
-			messagesToSummarize.length > 0
-				? generateSummary(
-						messagesToSummarize,
-						model,
-						settings.reserveTokens,
-						apiKey,
-						headers,
-						signal,
-						customInstructions,
-						previousSummary,
-						thinkingLevel,
-						streamFn,
-					)
-				: Promise.resolve("No prior history."),
-			generateTurnPrefixSummary(
-				turnPrefixMessages,
+	const generateHistory = async (): Promise<{ text: string; stats: CompactionSummaryStats }> => {
+		if (messagesToSummarize.length === 0) {
+			return { text: "No prior history.", stats: { durationMs: 0 } };
+		}
+		if (mode === "append") {
+			const appendPrefixSource = previousSummaryMessage
+				? [previousSummaryMessage, ...messagesToSummarize]
+				: messagesToSummarize;
+			const appendPrefixMessages = options?.convertMessages
+				? await options.convertMessages(appendPrefixSource)
+				: convertToLlm(appendPrefixSource);
+			const request = buildAppendSummaryRequestDebug(appendPrefixMessages, customInstructions, previousSummary, {
+				systemPrompt: options?.systemPrompt,
+				sessionId: options?.sessionId,
+				cacheRetention: options?.cacheRetention,
+			});
+			const result = await generateSummaryViaAppendPrompt(
+				appendPrefixMessages,
 				model,
 				settings.reserveTokens,
 				apiKey,
 				headers,
 				signal,
+				customInstructions,
+				previousSummary,
 				thinkingLevel,
 				streamFn,
-			),
-		]);
-		// Merge into single summary
-		summary = `${historyResult}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult}`;
-	} else {
-		// Just generate history summary
-		summary = await generateSummary(
-			messagesToSummarize,
-			model,
-			settings.reserveTokens,
-			apiKey,
-			headers,
-			signal,
-			customInstructions,
-			previousSummary,
-			thinkingLevel,
-			streamFn,
+				{
+					systemPrompt: options?.systemPrompt,
+					sessionId: options?.sessionId,
+					cacheRetention: options?.cacheRetention,
+					tools: options?.tools,
+				},
+			);
+			return { text: result.summary, stats: { ...result.stats, request } };
+		}
+		const request = buildSerializedSummaryRequestDebug(messagesToSummarize, customInstructions, previousSummary);
+		const startedAt = Date.now();
+		const maxTokens = Math.min(
+			Math.floor(0.8 * settings.reserveTokens),
+			model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 		);
+		const llmMessages = convertToLlm(messagesToSummarize);
+		const conversationText = serializeConversation(llmMessages);
+		const promptText = buildSerializedSummaryPromptText(conversationText, customInstructions, previousSummary);
+		const summarizationMessages = [
+			{
+				role: "user" as const,
+				content: [{ type: "text" as const, text: promptText }],
+				timestamp: Date.now(),
+			},
+		];
+		const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel);
+		const context: Context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
+		const response = await completeSummarization(model, context, completionOptions, streamFn);
+		const durationMs = Date.now() - startedAt;
+		const text = extractAssistantText(response, "Summarization failed");
+		return {
+			text,
+			stats: {
+				durationMs,
+				usage: response.usage,
+				request,
+				requestRecord: buildRequestRecord("history", context, completionOptions, durationMs, response.usage),
+				requestRecords: [buildRequestRecord("history", context, completionOptions, durationMs, response.usage)],
+			},
+		};
+	};
+
+	const generateTurnPrefix = async (): Promise<{ text: string; stats: CompactionSummaryStats }> => {
+		const startedAt = Date.now();
+		const maxTokens = Math.min(
+			Math.floor(0.5 * settings.reserveTokens),
+			model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+		);
+		const llmMessages = convertToLlm(turnPrefixMessages);
+		const conversationText = serializeConversation(llmMessages);
+		const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
+		const summarizationMessages = [
+			{
+				role: "user" as const,
+				content: [{ type: "text" as const, text: promptText }],
+				timestamp: Date.now(),
+			},
+		];
+		const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel);
+		const context: Context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
+		const response = await completeSummarization(model, context, completionOptions, streamFn);
+		const durationMs = Date.now() - startedAt;
+		if (response.stopReason === "error") {
+			throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
+		}
+		const text = response.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("\n");
+		return {
+			text,
+			stats: {
+				durationMs,
+				usage: response.usage,
+				requestRecord: buildRequestRecord("turnPrefix", context, completionOptions, durationMs, response.usage),
+				requestRecords: [buildRequestRecord("turnPrefix", context, completionOptions, durationMs, response.usage)],
+			},
+		};
+	};
+
+	let summary: string;
+	let stats: CompactionSummaryStats;
+
+	if (isSplitTurn && turnPrefixMessages.length > 0) {
+		const [historyResult, turnPrefixResult] = await Promise.all([generateHistory(), generateTurnPrefix()]);
+		summary = `${historyResult.text}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
+		stats = {
+			durationMs: historyResult.stats.durationMs + turnPrefixResult.stats.durationMs,
+			usage: historyResult.stats.usage,
+			request: historyResult.stats.request,
+			requestRecord: historyResult.stats.requestRecord,
+			requestRecords: [
+				...(historyResult.stats.requestRecords ?? []),
+				...(turnPrefixResult.stats.requestRecords ?? []),
+			],
+		};
+	} else {
+		const historyResult = await generateHistory();
+		summary = historyResult.text;
+		stats = historyResult.stats;
 	}
 
 	// Compute file lists and append to summary
@@ -823,54 +1253,116 @@ export async function compact(
 	}
 
 	return {
+		mode,
 		summary,
 		firstKeptEntryId,
 		tokensBefore,
 		details: { readFiles, modifiedFiles } as CompactionDetails,
+		stats,
 	};
 }
 
-/**
- * Generate a summary for a turn prefix (when splitting a turn).
- */
-async function generateTurnPrefixSummary(
-	messages: AgentMessage[],
+export async function compact(
+	preparation: CompactionPreparation,
 	model: Model<any>,
-	reserveTokens: number,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
+	customInstructions?: string,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
-): Promise<string> {
-	const maxTokens = Math.min(
-		Math.floor(0.5 * reserveTokens),
-		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
-	); // Smaller budget for turn prefix
-	const llmMessages = convertToLlm(messages);
-	const conversationText = serializeConversation(llmMessages);
-	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
-
-	const response = await completeSummarization(
+): Promise<CompactionSummaryVariant> {
+	return compactWithMode(
+		preparation,
+		"serialized",
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel),
+		apiKey,
+		headers,
+		customInstructions,
+		signal,
+		thinkingLevel,
 		streamFn,
 	);
+}
 
-	if (response.stopReason === "error") {
-		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
-	}
+export async function compactCache(
+	preparation: CompactionPreparation,
+	model: Model<any>,
+	apiKey: string | undefined,
+	headers?: Record<string, string>,
+	customInstructions?: string,
+	signal?: AbortSignal,
+	thinkingLevel?: ThinkingLevel,
+	streamFn?: StreamFn,
+	options?: {
+		systemPrompt?: string;
+		sessionId?: string;
+		cacheRetention?: "short";
+		tools?: Context["tools"];
+		convertMessages?: (messages: AgentMessage[]) => Promise<Message[]> | Message[];
+	},
+): Promise<CompactionSummaryVariant> {
+	return compactWithMode(
+		preparation,
+		"append",
+		model,
+		apiKey,
+		headers,
+		customInstructions,
+		signal,
+		thinkingLevel,
+		streamFn,
+		options,
+	);
+}
 
-	return response.content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join("\n");
+export async function compactBoth(
+	preparation: CompactionPreparation,
+	model: Model<any>,
+	apiKey: string | undefined,
+	headers?: Record<string, string>,
+	customInstructions?: string,
+	signal?: AbortSignal,
+	thinkingLevel?: ThinkingLevel,
+	streamFn?: StreamFn,
+	options?: {
+		systemPrompt?: string;
+		sessionId?: string;
+		cacheRetention?: "short";
+		tools?: Context["tools"];
+		convertMessages?: (messages: AgentMessage[]) => Promise<Message[]> | Message[];
+	},
+): Promise<CompactionComparisonResult> {
+	const [serialized, append] = await Promise.all([
+		compactWithMode(
+			preparation,
+			"serialized",
+			model,
+			apiKey,
+			headers,
+			customInstructions,
+			signal,
+			thinkingLevel,
+			streamFn,
+		),
+		compactWithMode(
+			preparation,
+			"append",
+			model,
+			apiKey,
+			headers,
+			customInstructions,
+			signal,
+			thinkingLevel,
+			streamFn,
+			options,
+		),
+	]);
+	return {
+		selected: serialized,
+		variants: {
+			serialized,
+			append,
+		},
+	};
 }

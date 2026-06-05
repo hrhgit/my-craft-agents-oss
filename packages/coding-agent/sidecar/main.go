@@ -125,6 +125,18 @@ type cancelOnCloseReadCloser struct {
 	cancel context.CancelFunc
 }
 
+type proxyReachabilityCacheEntry struct {
+	reachable bool
+	expiresAt time.Time
+}
+
+type proxyReachabilityCache struct {
+	mu      sync.Mutex
+	entries map[string]proxyReachabilityCacheEntry
+}
+
+var proxyStatusCache = &proxyReachabilityCache{entries: map[string]proxyReachabilityCacheEntry{}}
+
 func (r *cancelOnCloseReadCloser) Close() error {
 	err := r.ReadCloser.Close()
 	r.cancel()
@@ -297,17 +309,108 @@ func proxyFuncForPayload(payload fetchRequest) func(*http.Request) (*url.URL, er
 		if payload.ProxyMode != "required" && shouldBypassProxy(req.URL.Hostname(), payload) {
 			return nil, nil
 		}
-		for _, candidate := range payload.ProxyCandidates {
-			parsed, err := url.Parse(strings.TrimSpace(candidate))
-			if err == nil && parsed.Scheme != "" && parsed.Host != "" {
-				return parsed, nil
-			}
+		proxyURL, configured := reachableProxyCandidate(payload)
+		if proxyURL != nil {
+			return proxyURL, nil
 		}
 		if payload.ProxyMode == "required" {
+			if configured {
+				return nil, errors.New("required proxy route has no reachable proxy candidates")
+			}
 			return nil, errors.New("required proxy route has no configured proxy candidates")
 		}
 		return nil, nil
 	}
+}
+
+func reachableProxyCandidate(payload fetchRequest) (*url.URL, bool) {
+	configured := false
+	for _, candidate := range payload.ProxyCandidates {
+		parsed, address, ok := parseProxyCandidate(candidate)
+		if !ok {
+			continue
+		}
+		configured = true
+		if proxyStatusCache.isReachable(address, payload) {
+			return parsed, true
+		}
+	}
+	return nil, configured
+}
+
+func parseProxyCandidate(candidate string) (*url.URL, string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(candidate))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, "", false
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return nil, "", false
+	}
+	port := parsed.Port()
+	if port == "" {
+		port = defaultProxyPort(parsed.Scheme)
+	}
+	if port == "" {
+		return nil, "", false
+	}
+	return parsed, net.JoinHostPort(host, port), true
+}
+
+func defaultProxyPort(scheme string) string {
+	switch strings.ToLower(scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	case "socks5", "socks5h":
+		return "1080"
+	default:
+		return ""
+	}
+}
+
+func (c *proxyReachabilityCache) isReachable(address string, payload fetchRequest) bool {
+	cacheTTL := time.Duration(payload.ProxyStatusCacheMs) * time.Millisecond
+	if cacheTTL > 0 {
+		if reachable, ok := c.cached(address); ok {
+			return reachable
+		}
+	}
+	reachable := probeTCP(address, durationOrDefault(payload.ProxyProbeTimeoutMs, 500*time.Millisecond))
+	if cacheTTL > 0 {
+		c.store(address, reachable, cacheTTL)
+	}
+	return reachable
+}
+
+func (c *proxyReachabilityCache) cached(address string) (bool, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[address]
+	if !ok {
+		return false, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(c.entries, address)
+		return false, false
+	}
+	return entry.reachable, true
+}
+
+func (c *proxyReachabilityCache) store(address string, reachable bool, ttl time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[address] = proxyReachabilityCacheEntry{reachable: reachable, expiresAt: time.Now().Add(ttl)}
+}
+
+func probeTCP(address string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", address, timeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func handleFetch(state *sidecarState, client *http.Client, w http.ResponseWriter, r *http.Request) {

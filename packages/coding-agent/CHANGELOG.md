@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added experimental `/compact`, `/compact-ori`, and `/compact-cache` compaction modes so default/manual and auto compaction can store side-by-side original-vs-cache-friendly summary comparisons with timing and token usage metadata.
 - Added a dedicated `app.message.steer` shortcut for queuing steering messages without changing editor submit behavior.
 - Added `ctrl+y` redo support for the interactive editor.
 - Added the local `web_fetch` built-in tool and a persisted `webSearch` setting for supported provider built-in web search.
