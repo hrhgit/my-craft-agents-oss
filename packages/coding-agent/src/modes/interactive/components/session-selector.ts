@@ -54,6 +54,7 @@ function canonicalizePath(path: string | undefined): string | undefined {
 }
 
 class SessionSelectorHeader implements Component {
+	private title: string;
 	private scope: SessionScope;
 	private sortMode: SortMode;
 	private nameFilter: NameFilter;
@@ -66,7 +67,14 @@ class SessionSelectorHeader implements Component {
 	private statusTimeout: ReturnType<typeof setTimeout> | null = null;
 	private showRenameHint = false;
 
-	constructor(scope: SessionScope, sortMode: SortMode, nameFilter: NameFilter, requestRender: () => void) {
+	constructor(
+		title: string,
+		scope: SessionScope,
+		sortMode: SortMode,
+		nameFilter: NameFilter,
+		requestRender: () => void,
+	) {
+		this.title = title;
 		this.scope = scope;
 		this.sortMode = sortMode;
 		this.nameFilter = nameFilter;
@@ -128,7 +136,7 @@ class SessionSelectorHeader implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const title = this.scope === "current" ? "Resume Session (Current Folder)" : "Resume Session (All)";
+		const title = this.scope === "current" ? `${this.title} (Current Folder)` : `${this.title} (All)`;
 		const leftText = theme.bold(title);
 
 		const sortLabel = this.sortMode === "threaded" ? "Threaded" : this.sortMode === "recent" ? "Recent" : "Fuzzy";
@@ -743,17 +751,26 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		options?: {
 			renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
 			showRenameHint?: boolean;
+			initialScope?: SessionScope;
+			title?: string;
 			keybindings?: KeybindingsManager;
 		},
 		currentSessionFilePath?: string,
 	) {
 		super();
 		this.keybindings = options?.keybindings ?? KeybindingsManager.create();
+		this.scope = options?.initialScope ?? "current";
 		this.currentSessionsLoader = currentSessionsLoader;
 		this.allSessionsLoader = allSessionsLoader;
 		this.onCancel = onCancel;
 		this.requestRender = requestRender;
-		this.header = new SessionSelectorHeader(this.scope, this.sortMode, this.nameFilter, this.requestRender);
+		this.header = new SessionSelectorHeader(
+			options?.title ?? "Resume Session",
+			this.scope,
+			this.sortMode,
+			this.nameFilter,
+			this.requestRender,
+		);
 		const renameSession = options?.renameSession;
 		this.renameSession = renameSession;
 		this.canRename = !!renameSession;
@@ -843,12 +860,8 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			this.requestRender();
 		};
 
-		// Start loading current sessions immediately
-		this.loadCurrentSessions();
-	}
-
-	private loadCurrentSessions(): void {
-		void this.loadScope("current", "initial");
+		// Start loading the initial scope immediately.
+		void this.loadScope(this.scope, "initial");
 	}
 
 	private enterRenameMode(sessionPath: string, currentName: string | undefined): void {

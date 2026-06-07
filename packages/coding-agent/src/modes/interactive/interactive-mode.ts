@@ -82,8 +82,14 @@ import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScop
 import { DefaultPackageManager } from "../../core/package-manager.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
+import {
+	type ActiveSessionRecord,
+	type ActiveSessionStatus,
+	SessionActivityRegistry,
+	type WorkspaceHistoryRecord,
+} from "../../core/session-activity-registry.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
-import { type SessionContext, SessionManager } from "../../core/session-manager.ts";
+import { type SessionContext, type SessionInfo, SessionManager } from "../../core/session-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -124,6 +130,7 @@ import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { WorkspaceSelectorComponent, type WorkspaceSelectorKnownWorkspace } from "./components/workspace-selector.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -225,6 +232,135 @@ export function formatResumeCommand(sessionManager: SessionManager): string | un
 	return args.join(" ");
 }
 
+interface WorkspaceSummary {
+	cwd: string;
+	sessionCount: number;
+	activeCount: number;
+	runningCount: number;
+	current: boolean;
+	firstUsedAt?: string;
+	lastUsedAt?: string;
+	lastSessionModified?: Date;
+}
+
+function pathKey(targetPath: string): string {
+	const resolved = path.resolve(targetPath);
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function isExistingDirectory(targetPath: string): boolean {
+	try {
+		return fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+function shortenHomePath(targetPath: string): string {
+	const home = os.homedir();
+	const normalizedHome = path.normalize(home);
+	const normalizedTarget = path.normalize(targetPath);
+	if (normalizedTarget === normalizedHome) return "~";
+	if (process.platform === "win32") {
+		const prefix = `${normalizedHome.toLowerCase()}${path.sep}`;
+		if (normalizedTarget.toLowerCase().startsWith(prefix)) {
+			return `~${normalizedTarget.slice(normalizedHome.length)}`;
+		}
+		return targetPath;
+	}
+	if (normalizedTarget.startsWith(`${normalizedHome}${path.sep}`)) {
+		return `~${normalizedTarget.slice(normalizedHome.length)}`;
+	}
+	return targetPath;
+}
+
+function cleanOneLine(text: string | undefined, maxLength: number): string {
+	const clean = (text ?? "").replace(/\s+/g, " ").trim();
+	if (clean.length <= maxLength) return clean;
+	return `${clean.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function formatActivityTimestamp(value: string | Date | undefined): string {
+	if (!value) return "unknown";
+	const date = value instanceof Date ? value : new Date(value);
+	if (Number.isNaN(date.getTime())) return "unknown";
+	const pad = (part: number) => part.toString().padStart(2, "0");
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function sessionDisplayTitle(session: SessionInfo): string {
+	return cleanOneLine(session.name || session.firstMessage || session.id, 80) || session.id;
+}
+
+function addWorkspaceSummary(
+	workspaces: Map<string, WorkspaceSummary>,
+	cwd: string,
+	currentCwd: string,
+): WorkspaceSummary {
+	const key = pathKey(cwd);
+	const existing = workspaces.get(key);
+	if (existing) return existing;
+	const summary: WorkspaceSummary = {
+		cwd: path.resolve(cwd),
+		sessionCount: 0,
+		activeCount: 0,
+		runningCount: 0,
+		current: pathKey(cwd) === pathKey(currentCwd),
+	};
+	workspaces.set(key, summary);
+	return summary;
+}
+
+function buildWorkspaceSummaries(
+	sessions: SessionInfo[],
+	history: WorkspaceHistoryRecord[],
+	activeSessions: ActiveSessionRecord[],
+	currentCwd: string,
+): WorkspaceSummary[] {
+	const workspaces = new Map<string, WorkspaceSummary>();
+	for (const session of sessions) {
+		if (!session.cwd) continue;
+		if (!isExistingDirectory(session.cwd)) continue;
+		const summary = addWorkspaceSummary(workspaces, session.cwd, currentCwd);
+		summary.sessionCount++;
+		if (!summary.lastSessionModified || session.modified > summary.lastSessionModified) {
+			summary.lastSessionModified = session.modified;
+		}
+	}
+	for (const workspace of history) {
+		if (!isExistingDirectory(workspace.cwd)) continue;
+		const summary = addWorkspaceSummary(workspaces, workspace.cwd, currentCwd);
+		summary.firstUsedAt =
+			summary.firstUsedAt && summary.firstUsedAt < workspace.firstUsedAt
+				? summary.firstUsedAt
+				: workspace.firstUsedAt;
+		summary.lastUsedAt =
+			summary.lastUsedAt && summary.lastUsedAt > workspace.lastUsedAt ? summary.lastUsedAt : workspace.lastUsedAt;
+	}
+	for (const activeSession of activeSessions) {
+		if (!isExistingDirectory(activeSession.cwd)) continue;
+		const summary = addWorkspaceSummary(workspaces, activeSession.cwd, currentCwd);
+		summary.activeCount++;
+		if (activeSession.status === "running") summary.runningCount++;
+	}
+	const timestamp = (workspace: WorkspaceSummary): number => {
+		const values = [workspace.lastSessionModified?.toISOString(), workspace.lastUsedAt]
+			.filter((value): value is string => typeof value === "string")
+			.map((value) => new Date(value).getTime())
+			.filter((value) => !Number.isNaN(value));
+		return values.length > 0 ? Math.max(...values) : 0;
+	};
+	return Array.from(workspaces.values()).sort((a, b) => {
+		if (a.current !== b.current) return a.current ? -1 : 1;
+		if (a.runningCount !== b.runningCount) return b.runningCount - a.runningCount;
+		if (a.activeCount !== b.activeCount) return b.activeCount - a.activeCount;
+		return timestamp(b) - timestamp(a);
+	});
+}
+
+const SESSION_ACTIVITY_HEARTBEAT_MS = 30_000;
+const SESSION_ACTIVITY_LEASE_MS = 90_000;
+
 function hasDefaultModelProvider(providerId: string): providerId is keyof typeof defaultModelPerProvider {
 	return providerId in defaultModelPerProvider;
 }
@@ -282,6 +418,9 @@ export class InteractiveMode {
 	private footerDataProvider: FooterDataProvider;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
+	private sessionActivityRegistry: SessionActivityRegistry;
+	private sessionActivityId = `pi-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+	private sessionActivityHeartbeat: ReturnType<typeof setInterval> | undefined;
 	private version: string;
 	private isInitialized = false;
 	private onInputCallback?: (input: SubmittedInput) => void;
@@ -392,6 +531,7 @@ export class InteractiveMode {
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
 		this.options = options;
+		this.sessionActivityRegistry = SessionActivityRegistry.create(runtimeHost.services.agentDir);
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
 			this.resetExtensionUI();
 		});
@@ -744,6 +884,8 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
+		await this.publishSessionActivity(this.session.isStreaming ? "running" : "idle");
+		this.startSessionActivityHeartbeat();
 
 		// Start version check asynchronously
 		checkForNewPiVersion(this.version).then((newRelease) => {
@@ -814,6 +956,58 @@ export class InteractiveMode {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
 			}
+		}
+	}
+
+	private getCurrentModelLabel(): string | undefined {
+		const model = this.session.model;
+		return model ? `${model.provider}/${model.id}` : undefined;
+	}
+
+	private getSessionActivityStatus(): ActiveSessionStatus {
+		return this.session.isStreaming ? "running" : "idle";
+	}
+
+	private startSessionActivityHeartbeat(): void {
+		if (this.sessionActivityHeartbeat) return;
+		this.sessionActivityHeartbeat = setInterval(() => {
+			void this.publishSessionActivity(this.getSessionActivityStatus());
+		}, SESSION_ACTIVITY_HEARTBEAT_MS);
+		this.sessionActivityHeartbeat.unref?.();
+	}
+
+	private stopSessionActivityHeartbeat(): void {
+		if (!this.sessionActivityHeartbeat) return;
+		clearInterval(this.sessionActivityHeartbeat);
+		this.sessionActivityHeartbeat = undefined;
+	}
+
+	private async publishSessionActivity(status: ActiveSessionStatus): Promise<void> {
+		try {
+			await this.sessionActivityRegistry.upsertActiveSession({
+				id: this.sessionActivityId,
+				ownerId: this.sessionActivityId,
+				ownerKind: "process",
+				processId: process.pid,
+				cwd: this.sessionManager.getCwd(),
+				sessionId: this.sessionManager.getSessionId(),
+				sessionFile: this.sessionManager.getSessionFile(),
+				sessionName: this.sessionManager.getSessionName(),
+				status,
+				leaseDurationMs: SESSION_ACTIVITY_LEASE_MS,
+				model: this.getCurrentModelLabel(),
+			});
+		} catch {
+			// Presence tracking must never interrupt the interactive loop.
+		}
+	}
+
+	private async removeSessionActivity(): Promise<void> {
+		this.stopSessionActivityHeartbeat();
+		try {
+			await this.sessionActivityRegistry.removeActiveSession(this.sessionActivityId);
+		} catch {
+			// Best-effort cleanup; expired leases are pruned on the next list.
 		}
 	}
 
@@ -1640,6 +1834,7 @@ export class InteractiveMode {
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
 		this.renderInitialMessages();
+		void this.publishSessionActivity(this.session.isStreaming ? "running" : "idle");
 	}
 
 	/**
@@ -1663,6 +1858,7 @@ export class InteractiveMode {
 			cwd: this.sessionManager.getCwd(),
 			sessionManager: this.sessionManager,
 			modelRegistry: this.session.modelRegistry,
+			sessionActivityRegistry: this.sessionActivityRegistry,
 			model: this.session.model,
 			isIdle: () => !this.session.isStreaming,
 			signal: this.session.agent.signal,
@@ -2584,6 +2780,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/switch" || text.startsWith("/switch ")) {
+				this.editor.setText("");
+				await this.handleSwitchCommand(text);
+				return;
+			}
 			if (text === "/changelog") {
 				this.handleChangelogCommand();
 				this.editor.setText("");
@@ -2736,6 +2937,7 @@ export class InteractiveMode {
 
 		switch (event.type) {
 			case "agent_start":
+				void this.publishSessionActivity("running");
 				this.pendingTools.clear();
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
@@ -2771,6 +2973,7 @@ export class InteractiveMode {
 			case "session_info_changed":
 				this.updateTerminalTitle();
 				this.footer.invalidate();
+				void this.publishSessionActivity(this.session.isStreaming ? "running" : "idle");
 				this.ui.requestRender();
 				break;
 
@@ -2936,6 +3139,11 @@ export class InteractiveMode {
 
 				await this.checkShutdownRequested();
 
+				this.ui.requestRender();
+				break;
+
+			case "agent_settled":
+				void this.publishSessionActivity("idle");
 				this.ui.requestRender();
 				break;
 
@@ -3396,6 +3604,7 @@ export class InteractiveMode {
 			// terminal. If the terminal is gone, the restore writes below emit EIO,
 			// which the stdout/stderr error handler turns into emergencyTerminalExit;
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
+			await this.removeSessionActivity();
 			await this.runtimeHost.dispose();
 			await this.ui.terminal.drainInput(1000);
 			this.stop();
@@ -3410,6 +3619,7 @@ export class InteractiveMode {
 		await this.ui.terminal.drainInput(1000);
 
 		this.stop();
+		await this.removeSessionActivity();
 		await this.runtimeHost.dispose();
 
 		const resumeCommand = formatResumeCommand(this.sessionManager);
@@ -3535,6 +3745,7 @@ export class InteractiveMode {
 			clearInterval(suspendKeepAlive);
 			process.removeListener("SIGINT", ignoreSigint);
 			this.ui.start();
+			void this.publishSessionActivity(this.getSessionActivityStatus());
 			this.ui.requestRender(true);
 		});
 
@@ -4553,7 +4764,7 @@ export class InteractiveMode {
 		});
 	}
 
-	private showSessionSelector(): void {
+	private showSessionSelector(options?: { initialScope?: "current" | "all"; title?: string }): void {
 		this.showSelector((done) => {
 			const selector = new SessionSelectorComponent(
 				(onProgress) =>
@@ -4582,6 +4793,8 @@ export class InteractiveMode {
 						mgr.appendSessionInfo(next);
 					},
 					showRenameHint: true,
+					initialScope: options?.initialScope,
+					title: options?.title,
 					keybindings: this.keybindings,
 				},
 
@@ -4608,6 +4821,7 @@ export class InteractiveMode {
 				return result;
 			}
 			this.renderCurrentSessionState();
+			await this.publishSessionActivity(this.session.isStreaming ? "running" : "idle");
 			this.showStatus("Resumed session");
 			return result;
 		} catch (error: unknown) {
@@ -4625,10 +4839,200 @@ export class InteractiveMode {
 					return result;
 				}
 				this.renderCurrentSessionState();
+				await this.publishSessionActivity(this.session.isStreaming ? "running" : "idle");
 				this.showStatus("Resumed session in current cwd");
 				return result;
 			}
 			return this.handleFatalRuntimeError("Failed to resume session", error);
+		}
+	}
+
+	private async listVisibleSessions(): Promise<SessionInfo[]> {
+		return this.sessionManager.usesDefaultSessionDir()
+			? await SessionManager.listAll()
+			: await SessionManager.listAll(this.sessionManager.getSessionDir());
+	}
+
+	private workspaceOptionLabel(workspace: WorkspaceSummary): string {
+		const labels: string[] = [];
+		if (workspace.current) labels.push("current");
+		if (workspace.runningCount > 0) labels.push(`${workspace.runningCount} running`);
+		else if (workspace.activeCount > 0) labels.push(`${workspace.activeCount} active`);
+		if (workspace.sessionCount > 0) labels.push(`${workspace.sessionCount} sessions`);
+		const labelText = labels.length > 0 ? ` [${labels.join(", ")}]` : "";
+		const last = workspace.lastSessionModified ?? workspace.lastUsedAt;
+		return `Workspace: ${shortenHomePath(workspace.cwd)}${labelText} | ${formatActivityTimestamp(last)}`;
+	}
+
+	private sessionOptionLabel(session: SessionInfo, activeSessions: ActiveSessionRecord[]): string {
+		const activeForSession = activeSessions.filter(
+			(active) => active.sessionFile && pathKey(active.sessionFile) === pathKey(session.path),
+		);
+		const labels: string[] = [];
+		if (
+			this.sessionManager.getSessionFile() &&
+			pathKey(this.sessionManager.getSessionFile()!) === pathKey(session.path)
+		) {
+			labels.push("current");
+		}
+		const running = activeForSession.filter((active) => active.status === "running").length;
+		const idle = activeForSession.length - running;
+		if (running > 0) labels.push(`${running} running`);
+		if (idle > 0) labels.push(`${idle} active`);
+		const labelText = labels.length > 0 ? ` [${labels.join(", ")}]` : "";
+		return `Session: ${sessionDisplayTitle(session)}${labelText} | ${session.messageCount} messages | ${formatActivityTimestamp(session.modified)}`;
+	}
+
+	private async loadWorkspaceSummaries(): Promise<{
+		sessions: SessionInfo[];
+		activeSessions: ActiveSessionRecord[];
+		workspaces: WorkspaceSummary[];
+	}> {
+		const [sessions, activeSessions, workspaceHistory] = await Promise.all([
+			this.listVisibleSessions(),
+			this.sessionActivityRegistry.listActiveSessions(),
+			this.sessionActivityRegistry.listWorkspaces(),
+		]);
+		return {
+			sessions,
+			activeSessions,
+			workspaces: buildWorkspaceSummaries(sessions, workspaceHistory, activeSessions, this.sessionManager.getCwd()),
+		};
+	}
+
+	private getSwitchCommandQuery(text: string): string {
+		return text === "/switch" ? "" : text.slice("/switch ".length).trim();
+	}
+
+	private resolveWorkspaceArgument(input: string): string {
+		const raw = input.trim().replace(/^["']|["']$/g, "");
+		if (raw === "~") return os.homedir();
+		if (raw.startsWith("~/") || raw.startsWith("~\\")) {
+			return path.resolve(os.homedir(), raw.slice(2));
+		}
+		return path.resolve(this.sessionManager.getCwd(), raw);
+	}
+
+	private async handleSwitchWorkspace(
+		cwd: string,
+		sessions: SessionInfo[],
+		activeSessions: ActiveSessionRecord[],
+	): Promise<void> {
+		if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+			this.showWarning(`Workspace does not exist: ${cwd}`);
+			return;
+		}
+
+		const workspaceSessions = sessions.filter((session) => session.cwd && pathKey(session.cwd) === pathKey(cwd));
+		if (workspaceSessions.length === 0) {
+			await this.switchToNewWorkspaceSession(cwd);
+			return;
+		}
+
+		const newOption = `New session in ${shortenHomePath(cwd)}`;
+		const sessionChoices = workspaceSessions.slice(0, 40).map((session) => ({
+			session,
+			label: this.sessionOptionLabel(session, activeSessions),
+		}));
+		const labelCounts = new Map<string, number>();
+		for (const choice of sessionChoices) {
+			labelCounts.set(choice.label, (labelCounts.get(choice.label) ?? 0) + 1);
+		}
+		const sessionByOption = new Map<string, SessionInfo>();
+		const sessionOptions = sessionChoices.map((choice) => {
+			const label =
+				(labelCounts.get(choice.label) ?? 0) > 1
+					? `${choice.label} | ${shortenHomePath(choice.session.path)}`
+					: choice.label;
+			sessionByOption.set(label, choice.session);
+			return label;
+		});
+		const selected = await this.showExtensionSelector("Switch", [newOption, ...sessionOptions]);
+		if (!selected) return;
+		if (selected === newOption) {
+			await this.switchToNewWorkspaceSession(cwd);
+			return;
+		}
+		const session = sessionByOption.get(selected);
+		if (session) {
+			const currentSessionFile = this.sessionManager.getSessionFile();
+			if (currentSessionFile && pathKey(currentSessionFile) === pathKey(session.path)) {
+				this.showStatus("Already on selected session");
+				return;
+			}
+			await this.handleResumeSession(session.path);
+		}
+	}
+
+	private async chooseSwitchWorkspace(workspaces: WorkspaceSummary[], query: string): Promise<string | undefined> {
+		const knownWorkspaces: WorkspaceSelectorKnownWorkspace[] = workspaces.map((workspace) => {
+			const shortPath = shortenHomePath(workspace.cwd);
+			return {
+				cwd: workspace.cwd,
+				label: this.workspaceOptionLabel(workspace),
+				searchText: `${workspace.cwd} ${shortPath}`,
+			};
+		});
+
+		return await new Promise<string | undefined>((resolve) => {
+			this.showSelector((done) => {
+				const selector = new WorkspaceSelectorComponent(
+					knownWorkspaces,
+					this.sessionManager.getCwd(),
+					(cwd) => {
+						done();
+						resolve(cwd);
+					},
+					() => {
+						done();
+						resolve(undefined);
+						this.ui.requestRender();
+					},
+					query,
+				);
+				return { component: selector, focus: selector };
+			});
+		});
+	}
+
+	private async handleSwitchCommand(text: string): Promise<void> {
+		if (this.session.isStreaming) {
+			this.showWarning("Wait for the current response to finish before switching workspaces.");
+			return;
+		}
+		if (this.session.isCompacting) {
+			this.showWarning("Wait for compaction to finish before switching workspaces.");
+			return;
+		}
+
+		const query = this.getSwitchCommandQuery(text);
+		const { sessions, activeSessions, workspaces } = await this.loadWorkspaceSummaries();
+
+		if (query) {
+			const direct = this.resolveWorkspaceArgument(query);
+			if (fs.existsSync(direct) && fs.statSync(direct).isDirectory()) {
+				await this.handleSwitchWorkspace(direct, sessions, activeSessions);
+				return;
+			}
+		}
+
+		const cwd = await this.chooseSwitchWorkspace(workspaces, query);
+		if (!cwd) return;
+		await this.handleSwitchWorkspace(cwd, sessions, activeSessions);
+	}
+
+	private async switchToNewWorkspaceSession(cwd: string): Promise<void> {
+		try {
+			const result = await this.runtimeHost.newSession({ cwd });
+			if (result.cancelled) {
+				this.showStatus("Workspace switch cancelled");
+				return;
+			}
+			this.renderCurrentSessionState();
+			await this.publishSessionActivity(this.session.isStreaming ? "running" : "idle");
+			this.showStatus(`Switched workspace to ${shortenHomePath(cwd)}`);
+		} catch (error: unknown) {
+			await this.handleFatalRuntimeError("Failed to switch workspace", error);
 		}
 	}
 
@@ -5724,6 +6128,7 @@ export class InteractiveMode {
 
 	stop(): void {
 		this.unregisterSignalHandlers();
+		this.stopSessionActivityHeartbeat();
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}

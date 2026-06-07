@@ -12,6 +12,7 @@ import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
+import { SessionActivityRegistry } from "../src/core/session-activity-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
 describe("ExtensionRunner", () => {
@@ -424,6 +425,22 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("context creation", () => {
+		it("exposes the shared session activity registry", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const registry = SessionActivityRegistry.create(tempDir);
+			const runner = new ExtensionRunner(
+				result.extensions,
+				result.runtime,
+				tempDir,
+				sessionManager,
+				modelRegistry,
+				registry,
+			);
+
+			const ctx = runner.createContext();
+			expect(ctx.sessionActivityRegistry).toBe(registry);
+		});
+
 		it("exposes the current abort signal on ExtensionContext", async () => {
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);

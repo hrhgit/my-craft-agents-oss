@@ -211,6 +211,7 @@ export class AgentSessionRuntime {
 	}
 
 	async newSession(options?: {
+		cwd?: string;
 		parentSession?: string;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
@@ -221,16 +222,18 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		const sessionDir = this.session.sessionManager.getSessionDir();
-		const sessionManager = SessionManager.create(this.cwd, sessionDir);
+		const targetCwd = options?.cwd ? resolvePath(options.cwd) : this.cwd;
+		const sessionDir = options?.cwd ? undefined : this.session.sessionManager.getSessionDir();
+		const sessionManager = SessionManager.create(targetCwd, sessionDir);
 		if (options?.parentSession) {
 			sessionManager.newSession({ parentSession: options.parentSession });
 		}
+		assertSessionCwdExists(sessionManager, targetCwd);
 
 		await this.teardownCurrent("new", sessionManager.getSessionFile());
 		this.apply(
 			await this.createRuntime({
-				cwd: this.cwd,
+				cwd: targetCwd,
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },

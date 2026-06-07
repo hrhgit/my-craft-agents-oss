@@ -49,6 +49,7 @@ import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
 import type { KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
 import type { ModelRegistry } from "../model-registry.ts";
+import type { SessionActivityRegistry } from "../session-activity-registry.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
@@ -308,6 +309,8 @@ export interface ExtensionContext {
 	sessionManager: ReadonlySessionManager;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
+	/** Shared registry for process-independent session/workspace activity */
+	sessionActivityRegistry: SessionActivityRegistry;
 	/** Current model (may be undefined) */
 	model: Model<any> | undefined;
 	/** Whether the agent is idle (not streaming) */
@@ -338,6 +341,8 @@ export interface ExtensionCommandContext extends ExtensionContext {
 
 	/** Start a new session, optionally with initialization. */
 	newSession(options?: {
+		/** Target working directory for the new session. Defaults to the current cwd. */
+		cwd?: string;
 		parentSession?: string;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
@@ -1537,6 +1542,7 @@ export interface ExtensionContextActions {
 export interface ExtensionCommandContextActions {
 	waitForIdle: () => Promise<void>;
 	newSession: (options?: {
+		cwd?: string;
 		parentSession?: string;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;

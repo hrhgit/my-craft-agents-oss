@@ -13,13 +13,19 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	getMarkdownTheme,
+	withFileMutationQueue,
+} from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
@@ -28,6 +34,8 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
+const SUBAGENT_ACTIVITY_HEARTBEAT_MS = 30_000;
+const SUBAGENT_ACTIVITY_LEASE_MS = 90_000;
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -258,7 +266,56 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
+function formatSubagentSessionName(agentName: string, task: string): string {
+	const cleanTask = task.replace(/\s+/g, " ").trim();
+	const preview = cleanTask.length > 72 ? `${cleanTask.slice(0, 69)}...` : cleanTask;
+	return `${agentName}: ${preview}`;
+}
+
+async function startSubagentActivity(
+	ctx: ExtensionContext,
+	agentName: string,
+	task: string,
+	cwd: string,
+	model: string | undefined,
+): Promise<() => Promise<void>> {
+	const id = `subagent-${randomUUID()}`;
+	const publish = async () => {
+		try {
+			await ctx.sessionActivityRegistry.upsertActiveSession({
+				id,
+				ownerId: id,
+				ownerKind: "agent",
+				cwd,
+				sessionId: id,
+				sessionName: formatSubagentSessionName(agentName, task),
+				status: "running",
+				leaseDurationMs: SUBAGENT_ACTIVITY_LEASE_MS,
+				model,
+			});
+		} catch {
+			// Activity tracking must not fail the delegated task.
+		}
+	};
+
+	await publish();
+	const heartbeat = setInterval(() => {
+		void publish();
+	}, SUBAGENT_ACTIVITY_HEARTBEAT_MS);
+	heartbeat.unref?.();
+
+	return async () => {
+		clearInterval(heartbeat);
+		try {
+			await ctx.sessionActivityRegistry.removeActiveSession(id);
+		} catch {
+			// Expired leases are pruned by readers.
+		}
+	};
+}
+
 async function runSingleAgent(
+	ctx: ExtensionContext,
 	defaultCwd: string,
 	agents: AgentConfig[],
 	agentName: string,
@@ -291,6 +348,8 @@ async function runSingleAgent(
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
+	let stopActivity: (() => Promise<void>) | undefined;
+	const effectiveCwd = cwd ?? defaultCwd;
 
 	const currentResult: SingleResult = {
 		agent: agentName,
@@ -323,11 +382,12 @@ async function runSingleAgent(
 
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
+		stopActivity = await startSubagentActivity(ctx, agent.name, task, effectiveCwd, agent.model);
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
 			const proc = spawn(invocation.command, invocation.args, {
-				cwd: cwd ?? defaultCwd,
+				cwd: effectiveCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
@@ -407,6 +467,7 @@ async function runSingleAgent(
 		if (wasAborted) throw new Error("Subagent was aborted");
 		return currentResult;
 	} finally {
+		if (stopActivity) await stopActivity();
 		if (tmpPromptPath)
 			try {
 				fs.unlinkSync(tmpPromptPath);
@@ -545,6 +606,7 @@ export default function (pi: ExtensionAPI) {
 						: undefined;
 
 					const result = await runSingleAgent(
+						ctx,
 						ctx.cwd,
 						agents,
 						step.agent,
@@ -617,6 +679,7 @@ export default function (pi: ExtensionAPI) {
 
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
 					const result = await runSingleAgent(
+						ctx,
 						ctx.cwd,
 						agents,
 						t.agent,
@@ -659,6 +722,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (params.agent && params.task) {
 				const result = await runSingleAgent(
+					ctx,
 					ctx.cwd,
 					agents,
 					params.agent,

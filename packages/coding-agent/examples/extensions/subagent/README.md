@@ -9,6 +9,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Parallel streaming**: All parallel tasks stream updates simultaneously
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
+- **Activity tracking**: Registers running subagents as logical agent activity
 - **Abort support**: Ctrl+C propagates to kill subagent processes
 
 ## Structure

@@ -1020,6 +1020,7 @@ if (result.cancelled) {
 ```
 
 Options:
+- `cwd`: working directory for the new session. If omitted, Pi keeps the current cwd and session directory.
 - `parentSession`: parent session file to record in the new session header
 - `setup`: mutate the new session's `SessionManager` before `withSession` runs
 - `withSession`: run post-switch work against a fresh replacement-session context. Do not use captured old `pi` / command `ctx`; see [Session replacement lifecycle and footguns](#session-replacement-lifecycle-and-footguns).

@@ -1,5 +1,16 @@
 import { constants as bufferConstants } from "buffer";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "fs";
+import {
+	appendFileSync,
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+	writeSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -256,6 +267,55 @@ describe("SessionManager custom flat session directory", () => {
 
 		const continuedA = SessionManager.continueRecent(projectA, tempDir);
 		expect(continuedA.getSessionFile()).toBe(sessionA);
+	});
+});
+
+describe("SessionManager session file locking", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = join(tmpdir(), `session-test-${Date.now()}`);
+		mkdirSync(tempDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("clears stale write locks before first persisted assistant message", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		const sessionFile = session.getSessionFile();
+		if (!sessionFile) {
+			throw new Error("Expected session file path");
+		}
+
+		mkdirSync(`${sessionFile}.lock`);
+		const staleTime = new Date(Date.now() - 60_000);
+		utimesSync(`${sessionFile}.lock`, staleTime, staleTime);
+
+		session.appendMessage({ role: "user", content: "hello", timestamp: Date.now() });
+		session.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "hi" }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "test",
+			usage: {
+				input: 1,
+				output: 1,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		});
+
+		const content = readFileSync(sessionFile, "utf-8");
+		expect(content).toContain('"type":"session"');
+		expect(content).toContain('"role":"assistant"');
+		expect(existsSync(`${sessionFile}.lock`)).toBe(false);
 	});
 });
 

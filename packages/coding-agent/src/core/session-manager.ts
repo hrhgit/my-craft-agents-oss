@@ -10,11 +10,14 @@ import {
 	openSync,
 	readdirSync,
 	readSync,
+	renameSync,
+	rmSync,
 	statSync,
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
 import { join, resolve } from "path";
+import lockfile from "proper-lockfile";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -460,6 +463,62 @@ export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultA
 }
 
 const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
+const SESSION_FILE_LOCK_STALE_MS = 30_000;
+const SESSION_FILE_LOCK_RETRY_DELAY_MS = 25;
+const SESSION_FILE_LOCK_RETRY_COUNT = 1_400;
+const SESSION_FILE_LOCK_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepSync(ms: number): void {
+	Atomics.wait(SESSION_FILE_LOCK_SLEEP_BUFFER, 0, 0, ms);
+}
+
+function isLockConflict(error: unknown): boolean {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		String((error as { code?: unknown }).code) === "ELOCKED"
+	);
+}
+
+function acquireSessionFileLockSync(sessionFile: string): () => void {
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= SESSION_FILE_LOCK_RETRY_COUNT; attempt++) {
+		try {
+			return lockfile.lockSync(sessionFile, { realpath: false, stale: SESSION_FILE_LOCK_STALE_MS });
+		} catch (error) {
+			if (!isLockConflict(error) || attempt === SESSION_FILE_LOCK_RETRY_COUNT) {
+				throw error;
+			}
+			lastError = error;
+			sleepSync(SESSION_FILE_LOCK_RETRY_DELAY_MS);
+		}
+	}
+	throw (lastError as Error) ?? new Error(`Failed to acquire session file lock: ${sessionFile}`);
+}
+
+function writeEntriesAtomically(filePath: string, entries: FileEntry[]): void {
+	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}.tmp`;
+	const fd = openSync(tempPath, "wx");
+	try {
+		for (const entry of entries) {
+			writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+		}
+	} catch (error) {
+		try {
+			closeSync(fd);
+		} catch {}
+		rmSync(tempPath, { force: true });
+		throw error;
+	}
+	closeSync(fd);
+	try {
+		renameSync(tempPath, filePath);
+	} catch (error) {
+		rmSync(tempPath, { force: true });
+		throw error;
+	}
+}
 
 function parseSessionEntryLine(line: string): FileEntry | null {
 	if (!line.trim()) return null;
@@ -824,28 +883,30 @@ export class SessionManager {
 	setSessionFile(sessionFile: string): void {
 		this.sessionFile = resolvePath(sessionFile);
 		if (existsSync(this.sessionFile)) {
-			this.fileEntries = loadEntriesFromFile(this.sessionFile);
+			this.withSessionFileLock(() => {
+				this.fileEntries = loadEntriesFromFile(this.sessionFile!);
 
-			// If file was empty or corrupted (no valid header), truncate and start fresh
-			// to avoid appending messages without a session header (which breaks the session)
-			if (this.fileEntries.length === 0) {
-				const explicitPath = this.sessionFile;
-				this.newSession();
-				this.sessionFile = explicitPath;
-				this._rewriteFile();
+				// If file was empty or corrupted (no valid header), truncate and start fresh
+				// to avoid appending messages without a session header (which breaks the session)
+				if (this.fileEntries.length === 0) {
+					const explicitPath = this.sessionFile;
+					this.newSession();
+					this.sessionFile = explicitPath;
+					this.rewriteFileUnlocked();
+					this.flushed = true;
+					return;
+				}
+
+				const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
+				this.sessionId = header?.id ?? createSessionId();
+
+				if (migrateToCurrentVersion(this.fileEntries)) {
+					this.rewriteFileUnlocked();
+				}
+
+				this._buildIndex();
 				this.flushed = true;
-				return;
-			}
-
-			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
-			this.sessionId = header?.id ?? createSessionId();
-
-			if (migrateToCurrentVersion(this.fileEntries)) {
-				this._rewriteFile();
-			}
-
-			this._buildIndex();
-			this.flushed = true;
+			});
 		} else {
 			const explicitPath = this.sessionFile;
 			this.newSession();
@@ -901,16 +962,26 @@ export class SessionManager {
 		}
 	}
 
+	private withSessionFileLock<T>(fn: () => T): T {
+		if (!this.persist || !this.sessionFile) return fn();
+		const release = acquireSessionFileLockSync(this.sessionFile);
+		try {
+			return fn();
+		} finally {
+			release();
+		}
+	}
+
+	private rewriteFileUnlocked(): void {
+		if (!this.persist || !this.sessionFile) return;
+		writeEntriesAtomically(this.sessionFile, this.fileEntries);
+	}
+
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
-		const fd = openSync(this.sessionFile, "w");
-		try {
-			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
-			}
-		} finally {
-			closeSync(fd);
-		}
+		this.withSessionFileLock(() => {
+			this.rewriteFileUnlocked();
+		});
 	}
 
 	isPersisted(): boolean {
@@ -940,30 +1011,30 @@ export class SessionManager {
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
-			if (this.flushed) {
-				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
-			} else {
-				// Mark as not flushed so when assistant arrives, all entries get written
-				this.flushed = false;
-			}
-			return;
-		}
-
-		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
+		this.withSessionFileLock(() => {
+			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
+			if (!hasAssistant) {
+				if (this.flushed) {
+					appendFileSync(this.sessionFile!, `${JSON.stringify(entry)}\n`);
+				} else {
+					// Mark as not flushed so when assistant arrives, all entries get written
+					this.flushed = false;
 				}
-			} finally {
-				closeSync(fd);
+				return;
 			}
-			this.flushed = true;
-		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
-		}
+
+			if (!this.flushed) {
+				if (existsSync(this.sessionFile!)) {
+					const error = new Error(`Session file already exists: ${this.sessionFile}`);
+					(error as NodeJS.ErrnoException).code = "EEXIST";
+					throw error;
+				}
+				writeEntriesAtomically(this.sessionFile!, this.fileEntries);
+				this.flushed = true;
+			} else {
+				appendFileSync(this.sessionFile!, `${JSON.stringify(entry)}\n`);
+			}
+		});
 	}
 
 	private _appendEntry(entry: SessionEntry): void {

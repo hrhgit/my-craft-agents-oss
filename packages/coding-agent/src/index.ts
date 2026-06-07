@@ -196,6 +196,14 @@ export {
 	type PromptTemplate,
 } from "./core/sdk.ts";
 export {
+	type ActiveSessionInput,
+	type ActiveSessionOwnerKind,
+	type ActiveSessionRecord,
+	type ActiveSessionStatus,
+	SessionActivityRegistry,
+	type WorkspaceHistoryRecord,
+} from "./core/session-activity-registry.ts";
+export {
 	type BranchSummaryEntry,
 	buildSessionContext,
 	type CompactionEntry,

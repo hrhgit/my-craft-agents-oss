@@ -27,6 +27,7 @@ For the JSONL file format and SessionManager API, see [Session Format](session-f
 | `/new` | Start a new session |
 | `/name <name>` | Set the current session display name |
 | `/session` | Show session info |
+| `/switch [path|query]` | Switch workspace or session |
 | `/tree` | Navigate the current session tree |
 | `/fork` | Create a new session from a previous user message |
 | `/clone` | Duplicate the current active branch into a new session |
@@ -48,6 +49,27 @@ In the picker you can:
 - delete with Ctrl+D, then confirm
 
 When available, pi uses the `trash` CLI for deletion instead of permanently removing files.
+
+## Active Sessions and Workspaces
+
+Interactive Pi processes publish best-effort presence records under `~/.pi/agent/session-state/`.
+
+Use `/switch` to switch workspace first, then choose a session in that workspace. Without arguments, Pi opens a workspace picker with known workspaces and a `New workspace...` entry. With an argument, Pi treats an existing directory as the target workspace; otherwise it opens the workspace picker with that text prefilled.
+
+```text
+/switch auth refactor
+```
+
+In the workspace picker, type a path or workspace name to filter. When entering a path, matching child directories are listed below the input. Press Tab to open the selected folder and list its child directories; choose `Use this folder` or press Enter on a folder to select it as the workspace.
+
+After a workspace is selected, Pi asks whether to resume an existing session there or start a new one. If the workspace has no sessions, Pi starts a new session in that workspace. Directory paths can target workspaces with no prior session history:
+
+```text
+/switch ../other-project
+/switch E:\work\other-project
+```
+
+Presence tracking is best-effort. Stale active-session records and workspace history entries whose directories no longer exist are pruned when Pi builds switch options, so crashed processes and removed temp workspaces should disappear after the next switch lookup.
 
 ## Naming Sessions
 

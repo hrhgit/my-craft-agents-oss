@@ -76,4 +76,12 @@ export {
 	type WebFetchToolResultEvent,
 	type WorkingIndicatorOptions,
 } from "./extensions/index.ts";
+export {
+	type ActiveSessionInput,
+	type ActiveSessionOwnerKind,
+	type ActiveSessionRecord,
+	type ActiveSessionStatus,
+	SessionActivityRegistry,
+	type WorkspaceHistoryRecord,
+} from "./session-activity-registry.ts";
 export { createSyntheticSourceInfo } from "./source-info.ts";

@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import triggerCompactExtension from "../examples/extensions/trigger-compact.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../src/core/extensions/index.ts";
+import { SessionActivityRegistry } from "../src/core/session-activity-registry.ts";
 
 function createContext(tokens: number | null, compact = vi.fn()): ExtensionContext {
 	return {
@@ -9,6 +10,7 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		cwd: process.cwd(),
 		sessionManager: {} as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
+		sessionActivityRegistry: SessionActivityRegistry.create(),
 		model: undefined,
 		isIdle: () => true,
 		signal: undefined,

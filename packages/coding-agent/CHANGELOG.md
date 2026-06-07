@@ -7,6 +7,7 @@
 - Added a dedicated `app.message.steer` shortcut for queuing steering messages without changing editor submit behavior.
 - Added `ctrl+y` redo support for the interactive editor.
 - Added the local `web_fetch` built-in tool and a persisted `webSearch` setting for supported provider built-in web search.
+- Added built-in active session/workspace tracking for `/switch`, with workspace-first selection and path browsing.
 
 ### Changed
 
@@ -17,6 +18,8 @@
 ### Fixed
 
 - Fixed sidecar-backed HTTP fetches to stream `text/event-stream` responses incrementally instead of buffering until the upstream response completes.
+- Fixed extension access to the shared session activity registry so background agents use the active runtime `agentDir` instead of falling back to the global config directory, and updated the subagent example to publish logical agent activity while delegated tasks run.
+- Fixed `/switch` workspace tracking to prune removed temp workspaces and immediately record switched sessions under the selected workspace.
 - Fixed opening and listing very large JSONL session files by reading session entries line-by-line instead of materializing the full file as one string ([#5231](https://github.com/earendil-works/pi/issues/5231)).
 
 ## [0.78.0] - 2026-05-29

@@ -28,14 +28,23 @@ function isWebSearchEnabled(systemPrompt: string): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
-  const renderFooter = (ctx: ExtensionContext) => {
-    ctx.ui.setFooter((tui, theme, footerData) => {
+  let contextGeneration = 0;
+  let currentContext: ExtensionContext | undefined;
+
+  const renderFooter = (ctx: ExtensionContext, generation: number) => {
+    try {
+      if (!ctx.hasUI) return;
+      ctx.ui.setFooter((tui, theme, footerData) => {
       const unsub = footerData.onBranchChange(() => tui.requestRender());
 
       return {
         dispose: unsub,
         invalidate() {},
         render(width: number): string[] {
+          if (generation !== contextGeneration || currentContext !== ctx) {
+            return [];
+          }
+          try {
           let totalInput = 0;
           let totalOutput = 0;
           let totalCacheRead = 0;
@@ -185,16 +194,35 @@ export default function (pi: ExtensionAPI) {
           }
 
           return lines;
+          } catch {
+            return [];
+          }
         },
       };
     });
+    } catch {
+      if (currentContext === ctx) currentContext = undefined;
+    }
   };
 
   pi.on("session_start", async (_event, ctx) => {
-    renderFooter(ctx);
+    contextGeneration++;
+    currentContext = ctx;
+    renderFooter(ctx, contextGeneration);
+  });
+
+  pi.on("session_shutdown", async (_event, ctx) => {
+    contextGeneration++;
+    currentContext = undefined;
+    try {
+      if (ctx.hasUI) ctx.ui.setFooter(undefined);
+    } catch {
+      // Footer cleanup is best-effort during session replacement/reload.
+    }
   });
 
   pi.on("model_select", async (_event, ctx) => {
-    renderFooter(ctx);
+    currentContext = ctx;
+    renderFooter(ctx, contextGeneration);
   });
 }

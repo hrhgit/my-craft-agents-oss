@@ -59,6 +59,17 @@ function formatAuthor(author?: GhMetadata["author"]): string | undefined {
 }
 
 export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
+	let contextGeneration = 0;
+
+	const hasLiveUi = (ctx: ExtensionContext, generation: number): boolean => {
+		if (generation !== contextGeneration) return false;
+		try {
+			return ctx.hasUI;
+		} catch {
+			return false;
+		}
+	};
+
 	const setWidget = (ctx: ExtensionContext, match: PromptMatch, title?: string, authorText?: string) => {
 		ctx.ui.setWidget("prompt-url", (_tui, thm) => {
 			const titleText = title ? thm.fg("accent", title) : thm.fg("accent", match.url);
@@ -92,7 +103,8 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 	};
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (!ctx.hasUI) return;
+		const generation = contextGeneration;
+		if (!hasLiveUi(ctx, generation)) return;
 		const match = extractPromptMatch(event.prompt);
 		if (!match) {
 			return;
@@ -101,6 +113,7 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 		setWidget(ctx, match);
 		applySessionName(ctx, match);
 		void fetchGhMetadata(pi, match.kind, match.url).then((meta) => {
+			if (!hasLiveUi(ctx, generation)) return;
 			const title = meta?.title?.trim();
 			const authorText = formatAuthor(meta?.author);
 			setWidget(ctx, match, title, authorText);
@@ -109,6 +122,7 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_switch", async (_event, ctx) => {
+		contextGeneration++;
 		rebuildFromSession(ctx);
 	});
 
@@ -124,7 +138,8 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 	};
 
 	const rebuildFromSession = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI) return;
+		const generation = contextGeneration;
+		if (!hasLiveUi(ctx, generation)) return;
 
 		const entries = ctx.sessionManager.getEntries();
 		const lastMatch = [...entries].reverse().find((entry) => {
@@ -145,6 +160,7 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 		setWidget(ctx, match);
 		applySessionName(ctx, match);
 		void fetchGhMetadata(pi, match.kind, match.url).then((meta) => {
+			if (!hasLiveUi(ctx, generation)) return;
 			const title = meta?.title?.trim();
 			const authorText = formatAuthor(meta?.author);
 			setWidget(ctx, match, title, authorText);
@@ -153,6 +169,11 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
+		contextGeneration++;
 		rebuildFromSession(ctx);
+	});
+
+	pi.on("session_shutdown", async () => {
+		contextGeneration++;
 	});
 }

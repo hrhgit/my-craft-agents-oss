@@ -10,6 +10,7 @@ import {
 	createAgentSessionServices,
 } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { SessionActivityRegistry } from "../src/core/session-activity-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import type {
 	ExtensionFactory,
@@ -155,6 +156,63 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		expect(result.cancelled).toBe(true);
 		expect(runtimeHost.session.sessionFile).toBe(originalSessionFile);
 		expect(events).toEqual([{ type: "session_before_switch", reason: "new", targetSessionFile: undefined }]);
+	});
+
+	it("gives extensions the runtime agentDir session activity registry", async () => {
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.on("session_start", async (_event, ctx) => {
+				await ctx.sessionActivityRegistry.upsertActiveSession({
+					id: "background-agent",
+					ownerId: "background-agent",
+					ownerKind: "agent",
+					cwd: ctx.cwd,
+					sessionId: "background-session",
+					status: "running",
+					leaseDurationMs: 60_000,
+				});
+			});
+		});
+
+		const activeSessions = await SessionActivityRegistry.create(runtimeHost.services.agentDir).listActiveSessions();
+
+		expect(activeSessions).toMatchObject([
+			{
+				id: "background-agent",
+				ownerId: "background-agent",
+				ownerKind: "agent",
+				cwd: runtimeHost.cwd,
+				sessionId: "background-session",
+				status: "running",
+			},
+		]);
+	});
+
+	it("can create a new session in a different cwd", async () => {
+		const events: RecordedSessionEvent[] = [];
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.on("session_shutdown", (event) => {
+				events.push(event);
+			});
+			pi.on("session_start", (event) => {
+				events.push(event);
+			});
+		});
+		const originalSessionFile = runtimeHost.session.sessionFile;
+		const targetCwd = join(runtimeHost.services.agentDir, "other-workspace");
+		mkdirSync(targetCwd, { recursive: true });
+
+		const result = await runtimeHost.newSession({ cwd: targetCwd });
+		await runtimeHost.session.bindExtensions({});
+
+		expect(result.cancelled).toBe(false);
+		expect(runtimeHost.cwd).toBe(targetCwd);
+		expect(runtimeHost.session.sessionManager.getCwd()).toBe(targetCwd);
+		expect(runtimeHost.session.sessionManager.getSessionFile()).toContain("other-workspace");
+		expect(events).toEqual([
+			{ type: "session_start", reason: "startup" },
+			{ type: "session_shutdown", reason: "new", targetSessionFile: runtimeHost.session.sessionFile },
+			{ type: "session_start", reason: "new", previousSessionFile: originalSessionFile },
+		]);
 	});
 
 	it("runs beforeSessionInvalidate after session_shutdown and before rebindSession", async () => {

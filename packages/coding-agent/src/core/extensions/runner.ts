@@ -9,6 +9,7 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
+import { SessionActivityRegistry } from "../session-activity-registry.ts";
 import type { SessionManager } from "../session-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type {
@@ -150,6 +151,7 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 export type ExtensionErrorListener = (error: ExtensionError) => void;
 
 export type NewSessionHandler = (options?: {
+	cwd?: string;
 	parentSession?: string;
 	setup?: (sessionManager: SessionManager) => Promise<void>;
 	withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
@@ -229,6 +231,7 @@ export class ExtensionRunner {
 	private cwd: string;
 	private sessionManager: SessionManager;
 	private modelRegistry: ModelRegistry;
+	private sessionActivityRegistry: SessionActivityRegistry;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private isIdleFn: () => boolean = () => true;
@@ -255,6 +258,7 @@ export class ExtensionRunner {
 		cwd: string,
 		sessionManager: SessionManager,
 		modelRegistry: ModelRegistry,
+		sessionActivityRegistry: SessionActivityRegistry = SessionActivityRegistry.create(),
 	) {
 		this.extensions = extensions;
 		this.runtime = runtime;
@@ -262,6 +266,7 @@ export class ExtensionRunner {
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
 		this.modelRegistry = modelRegistry;
+		this.sessionActivityRegistry = sessionActivityRegistry;
 	}
 
 	bindCore(
@@ -594,6 +599,10 @@ export class ExtensionRunner {
 			get modelRegistry() {
 				runner.assertActive();
 				return runner.modelRegistry;
+			},
+			get sessionActivityRegistry() {
+				runner.assertActive();
+				return runner.sessionActivityRegistry;
 			},
 			get model() {
 				runner.assertActive();
