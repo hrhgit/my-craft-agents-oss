@@ -8,6 +8,7 @@
 - Added `ctrl+y` redo support for the interactive editor.
 - Added the local `web_fetch` built-in tool and a persisted `webSearch` setting for supported provider built-in web search.
 - Added built-in active session/workspace tracking for `/switch`, with workspace-first selection and path browsing.
+- Added `pi mux` as an experimental terminal multiplexer for running multiple independent RPC-backed Pi sessions concurrently.
 
 ### Changed
 
@@ -17,6 +18,7 @@
 
 ### Fixed
 
+- Fixed Windows clipboard image paste to fall back to the Windows Clipboard API via PowerShell when the native clipboard addon does not expose copied screenshot or browser image data.
 - Fixed sidecar-backed HTTP fetches to stream `text/event-stream` responses incrementally instead of buffering until the upstream response completes.
 - Fixed extension access to the shared session activity registry so background agents use the active runtime `agentDir` instead of falling back to the global config directory, and updated the subagent example to publish logical agent activity while delegated tasks run.
 - Fixed `/switch` workspace tracking to prune removed temp workspaces and immediately record switched sessions under the selected workspace.

@@ -40,7 +40,7 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
-import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
+import { InteractiveMode, runMuxMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -485,6 +485,11 @@ export async function main(args: string[], options?: MainOptions) {
 		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
 	}
 
+	if (args[0] === "mux") {
+		await runMuxMode(args.slice(1));
+		return;
+	}
+
 	if (await handlePackageCommand(args)) {
 		return;
 	}
@@ -585,17 +590,21 @@ export async function main(args: string[], options?: MainOptions) {
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
 	const authStorage = AuthStorage.create();
+	const deferInitialWorkspaceLoad = appMode === "interactive" && !parsed.help && parsed.listModels === undefined;
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
 		sessionManager,
 		sessionStartEvent,
+		deferResourceLoad,
+		persistInitialState,
 	}) => {
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
 			authStorage,
 			extensionFlagValues: parsed.unknownFlags,
+			deferResourceLoad,
 			resourceLoaderOptions: {
 				additionalExtensionPaths: resolvedExtensionPaths,
 				additionalSkillPaths: resolvedSkillPaths,
@@ -659,6 +668,7 @@ export async function main(args: string[], options?: MainOptions) {
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
+			persistInitialState,
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
@@ -676,11 +686,15 @@ export async function main(args: string[], options?: MainOptions) {
 		cwd: sessionManager.getCwd(),
 		agentDir,
 		sessionManager,
+		deferResourceLoad: deferInitialWorkspaceLoad,
+		persistInitialState: !deferInitialWorkspaceLoad,
 	});
 	time("createAgentSessionRuntime");
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRegistry, resourceLoader } = services;
-	await services.networkManager.applySettings();
+	if (runtime.isWorkspaceLoaded) {
+		await services.networkManager.applySettings();
+	}
 
 	if (parsed.help) {
 		const extensionFlags = resourceLoader
@@ -721,9 +735,11 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	time("resolveModelScope");
-	reportDiagnostics(runtime.diagnostics);
-	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
-		process.exit(1);
+	if (runtime.isWorkspaceLoaded) {
+		reportDiagnostics(runtime.diagnostics);
+		if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
+			process.exit(1);
+		}
 	}
 	time("createAgentSession");
 

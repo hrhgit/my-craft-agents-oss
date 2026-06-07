@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
+type SubmittedInput = {
+	text: string;
+	images?: unknown[];
+};
+
 type SubmitContext = {
 	defaultEditor: { onSubmit?: (text: string) => void };
 	editor: {
@@ -14,18 +19,20 @@ type SubmitContext = {
 		prompt: (text: string, options?: unknown) => Promise<void>;
 	};
 	flushPendingBashComponents: () => void;
-	onInputCallback?: (text: string) => void;
-	pendingUserInputs: string[];
+	extractSubmittedImages: (text: string) => Promise<SubmittedInput>;
+	ensureWorkspaceLoaded: () => Promise<void>;
+	onInputCallback?: (input: SubmittedInput) => void;
+	pendingUserInputs: SubmittedInput[];
 };
 
 type InputContext = {
-	onInputCallback?: (text: string) => void;
-	pendingUserInputs: string[];
+	onInputCallback?: (input: SubmittedInput) => void;
+	pendingUserInputs: SubmittedInput[];
 };
 
 type InteractiveModePrivate = {
 	setupEditorSubmitHandler(this: SubmitContext): void;
-	getUserInput(this: InputContext): Promise<string>;
+	getUserInput(this: InputContext): Promise<SubmittedInput>;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrivate;
@@ -44,6 +51,8 @@ function createSubmitContext(): SubmitContext {
 			prompt: vi.fn(async () => {}),
 		},
 		flushPendingBashComponents: vi.fn(),
+		extractSubmittedImages: vi.fn(async (text: string) => ({ text })),
+		ensureWorkspaceLoaded: vi.fn(async () => {}),
 		pendingUserInputs: [],
 	};
 }
@@ -55,17 +64,41 @@ describe("InteractiveMode startup input", () => {
 
 		await context.defaultEditor.onSubmit?.(" early prompt ");
 
-		expect(context.pendingUserInputs).toEqual(["early prompt"]);
+		expect(context.pendingUserInputs).toEqual([{ text: "early prompt" }]);
 		expect(context.flushPendingBashComponents).toHaveBeenCalledTimes(1);
 		expect(context.editor.addToHistory).toHaveBeenCalledWith("early prompt");
 	});
 
+	it("waits for deferred workspace loading before accepting startup input", async () => {
+		const context = createSubmitContext();
+		let resolveLoad: (() => void) | undefined;
+		const loadPromise = new Promise<void>((resolve) => {
+			resolveLoad = resolve;
+		});
+		context.ensureWorkspaceLoaded = vi.fn(() => loadPromise);
+		interactiveModePrototype.setupEditorSubmitHandler.call(context);
+
+		const submitPromise = context.defaultEditor.onSubmit?.(" early prompt ");
+		await Promise.resolve();
+
+		expect(context.pendingUserInputs).toEqual([]);
+		expect(context.flushPendingBashComponents).not.toHaveBeenCalled();
+		if (!resolveLoad) {
+			throw new Error("load promise resolver was not created");
+		}
+		resolveLoad();
+		await submitPromise;
+
+		expect(context.pendingUserInputs).toEqual([{ text: "early prompt" }]);
+		expect(context.flushPendingBashComponents).toHaveBeenCalledTimes(1);
+	});
+
 	it("returns queued startup input before installing a new input callback", async () => {
 		const context: InputContext = {
-			pendingUserInputs: ["queued prompt"],
+			pendingUserInputs: [{ text: "queued prompt" }],
 		};
 
-		await expect(interactiveModePrototype.getUserInput.call(context)).resolves.toBe("queued prompt");
+		await expect(interactiveModePrototype.getUserInput.call(context)).resolves.toEqual({ text: "queued prompt" });
 		expect(context.onInputCallback).toBeUndefined();
 		expect(context.pendingUserInputs).toEqual([]);
 	});

@@ -11,7 +11,14 @@ import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type {
+	RpcCommand,
+	RpcExtensionUIRequest,
+	RpcExtensionUIResponse,
+	RpcResponse,
+	RpcSessionState,
+	RpcSlashCommand,
+} from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -24,6 +31,10 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 type RpcCommandBody = DistributiveOmit<RpcCommand, "id">;
 
 export interface RpcClientOptions {
+	/** Command used to launch the CLI entry point (default: node) */
+	command?: string;
+	/** Arguments placed before the CLI entry point, useful for tsx/register-based dev runs */
+	commandArgs?: string[];
 	/** Path to the CLI entry point (default: searches for dist/cli.js) */
 	cliPath?: string;
 	/** Working directory for the agent */
@@ -36,6 +47,8 @@ export interface RpcClientOptions {
 	model?: string;
 	/** Additional CLI arguments */
 	args?: string[];
+	/** Mirror child stderr to the parent stderr (default: true) */
+	pipeStderr?: boolean;
 }
 
 export interface ModelInfo {
@@ -45,7 +58,16 @@ export interface ModelInfo {
 	reasoning: boolean;
 }
 
+export interface RpcExtensionErrorEvent {
+	type: "extension_error";
+	extensionPath: string;
+	event: string;
+	error: string;
+}
+
+export type RpcClientEvent = AgentEvent | RpcExtensionUIRequest | RpcExtensionErrorEvent;
 export type RpcEventListener = (event: AgentEvent) => void;
+export type RpcClientEventListener = (event: RpcClientEvent) => void;
 
 // ============================================================================
 // RPC Client
@@ -55,6 +77,7 @@ export class RpcClient {
 	private process: ChildProcess | null = null;
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
+	private clientEventListeners: RpcClientEventListener[] = [];
 	private pendingRequests: Map<string, { resolve: (response: RpcResponse) => void; reject: (error: Error) => void }> =
 		new Map();
 	private requestId = 0;
@@ -76,6 +99,8 @@ export class RpcClient {
 
 		this.exitError = null;
 
+		const command = this.options.command ?? "node";
+		const commandArgs = this.options.commandArgs ?? [];
 		const cliPath = this.options.cliPath ?? "dist/cli.js";
 		const args = ["--mode", "rpc"];
 
@@ -89,7 +114,7 @@ export class RpcClient {
 			args.push(...this.options.args);
 		}
 
-		const childProcess = spawn("node", [cliPath, ...args], {
+		const childProcess = spawn(command, [...commandArgs, cliPath, ...args], {
 			cwd: this.options.cwd,
 			env: { ...process.env, ...this.options.env },
 			stdio: ["pipe", "pipe", "pipe"],
@@ -99,7 +124,9 @@ export class RpcClient {
 		// Collect stderr for debugging
 		childProcess.stderr?.on("data", (data) => {
 			this.stderr += data.toString();
-			process.stderr.write(data);
+			if (this.options.pipeStderr !== false) {
+				process.stderr.write(data);
+			}
 		});
 
 		childProcess.once("exit", (code, signal) => {
@@ -178,6 +205,19 @@ export class RpcClient {
 	}
 
 	/**
+	 * Subscribe to all client events, including extension UI events.
+	 */
+	onClientEvent(listener: RpcClientEventListener): () => void {
+		this.clientEventListeners.push(listener);
+		return () => {
+			const index = this.clientEventListeners.indexOf(listener);
+			if (index !== -1) {
+				this.clientEventListeners.splice(index, 1);
+			}
+		};
+	}
+
+	/**
 	 * Get collected stderr output (useful for debugging).
 	 */
 	getStderr(): string {
@@ -216,6 +256,18 @@ export class RpcClient {
 	 */
 	async abort(): Promise<void> {
 		await this.send({ type: "abort" });
+	}
+
+	/**
+	 * Respond to an extension UI request emitted by an RPC worker.
+	 */
+	respondToExtensionUI(response: RpcExtensionUIResponse): void {
+		const childProcess = this.process;
+		const stdin = childProcess?.stdin;
+		if (!childProcess || !stdin || stdin.destroyed || !stdin.writable) {
+			throw new Error("Client not started");
+		}
+		stdin.write(serializeJsonLine(response));
 	}
 
 	/**
@@ -492,8 +544,15 @@ export class RpcClient {
 			}
 
 			// Otherwise it's an event
+			const event = data as RpcClientEvent;
+			for (const listener of this.clientEventListeners) {
+				listener(event);
+			}
+			if (event.type === "extension_ui_request" || event.type === "extension_error") {
+				return;
+			}
 			for (const listener of this.eventListeners) {
-				listener(data as AgentEvent);
+				listener(event);
 			}
 		} catch {
 			// Ignore non-JSON lines

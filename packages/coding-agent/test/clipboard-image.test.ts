@@ -171,4 +171,33 @@ describe("readClipboardImage", () => {
 		const result = await readClipboardImage({ platform: "linux", env: {} });
 		expect(result).toBeNull();
 	});
+
+	test("Windows: falls back to PowerShell when native clipboard has no image", async () => {
+		mocks.clipboard.hasImage.mockReturnValue(false);
+
+		let powershellCalled = false;
+		mocks.spawnSync.mockImplementation((command, args, _options) => {
+			if (command !== "powershell.exe") {
+				throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+			}
+
+			powershellCalled = true;
+			const script = args[2] ?? "";
+			const pathMatch = /\$path = '((?:[^']|'')*)'/.exec(script);
+			if (!pathMatch) {
+				throw new Error("PowerShell script should include a quoted output path");
+			}
+
+			const tmpFile = pathMatch[1]!.replaceAll("''", "'");
+			writeFileSync(tmpFile, Buffer.from([10, 11, 12]));
+			return spawnOk(Buffer.from("ok\n", "utf-8"));
+		});
+
+		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
+		const result = await readClipboardImage({ platform: "win32", env: {} });
+		expect(powershellCalled).toBe(true);
+		expect(result).not.toBeNull();
+		expect(result?.mimeType).toBe("image/png");
+		expect(Array.from(result?.bytes ?? [])).toEqual([10, 11, 12]);
+	});
 });

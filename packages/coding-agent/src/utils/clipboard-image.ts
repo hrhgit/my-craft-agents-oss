@@ -153,12 +153,42 @@ function isWSL(env: NodeJS.ProcessEnv = process.env): boolean {
 	}
 }
 
+function readWindowsClipboardImageViaPowerShell(tmpFile: string, winPath: string): ClipboardImage | null {
+	const psQuotedWinPath = winPath.replaceAll("'", "''");
+	const psScript = [
+		"Add-Type -AssemblyName System.Windows.Forms",
+		"Add-Type -AssemblyName System.Drawing",
+		`$path = '${psQuotedWinPath}'`,
+		"$img = [System.Windows.Forms.Clipboard]::GetImage()",
+		"if ($img) { $img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' } else { Write-Output 'empty' }",
+	].join("; ");
+
+	const result = runCommand("powershell.exe", ["-NoProfile", "-Command", psScript], {
+		timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
+	});
+	if (!result.ok) {
+		return null;
+	}
+
+	const output = result.stdout.toString("utf-8").trim();
+	if (output !== "ok") {
+		return null;
+	}
+
+	const bytes = readFileSync(tmpFile);
+	if (bytes.length === 0) {
+		return null;
+	}
+
+	return { bytes: new Uint8Array(bytes), mimeType: "image/png" };
+}
+
 /**
  * On WSL, the Linux clipboard (Wayland/X11) does not receive image data from
  * Windows screenshots (Win+Shift+S). PowerShell can access the Windows clipboard
  * directly, so we use it as a fallback.
  */
-function readClipboardImageViaPowerShell(): ClipboardImage | null {
+function readClipboardImageViaWslPowerShell(): ClipboardImage | null {
 	const tmpFile = join(tmpdir(), `pi-wsl-clip-${randomUUID()}.png`);
 
 	try {
@@ -172,33 +202,23 @@ function readClipboardImageViaPowerShell(): ClipboardImage | null {
 			return null;
 		}
 
-		const psQuotedWinPath = winPath.replaceAll("'", "''");
-		const psScript = [
-			"Add-Type -AssemblyName System.Windows.Forms",
-			"Add-Type -AssemblyName System.Drawing",
-			`$path = '${psQuotedWinPath}'`,
-			"$img = [System.Windows.Forms.Clipboard]::GetImage()",
-			"if ($img) { $img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' } else { Write-Output 'empty' }",
-		].join("; ");
-
-		const result = runCommand("powershell.exe", ["-NoProfile", "-Command", psScript], {
-			timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
-		});
-		if (!result.ok) {
-			return null;
+		return readWindowsClipboardImageViaPowerShell(tmpFile, winPath);
+	} catch {
+		return null;
+	} finally {
+		try {
+			unlinkSync(tmpFile);
+		} catch {
+			// Ignore cleanup errors.
 		}
+	}
+}
 
-		const output = result.stdout.toString("utf-8").trim();
-		if (output !== "ok") {
-			return null;
-		}
+function readClipboardImageViaWindowsPowerShell(): ClipboardImage | null {
+	const tmpFile = join(tmpdir(), `pi-win-clip-${randomUUID()}.png`);
 
-		const bytes = readFileSync(tmpFile);
-		if (bytes.length === 0) {
-			return null;
-		}
-
-		return { bytes: new Uint8Array(bytes), mimeType: "image/png" };
+	try {
+		return readWindowsClipboardImageViaPowerShell(tmpFile, tmpFile);
 	} catch {
 		return null;
 	} finally {
@@ -238,17 +258,21 @@ function readClipboardImageViaXclip(): ClipboardImage | null {
 }
 
 async function readClipboardImageViaNativeClipboard(): Promise<ClipboardImage | null> {
-	if (!clipboard || !clipboard.hasImage()) {
+	try {
+		if (!clipboard || !clipboard.hasImage()) {
+			return null;
+		}
+
+		const imageData = await clipboard.getImageBinary();
+		if (!imageData || imageData.length === 0) {
+			return null;
+		}
+
+		const bytes = imageData instanceof Uint8Array ? imageData : Uint8Array.from(imageData);
+		return { bytes, mimeType: "image/png" };
+	} catch {
 		return null;
 	}
-
-	const imageData = await clipboard.getImageBinary();
-	if (!imageData || imageData.length === 0) {
-		return null;
-	}
-
-	const bytes = imageData instanceof Uint8Array ? imageData : Uint8Array.from(imageData);
-	return { bytes, mimeType: "image/png" };
 }
 
 export async function readClipboardImage(options?: {
@@ -273,11 +297,16 @@ export async function readClipboardImage(options?: {
 		}
 
 		if (!image && wsl) {
-			image = readClipboardImageViaPowerShell();
+			image = readClipboardImageViaWslPowerShell();
 		}
 
 		if (!image && !wayland) {
 			image = await readClipboardImageViaNativeClipboard();
+		}
+	} else if (platform === "win32") {
+		image = await readClipboardImageViaNativeClipboard();
+		if (!image) {
+			image = readClipboardImageViaWindowsPowerShell();
 		}
 	} else {
 		image = await readClipboardImageViaNativeClipboard();

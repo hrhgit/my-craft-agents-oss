@@ -308,6 +308,8 @@ export {
 	type ModelInfo,
 	type PrintModeOptions,
 	RpcClient,
+	type RpcClientEvent,
+	type RpcClientEventListener,
 	type RpcClientOptions,
 	type RpcCommand,
 	type RpcEventListener,

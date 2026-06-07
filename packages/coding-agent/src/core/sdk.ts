@@ -94,6 +94,8 @@ export interface CreateAgentSessionOptions {
 	networkManager?: NetworkManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Persist initial model/thinking entries for a new session. Default: true. */
+	persistInitialState?: boolean;
 }
 
 /** Result from createAgentSession */
@@ -241,6 +243,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const existingSession = sessionManager.buildSessionContext();
 	const hasExistingSession = existingSession.messages.length > 0;
 	const hasThinkingEntry = sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
+	const persistInitialState = options.persistInitialState ?? true;
 
 	let model = options.model;
 	let modelFallbackMessage: string | undefined;
@@ -475,10 +478,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// Restore messages if session has existing data
 	if (hasExistingSession) {
 		agent.state.messages = existingSession.messages;
-		if (!hasThinkingEntry) {
+		if (!hasThinkingEntry && persistInitialState) {
 			sessionManager.appendThinkingLevelChange(thinkingLevel);
 		}
-	} else {
+	} else if (persistInitialState) {
 		// Save initial model and thinking level for new sessions so they can be restored on resume
 		if (model) {
 			sessionManager.appendModelChange(model.provider, model.id);

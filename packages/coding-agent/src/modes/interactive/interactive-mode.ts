@@ -438,6 +438,7 @@ export class InteractiveMode {
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
+	private workspaceLoadPromise: Promise<void> | undefined;
 
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
@@ -843,8 +844,12 @@ export class InteractiveMode {
 		this.ui.start();
 		this.isInitialized = true;
 
-		// Initialize extensions first so resources are shown before messages
-		await this.rebindCurrentSession();
+		if (this.runtimeHost.isWorkspaceLoaded) {
+			// Initialize extensions first so resources are shown before messages
+			await this.rebindCurrentSession();
+		} else {
+			await this.ensureWorkspaceLoaded();
+		}
 
 		// Render initial messages AFTER showing loaded resources
 		this.renderInitialMessages();
@@ -909,7 +914,8 @@ export class InteractiveMode {
 		});
 
 		// Show startup warnings
-		const { migratedProviders, modelFallbackMessage, initialMessage, initialImages, initialMessages } = this.options;
+		const { migratedProviders, initialMessage, initialImages, initialMessages } = this.options;
+		const modelFallbackMessage = this.runtimeHost.modelFallbackMessage ?? this.options.modelFallbackMessage;
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
@@ -1816,6 +1822,59 @@ export class InteractiveMode {
 		await this.updateAvailableProviderCount();
 		this.updateEditorBorderColor();
 		this.updateTerminalTitle();
+	}
+
+	private reportRuntimeDiagnostics(): boolean {
+		let hasError = false;
+		for (const diagnostic of this.runtimeHost.diagnostics) {
+			if (diagnostic.type === "error") {
+				hasError = true;
+				this.showError(diagnostic.message);
+			} else if (diagnostic.type === "warning") {
+				this.showWarning(diagnostic.message);
+			} else {
+				this.showStatus(diagnostic.message);
+			}
+		}
+		return hasError;
+	}
+
+	private async loadDeferredWorkspace(): Promise<void> {
+		const loader = new Loader(
+			this.ui,
+			(spinner) => theme.fg("accent", spinner),
+			(text) => theme.fg("muted", text),
+			"Loading workspace...",
+		);
+		this.statusContainer.clear();
+		this.statusContainer.addChild(loader);
+		this.ui.requestRender();
+
+		try {
+			await this.runtimeHost.loadWorkspace();
+			if (this.reportRuntimeDiagnostics()) {
+				await this.handleFatalRuntimeError(
+					"Workspace load failed",
+					new Error("One or more startup diagnostics were errors"),
+				);
+			}
+		} catch (error) {
+			await this.handleFatalRuntimeError("Workspace load failed", error);
+		} finally {
+			loader.stop();
+			this.statusContainer.clear();
+			this.ui.requestRender();
+		}
+	}
+
+	private async ensureWorkspaceLoaded(): Promise<void> {
+		if (this.runtimeHost.isWorkspaceLoaded) {
+			return;
+		}
+		this.workspaceLoadPromise ??= this.loadDeferredWorkspace().finally(() => {
+			this.workspaceLoadPromise = undefined;
+		});
+		await this.workspaceLoadPromise;
 	}
 
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
@@ -2732,6 +2791,7 @@ export class InteractiveMode {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
 			if (!text) return;
+			await this.ensureWorkspaceLoaded();
 
 			// Handle commands
 			if (text === "/settings") {

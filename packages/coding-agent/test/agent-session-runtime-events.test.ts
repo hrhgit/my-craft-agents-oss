@@ -187,6 +187,88 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		]);
 	});
 
+	it("hydrates a deferred workspace without persisting placeholder state", async () => {
+		const tempDir = join(tmpdir(), `pi-runtime-deferred-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const sessionDir = join(tempDir, "sessions");
+		mkdirSync(sessionDir, { recursive: true });
+
+		const faux = registerFauxProvider();
+		const authStorage = AuthStorage.inMemory();
+		authStorage.setRuntimeApiKey(faux.getModel().provider, "faux-key");
+		const events: RecordedSessionEvent[] = [];
+
+		const createRuntime: CreateAgentSessionRuntimeFactory = async ({
+			cwd,
+			sessionManager,
+			sessionStartEvent,
+			deferResourceLoad,
+			persistInitialState,
+		}) => {
+			const services = await createAgentSessionServices({
+				cwd,
+				agentDir: tempDir,
+				authStorage,
+				deferResourceLoad,
+				resourceLoaderOptions: {
+					extensionFactories: [
+						(pi) => {
+							pi.on("session_start", (event) => {
+								events.push(event);
+							});
+						},
+					],
+					noSkills: true,
+					noPromptTemplates: true,
+					noThemes: true,
+				},
+			});
+			return {
+				...(await createAgentSessionFromServices({
+					services,
+					sessionManager,
+					sessionStartEvent,
+					model: faux.getModel(),
+					persistInitialState,
+				})),
+				services,
+				diagnostics: services.diagnostics,
+			};
+		};
+
+		const sessionManager = SessionManager.create(tempDir, sessionDir);
+		const runtimeHost = await createAgentSessionRuntime(createRuntime, {
+			cwd: tempDir,
+			agentDir: tempDir,
+			sessionManager,
+			deferResourceLoad: true,
+			persistInitialState: false,
+		});
+		runtimeHost.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+		});
+		cleanups.push(async () => {
+			await runtimeHost.dispose();
+			faux.unregister();
+			if (existsSync(tempDir)) {
+				rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
+
+		expect(runtimeHost.isWorkspaceLoaded).toBe(false);
+		expect(runtimeHost.session.resourceLoader.getExtensions().extensions).toEqual([]);
+		expect(runtimeHost.session.sessionManager.getEntries()).toEqual([]);
+
+		await runtimeHost.loadWorkspace();
+
+		expect(runtimeHost.isWorkspaceLoaded).toBe(true);
+		expect(runtimeHost.session.resourceLoader.getExtensions().extensions).toHaveLength(1);
+		expect(events).toEqual([{ type: "session_start", reason: "startup" }]);
+		expect(runtimeHost.session.sessionManager.getEntries().map((entry) => entry.type)).toEqual([
+			"model_change",
+			"thinking_level_change",
+		]);
+	});
+
 	it("can create a new session in a different cwd", async () => {
 		const events: RecordedSessionEvent[] = [];
 		const { runtimeHost } = await createRuntimeHost((pi) => {

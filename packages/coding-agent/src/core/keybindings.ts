@@ -53,6 +53,9 @@ export interface AppKeybindings {
 	"app.tree.filter.all": true;
 	"app.tree.filter.cycleForward": true;
 	"app.tree.filter.cycleBackward": true;
+	"app.mux.switcher": true;
+	"app.mux.new": true;
+	"app.mux.close": true;
 }
 
 export type AppKeybinding = keyof AppKeybindings;
@@ -203,6 +206,18 @@ export const KEYBINDINGS = {
 	"app.tree.filter.cycleBackward": {
 		defaultKeys: "shift+ctrl+o",
 		description: "Tree filter: cycle backward",
+	},
+	"app.mux.switcher": {
+		defaultKeys: "ctrl+o",
+		description: "Mux: switch active process",
+	},
+	"app.mux.new": {
+		defaultKeys: "ctrl+n",
+		description: "Mux: start a new process",
+	},
+	"app.mux.close": {
+		defaultKeys: "ctrl+shift+w",
+		description: "Mux: close active process",
 	},
 } as const satisfies KeybindingDefinitions;
 
