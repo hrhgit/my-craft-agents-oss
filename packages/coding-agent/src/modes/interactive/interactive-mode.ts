@@ -2627,19 +2627,7 @@ export class InteractiveMode {
 			if (text === "/compact" || text.startsWith("/compact ")) {
 				const customInstructions = text.startsWith("/compact ") ? text.slice(9).trim() : undefined;
 				this.editor.setText("");
-				await this.handleCompactCommand("both", customInstructions);
-				return;
-			}
-			if (text === "/compact-ori" || text.startsWith("/compact-ori ")) {
-				const customInstructions = text.startsWith("/compact-ori ") ? text.slice(13).trim() : undefined;
-				this.editor.setText("");
-				await this.handleCompactCommand("default", customInstructions);
-				return;
-			}
-			if (text === "/compact-cache" || text.startsWith("/compact-cache ")) {
-				const customInstructions = text.startsWith("/compact-cache ") ? text.slice(15).trim() : undefined;
-				this.editor.setText("");
-				await this.handleCompactCommand("cache", customInstructions);
+				await this.handleCompactCommand(customInstructions);
 				return;
 			}
 			if (text === "/reload") {
@@ -5712,10 +5700,7 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private async handleCompactCommand(
-		mode: "default" | "cache" | "both" = "default",
-		customInstructions?: string,
-	): Promise<void> {
+	private async handleCompactCommand(customInstructions?: string): Promise<void> {
 		const entries = this.sessionManager.getEntries();
 		const messageCount = entries.filter((e) => e.type === "message").length;
 
@@ -5731,13 +5716,7 @@ export class InteractiveMode {
 		this.statusContainer.clear();
 
 		try {
-			if (mode === "cache") {
-				await this.session.compactCache(customInstructions);
-			} else if (mode === "both") {
-				await this.session.compact(customInstructions);
-			} else {
-				await this.session.compactOriginal(customInstructions);
-			}
+			await this.session.compact(customInstructions);
 		} catch {
 			// Ignore, will be emitted as an event
 		}

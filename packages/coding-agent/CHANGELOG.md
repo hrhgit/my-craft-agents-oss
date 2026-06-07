@@ -4,13 +4,13 @@
 
 ### Added
 
-- Added experimental `/compact`, `/compact-ori`, and `/compact-cache` compaction modes so default/manual and auto compaction can store side-by-side original-vs-cache-friendly summary comparisons with timing and token usage metadata.
 - Added a dedicated `app.message.steer` shortcut for queuing steering messages without changing editor submit behavior.
 - Added `ctrl+y` redo support for the interactive editor.
 - Added the local `web_fetch` built-in tool and a persisted `webSearch` setting for supported provider built-in web search.
 
 ### Changed
 
+- Changed `/compact` and auto compaction to use the cache-friendly append summarizer directly, removed the experimental `/compact-ori` and `/compact-cache` commands, and stopped writing compaction comparison debug artifacts.
 - Changed coding-agent HTTP/SSE model requests to prefer the bundled Go sidecar transport path when it is available, and removed user-visible WebSocket transport selection from interactive settings.
 - Changed coding-agent build and release artifacts to include prebuilt Go sidecar binaries for supported platforms.
 

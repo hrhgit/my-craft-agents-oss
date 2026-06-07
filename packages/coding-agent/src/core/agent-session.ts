@@ -14,7 +14,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname } from "node:path";
 import type {
 	Agent,
 	AgentEvent,
@@ -34,7 +34,6 @@ import {
 	streamSimple,
 	supportsBuiltinWebSearch,
 } from "@earendil-works/pi-ai";
-import { getAgentDir } from "../config.ts";
 import { theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -42,14 +41,10 @@ import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
-	type CompactionComparisonResult,
 	type CompactionResult,
-	type CompactionSummaryVariant,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
-	compactBoth,
-	compactCache,
 	estimateContextTokens,
 	generateBranchSummary,
 	prepareCompaction,
@@ -268,6 +263,7 @@ interface ToolDefinitionEntry {
 
 /** Standard thinking levels */
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
+const COMPACTION_THINKING_LEVEL: ThinkingLevel = "medium";
 
 // ============================================================================
 // AgentSession Class
@@ -1774,147 +1770,7 @@ export class AgentSession {
 	 * Aborts current agent operation first.
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
-	private _getCompactionArtifactsDir(): string {
-		const sessionDir = this.sessionManager.getSessionDir();
-		const defaultSessionsRoot = join(getAgentDir(), "sessions");
-		const artifactsRoot = join(getAgentDir(), "compaction-summaries");
-		if (sessionDir.startsWith(defaultSessionsRoot)) {
-			const relativeSessionDir = sessionDir.slice(defaultSessionsRoot.length).replace(/^[/\\]/, "");
-			return relativeSessionDir ? join(artifactsRoot, relativeSessionDir) : artifactsRoot;
-		}
-		const safePath = `--${sessionDir.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-		return join(artifactsRoot, safePath);
-	}
-
-	private _getCompactionRequestsDir(): string {
-		const sessionDir = this.sessionManager.getSessionDir();
-		const defaultSessionsRoot = join(getAgentDir(), "sessions");
-		const requestsRoot = join(getAgentDir(), "compaction-requests");
-		if (sessionDir.startsWith(defaultSessionsRoot)) {
-			const relativeSessionDir = sessionDir.slice(defaultSessionsRoot.length).replace(/^[/\\]/, "");
-			return relativeSessionDir ? join(requestsRoot, relativeSessionDir) : requestsRoot;
-		}
-		const safePath = `--${sessionDir.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-		return join(requestsRoot, safePath);
-	}
-
-	private _saveCompactionRequestRecords(args: {
-		reason: "manual" | "threshold" | "overflow";
-		mode: "default" | "cache" | "both";
-		customInstructions?: string;
-		selected?: CompactionSummaryVariant;
-		variants?: Partial<Record<"serialized" | "append", CompactionSummaryVariant>>;
-	}): void {
-		const requestsDir = this._getCompactionRequestsDir();
-		if (!existsSync(requestsDir)) {
-			mkdirSync(requestsDir, { recursive: true });
-		}
-		const timestamp = new Date().toISOString();
-		const variantEntries = args.variants
-			? Object.entries(args.variants)
-			: args.selected
-				? [[args.selected.mode, args.selected] as const]
-				: [];
-		const variants = Object.fromEntries(
-			variantEntries.map(([name, variant]) => [
-				name,
-				{
-					mode: variant.mode,
-					firstKeptEntryId: variant.firstKeptEntryId,
-					tokensBefore: variant.tokensBefore,
-					durationMs: variant.stats.durationMs,
-					usage: variant.stats.usage,
-					request: variant.stats.request,
-					requestRecord: variant.stats.requestRecord,
-					requestRecords: variant.stats.requestRecords,
-				},
-			]),
-		);
-		const firstKeptEntryId = args.selected?.firstKeptEntryId ?? variantEntries[0]?.[1].firstKeptEntryId ?? "unknown";
-		const filePath = join(
-			requestsDir,
-			`${timestamp.replace(/[:.]/g, "-")}_${this.sessionManager.getSessionId()}_${firstKeptEntryId}.json`,
-		);
-		writeFileSync(
-			filePath,
-			`${JSON.stringify(
-				{
-					timestamp,
-					sessionId: this.sessionManager.getSessionId(),
-					sessionFile: this.sessionManager.getSessionFile(),
-					cwd: this.sessionManager.getCwd(),
-					reason: args.reason,
-					mode: args.mode,
-					customInstructions: args.customInstructions,
-					model: this.model
-						? {
-								provider: this.model.provider,
-								id: this.model.id,
-								api: this.model.api,
-							}
-						: undefined,
-					thinkingLevel: this.thinkingLevel,
-					selected: args.selected?.mode,
-					variants,
-				},
-				null,
-				2,
-			)}
-`,
-			"utf-8",
-		);
-	}
-
-	private _saveCompactionComparisonResult(comparison: CompactionComparisonResult, customInstructions?: string): void {
-		const artifactsDir = this._getCompactionArtifactsDir();
-		if (!existsSync(artifactsDir)) {
-			mkdirSync(artifactsDir, { recursive: true });
-		}
-		const timestamp = new Date().toISOString();
-		const filePath = join(
-			artifactsDir,
-			`${timestamp.replace(/[:.]/g, "-")}_${this.sessionManager.getSessionId()}_${comparison.selected.firstKeptEntryId}.json`,
-		);
-		writeFileSync(
-			filePath,
-			`${JSON.stringify(
-				{
-					timestamp,
-					sessionId: this.sessionManager.getSessionId(),
-					sessionFile: this.sessionManager.getSessionFile(),
-					cwd: this.sessionManager.getCwd(),
-					customInstructions,
-					selected: comparison.selected.mode,
-					selectedSummary: comparison.selected.summary,
-					selectedFirstKeptEntryId: comparison.selected.firstKeptEntryId,
-					selectedTokensBefore: comparison.selected.tokensBefore,
-					variants: {
-						serialized: {
-							summary: comparison.variants.serialized.summary,
-							firstKeptEntryId: comparison.variants.serialized.firstKeptEntryId,
-							tokensBefore: comparison.variants.serialized.tokensBefore,
-							stats: comparison.variants.serialized.stats,
-						},
-						append: {
-							summary: comparison.variants.append.summary,
-							firstKeptEntryId: comparison.variants.append.firstKeptEntryId,
-							tokensBefore: comparison.variants.append.tokensBefore,
-							stats: comparison.variants.append.stats,
-						},
-					},
-				},
-				null,
-				2,
-			)}
-`,
-			"utf-8",
-		);
-	}
-
-	private async _compactInternal(
-		mode: "default" | "cache" | "both",
-		customInstructions?: string,
-	): Promise<CompactionResult> {
+	private async _compactInternal(customInstructions?: string): Promise<CompactionResult> {
 		this._disconnectFromAgent();
 		await this.abort();
 		this._compactionAbortController = new AbortController();
@@ -1966,8 +1822,7 @@ export class AgentSession {
 			let firstKeptEntryId: string;
 			let tokensBefore: number;
 			let details: unknown;
-			let selectedVariant: CompactionSummaryVariant | undefined;
-			let variantRecords: Partial<Record<"serialized" | "append", CompactionSummaryVariant>> | undefined;
+			let summaryStats: CompactionResult["summaryStats"];
 
 			if (extensionCompaction) {
 				// Extension provided compaction content
@@ -1975,57 +1830,8 @@ export class AgentSession {
 				firstKeptEntryId = extensionCompaction.firstKeptEntryId;
 				tokensBefore = extensionCompaction.tokensBefore;
 				details = extensionCompaction.details;
-			} else if (mode === "cache") {
-				const result = await compactCache(
-					preparation,
-					this.model,
-					apiKey,
-					headers,
-					customInstructions,
-					this._compactionAbortController.signal,
-					this.thinkingLevel,
-					this.agent.streamFn,
-					{
-						systemPrompt: this.systemPrompt,
-						sessionId: this.sessionId,
-						cacheRetention: "short",
-						tools: this.agent.state.tools,
-						convertMessages: (messages) => this._convertMessagesForCompaction(messages),
-					},
-				);
-				summary = result.summary;
-				firstKeptEntryId = result.firstKeptEntryId;
-				tokensBefore = result.tokensBefore;
-				details = result.details;
-				selectedVariant = result;
-				variantRecords = { append: result };
-			} else if (mode === "both") {
-				const comparison = await compactBoth(
-					preparation,
-					this.model,
-					apiKey,
-					headers,
-					customInstructions,
-					this._compactionAbortController.signal,
-					this.thinkingLevel,
-					this.agent.streamFn,
-					{
-						systemPrompt: this.systemPrompt,
-						sessionId: this.sessionId,
-						cacheRetention: "short",
-						tools: this.agent.state.tools,
-						convertMessages: (messages) => this._convertMessagesForCompaction(messages),
-					},
-				);
-				this._saveCompactionComparisonResult(comparison, customInstructions);
-				summary = comparison.selected.summary;
-				firstKeptEntryId = comparison.selected.firstKeptEntryId;
-				tokensBefore = comparison.selected.tokensBefore;
-				details = comparison.selected.details;
-				selectedVariant = comparison.selected;
-				variantRecords = comparison.variants;
+				summaryStats = extensionCompaction.summaryStats;
 			} else {
-				// Generate compaction result
 				const result = await compact(
 					preparation,
 					this.model,
@@ -2033,32 +1839,35 @@ export class AgentSession {
 					headers,
 					customInstructions,
 					this._compactionAbortController.signal,
-					this.thinkingLevel,
+					COMPACTION_THINKING_LEVEL,
 					this.agent.streamFn,
+					{
+						systemPrompt: this.systemPrompt,
+						sessionId: this.sessionId,
+						cacheRetention: "short",
+						tools: this.agent.state.tools,
+						convertMessages: (messages) => this._convertMessagesForCompaction(messages),
+					},
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
 				tokensBefore = result.tokensBefore;
 				details = result.details;
-				selectedVariant = result;
-				variantRecords = { serialized: selectedVariant };
+				summaryStats = result.summaryStats;
 			}
 
 			if (this._compactionAbortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
 
-			if (selectedVariant) {
-				this._saveCompactionRequestRecords({
-					reason: "manual",
-					mode,
-					customInstructions,
-					selected: selectedVariant,
-					variants: variantRecords,
-				});
-			}
-
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
+			this.sessionManager.appendCompaction(
+				summary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+				fromExtension,
+				summaryStats,
+			);
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
@@ -2081,6 +1890,7 @@ export class AgentSession {
 				firstKeptEntryId,
 				tokensBefore,
 				details,
+				summaryStats,
 			};
 			this._emit({
 				type: "compaction_end",
@@ -2109,15 +1919,7 @@ export class AgentSession {
 	}
 
 	async compact(customInstructions?: string): Promise<CompactionResult> {
-		return this._compactInternal("both", customInstructions);
-	}
-
-	async compactOriginal(customInstructions?: string): Promise<CompactionResult> {
-		return this._compactInternal("default", customInstructions);
-	}
-
-	async compactCache(customInstructions?: string): Promise<CompactionResult> {
-		return this._compactInternal("cache", customInstructions);
+		return this._compactInternal(customInstructions);
 	}
 
 	/**
@@ -2314,7 +2116,7 @@ export class AgentSession {
 			let firstKeptEntryId: string;
 			let tokensBefore: number;
 			let details: unknown;
-			let comparisonRecord: CompactionComparisonResult | undefined;
+			let summaryStats: CompactionResult["summaryStats"];
 
 			if (extensionCompaction) {
 				// Extension provided compaction content
@@ -2322,15 +2124,16 @@ export class AgentSession {
 				firstKeptEntryId = extensionCompaction.firstKeptEntryId;
 				tokensBefore = extensionCompaction.tokensBefore;
 				details = extensionCompaction.details;
+				summaryStats = extensionCompaction.summaryStats;
 			} else {
-				const comparison = await compactBoth(
+				const result = await compact(
 					preparation,
 					this.model,
 					apiKey,
 					headers,
 					undefined,
 					this._autoCompactionAbortController.signal,
-					this.thinkingLevel,
+					COMPACTION_THINKING_LEVEL,
 					this.agent.streamFn,
 					{
 						systemPrompt: this.systemPrompt,
@@ -2340,12 +2143,11 @@ export class AgentSession {
 						convertMessages: (messages) => this._convertMessagesForCompaction(messages),
 					},
 				);
-				this._saveCompactionComparisonResult(comparison);
-				summary = comparison.selected.summary;
-				firstKeptEntryId = comparison.selected.firstKeptEntryId;
-				tokensBefore = comparison.selected.tokensBefore;
-				details = comparison.selected.details;
-				comparisonRecord = comparison;
+				summary = result.summary;
+				firstKeptEntryId = result.firstKeptEntryId;
+				tokensBefore = result.tokensBefore;
+				details = result.details;
+				summaryStats = result.summaryStats;
 			}
 
 			if (this._autoCompactionAbortController.signal.aborted) {
@@ -2359,16 +2161,14 @@ export class AgentSession {
 				return false;
 			}
 
-			if (comparisonRecord) {
-				this._saveCompactionRequestRecords({
-					reason,
-					mode: "both",
-					selected: comparisonRecord.selected,
-					variants: comparisonRecord.variants,
-				});
-			}
-
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
+			this.sessionManager.appendCompaction(
+				summary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+				fromExtension,
+				summaryStats,
+			);
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
@@ -2391,6 +2191,7 @@ export class AgentSession {
 				firstKeptEntryId,
 				tokensBefore,
 				details,
+				summaryStats,
 			};
 			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
 
