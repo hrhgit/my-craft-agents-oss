@@ -1,6 +1,7 @@
 import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 import path from "path";
@@ -10,7 +11,14 @@ import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { resolveToCwd } from "./path-utils.ts";
+import { buildObservedPathHistoryEntry, type ReadHistoryStore } from "./read-history.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
+import {
+	buildSearchDedupKey,
+	formatDeduplicationNote,
+	type ToolDeduplicationDetails,
+	type ToolDedupStore,
+} from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import {
 	DEFAULT_MAX_BYTES,
@@ -42,6 +50,7 @@ export interface GrepToolDetails {
 	truncation?: TruncationResult;
 	matchLimitReached?: number;
 	linesTruncated?: boolean;
+	deduplication?: ToolDeduplicationDetails;
 }
 
 /**
@@ -63,6 +72,10 @@ const defaultGrepOperations: GrepOperations = {
 export interface GrepToolOptions {
 	/** Custom operations for grep. Default: local filesystem plus ripgrep */
 	operations?: GrepOperations;
+	/** Session-scoped path history used for later read/edit recovery. */
+	readHistoryStore?: ReadHistoryStore;
+	/** Session-scoped short-term tool-result cache for exact duplicate searches. */
+	toolDedupStore?: ToolDedupStore;
 }
 
 function formatGrepCall(
@@ -125,6 +138,8 @@ export function createGrepToolDefinition(
 	options?: GrepToolOptions,
 ): ToolDefinition<typeof grepSchema, GrepToolDetails | undefined> {
 	const customOps = options?.operations;
+	const readHistoryStore = options?.readHistoryStore;
+	const toolDedupStore = options?.toolDedupStore;
 	return {
 		name: "grep",
 		label: "grep",
@@ -132,7 +147,7 @@ export function createGrepToolDefinition(
 		promptSnippet: "Search file contents for patterns (respects .gitignore)",
 		parameters: grepSchema,
 		async execute(
-			_toolCallId,
+			toolCallId,
 			{
 				pattern,
 				path: searchDir,
@@ -169,13 +184,37 @@ export function createGrepToolDefinition(
 
 				(async () => {
 					try {
+						const searchPath = resolveToCwd(searchDir || ".", cwd);
+						const contextValue = context && context > 0 ? context : 0;
+						const effectiveLimit = Math.max(1, limit ?? DEFAULT_LIMIT);
+						const searchDedupKey = buildSearchDedupKey("grep", cwd, {
+							pattern,
+							path: searchPath,
+							glob: glob ?? null,
+							ignoreCase: ignoreCase ?? false,
+							literal: literal ?? false,
+							context: contextValue,
+							limit: effectiveLimit,
+						});
+						const dedupHit = toolDedupStore?.findSearchHit({ toolCallId, key: searchDedupKey });
+						if (dedupHit) {
+							const content: TextContent[] = [
+								{
+									type: "text",
+									text: formatDeduplicationNote(dedupHit.details, "Reused previous grep result."),
+								},
+							];
+							toolDedupStore?.recordSyntheticResult(toolCallId, content);
+							settle(() => resolve({ content, details: { deduplication: dedupHit.details } }));
+							return;
+						}
+
 						const rgPath = await ensureTool("rg", true);
 						if (!rgPath) {
 							settle(() => reject(new Error("ripgrep (rg) is not available and could not be downloaded")));
 							return;
 						}
 
-						const searchPath = resolveToCwd(searchDir || ".", cwd);
 						const ops = customOps ?? defaultGrepOperations;
 						let isDirectory: boolean;
 						try {
@@ -185,8 +224,6 @@ export function createGrepToolDefinition(
 							return;
 						}
 
-						const contextValue = context && context > 0 ? context : 0;
-						const effectiveLimit = Math.max(1, limit ?? DEFAULT_LIMIT);
 						const formatPath = (filePath: string): string => {
 							if (isDirectory) {
 								const relative = path.relative(searchPath, filePath);
@@ -214,7 +251,7 @@ export function createGrepToolDefinition(
 
 						const args: string[] = ["--json", "--line-number", "--color=never", "--hidden"];
 						if (ignoreCase) args.push("--ignore-case");
-						if (literal) args.push("--fixed-strings");
+						if (literal || pattern.startsWith("-")) args.push("--fixed-strings");
 						if (glob) args.push("--glob", glob);
 						args.push("--", pattern, searchPath);
 
@@ -307,14 +344,26 @@ export function createGrepToolDefinition(
 								return;
 							}
 							if (matchCount === 0) {
-								settle(() =>
-									resolve({ content: [{ type: "text", text: "No matches found" }], details: undefined }),
-								);
+								const content: TextContent[] = [{ type: "text", text: "No matches found" }];
+								toolDedupStore?.recordSearch({
+									toolCallId,
+									key: searchDedupKey,
+									scopePath: searchPath,
+									resultContent: content,
+								});
+								settle(() => resolve({ content, details: undefined }));
 								return;
 							}
 
 							// Format matches after streaming finishes so custom readFile() backends can be async.
 							for (const match of matches) {
+								readHistoryStore?.record(
+									buildObservedPathHistoryEntry({
+										toolCallId,
+										requestedPath: formatPath(match.filePath),
+										canonicalPath: match.filePath,
+									}),
+								);
 								if (contextValue === 0 && match.lineText !== undefined) {
 									const relativePath = formatPath(match.filePath);
 									const sanitized = match.lineText
@@ -354,9 +403,16 @@ export function createGrepToolDefinition(
 								details.linesTruncated = true;
 							}
 							if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
+							const content: TextContent[] = [{ type: "text", text: output }];
+							toolDedupStore?.recordSearch({
+								toolCallId,
+								key: searchDedupKey,
+								scopePath: searchPath,
+								resultContent: content,
+							});
 							settle(() =>
 								resolve({
-									content: [{ type: "text", text: output }],
+									content,
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);

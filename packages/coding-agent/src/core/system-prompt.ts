@@ -25,6 +25,17 @@ export interface BuildSystemPromptOptions {
 	skills?: Skill[];
 }
 
+const TOOL_USE_DISCIPLINE = `Tool use discipline:
+- Each tool call should reduce a specific uncertainty; skip or combine calls that are only defensive "just in case" exploration.
+- Use paths from the user's message, current tool output, or a successful read; do not reconstruct paths from memory or naming patterns.
+- After two consecutive failures of the same kind against the same target, stop retrying, identify the likely cause, and switch strategy.
+- Treat status/progress checks as read-only by default; edit files only when the user asks for implementation or fixes.
+- For large files, locate symbols or keywords first, then read one relevant contiguous range instead of guessing with many small offsets.
+- If an edit exact match fails, reread the target region and rebuild oldText from the current file content.
+- On Windows/PowerShell, write commands as PowerShell, not bash: avoid reserved variable names such as $pid (use $targetPid), do not use bash heredocs, verify wildcard paths with Get-ChildItem or Test-Path, and put complex multi-line scripts in a temp .ps1 file before running them.
+- Before long-running commands, do a minimal preflight for target paths, ports/processes, dependencies, or required input files.
+- Once you find a concrete anchor such as a path, symbol, run id, or log file, reuse it instead of restarting broad exploration.`;
+
 /** Build the system prompt with tools, guidelines, and context */
 export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const {
@@ -155,7 +166,9 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 - When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
 - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md)
 - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)
+
+${TOOL_USE_DISCIPLINE}`;
 
 	if (appendSection) {
 		prompt += appendSection;

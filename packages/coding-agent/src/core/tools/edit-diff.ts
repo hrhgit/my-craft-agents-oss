@@ -6,8 +6,13 @@
 import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
-import { resolveToCwd } from "./path-utils.ts";
-import type { ReadHistoryEntry, ReadHistoryPathCandidate, ReadHistoryStore } from "./read-history.ts";
+import type {
+	ReadHistoryEntry,
+	ReadHistoryPathCandidate,
+	ReadHistoryPathRecovery,
+	ReadHistoryStore,
+} from "./read-history.ts";
+import { resolvePathWithHistory } from "./read-history.ts";
 import {
 	diceCoefficient,
 	lineDiceCoefficient,
@@ -67,11 +72,7 @@ export interface ApproximateMatchCandidate {
 	reasons: string[];
 }
 
-export interface EditPathRecovery {
-	resolvedPath: string;
-	candidates: ReadonlyArray<ReadHistoryPathCandidate>;
-	autoRecovered: boolean;
-}
+export type EditPathRecovery = ReadHistoryPathRecovery;
 
 export type EditFailureKind =
 	| "path_not_found"
@@ -347,35 +348,7 @@ export function resolveEditPathWithHistory(
 	cwd: string,
 	readHistoryStore?: ReadHistoryStore,
 ): EditPathRecovery {
-	const absolutePath = resolveToCwd(path, cwd);
-	const candidates = readHistoryStore?.findPathCandidates(path) ?? [];
-	if (candidates.length === 0) {
-		return { resolvedPath: absolutePath, candidates, autoRecovered: false };
-	}
-
-	const [best, second] = candidates;
-	// Auto-recover when the best candidate is strong enough.
-	// We also check if the model's current request matches the entry's original request
-	// (e.g., model consistently asks for "index.tsx" which maps to "index.ts").
-	if (best) {
-		const entryBasename = best.entryRequestedPath.replace(/\\/g, "/").split("/").at(-1) ?? "";
-		const requestBasename = path.replace(/\\/g, "/").split("/").at(-1) ?? "";
-		// If the model's current request matches its previous request by basename,
-		// that's a strong signal the model is consistently pointing to the same file.
-		const basenamesMatch = entryBasename === requestBasename;
-		const strongScore = best.score >= 0.85;
-		const gapOk = !second || best.score - second.score >= 0.15;
-		// Recover if: (1) strong score, or (2) basenames match (model is consistent)
-		if (gapOk && (strongScore || basenamesMatch)) {
-			return {
-				resolvedPath: best.canonicalPath,
-				candidates,
-				autoRecovered: true,
-			};
-		}
-	}
-
-	return { resolvedPath: absolutePath, candidates, autoRecovered: false };
+	return resolvePathWithHistory(path, cwd, readHistoryStore);
 }
 
 /**

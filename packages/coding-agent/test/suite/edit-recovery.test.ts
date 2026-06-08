@@ -13,8 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEditToolDefinition } from "../../src/core/tools/edit.ts";
+import { createFindToolDefinition } from "../../src/core/tools/find.ts";
+import { createReadToolDefinition } from "../../src/core/tools/read.ts";
 import type { ReadHistoryStore } from "../../src/core/tools/read-history.ts";
 import {
+	buildObservedPathHistoryEntry,
 	buildReadHistoryEntry,
 	cleanupReadHistoryStore,
 	getReadHistoryStore,
@@ -42,6 +45,20 @@ async function executeEdit(
 	input: { path: string; edits: Array<{ oldText: string; newText: string }> },
 ) {
 	return tool.execute("test-call-id", input as any, undefined, undefined, undefined as any);
+}
+
+async function executeRead(
+	tool: ReturnType<typeof createReadToolDefinition>,
+	input: { path: string; offset?: number; limit?: number },
+) {
+	return tool.execute("test-read-call-id", input, undefined, undefined, undefined as any);
+}
+
+function getTextOutput(result: { content: Array<{ type: string; text?: string }> }): string {
+	return result.content
+		.filter((block): block is { type: "text"; text: string } => block.type === "text")
+		.map((block) => block.text)
+		.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +137,71 @@ describe("edit path recovery from read history", () => {
 			// Structured details should be present
 			expect(error.toolResult?.details?.error?.kind).toBe("path_not_found");
 		}
+
+		store.clear();
+	});
+});
+
+describe("read path recovery from observed path history", () => {
+	it("auto-resolves read path when observed history has a unique high-confidence candidate", async () => {
+		const dir = await createTempDir();
+		const realPath = join(dir, "runs", "correct-run", "reports", "ui-review-report.md");
+		await mkdir(join(dir, "runs", "correct-run", "reports"), { recursive: true });
+		await writeFile(realPath, "score: 9.1\n", "utf8");
+
+		const store = getReadHistoryStore(`${SESSION_ID}-read-observed`);
+		store.clear();
+		store.record(
+			buildObservedPathHistoryEntry({
+				toolCallId: "find-observed-1",
+				requestedPath: "runs/correct-run/reports/ui-review-report.md",
+				canonicalPath: realPath,
+			}),
+		);
+
+		const tool = createReadToolDefinition(dir, { readHistoryStore: store });
+		const wrongPath = join(dir, "runs", "wrong-run", "reports", "ui-review-report.md");
+		const result = await executeRead(tool, { path: wrongPath });
+		const output = getTextOutput(result);
+
+		expect(output).toContain("Path recovered from history");
+		expect(output).toContain("score: 9.1");
+		expect(result.details?.pathRecovery?.autoRecovered).toBe(true);
+		expect(result.details?.pathRecovery?.resolvedPath).toBe(realPath);
+
+		store.clear();
+	});
+
+	it("records find results so a later read can recover from a similar wrong path", async () => {
+		const dir = await createTempDir();
+		const realPath = join(dir, "runs", "correct-run", "reports", "ui-review-report.md");
+		await mkdir(join(dir, "runs", "correct-run", "reports"), { recursive: true });
+		await writeFile(realPath, "officialUiScore: 9.4\n", "utf8");
+
+		const store = getReadHistoryStore(`${SESSION_ID}-find-observed`);
+		store.clear();
+		const findTool = createFindToolDefinition(dir, {
+			readHistoryStore: store,
+			operations: {
+				exists: async () => true,
+				glob: async () => [realPath],
+			},
+		});
+		await findTool.execute(
+			"find-observed-2",
+			{ pattern: "**/ui-review-report.md", path: dir },
+			undefined,
+			undefined,
+			undefined as any,
+		);
+
+		const readTool = createReadToolDefinition(dir, { readHistoryStore: store });
+		const wrongPath = join(dir, "runs", "wrong-run", "reports", "ui-review-report.md");
+		const result = await executeRead(readTool, { path: wrongPath });
+
+		expect(getTextOutput(result)).toContain("officialUiScore: 9.4");
+		expect(result.details?.pathRecovery?.autoRecovered).toBe(true);
+		expect(result.details?.pathRecovery?.resolvedPath).toBe(realPath);
 
 		store.clear();
 	});

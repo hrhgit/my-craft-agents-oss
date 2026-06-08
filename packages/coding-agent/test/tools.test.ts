@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { executeBashWithOperations } from "../src/core/bash-executor.ts";
 import { type BashOperations, createBashTool, createLocalBashOperations } from "../src/core/tools/bash.ts";
 import { computeEditsDiff } from "../src/core/tools/edit-diff.ts";
+import { createToolDedupStoreForTesting, findShellMutationPaths } from "../src/core/tools/tool-dedup-cache.ts";
 import {
 	createEditTool,
 	createFindTool,
@@ -73,7 +74,7 @@ describe("Coding Agent Tools", () => {
 			const lines = Array.from({ length: 2500 }, (_, i) => `Line ${i + 1}`);
 			writeFileSync(testFile, lines.join("\n"));
 
-			const result = await readTool.execute("test-call-3", { path: testFile });
+			const result = await readTool.execute("test-call-3", { path: testFile, forceFullRead: true });
 			const output = getTextOutput(result);
 
 			expect(output).toContain("Line 1");
@@ -88,7 +89,7 @@ describe("Coding Agent Tools", () => {
 			const lines = Array.from({ length: 500 }, (_, i) => `Line ${i + 1}: ${"x".repeat(200)}`);
 			writeFileSync(testFile, lines.join("\n"));
 
-			const result = await readTool.execute("test-call-4", { path: testFile });
+			const result = await readTool.execute("test-call-4", { path: testFile, forceFullRead: true });
 			const output = getTextOutput(result);
 
 			expect(output).toContain("Line 1:");
@@ -158,7 +159,7 @@ describe("Coding Agent Tools", () => {
 			const lines = Array.from({ length: 2500 }, (_, i) => `Line ${i + 1}`);
 			writeFileSync(testFile, lines.join("\n"));
 
-			const result = await readTool.execute("test-call-9", { path: testFile });
+			const result = await readTool.execute("test-call-9", { path: testFile, forceFullRead: true });
 
 			expect(result.details).toBeDefined();
 			expect(result.details?.truncation).toBeDefined();
@@ -166,6 +167,43 @@ describe("Coding Agent Tools", () => {
 			expect(result.details?.truncation?.truncatedBy).toBe("lines");
 			expect(result.details?.truncation?.totalLines).toBe(2500);
 			expect(result.details?.truncation?.outputLines).toBe(2000);
+		});
+
+		it("should preflight large files before unbounded reads", async () => {
+			const testFile = join(testDir, "large-preflight.txt");
+			const lines = Array.from({ length: 2500 }, (_, i) => `Line ${i + 1}`);
+			writeFileSync(testFile, lines.join("\n"));
+
+			const result = await readTool.execute("test-call-large-preflight", { path: testFile });
+			const output = getTextOutput(result);
+
+			expect(output).toContain("[large_file_preflight]");
+			expect(output).toContain("forceFullRead=true");
+			expect(output).not.toContain("Line 1");
+			expect(result.details?.largeFilePreflight).toEqual({
+				kind: "large_file_preflight",
+				path: testFile,
+				sizeBytes: Buffer.byteLength(lines.join("\n"), "utf-8"),
+				totalLines: 2500,
+				maxBytes: 50 * 1024,
+				maxLines: 2000,
+				forceParam: "forceFullRead",
+			});
+			expect(result.details?.truncation).toBeUndefined();
+		});
+
+		it("should allow bounded reads for large files without preflight", async () => {
+			const testFile = join(testDir, "large-bounded.txt");
+			const lines = Array.from({ length: 2500 }, (_, i) => `Line ${i + 1}`);
+			writeFileSync(testFile, lines.join("\n"));
+
+			const result = await readTool.execute("test-call-large-bounded", { path: testFile, offset: 20, limit: 3 });
+			const output = getTextOutput(result);
+
+			expect(output).toContain("Line 20");
+			expect(output).toContain("Line 22");
+			expect(output).not.toContain("[large_file_preflight]");
+			expect(result.details?.largeFilePreflight).toBeUndefined();
 		});
 
 		it("should detect image MIME type from file magic (not extension)", async () => {
@@ -199,6 +237,109 @@ describe("Coding Agent Tools", () => {
 
 			expect(output).toContain("definitely not a png");
 			expect(result.content.some((c: any) => c.type === "image")).toBe(false);
+		});
+
+		it("should short-circuit near duplicate reads of the same range", async () => {
+			const testFile = join(testDir, "dedupe-same-range.txt");
+			writeFileSync(testFile, "alpha\nbeta\ngamma\n");
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const read = createReadTool(testDir, { toolDedupStore });
+
+			toolDedupStore.startUserTurn("turn-1");
+			const first = await read.execute("read-dedupe-1", { path: testFile, offset: 1, limit: 2 });
+			toolDedupStore.noteToolCallStart("read-dedupe-2");
+			const second = await read.execute("read-dedupe-2", { path: testFile, offset: 1, limit: 2 });
+
+			expect(getTextOutput(first)).toContain("alpha");
+			expect(getTextOutput(second)).toContain("deduped=true");
+			expect(second.details?.deduplication?.sourceToolCallId).toBe("read-dedupe-1");
+		});
+
+		it("should return a cached slice when the requested range is covered", async () => {
+			const testFile = join(testDir, "dedupe-covered-range.txt");
+			writeFileSync(testFile, "one\ntwo\nthree\nfour\n");
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const read = createReadTool(testDir, { toolDedupStore });
+
+			toolDedupStore.startUserTurn("turn-1");
+			await read.execute("read-covered-1", { path: testFile, offset: 1, limit: 4 });
+			toolDedupStore.noteToolCallStart("read-covered-2");
+			const second = await read.execute("read-covered-2", { path: testFile, offset: 2, limit: 2 });
+			const output = getTextOutput(second);
+
+			expect(output).toContain("deduped=true");
+			expect(output).toContain("two\nthree");
+			expect(output).not.toContain("four");
+			expect(second.details?.deduplication?.coveredRange).toEqual({ startLine: 2, endLine: 3 });
+		});
+
+		it("should not short-circuit duplicate reads beyond the character distance threshold", async () => {
+			const testFile = join(testDir, "dedupe-distance.txt");
+			writeFileSync(testFile, "near\nfar\n");
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const read = createReadTool(testDir, { toolDedupStore });
+
+			toolDedupStore.startUserTurn("turn-1");
+			await read.execute("read-far-1", { path: testFile, offset: 1, limit: 1 });
+			toolDedupStore.advanceContextChars(2001);
+			toolDedupStore.noteToolCallStart("read-far-2");
+			const second = await read.execute("read-far-2", { path: testFile, offset: 1, limit: 1 });
+
+			expect(getTextOutput(second)).toContain("near");
+			expect(second.details?.deduplication).toBeUndefined();
+		});
+
+		it("should not short-circuit reads across user turns", async () => {
+			const testFile = join(testDir, "dedupe-turn.txt");
+			writeFileSync(testFile, "turn scoped\n");
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const read = createReadTool(testDir, { toolDedupStore });
+
+			toolDedupStore.startUserTurn("turn-1");
+			await read.execute("read-turn-1", { path: testFile });
+			toolDedupStore.startUserTurn("turn-2");
+			toolDedupStore.noteToolCallStart("read-turn-2");
+			const second = await read.execute("read-turn-2", { path: testFile });
+
+			expect(getTextOutput(second)).toBe("turn scoped\n");
+			expect(second.details?.deduplication).toBeUndefined();
+		});
+
+		it("should not short-circuit after a write modifies the file", async () => {
+			const testFile = join(testDir, "dedupe-write-invalidates.txt");
+			writeFileSync(testFile, "before\n");
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const read = createReadTool(testDir, { toolDedupStore });
+			const write = createWriteTool(testDir, { toolDedupStore });
+
+			toolDedupStore.startUserTurn("turn-1");
+			await read.execute("read-write-invalidate-1", { path: testFile });
+			await write.execute("write-invalidate-1", { path: testFile, content: "after\n" });
+			toolDedupStore.noteToolCallStart("read-write-invalidate-2");
+			const second = await read.execute("read-write-invalidate-2", { path: testFile });
+
+			expect(getTextOutput(second)).toBe("after\n");
+			expect(second.details?.deduplication).toBeUndefined();
+		});
+
+		it("should not short-circuit after an edit modifies the file", async () => {
+			const testFile = join(testDir, "dedupe-edit-invalidates.txt");
+			writeFileSync(testFile, "hello world\n");
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const read = createReadTool(testDir, { toolDedupStore });
+			const edit = createEditTool(testDir, { toolDedupStore });
+
+			toolDedupStore.startUserTurn("turn-1");
+			await read.execute("read-edit-invalidate-1", { path: testFile });
+			await edit.execute("edit-invalidate-1", {
+				path: testFile,
+				edits: [{ oldText: "world", newText: "pi" }],
+			});
+			toolDedupStore.noteToolCallStart("read-edit-invalidate-2");
+			const second = await read.execute("read-edit-invalidate-2", { path: testFile });
+
+			expect(getTextOutput(second)).toBe("hello pi\n");
+			expect(second.details?.deduplication).toBeUndefined();
 		});
 	});
 
@@ -535,6 +676,51 @@ describe("Coding Agent Tools", () => {
 			expect(getShellConfigSpy).toHaveBeenCalledWith("/custom/bash");
 		});
 
+		it("should detect conservative PowerShell mutation paths", () => {
+			const paths = findShellMutationPaths(
+				'Set-Content -Path target.txt -Value hi; Out-File -FilePath "nested/out.txt"; Move-Item -Path old.txt -Destination moved.txt',
+				testDir,
+			);
+
+			expect(paths).toContain(join(testDir, "target.txt"));
+			expect(paths).toContain(join(testDir, "nested/out.txt"));
+			expect(paths).toContain(join(testDir, "moved.txt"));
+		});
+
+		it("should invalidate cached search results after clear shell mutation paths", async () => {
+			let findCalls = 0;
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const find = createFindTool(testDir, {
+				toolDedupStore,
+				operations: {
+					exists: async () => true,
+					glob: async () => {
+						findCalls++;
+						return ["target.txt"];
+					},
+				},
+			});
+			const bash = createBashTool(testDir, {
+				toolDedupStore,
+				operations: {
+					exec: async () => ({ exitCode: 0 }),
+				},
+			});
+
+			toolDedupStore.startUserTurn("turn-1");
+			await find.execute("find-shell-invalidate-1", { pattern: "**/*.txt", path: testDir, limit: 10 });
+			await bash.execute("bash-shell-invalidate-1", { command: "Set-Content -Path target.txt -Value changed" });
+			toolDedupStore.noteToolCallStart("find-shell-invalidate-2");
+			const second = await find.execute("find-shell-invalidate-2", {
+				pattern: "**/*.txt",
+				path: testDir,
+				limit: 10,
+			});
+
+			expect(findCalls).toBe(2);
+			expect(second.details?.deduplication).toBeUndefined();
+		});
+
 		it("should prepend command prefix when configured", async () => {
 			const bashWithPrefix = createBashTool(testDir, {
 				commandPrefix: "export TEST_VAR=hello",
@@ -789,6 +975,59 @@ describe("Coding Agent Tools", () => {
 			});
 
 			expect(getTextOutput(result)).toContain("No files found matching pattern");
+		});
+
+		it("should short-circuit exact duplicate find calls within the character threshold", async () => {
+			writeFileSync(join(testDir, "first.txt"), "first");
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const find = createFindTool(testDir, { toolDedupStore });
+
+			toolDedupStore.startUserTurn("turn-1");
+			await find.execute("find-dedupe-1", { pattern: "**/*.txt", path: testDir, limit: 10 });
+			toolDedupStore.noteToolCallStart("find-dedupe-2");
+			const second = await find.execute("find-dedupe-2", { pattern: "**/*.txt", path: testDir, limit: 10 });
+
+			expect(getTextOutput(second)).toContain("deduped=true");
+			expect(second.details?.deduplication?.sourceToolCallId).toBe("find-dedupe-1");
+		});
+
+		it("should not short-circuit similar find patterns or changed limits", async () => {
+			writeFileSync(join(testDir, "first.txt"), "first");
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const find = createFindTool(testDir, { toolDedupStore });
+
+			toolDedupStore.startUserTurn("turn-1");
+			await find.execute("find-no-dedupe-1", { pattern: "**/*.txt", path: testDir, limit: 1 });
+			toolDedupStore.noteToolCallStart("find-no-dedupe-2");
+			const similarPattern = await find.execute("find-no-dedupe-2", {
+				pattern: "*.txt",
+				path: testDir,
+				limit: 1,
+			});
+			toolDedupStore.noteToolCallStart("find-no-dedupe-3");
+			const largerLimit = await find.execute("find-no-dedupe-3", {
+				pattern: "**/*.txt",
+				path: testDir,
+				limit: 2,
+			});
+
+			expect(similarPattern.details?.deduplication).toBeUndefined();
+			expect(largerLimit.details?.deduplication).toBeUndefined();
+		});
+
+		it("should not short-circuit exact duplicate find calls beyond the character threshold", async () => {
+			writeFileSync(join(testDir, "first.txt"), "first");
+			const toolDedupStore = createToolDedupStoreForTesting();
+			const find = createFindTool(testDir, { toolDedupStore });
+
+			toolDedupStore.startUserTurn("turn-1");
+			await find.execute("find-far-1", { pattern: "**/*.txt", path: testDir, limit: 10 });
+			toolDedupStore.advanceContextChars(2001);
+			toolDedupStore.noteToolCallStart("find-far-2");
+			const second = await find.execute("find-far-2", { pattern: "**/*.txt", path: testDir, limit: 10 });
+
+			expect(getTextOutput(second)).toContain("first.txt");
+			expect(second.details?.deduplication).toBeUndefined();
 		});
 	});
 

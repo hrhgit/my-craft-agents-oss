@@ -15,6 +15,7 @@
 - Changed `/compact` and auto compaction to use the cache-friendly append summarizer directly, removed the experimental `/compact-ori` and `/compact-cache` commands, and stopped writing compaction comparison debug artifacts.
 - Changed coding-agent HTTP/SSE model requests to prefer the bundled Go sidecar transport path when it is available, and removed user-visible WebSocket transport selection from interactive settings.
 - Changed coding-agent build and release artifacts to include prebuilt Go sidecar binaries for supported platforms.
+- Changed the default system prompt to include concise tool-use discipline for reducing redundant exploration, repeated failures, and path-guessing.
 
 ### Fixed
 

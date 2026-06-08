@@ -1,5 +1,6 @@
 import { readdir as fsReaddir, stat as fsStat } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import nodePath from "path";
 import { type Static, Type } from "typebox";
@@ -7,7 +8,14 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts"
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
+import { buildObservedPathHistoryEntry, type ReadHistoryStore } from "./read-history.ts";
 import { getTextOutput, renderToolPath, str } from "./render-utils.ts";
+import {
+	buildSearchDedupKey,
+	formatDeduplicationNote,
+	type ToolDeduplicationDetails,
+	type ToolDedupStore,
+} from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
@@ -23,6 +31,7 @@ const DEFAULT_LIMIT = 500;
 export interface LsToolDetails {
 	truncation?: TruncationResult;
 	entryLimitReached?: number;
+	deduplication?: ToolDeduplicationDetails;
 }
 
 /**
@@ -47,6 +56,10 @@ const defaultLsOperations: LsOperations = {
 export interface LsToolOptions {
 	/** Custom operations for directory listing. Default: local filesystem */
 	operations?: LsOperations;
+	/** Session-scoped path history used for later read/edit recovery. */
+	readHistoryStore?: ReadHistoryStore;
+	/** Session-scoped short-term tool-result cache for exact duplicate directory listings. */
+	toolDedupStore?: ToolDedupStore;
 }
 
 function formatLsCall(args: { path?: string; limit?: number } | undefined, theme: Theme, cwd: string): string {
@@ -97,6 +110,8 @@ export function createLsToolDefinition(
 	options?: LsToolOptions,
 ): ToolDefinition<typeof lsSchema, LsToolDetails | undefined> {
 	const ops = options?.operations ?? defaultLsOperations;
+	const readHistoryStore = options?.readHistoryStore;
+	const toolDedupStore = options?.toolDedupStore;
 	return {
 		name: "ls",
 		label: "ls",
@@ -104,7 +119,7 @@ export function createLsToolDefinition(
 		promptSnippet: "List directory contents",
 		parameters: lsSchema,
 		async execute(
-			_toolCallId,
+			toolCallId,
 			{ path, limit }: { path?: string; limit?: number },
 			signal?: AbortSignal,
 			_onUpdate?,
@@ -123,6 +138,22 @@ export function createLsToolDefinition(
 					try {
 						const dirPath = resolveToCwd(path || ".", cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
+						const searchDedupKey = buildSearchDedupKey("ls", cwd, {
+							path: dirPath,
+							limit: effectiveLimit,
+						});
+						const dedupHit = toolDedupStore?.findSearchHit({ toolCallId, key: searchDedupKey });
+						if (dedupHit) {
+							const content: TextContent[] = [
+								{
+									type: "text",
+									text: formatDeduplicationNote(dedupHit.details, "Reused previous ls result."),
+								},
+							];
+							toolDedupStore?.recordSyntheticResult(toolCallId, content);
+							resolve({ content, details: { deduplication: dedupHit.details } });
+							return;
+						}
 
 						// Check if path exists.
 						if (!(await ops.exists(dirPath))) {
@@ -163,6 +194,15 @@ export function createLsToolDefinition(
 							try {
 								const entryStat = await ops.stat(fullPath);
 								if (entryStat.isDirectory()) suffix = "/";
+								else {
+									readHistoryStore?.record(
+										buildObservedPathHistoryEntry({
+											toolCallId,
+											requestedPath: entry,
+											canonicalPath: fullPath,
+										}),
+									);
+								}
 							} catch {
 								// Skip entries we cannot stat.
 								continue;
@@ -173,7 +213,14 @@ export function createLsToolDefinition(
 						signal?.removeEventListener("abort", onAbort);
 
 						if (results.length === 0) {
-							resolve({ content: [{ type: "text", text: "(empty directory)" }], details: undefined });
+							const content: TextContent[] = [{ type: "text", text: "(empty directory)" }];
+							toolDedupStore?.recordSearch({
+								toolCallId,
+								key: searchDedupKey,
+								scopePath: dirPath,
+								resultContent: content,
+							});
+							resolve({ content, details: undefined });
 							return;
 						}
 
@@ -196,8 +243,15 @@ export function createLsToolDefinition(
 							output += `\n\n[${notices.join(". ")}]`;
 						}
 
+						const content: TextContent[] = [{ type: "text", text: output }];
+						toolDedupStore?.recordSearch({
+							toolCallId,
+							key: searchDedupKey,
+							scopePath: dirPath,
+							resultContent: content,
+						});
 						resolve({
-							content: [{ type: "text", text: output }],
+							content,
 							details: Object.keys(details).length > 0 ? details : undefined,
 						});
 					} catch (e: any) {

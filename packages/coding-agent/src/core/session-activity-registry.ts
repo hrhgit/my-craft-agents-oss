@@ -66,8 +66,9 @@ function isPidAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;
-	} catch {
-		return false;
+	} catch (error) {
+		const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+		return code === "EPERM";
 	}
 }
 
@@ -174,8 +175,10 @@ export class SessionActivityRegistry {
 			const raw = await readFile(this.lockPath, "utf-8").catch(() => "");
 			const [pidLine, timestampLine] = raw.split(/\r?\n/);
 			const lockPid = Number.parseInt(pidLine ?? "", 10);
-			if (Number.isInteger(lockPid) && lockPid > 0 && !isPidAlive(lockPid)) {
-				await rm(this.lockPath, { force: true });
+			if (Number.isInteger(lockPid) && lockPid > 0) {
+				if (!isPidAlive(lockPid)) {
+					await rm(this.lockPath, { force: true });
+				}
 				return;
 			}
 			const lockTimestamp = Number.parseInt(timestampLine ?? "", 10);

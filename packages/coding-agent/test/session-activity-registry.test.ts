@@ -283,4 +283,20 @@ describe("SessionActivityRegistry", () => {
 		expect(workspaces).toHaveLength(1);
 		expect(workspaces[0]!.cwd).toBe(cwd);
 	});
+
+	it("keeps an old registry lock when the owner process is still alive", async () => {
+		const { registry, agentDir } = await createRegistry();
+		const stateDir = join(agentDir, "session-state");
+		const lockPath = join(stateDir, ".lock");
+		await mkdir(stateDir, { recursive: true });
+		await writeFile(lockPath, `${process.pid}\n${Date.now() - 60_000}\n`, "utf-8");
+
+		const removeStaleLock = Reflect.get(registry as object, "removeStaleLock");
+		if (typeof removeStaleLock !== "function") {
+			throw new Error("Expected SessionActivityRegistry.removeStaleLock");
+		}
+		await (removeStaleLock as (this: SessionActivityRegistry) => Promise<void>).call(registry);
+
+		expect(existsSync(lockPath)).toBe(true);
+	});
 });

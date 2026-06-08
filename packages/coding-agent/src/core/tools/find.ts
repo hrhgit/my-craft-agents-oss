@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 import path from "path";
@@ -9,7 +10,14 @@ import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
+import { type ReadHistoryStore, recordObservedFilePathsFromText } from "./read-history.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
+import {
+	buildSearchDedupKey,
+	formatDeduplicationNote,
+	type ToolDeduplicationDetails,
+	type ToolDedupStore,
+} from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
@@ -32,6 +40,7 @@ const DEFAULT_LIMIT = 1000;
 export interface FindToolDetails {
 	truncation?: TruncationResult;
 	resultLimitReached?: number;
+	deduplication?: ToolDeduplicationDetails;
 }
 
 /**
@@ -54,6 +63,10 @@ const defaultFindOperations: FindOperations = {
 export interface FindToolOptions {
 	/** Custom operations for find. Default: local filesystem plus fd */
 	operations?: FindOperations;
+	/** Session-scoped path history used for later read/edit recovery. */
+	readHistoryStore?: ReadHistoryStore;
+	/** Session-scoped short-term tool-result cache for exact duplicate searches. */
+	toolDedupStore?: ToolDedupStore;
 }
 
 function formatFindCall(args: { pattern: string; path?: string; limit?: number } | undefined, theme: Theme): string {
@@ -111,6 +124,8 @@ export function createFindToolDefinition(
 	options?: FindToolOptions,
 ): ToolDefinition<typeof findSchema, FindToolDetails | undefined> {
 	const customOps = options?.operations;
+	const readHistoryStore = options?.readHistoryStore;
+	const toolDedupStore = options?.toolDedupStore;
 	return {
 		name: "find",
 		label: "find",
@@ -118,7 +133,7 @@ export function createFindToolDefinition(
 		promptSnippet: "Find files by glob pattern (respects .gitignore)",
 		parameters: findSchema,
 		async execute(
-			_toolCallId,
+			toolCallId,
 			{ pattern, path: searchDir, limit }: { pattern: string; path?: string; limit?: number },
 			signal?: AbortSignal,
 			_onUpdate?,
@@ -149,6 +164,23 @@ export function createFindToolDefinition(
 					try {
 						const searchPath = resolveToCwd(searchDir || ".", cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
+						const searchDedupKey = buildSearchDedupKey("find", cwd, {
+							pattern,
+							path: searchPath,
+							limit: effectiveLimit,
+						});
+						const dedupHit = toolDedupStore?.findSearchHit({ toolCallId, key: searchDedupKey });
+						if (dedupHit) {
+							const content: TextContent[] = [
+								{
+									type: "text",
+									text: formatDeduplicationNote(dedupHit.details, "Reused previous find result."),
+								},
+							];
+							toolDedupStore?.recordSyntheticResult(toolCallId, content);
+							settle(() => resolve({ content, details: { deduplication: dedupHit.details } }));
+							return;
+						}
 						const ops = customOps ?? defaultFindOperations;
 
 						// If custom operations provide glob(), use that instead of fd.
@@ -170,9 +202,16 @@ export function createFindToolDefinition(
 								return;
 							}
 							if (results.length === 0) {
+								const content: TextContent[] = [{ type: "text", text: "No files found matching pattern" }];
+								toolDedupStore?.recordSearch({
+									toolCallId,
+									key: searchDedupKey,
+									scopePath: searchPath,
+									resultContent: content,
+								});
 								settle(() =>
 									resolve({
-										content: [{ type: "text", text: "No files found matching pattern" }],
+										content,
 										details: undefined,
 									}),
 								);
@@ -186,6 +225,12 @@ export function createFindToolDefinition(
 							});
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
+							await recordObservedFilePathsFromText({
+								store: readHistoryStore,
+								toolCallId,
+								text: rawOutput,
+								cwd: searchPath,
+							});
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
 							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};
@@ -201,9 +246,16 @@ export function createFindToolDefinition(
 							if (notices.length > 0) {
 								resultOutput += `\n\n[${notices.join(". ")}]`;
 							}
+							const content: TextContent[] = [{ type: "text", text: resultOutput }];
+							toolDedupStore?.recordSearch({
+								toolCallId,
+								key: searchDedupKey,
+								scopePath: searchPath,
+								resultContent: content,
+							});
 							settle(() =>
 								resolve({
-									content: [{ type: "text", text: resultOutput }],
+									content,
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);
@@ -273,7 +325,7 @@ export function createFindToolDefinition(
 							settle(() => reject(new Error(`Failed to run fd: ${error.message}`)));
 						});
 
-						child.on("close", (code) => {
+						child.on("close", async (code) => {
 							cleanup();
 							if (signal?.aborted) {
 								settle(() => reject(new Error("Operation aborted")));
@@ -288,9 +340,16 @@ export function createFindToolDefinition(
 								}
 							}
 							if (!output) {
+								const content: TextContent[] = [{ type: "text", text: "No files found matching pattern" }];
+								toolDedupStore?.recordSearch({
+									toolCallId,
+									key: searchDedupKey,
+									scopePath: searchPath,
+									resultContent: content,
+								});
 								settle(() =>
 									resolve({
-										content: [{ type: "text", text: "No files found matching pattern" }],
+										content,
 										details: undefined,
 									}),
 								);
@@ -314,6 +373,12 @@ export function createFindToolDefinition(
 
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
+							await recordObservedFilePathsFromText({
+								store: readHistoryStore,
+								toolCallId,
+								text: rawOutput,
+								cwd: searchPath,
+							});
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
 							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};
@@ -331,9 +396,16 @@ export function createFindToolDefinition(
 							if (notices.length > 0) {
 								resultOutput += `\n\n[${notices.join(". ")}]`;
 							}
+							const content: TextContent[] = [{ type: "text", text: resultOutput }];
+							toolDedupStore?.recordSearch({
+								toolCallId,
+								key: searchDedupKey,
+								scopePath: searchPath,
+								resultContent: content,
+							});
 							settle(() =>
 								resolve({
-									content: [{ type: "text", text: resultOutput }],
+									content,
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);

@@ -18,7 +18,9 @@ import {
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { getShellToolName } from "../shell-tool-name.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
+import { type ReadHistoryStore, recordObservedFilePathsFromText } from "./read-history.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
+import { findShellMutationPaths, type ToolDedupStore } from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
 
@@ -148,6 +150,10 @@ export interface BashToolOptions {
 	shellPath?: string;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/** Session-scoped path history used for later read/edit recovery. */
+	readHistoryStore?: ReadHistoryStore;
+	/** Session-scoped short-term tool-result cache to invalidate after clear shell writes. */
+	toolDedupStore?: ToolDedupStore;
 }
 
 const BASH_PREVIEW_LINES = 5;
@@ -274,6 +280,8 @@ export function createBashToolDefinition(
 	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
 	const commandPrefix = options?.commandPrefix;
 	const spawnHook = options?.spawnHook;
+	const readHistoryStore = options?.readHistoryStore;
+	const toolDedupStore = options?.toolDedupStore;
 	const shellToolName = getShellToolName(options?.shellPath);
 	const toolDescription =
 		shellToolName === "pwsh"
@@ -290,7 +298,7 @@ export function createBashToolDefinition(
 		promptSnippet,
 		parameters: bashSchema,
 		async execute(
-			_toolCallId,
+			toolCallId,
 			{ command, timeout }: { command: string; timeout?: number },
 			signal?: AbortSignal,
 			onUpdate?,
@@ -298,6 +306,7 @@ export function createBashToolDefinition(
 		) {
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
+			const mutationPaths = findShellMutationPaths(spawnContext.command, spawnContext.cwd);
 			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;
@@ -392,6 +401,12 @@ export function createBashToolDefinition(
 				} catch (err) {
 					const snapshot = await finishOutput();
 					const { text } = formatOutput(snapshot, "");
+					await recordObservedFilePathsFromText({
+						store: readHistoryStore,
+						toolCallId,
+						text,
+						cwd: spawnContext.cwd,
+					});
 					if (err instanceof Error && err.message === "aborted") {
 						throw new Error(appendStatus(text, "Command aborted"));
 					}
@@ -404,8 +419,17 @@ export function createBashToolDefinition(
 
 				const snapshot = await finishOutput();
 				const { text: outputText, details } = formatOutput(snapshot);
+				await recordObservedFilePathsFromText({
+					store: readHistoryStore,
+					toolCallId,
+					text: outputText,
+					cwd: spawnContext.cwd,
+				});
 				if (exitCode !== 0 && exitCode !== null) {
 					throw new Error(appendStatus(outputText, `Command exited with code ${exitCode}`));
+				}
+				for (const mutationPath of mutationPaths) {
+					toolDedupStore?.invalidatePath(mutationPath);
 				}
 				return { content: [{ type: "text", text: outputText }], details };
 			} finally {

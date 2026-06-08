@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { resolveToCwd } from "./path-utils.ts";
 import { normalizeForApproximateMatch, normalizeForFuzzyMatch } from "./text-match-utils.ts";
 
 export interface ReadHistoryEntry {
 	toolCallId: string;
+	source: "read" | "observed";
 	requestedPath: string;
 	canonicalPath: string;
 	startLine: number;
@@ -31,7 +34,15 @@ export interface ReadHistoryPathCandidate {
 	entryRequestedPath: string;
 }
 
-const MAX_READ_HISTORY_ENTRIES = 80;
+export interface ReadHistoryPathRecovery {
+	resolvedPath: string;
+	candidates: ReadonlyArray<ReadHistoryPathCandidate>;
+	autoRecovered: boolean;
+}
+
+const MAX_READ_HISTORY_ENTRIES = 200;
+const MAX_OBSERVED_PATHS_PER_TEXT = 80;
+const ANSI_ESCAPE_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/g;
 
 class InMemoryReadHistoryStore implements ReadHistoryStore {
 	private entries: ReadHistoryEntry[] = [];
@@ -130,6 +141,7 @@ export function buildReadHistoryEntry(params: {
 	const normalizedText = normalizeToLF(params.text);
 	return {
 		toolCallId: params.toolCallId,
+		source: "read",
 		requestedPath: params.requestedPath,
 		canonicalPath: params.canonicalPath,
 		startLine: params.startLine,
@@ -143,6 +155,89 @@ export function buildReadHistoryEntry(params: {
 	};
 }
 
+export function buildObservedPathHistoryEntry(params: {
+	toolCallId: string;
+	canonicalPath: string;
+	requestedPath?: string;
+	timestamp?: number;
+}): ReadHistoryEntry {
+	return {
+		toolCallId: params.toolCallId,
+		source: "observed",
+		requestedPath: params.requestedPath ?? params.canonicalPath,
+		canonicalPath: params.canonicalPath,
+		startLine: 0,
+		endLine: 0,
+		text: "",
+		normalizedText: "",
+		fuzzyText: "",
+		approximateText: "",
+		contentHash: "",
+		timestamp: params.timestamp ?? Date.now(),
+	};
+}
+
+export function resolvePathWithHistory(
+	path: string,
+	cwd: string,
+	readHistoryStore?: ReadHistoryStore,
+): ReadHistoryPathRecovery {
+	const absolutePath = resolveToCwd(path, cwd);
+	const candidates = readHistoryStore?.findPathCandidates(path) ?? [];
+	if (candidates.length === 0) {
+		return { resolvedPath: absolutePath, candidates, autoRecovered: false };
+	}
+
+	const [best, second] = candidates;
+	if (best) {
+		const entryBasename = best.entryRequestedPath.replace(/\\/g, "/").split("/").at(-1) ?? "";
+		const requestBasename = path.replace(/\\/g, "/").split("/").at(-1) ?? "";
+		const basenamesMatch = entryBasename === requestBasename;
+		const strongScore = best.score >= 0.85;
+		const gapOk = !second || best.score - second.score >= 0.15;
+		if (gapOk && (strongScore || basenamesMatch)) {
+			return {
+				resolvedPath: best.canonicalPath,
+				candidates,
+				autoRecovered: true,
+			};
+		}
+	}
+
+	return { resolvedPath: absolutePath, candidates, autoRecovered: false };
+}
+
+export async function recordObservedFilePathsFromText(params: {
+	store: ReadHistoryStore | undefined;
+	toolCallId: string;
+	text: string;
+	cwd: string;
+}): Promise<number> {
+	if (!params.store || !params.text.trim()) return 0;
+	const seen = new Set<string>();
+	let recorded = 0;
+	for (const rawCandidate of extractPathCandidatesFromText(params.text)) {
+		if (recorded >= MAX_OBSERVED_PATHS_PER_TEXT) break;
+		for (const candidate of expandCandidateVariants(rawCandidate)) {
+			const canonicalPath = resolveToCwd(candidate, params.cwd);
+			const key = normalizePathForComparison(canonicalPath);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			if (!(await isReadableFile(canonicalPath))) continue;
+			params.store.record(
+				buildObservedPathHistoryEntry({
+					toolCallId: params.toolCallId,
+					requestedPath: rawCandidate,
+					canonicalPath,
+				}),
+			);
+			recorded++;
+			break;
+		}
+	}
+	return recorded;
+}
+
 export function hashText(text: string): string {
 	return createHash("sha256").update(text).digest("hex");
 }
@@ -153,6 +248,71 @@ function normalizeToLF(text: string): string {
 
 function normalizePathForComparison(path: string): string {
 	return path.replace(/\\/g, "/").toLowerCase();
+}
+
+function stripAnsi(text: string): string {
+	return text.replace(ANSI_ESCAPE_PATTERN, "");
+}
+
+function extractPathCandidatesFromText(text: string): string[] {
+	const candidates: string[] = [];
+	const push = (value: string | undefined) => {
+		const cleaned = cleanPathCandidate(value);
+		if (cleaned) candidates.push(cleaned);
+	};
+
+	for (const rawLine of stripAnsi(text).split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line) continue;
+
+		for (const match of line.matchAll(/[A-Za-z]:[\\/][^\r\n"'`<>|]*/g)) {
+			push(match[0]);
+		}
+
+		const grepMatch = line.match(/^(.+?)(?::\d+(?::|-)\s)/);
+		if (grepMatch) push(grepMatch[1]);
+
+		if (looksLikeStandalonePath(line)) push(line);
+	}
+
+	return candidates;
+}
+
+function looksLikeStandalonePath(value: string): boolean {
+	if (/^[A-Za-z]:[\\/]/.test(value)) return true;
+	if (value.startsWith("./") || value.startsWith("../") || value.startsWith(".\\")) return true;
+	if (!/[\\/]/.test(value)) return false;
+	return /\.[A-Za-z0-9]{1,12}(?::\d+)?$/.test(value);
+}
+
+function cleanPathCandidate(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	let cleaned = value.trim();
+	cleaned = cleaned.replace(/^[`"'(<[]+/, "").replace(/[`"',;:)>\\\]]+$/g, "");
+	cleaned = cleaned.replace(/:\d+(?::|-)?$/, "");
+	if (!cleaned || cleaned === "." || cleaned === "..") return undefined;
+	return cleaned;
+}
+
+function expandCandidateVariants(value: string): string[] {
+	const variants = [value];
+	for (const part of value.split(/\s{2,}/)) {
+		const cleaned = cleanPathCandidate(part);
+		if (cleaned && cleaned !== value) variants.push(cleaned);
+	}
+	if (/\s/.test(value)) {
+		const firstToken = cleanPathCandidate(value.split(/\s+/, 1)[0]);
+		if (firstToken && firstToken !== value) variants.push(firstToken);
+	}
+	return variants;
+}
+
+async function isReadableFile(filePath: string): Promise<boolean> {
+	try {
+		return (await stat(filePath)).isFile();
+	} catch {
+		return false;
+	}
 }
 
 function normalizedSimilarity(a: string, b: string): number {

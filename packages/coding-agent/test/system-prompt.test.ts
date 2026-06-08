@@ -59,6 +59,31 @@ describe("buildSystemPrompt", () => {
 				"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
 			);
 		});
+
+		test("includes tool use discipline in the default prompt", () => {
+			const prompt = buildSystemPrompt({
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("Tool use discipline:");
+			expect(prompt).toContain("Each tool call should reduce a specific uncertainty");
+			expect(prompt).toContain("After two consecutive failures of the same kind against the same target");
+			expect(prompt).toContain("write commands as PowerShell, not bash");
+			expect(prompt).toContain("use $targetPid");
+		});
+
+		test("does not append default tool use discipline to custom prompts", () => {
+			const prompt = buildSystemPrompt({
+				customPrompt: "Custom prompt only.",
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).not.toContain("Tool use discipline:");
+		});
 	});
 
 	describe("custom tool snippets", () => {
