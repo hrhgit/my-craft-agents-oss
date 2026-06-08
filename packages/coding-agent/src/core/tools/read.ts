@@ -3,7 +3,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { constants } from "fs";
-import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
+import { access as fsAccess, readFile as fsReadFile, stat as fsStat } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { getReadmePath } from "../../config.ts";
 import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
@@ -15,13 +15,6 @@ import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/type
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
 import { buildReadHistoryEntry, type ReadHistoryStore, resolvePathWithHistory } from "./read-history.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
-import {
-	buildReadDedupRequestKey,
-	formatDeduplicationNote,
-	getFileFingerprint,
-	type ToolDeduplicationDetails,
-	type ToolDedupStore,
-} from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
@@ -45,12 +38,11 @@ export interface ReadToolDetails {
 		kind: "large_file_preflight";
 		path: string;
 		sizeBytes: number;
-		totalLines: number;
+		totalLines?: number;
 		maxBytes: number;
 		maxLines: number;
 		forceParam: "forceFullRead";
 	};
-	deduplication?: ToolDeduplicationDetails;
 	pathRecovery?: {
 		requestedPath: string;
 		resolvedPath: string;
@@ -82,12 +74,15 @@ export interface ReadOperations {
 	access: (absolutePath: string) => Promise<void>;
 	/** Detect image MIME type, return null or undefined for non-images */
 	detectImageMimeType?: (absolutePath: string) => Promise<string | null | undefined>;
+	/** Get file stats before reading content. */
+	stat?: (absolutePath: string) => Promise<{ isFile: () => boolean; size: number }>;
 }
 
 const defaultReadOperations: ReadOperations = {
 	readFile: (path) => fsReadFile(path),
 	access: (path) => fsAccess(path, constants.R_OK),
 	detectImageMimeType: detectSupportedImageMimeTypeFromFile,
+	stat: fsStat,
 };
 
 export interface ReadToolOptions {
@@ -97,8 +92,6 @@ export interface ReadToolOptions {
 	operations?: ReadOperations;
 	/** Session-scoped history of successful text reads for later edit recovery. */
 	readHistoryStore?: ReadHistoryStore;
-	/** Session-scoped short-term tool-result cache for near-duplicate read calls. */
-	toolDedupStore?: ToolDedupStore;
 }
 
 type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
@@ -168,11 +161,11 @@ function shouldPreflightLargeTextRead(params: {
 	offset?: number;
 	limit?: number;
 	totalBytes: number;
-	totalLines: number;
+	totalLines?: number;
 }): boolean {
 	if (params.forceFullRead === true) return false;
 	if (params.offset !== undefined || params.limit !== undefined) return false;
-	return params.totalBytes > DEFAULT_MAX_BYTES || params.totalLines > DEFAULT_MAX_LINES;
+	return params.totalBytes > DEFAULT_MAX_BYTES || (params.totalLines ?? 0) > DEFAULT_MAX_LINES;
 }
 
 function formatLargeFilePreflight(details: NonNullable<ReadToolDetails["largeFilePreflight"]>): string {
@@ -180,7 +173,7 @@ function formatLargeFilePreflight(details: NonNullable<ReadToolDetails["largeFil
 		"[large_file_preflight]",
 		`path=${details.path}`,
 		`size=${formatSize(details.sizeBytes)}`,
-		`lines=${details.totalLines}`,
+		`lines=${details.totalLines ?? "not counted"}`,
 		`normalReadLimit=${details.maxLines} lines or ${formatSize(details.maxBytes)}`,
 		"Use offset/limit for a targeted read, or retry with forceFullRead=true to read from the beginning under normal truncation limits.",
 	].join("\n");
@@ -298,7 +291,6 @@ export function createReadToolDefinition(
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const ops = options?.operations ?? defaultReadOperations;
 	const readHistoryStore = options?.readHistoryStore;
-	const toolDedupStore = options?.toolDedupStore;
 	return {
 		name: "read",
 		label: "read",
@@ -324,10 +316,17 @@ export function createReadToolDefinition(
 						reject(new Error("Operation aborted"));
 						return;
 					}
+					let settled = false;
 					let aborted = false;
+					const settle = (fn: () => void): void => {
+						if (settled) return;
+						settled = true;
+						signal?.removeEventListener("abort", onAbort);
+						fn();
+					};
 					const onAbort = () => {
 						aborted = true;
-						reject(new Error("Operation aborted"));
+						settle(() => reject(new Error("Operation aborted")));
 					};
 					signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -353,48 +352,9 @@ export function createReadToolDefinition(
 								await ops.access(absolutePath);
 							}
 							if (aborted) return;
-							const fingerprint = await getFileFingerprint(absolutePath);
-							const requestedStartLine = offset !== undefined ? Math.max(1, offset) : 1;
-							const requestedEndLine =
-								limit !== undefined && limit > 0 ? requestedStartLine + limit - 1 : undefined;
-							const readDedupRequestKey = buildReadDedupRequestKey({
-								path: absolutePath,
-								offset,
-								limit,
-							});
-							if (fingerprint) {
-								const dedupHit = toolDedupStore?.findReadHit({
-									toolCallId,
-									canonicalPath: absolutePath,
-									fingerprint,
-									startLine: requestedStartLine,
-									endLine: requestedEndLine,
-									requestKey: readDedupRequestKey,
-								});
-								if (dedupHit) {
-									const dedupText =
-										dedupHit.text !== undefined
-											? `Reused cached read slice from ${absolutePath}.\n\n${dedupHit.text}`
-											: `Reused previous read result for ${absolutePath}.`;
-									const content: TextContent[] = [
-										{ type: "text", text: formatDeduplicationNote(dedupHit.details, dedupText) },
-									];
-									toolDedupStore?.recordSyntheticResult(toolCallId, content);
-									resolve({
-										content,
-										details: mergeReadDetails(pathRecovery ? { pathRecovery } : undefined, {
-											deduplication: dedupHit.details,
-										}),
-									});
-									return;
-								}
-							}
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
 							let content: (TextContent | ImageContent)[];
 							let details: ReadToolDetails | undefined = pathRecovery ? { pathRecovery } : undefined;
-							let dedupRecordText: string | undefined;
-							let dedupCoveredEndLine: number | undefined;
-							let dedupCoveredToEnd: boolean | undefined;
 							const nonVisionImageNote = getNonVisionImageNote(ctx?.model);
 							if (mimeType) {
 								// Read image as binary.
@@ -432,25 +392,22 @@ export function createReadToolDefinition(
 								}
 							} else {
 								// Read text content.
-								const buffer = await ops.readFile(absolutePath);
-								const textContent = buffer.toString("utf-8");
-								const allLines = textContent.split("\n");
-								const totalFileLines = allLines.length;
-								const totalFileBytes = Buffer.byteLength(textContent, "utf-8");
+								const fileStat = await ops.stat?.(absolutePath);
+								if (fileStat && !fileStat.isFile()) {
+									throw new Error(`Could not read file: ${path}. Not a file.`);
+								}
 								if (
 									shouldPreflightLargeTextRead({
 										forceFullRead,
 										offset,
 										limit,
-										totalBytes: totalFileBytes,
-										totalLines: totalFileLines,
+										totalBytes: fileStat?.size ?? 0,
 									})
 								) {
 									const preflight: NonNullable<ReadToolDetails["largeFilePreflight"]> = {
 										kind: "large_file_preflight",
 										path: absolutePath,
-										sizeBytes: totalFileBytes,
-										totalLines: totalFileLines,
+										sizeBytes: fileStat?.size ?? 0,
 										maxBytes: DEFAULT_MAX_BYTES,
 										maxLines: DEFAULT_MAX_LINES,
 										forceParam: "forceFullRead",
@@ -460,11 +417,13 @@ export function createReadToolDefinition(
 										outputText = formatReadPathRecoveryNote(path, absolutePath) + outputText;
 									content = [{ type: "text", text: outputText }];
 									details = mergeReadDetails(details, { largeFilePreflight: preflight });
-									toolDedupStore?.recordSyntheticResult(toolCallId, content);
-									signal?.removeEventListener("abort", onAbort);
-									resolve({ content, details });
+									settle(() => resolve({ content, details }));
 									return;
 								}
+								const buffer = await ops.readFile(absolutePath);
+								const textContent = buffer.toString("utf-8");
+								const allLines = textContent.split("\n");
+								const totalFileLines = allLines.length;
 								// Apply offset if specified. Convert from 1-indexed input to 0-indexed array access.
 								const startLine = offset ? Math.max(0, offset - 1) : 0;
 								const startLineDisplay = startLine + 1;
@@ -495,9 +454,6 @@ export function createReadToolDefinition(
 									const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
 									const nextOffset = endLineDisplay + 1;
 									outputText = truncation.content;
-									dedupRecordText = truncation.content;
-									dedupCoveredEndLine = endLineDisplay;
-									dedupCoveredToEnd = false;
 									if (truncation.truncatedBy === "lines") {
 										outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines}. Use offset=${nextOffset} to continue.]`;
 									} else {
@@ -509,16 +465,9 @@ export function createReadToolDefinition(
 									const remaining = allLines.length - (startLine + userLimitedLines);
 									const nextOffset = startLine + userLimitedLines + 1;
 									outputText = `${truncation.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
-									dedupRecordText = truncation.content;
-									dedupCoveredEndLine = startLineDisplay + userLimitedLines - 1;
-									dedupCoveredToEnd = false;
 								} else {
 									// No truncation and no remaining user-limited content.
 									outputText = truncation.content;
-									dedupRecordText = truncation.content;
-									dedupCoveredEndLine =
-										userLimitedLines !== undefined ? startLineDisplay + userLimitedLines - 1 : totalFileLines;
-									dedupCoveredToEnd = true;
 								}
 								if (pathRecovery?.autoRecovered)
 									outputText = formatReadPathRecoveryNote(path, absolutePath) + outputText;
@@ -541,31 +490,9 @@ export function createReadToolDefinition(
 							}
 
 							if (aborted) return;
-							if (
-								fingerprint &&
-								dedupRecordText !== undefined &&
-								dedupCoveredEndLine !== undefined &&
-								dedupCoveredToEnd !== undefined
-							) {
-								toolDedupStore?.recordRead({
-									toolCallId,
-									canonicalPath: absolutePath,
-									fingerprint,
-									startLine: requestedStartLine,
-									coveredEndLine: dedupCoveredEndLine,
-									coveredToEnd: dedupCoveredToEnd,
-									requestKey: readDedupRequestKey,
-									text: dedupRecordText,
-									resultContent: content,
-								});
-							} else {
-								toolDedupStore?.recordSyntheticResult(toolCallId, content);
-							}
-							signal?.removeEventListener("abort", onAbort);
-							resolve({ content, details });
-						} catch (error: any) {
-							signal?.removeEventListener("abort", onAbort);
-							if (!aborted) reject(error);
+							settle(() => resolve({ content, details }));
+						} catch (error: unknown) {
+							if (!aborted) settle(() => reject(error));
 						}
 					})();
 				},

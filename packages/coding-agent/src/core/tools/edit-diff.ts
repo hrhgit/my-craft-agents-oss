@@ -254,7 +254,7 @@ function findReadEvidence(path: string, oldText: string, store?: ReadHistoryStor
 	const fuzzyOldText = normalizeForFuzzyMatch(normalizedOldText);
 	return store
 		.getByCanonicalPath(path)
-		.filter((entry) => entry.fuzzyText.includes(fuzzyOldText))
+		.filter((entry) => entry.source === "read" && entry.fuzzyText.includes(fuzzyOldText))
 		.sort((a, b) => b.timestamp - a.timestamp);
 }
 
@@ -348,7 +348,7 @@ export function resolveEditPathWithHistory(
 	cwd: string,
 	readHistoryStore?: ReadHistoryStore,
 ): EditPathRecovery {
-	return resolvePathWithHistory(path, cwd, readHistoryStore);
+	return resolvePathWithHistory(path, cwd, readHistoryStore, { sources: ["read"] });
 }
 
 /**

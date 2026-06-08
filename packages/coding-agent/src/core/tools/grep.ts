@@ -1,7 +1,6 @@
 import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 import path from "path";
@@ -13,12 +12,6 @@ import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/type
 import { resolveToCwd } from "./path-utils.ts";
 import { buildObservedPathHistoryEntry, type ReadHistoryStore } from "./read-history.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
-import {
-	buildSearchDedupKey,
-	formatDeduplicationNote,
-	type ToolDeduplicationDetails,
-	type ToolDedupStore,
-} from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import {
 	DEFAULT_MAX_BYTES,
@@ -50,7 +43,6 @@ export interface GrepToolDetails {
 	truncation?: TruncationResult;
 	matchLimitReached?: number;
 	linesTruncated?: boolean;
-	deduplication?: ToolDeduplicationDetails;
 }
 
 /**
@@ -74,8 +66,6 @@ export interface GrepToolOptions {
 	operations?: GrepOperations;
 	/** Session-scoped path history used for later read/edit recovery. */
 	readHistoryStore?: ReadHistoryStore;
-	/** Session-scoped short-term tool-result cache for exact duplicate searches. */
-	toolDedupStore?: ToolDedupStore;
 }
 
 function formatGrepCall(
@@ -139,7 +129,6 @@ export function createGrepToolDefinition(
 ): ToolDefinition<typeof grepSchema, GrepToolDetails | undefined> {
 	const customOps = options?.operations;
 	const readHistoryStore = options?.readHistoryStore;
-	const toolDedupStore = options?.toolDedupStore;
 	return {
 		name: "grep",
 		label: "grep",
@@ -187,27 +176,6 @@ export function createGrepToolDefinition(
 						const searchPath = resolveToCwd(searchDir || ".", cwd);
 						const contextValue = context && context > 0 ? context : 0;
 						const effectiveLimit = Math.max(1, limit ?? DEFAULT_LIMIT);
-						const searchDedupKey = buildSearchDedupKey("grep", cwd, {
-							pattern,
-							path: searchPath,
-							glob: glob ?? null,
-							ignoreCase: ignoreCase ?? false,
-							literal: literal ?? false,
-							context: contextValue,
-							limit: effectiveLimit,
-						});
-						const dedupHit = toolDedupStore?.findSearchHit({ toolCallId, key: searchDedupKey });
-						if (dedupHit) {
-							const content: TextContent[] = [
-								{
-									type: "text",
-									text: formatDeduplicationNote(dedupHit.details, "Reused previous grep result."),
-								},
-							];
-							toolDedupStore?.recordSyntheticResult(toolCallId, content);
-							settle(() => resolve({ content, details: { deduplication: dedupHit.details } }));
-							return;
-						}
 
 						const rgPath = await ensureTool("rg", true);
 						if (!rgPath) {
@@ -344,14 +312,9 @@ export function createGrepToolDefinition(
 								return;
 							}
 							if (matchCount === 0) {
-								const content: TextContent[] = [{ type: "text", text: "No matches found" }];
-								toolDedupStore?.recordSearch({
-									toolCallId,
-									key: searchDedupKey,
-									scopePath: searchPath,
-									resultContent: content,
-								});
-								settle(() => resolve({ content, details: undefined }));
+								settle(() =>
+									resolve({ content: [{ type: "text", text: "No matches found" }], details: undefined }),
+								);
 								return;
 							}
 
@@ -403,16 +366,9 @@ export function createGrepToolDefinition(
 								details.linesTruncated = true;
 							}
 							if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
-							const content: TextContent[] = [{ type: "text", text: output }];
-							toolDedupStore?.recordSearch({
-								toolCallId,
-								key: searchDedupKey,
-								scopePath: searchPath,
-								resultContent: content,
-							});
 							settle(() =>
 								resolve({
-									content,
+									content: [{ type: "text", text: output }],
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);

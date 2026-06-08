@@ -1,6 +1,5 @@
 import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 import path from "path";
@@ -12,12 +11,6 @@ import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/type
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { type ReadHistoryStore, recordObservedFilePathsFromText } from "./read-history.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
-import {
-	buildSearchDedupKey,
-	formatDeduplicationNote,
-	type ToolDeduplicationDetails,
-	type ToolDedupStore,
-} from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
@@ -40,7 +33,6 @@ const DEFAULT_LIMIT = 1000;
 export interface FindToolDetails {
 	truncation?: TruncationResult;
 	resultLimitReached?: number;
-	deduplication?: ToolDeduplicationDetails;
 }
 
 /**
@@ -65,8 +57,6 @@ export interface FindToolOptions {
 	operations?: FindOperations;
 	/** Session-scoped path history used for later read/edit recovery. */
 	readHistoryStore?: ReadHistoryStore;
-	/** Session-scoped short-term tool-result cache for exact duplicate searches. */
-	toolDedupStore?: ToolDedupStore;
 }
 
 function formatFindCall(args: { pattern: string; path?: string; limit?: number } | undefined, theme: Theme): string {
@@ -125,7 +115,6 @@ export function createFindToolDefinition(
 ): ToolDefinition<typeof findSchema, FindToolDetails | undefined> {
 	const customOps = options?.operations;
 	const readHistoryStore = options?.readHistoryStore;
-	const toolDedupStore = options?.toolDedupStore;
 	return {
 		name: "find",
 		label: "find",
@@ -164,23 +153,6 @@ export function createFindToolDefinition(
 					try {
 						const searchPath = resolveToCwd(searchDir || ".", cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
-						const searchDedupKey = buildSearchDedupKey("find", cwd, {
-							pattern,
-							path: searchPath,
-							limit: effectiveLimit,
-						});
-						const dedupHit = toolDedupStore?.findSearchHit({ toolCallId, key: searchDedupKey });
-						if (dedupHit) {
-							const content: TextContent[] = [
-								{
-									type: "text",
-									text: formatDeduplicationNote(dedupHit.details, "Reused previous find result."),
-								},
-							];
-							toolDedupStore?.recordSyntheticResult(toolCallId, content);
-							settle(() => resolve({ content, details: { deduplication: dedupHit.details } }));
-							return;
-						}
 						const ops = customOps ?? defaultFindOperations;
 
 						// If custom operations provide glob(), use that instead of fd.
@@ -202,16 +174,9 @@ export function createFindToolDefinition(
 								return;
 							}
 							if (results.length === 0) {
-								const content: TextContent[] = [{ type: "text", text: "No files found matching pattern" }];
-								toolDedupStore?.recordSearch({
-									toolCallId,
-									key: searchDedupKey,
-									scopePath: searchPath,
-									resultContent: content,
-								});
 								settle(() =>
 									resolve({
-										content,
+										content: [{ type: "text", text: "No files found matching pattern" }],
 										details: undefined,
 									}),
 								);
@@ -246,16 +211,9 @@ export function createFindToolDefinition(
 							if (notices.length > 0) {
 								resultOutput += `\n\n[${notices.join(". ")}]`;
 							}
-							const content: TextContent[] = [{ type: "text", text: resultOutput }];
-							toolDedupStore?.recordSearch({
-								toolCallId,
-								key: searchDedupKey,
-								scopePath: searchPath,
-								resultContent: content,
-							});
 							settle(() =>
 								resolve({
-									content,
+									content: [{ type: "text", text: resultOutput }],
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);
@@ -340,16 +298,9 @@ export function createFindToolDefinition(
 								}
 							}
 							if (!output) {
-								const content: TextContent[] = [{ type: "text", text: "No files found matching pattern" }];
-								toolDedupStore?.recordSearch({
-									toolCallId,
-									key: searchDedupKey,
-									scopePath: searchPath,
-									resultContent: content,
-								});
 								settle(() =>
 									resolve({
-										content,
+										content: [{ type: "text", text: "No files found matching pattern" }],
 										details: undefined,
 									}),
 								);
@@ -396,16 +347,9 @@ export function createFindToolDefinition(
 							if (notices.length > 0) {
 								resultOutput += `\n\n[${notices.join(". ")}]`;
 							}
-							const content: TextContent[] = [{ type: "text", text: resultOutput }];
-							toolDedupStore?.recordSearch({
-								toolCallId,
-								key: searchDedupKey,
-								scopePath: searchPath,
-								resultContent: content,
-							});
 							settle(() =>
 								resolve({
-									content,
+									content: [{ type: "text", text: resultOutput }],
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);

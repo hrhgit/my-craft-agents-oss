@@ -21,8 +21,12 @@ export interface ReadHistoryEntry {
 export interface ReadHistoryStore {
 	record(entry: ReadHistoryEntry): void;
 	getByCanonicalPath(canonicalPath: string): ReadHistoryEntry[];
-	findPathCandidates(requestedPath: string): ReadHistoryPathCandidate[];
+	findPathCandidates(requestedPath: string, options?: ReadHistoryPathCandidateOptions): ReadHistoryPathCandidate[];
 	clear(): void;
+}
+
+export interface ReadHistoryPathCandidateOptions {
+	sources?: ReadonlyArray<ReadHistoryEntry["source"]>;
 }
 
 export interface ReadHistoryPathCandidate {
@@ -58,14 +62,16 @@ class InMemoryReadHistoryStore implements ReadHistoryStore {
 		return this.entries.filter((entry) => entry.canonicalPath === canonicalPath);
 	}
 
-	findPathCandidates(requestedPath: string): ReadHistoryPathCandidate[] {
+	findPathCandidates(requestedPath: string, options?: ReadHistoryPathCandidateOptions): ReadHistoryPathCandidate[] {
 		const grouped = new Map<string, ReadHistoryPathCandidate>();
+		const allowedSources = options?.sources ? new Set(options.sources) : undefined;
 		const normalizedRequested = normalizePathForComparison(requestedPath);
 		const requestedSegments = normalizedRequested.split("/").filter(Boolean);
 		const requestedBasename = requestedSegments.at(-1) ?? normalizedRequested;
 		const requestedSuffix = requestedSegments.slice(-3).join("/");
 
 		for (const entry of this.entries) {
+			if (allowedSources && !allowedSources.has(entry.source)) continue;
 			const normalizedCandidate = normalizePathForComparison(entry.canonicalPath);
 			const candidateSegments = normalizedCandidate.split("/").filter(Boolean);
 			const candidateBasename = candidateSegments.at(-1) ?? normalizedCandidate;
@@ -181,9 +187,10 @@ export function resolvePathWithHistory(
 	path: string,
 	cwd: string,
 	readHistoryStore?: ReadHistoryStore,
+	options?: ReadHistoryPathCandidateOptions,
 ): ReadHistoryPathRecovery {
 	const absolutePath = resolveToCwd(path, cwd);
-	const candidates = readHistoryStore?.findPathCandidates(path) ?? [];
+	const candidates = readHistoryStore?.findPathCandidates(path, options) ?? [];
 	if (candidates.length === 0) {
 		return { resolvedPath: absolutePath, candidates, autoRecovered: false };
 	}

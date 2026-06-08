@@ -16,6 +16,7 @@
 - Changed coding-agent HTTP/SSE model requests to prefer the bundled Go sidecar transport path when it is available, and removed user-visible WebSocket transport selection from interactive settings.
 - Changed coding-agent build and release artifacts to include prebuilt Go sidecar binaries for supported platforms.
 - Changed the default system prompt to include concise tool-use discipline for reducing redundant exploration, repeated failures, and path-guessing.
+- Changed large-file `read` preflight to use file metadata before reading content.
 
 ### Fixed
 
@@ -24,6 +25,11 @@
 - Fixed extension access to the shared session activity registry so background agents use the active runtime `agentDir` instead of falling back to the global config directory, and updated the subagent example to publish logical agent activity while delegated tasks run.
 - Fixed `/switch` workspace tracking to prune removed temp workspaces and immediately record switched sessions under the selected workspace.
 - Fixed opening and listing very large JSONL session files by reading session entries line-by-line instead of materializing the full file as one string ([#5231](https://github.com/earendil-works/pi/issues/5231)).
+- Fixed edit path recovery to auto-recover only from successful read history while leaving observed search/list paths available for read recovery.
+
+### Removed
+
+- Removed the experimental built-in tool result deduplication short-circuiting.
 
 ## [0.78.0] - 2026-05-29
 

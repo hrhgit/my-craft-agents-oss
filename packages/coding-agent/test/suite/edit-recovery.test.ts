@@ -142,7 +142,7 @@ describe("edit path recovery from read history", () => {
 	});
 });
 
-describe("read path recovery from observed path history", () => {
+describe("path recovery from observed path history", () => {
 	it("auto-resolves read path when observed history has a unique high-confidence candidate", async () => {
 		const dir = await createTempDir();
 		const realPath = join(dir, "runs", "correct-run", "reports", "ui-review-report.md");
@@ -202,6 +202,35 @@ describe("read path recovery from observed path history", () => {
 		expect(getTextOutput(result)).toContain("officialUiScore: 9.4");
 		expect(result.details?.pathRecovery?.autoRecovered).toBe(true);
 		expect(result.details?.pathRecovery?.resolvedPath).toBe(realPath);
+
+		store.clear();
+	});
+
+	it("does not auto-recover edit paths from observed-only history", async () => {
+		const dir = await createTempDir();
+		const realPath = join(dir, "runs", "correct-run", "reports", "ui-review-report.md");
+		await mkdir(join(dir, "runs", "correct-run", "reports"), { recursive: true });
+		await writeFile(realPath, "score: 9.1\n", "utf8");
+
+		const store = getReadHistoryStore(`${SESSION_ID}-edit-observed-only`);
+		store.clear();
+		store.record(
+			buildObservedPathHistoryEntry({
+				toolCallId: "find-observed-edit",
+				requestedPath: "runs/correct-run/reports/ui-review-report.md",
+				canonicalPath: realPath,
+			}),
+		);
+
+		const tool = createTool(dir, store);
+		const wrongPath = join(dir, "runs", "wrong-run", "reports", "ui-review-report.md");
+		await expect(
+			executeEdit(tool, {
+				path: wrongPath,
+				edits: [{ oldText: "score: 9.1", newText: "score: 9.2" }],
+			}),
+		).rejects.toThrow("ENOENT");
+		expect(await readFile(realPath, "utf8")).toBe("score: 9.1\n");
 
 		store.clear();
 	});

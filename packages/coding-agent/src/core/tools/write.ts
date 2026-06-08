@@ -9,7 +9,6 @@ import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/type
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
-import type { ToolDedupStore } from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const writeSchema = Type.Object({
@@ -38,8 +37,6 @@ const defaultWriteOperations: WriteOperations = {
 export interface WriteToolOptions {
 	/** Custom operations for file writing. Default: local filesystem */
 	operations?: WriteOperations;
-	/** Session-scoped short-term tool-result cache to invalidate after writes. */
-	toolDedupStore?: ToolDedupStore;
 }
 
 type WriteHighlightCache = {
@@ -186,7 +183,6 @@ export function createWriteToolDefinition(
 	options?: WriteToolOptions,
 ): ToolDefinition<typeof writeSchema, undefined> {
 	const ops = options?.operations ?? defaultWriteOperations;
-	const toolDedupStore = options?.toolDedupStore;
 	return {
 		name: "write",
 		label: "write",
@@ -220,7 +216,6 @@ export function createWriteToolDefinition(
 
 				// Write the file contents.
 				await ops.writeFile(absolutePath, content);
-				toolDedupStore?.invalidatePath(absolutePath);
 				throwIfAborted();
 
 				return {

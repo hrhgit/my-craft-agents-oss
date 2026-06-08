@@ -95,7 +95,6 @@ import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-promp
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { cleanupReadHistoryStore, getReadHistoryStore } from "./tools/read-history.ts";
-import { cleanupToolDedupStore, getToolDedupStore } from "./tools/tool-dedup-cache.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
@@ -314,7 +313,6 @@ export class AgentSession {
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
 	private _turnIndex = 0;
-	private _toolDedupUserTurnIndex = 0;
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
@@ -432,8 +430,6 @@ export class AgentSession {
 	 */
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
-			getToolDedupStore(this.sessionId).noteToolCallStart(toolCall.id);
-
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_call")) {
 				return undefined;
@@ -551,10 +547,6 @@ export class AgentSession {
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryAttempted = false;
-			const toolDedupStore = getToolDedupStore(this.sessionId);
-			this._toolDedupUserTurnIndex++;
-			toolDedupStore.startUserTurn(`user-${this._toolDedupUserTurnIndex}`);
-			toolDedupStore.noteMessageContent(event.message.content);
 			const messageText = this._getUserMessageText(event.message);
 			if (messageText) {
 				// Check steering queue first
@@ -581,16 +573,6 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
-			const toolDedupStore = getToolDedupStore(this.sessionId);
-			if (event.message.role === "assistant") {
-				const assistantMsg = event.message as AssistantMessage;
-				toolDedupStore.noteAssistantContent(assistantMsg.content);
-			} else if (event.message.role === "toolResult") {
-				toolDedupStore.noteToolResultContent(event.message.toolCallId, event.message.content);
-			} else if (event.message.role === "custom") {
-				toolDedupStore.noteMessageContent(this._extractCustomMessageText(event.message.content));
-			}
-
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
 				// Persist as CustomMessageEntry
@@ -659,19 +641,6 @@ export class AgentSession {
 		if (typeof content === "string") return content;
 		const textBlocks = content.filter((c) => c.type === "text");
 		return textBlocks.map((c) => (c as TextContent).text).join("");
-	}
-
-	private _extractCustomMessageText(content: unknown): string {
-		if (typeof content === "string") return content;
-		if (!Array.isArray(content)) return "";
-		return content
-			.filter((block): block is { type: string; text: string } => {
-				if (typeof block !== "object" || block === null) return false;
-				const record = block as Record<string, unknown>;
-				return record.type === "text" && typeof record.text === "string";
-			})
-			.map((block) => block.text)
-			.join("");
 	}
 
 	/** Find the last assistant message in agent state (including aborted ones) */
@@ -836,7 +805,6 @@ export class AgentSession {
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
 		cleanupReadHistoryStore(this.sessionId);
-		cleanupToolDedupStore(this.sessionId);
 	}
 
 	// =========================================================================
@@ -2590,7 +2558,6 @@ export class AgentSession {
 		const shellPath = this.settingsManager.getShellPath();
 		const shellToolName = getShellToolName(shellPath);
 		const readHistoryStore = getReadHistoryStore(this.sessionId);
-		const toolDedupStore = getToolDedupStore(this.sessionId);
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -2599,13 +2566,12 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages, readHistoryStore, toolDedupStore },
-					edit: { readHistoryStore, toolDedupStore },
-					bash: { commandPrefix: shellCommandPrefix, shellPath, readHistoryStore, toolDedupStore },
-					write: { toolDedupStore },
-					grep: { readHistoryStore, toolDedupStore },
-					find: { readHistoryStore, toolDedupStore },
-					ls: { readHistoryStore, toolDedupStore },
+					read: { autoResizeImages, readHistoryStore },
+					edit: { readHistoryStore },
+					bash: { commandPrefix: shellCommandPrefix, shellPath, readHistoryStore },
+					grep: { readHistoryStore },
+					find: { readHistoryStore },
+					ls: { readHistoryStore },
 				});
 
 		this._baseToolDefinitions = new Map(

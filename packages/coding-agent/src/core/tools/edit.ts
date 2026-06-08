@@ -24,7 +24,6 @@ import {
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import type { ReadHistoryStore } from "./read-history.ts";
 import { renderToolPath, str } from "./render-utils.ts";
-import type { ToolDedupStore } from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 type EditPreview = EditDiffResult | EditDiffError;
@@ -134,8 +133,6 @@ export interface EditToolOptions {
 	operations?: EditOperations;
 	/** Session-scoped successful text reads used for conservative recovery. */
 	readHistoryStore?: ReadHistoryStore;
-	/** Session-scoped short-term tool-result cache to invalidate after edits. */
-	toolDedupStore?: ToolDedupStore;
 }
 
 function prepareEditArguments(input: unknown): EditToolInput {
@@ -408,7 +405,6 @@ export function createEditToolDefinition(
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
 	const ops = options?.operations ?? defaultEditOperations;
 	const readHistoryStore = options?.readHistoryStore;
-	const toolDedupStore = options?.toolDedupStore;
 	return {
 		name: "edit",
 		label: "edit",
@@ -509,7 +505,6 @@ export function createEditToolDefinition(
 				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
 				await ops.writeFile(absolutePath, finalContent);
 				throwIfAborted();
-				toolDedupStore?.invalidatePath(absolutePath);
 
 				const diffResult = generateDiffString(baseContent, newContent);
 				const patch = generateUnifiedPatch(path, baseContent, newContent);

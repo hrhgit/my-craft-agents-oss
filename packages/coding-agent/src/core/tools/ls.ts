@@ -1,6 +1,5 @@
 import { readdir as fsReaddir, stat as fsStat } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import nodePath from "path";
 import { type Static, Type } from "typebox";
@@ -10,12 +9,6 @@ import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/type
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { buildObservedPathHistoryEntry, type ReadHistoryStore } from "./read-history.ts";
 import { getTextOutput, renderToolPath, str } from "./render-utils.ts";
-import {
-	buildSearchDedupKey,
-	formatDeduplicationNote,
-	type ToolDeduplicationDetails,
-	type ToolDedupStore,
-} from "./tool-dedup-cache.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
@@ -31,7 +24,6 @@ const DEFAULT_LIMIT = 500;
 export interface LsToolDetails {
 	truncation?: TruncationResult;
 	entryLimitReached?: number;
-	deduplication?: ToolDeduplicationDetails;
 }
 
 /**
@@ -58,8 +50,6 @@ export interface LsToolOptions {
 	operations?: LsOperations;
 	/** Session-scoped path history used for later read/edit recovery. */
 	readHistoryStore?: ReadHistoryStore;
-	/** Session-scoped short-term tool-result cache for exact duplicate directory listings. */
-	toolDedupStore?: ToolDedupStore;
 }
 
 function formatLsCall(args: { path?: string; limit?: number } | undefined, theme: Theme, cwd: string): string {
@@ -111,7 +101,6 @@ export function createLsToolDefinition(
 ): ToolDefinition<typeof lsSchema, LsToolDetails | undefined> {
 	const ops = options?.operations ?? defaultLsOperations;
 	const readHistoryStore = options?.readHistoryStore;
-	const toolDedupStore = options?.toolDedupStore;
 	return {
 		name: "ls",
 		label: "ls",
@@ -131,51 +120,52 @@ export function createLsToolDefinition(
 					return;
 				}
 
-				const onAbort = () => reject(new Error("Operation aborted"));
+				let settled = false;
+				let aborted = false;
+				const settle = (fn: () => void): void => {
+					if (settled) return;
+					settled = true;
+					signal?.removeEventListener("abort", onAbort);
+					fn();
+				};
+				const onAbort = () => {
+					aborted = true;
+					settle(() => reject(new Error("Operation aborted")));
+				};
 				signal?.addEventListener("abort", onAbort, { once: true });
 
 				(async () => {
 					try {
 						const dirPath = resolveToCwd(path || ".", cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
-						const searchDedupKey = buildSearchDedupKey("ls", cwd, {
-							path: dirPath,
-							limit: effectiveLimit,
-						});
-						const dedupHit = toolDedupStore?.findSearchHit({ toolCallId, key: searchDedupKey });
-						if (dedupHit) {
-							const content: TextContent[] = [
-								{
-									type: "text",
-									text: formatDeduplicationNote(dedupHit.details, "Reused previous ls result."),
-								},
-							];
-							toolDedupStore?.recordSyntheticResult(toolCallId, content);
-							resolve({ content, details: { deduplication: dedupHit.details } });
-							return;
-						}
 
 						// Check if path exists.
 						if (!(await ops.exists(dirPath))) {
-							reject(new Error(`Path not found: ${dirPath}`));
+							settle(() => reject(new Error(`Path not found: ${dirPath}`)));
 							return;
 						}
+
+						if (aborted) return;
 
 						// Check if path is a directory.
 						const stat = await ops.stat(dirPath);
 						if (!stat.isDirectory()) {
-							reject(new Error(`Not a directory: ${dirPath}`));
+							settle(() => reject(new Error(`Not a directory: ${dirPath}`)));
 							return;
 						}
+
+						if (aborted) return;
 
 						// Read directory entries.
 						let entries: string[];
 						try {
 							entries = await ops.readdir(dirPath);
 						} catch (e: any) {
-							reject(new Error(`Cannot read directory: ${e.message}`));
+							settle(() => reject(new Error(`Cannot read directory: ${e.message}`)));
 							return;
 						}
+
+						if (aborted) return;
 
 						// Sort alphabetically, case-insensitive.
 						entries.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
@@ -184,6 +174,7 @@ export function createLsToolDefinition(
 						const results: string[] = [];
 						let entryLimitReached = false;
 						for (const entry of entries) {
+							if (aborted) return;
 							if (results.length >= effectiveLimit) {
 								entryLimitReached = true;
 								break;
@@ -210,17 +201,12 @@ export function createLsToolDefinition(
 							results.push(entry + suffix);
 						}
 
-						signal?.removeEventListener("abort", onAbort);
+						if (aborted) return;
 
 						if (results.length === 0) {
-							const content: TextContent[] = [{ type: "text", text: "(empty directory)" }];
-							toolDedupStore?.recordSearch({
-								toolCallId,
-								key: searchDedupKey,
-								scopePath: dirPath,
-								resultContent: content,
-							});
-							resolve({ content, details: undefined });
+							settle(() =>
+								resolve({ content: [{ type: "text", text: "(empty directory)" }], details: undefined }),
+							);
 							return;
 						}
 
@@ -243,20 +229,14 @@ export function createLsToolDefinition(
 							output += `\n\n[${notices.join(". ")}]`;
 						}
 
-						const content: TextContent[] = [{ type: "text", text: output }];
-						toolDedupStore?.recordSearch({
-							toolCallId,
-							key: searchDedupKey,
-							scopePath: dirPath,
-							resultContent: content,
-						});
-						resolve({
-							content,
-							details: Object.keys(details).length > 0 ? details : undefined,
-						});
-					} catch (e: any) {
-						signal?.removeEventListener("abort", onAbort);
-						reject(e);
+						settle(() =>
+							resolve({
+								content: [{ type: "text", text: output }],
+								details: Object.keys(details).length > 0 ? details : undefined,
+							}),
+						);
+					} catch (e: unknown) {
+						if (!aborted) settle(() => reject(e));
 					}
 				})();
 			});
