@@ -164,6 +164,8 @@ Pi no longer exposes a user-selectable WebSocket transport mode. Streaming model
 
 `network.mode: "proxy"` and route rules with `policy: "proxy"` are hard egress boundaries: they do not fall back to direct connections. Use `proxy-preferred` when direct fallback is acceptable. Explicit route rules take precedence over default bypasses; use `policy: "direct"` for intentional direct exceptions.
 
+Use `/network-reset` in interactive mode to clear in-process route circuit breaker state, pending retry routes, stale active request records, and restart the sidecar without starting a new session.
+
 ### Terminal & Images
 
 | Setting | Type | Default | Description |

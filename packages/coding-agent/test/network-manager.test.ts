@@ -5,7 +5,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NetworkManager } from "../src/core/network-manager.ts";
 import type { SidecarState } from "../src/core/network-sidecar.ts";
-import type { NetworkRequestContext } from "../src/core/network-types.ts";
+import type { NetworkRequestContext, NetworkRoutePath } from "../src/core/network-types.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
 interface TestSidecarManager {
@@ -36,6 +36,7 @@ interface TestRouteDispatcher {
 interface TestNetworkManagerInternals {
 	sidecarManager: TestSidecarManager;
 	dispatcher: TestRouteDispatcher;
+	pendingRetryPaths: Map<string, NetworkRoutePath>;
 }
 
 function createAssistantErrorMessage(overrides?: Partial<AssistantMessage>): AssistantMessage {
@@ -339,6 +340,52 @@ describe("NetworkManager", () => {
 			proxyMode: "required",
 		});
 		expect(calls).toEqual([{ url: "https://api.example.com/v1/test", method: "POST" }]);
+
+		await manager.dispose();
+	});
+
+	it("resets runtime route state after direct circuit breaker opens", async () => {
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const manager = new NetworkManager(settingsManager);
+		const internals = manager as unknown as TestNetworkManagerInternals;
+
+		const activeContext = manager.beginRequest("https://api.example.com/v1/active", {
+			requestClass: "safe",
+			method: "GET",
+		});
+		internals.pendingRetryPaths.set("api.example.com:model_pre_first_byte", "sidecar");
+
+		for (let i = 0; i < 3; i++) {
+			const context = manager.beginRequest(`https://api.example.com/v1/fail-${i}`, {
+				requestClass: "safe",
+				method: "GET",
+			});
+			manager.completeRequest(context.requestId, false);
+		}
+
+		expect(() =>
+			manager.beginRequest("https://api.example.com/v1/blocked", {
+				requestClass: "safe",
+				method: "GET",
+			}),
+		).toThrow("Network proxy sidecar is required but unavailable");
+
+		const result = await manager.resetRuntimeState();
+
+		expect(result).toMatchObject({
+			mode: "auto",
+			sidecarEnabled: true,
+			sidecarReady: false,
+			clearedActiveRequests: 1,
+			clearedPendingRetryPaths: 1,
+		});
+		expect(internals.pendingRetryPaths.size).toBe(0);
+		const restored = manager.beginRequest("https://api.example.com/v1/restored", {
+			requestClass: "safe",
+			method: "GET",
+		});
+		expect(restored.path).toBe("direct");
+		expect(restored.requestId).not.toBe(activeContext.requestId);
 
 		await manager.dispose();
 	});

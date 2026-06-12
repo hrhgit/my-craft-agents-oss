@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { createAssistantMessageDiagnostic } from "@earendil-works/pi-ai";
 import { NetworkRouteDispatcher } from "./network-dispatcher.ts";
-import { SidecarManager } from "./network-sidecar.ts";
+import { SidecarManager, type SidecarState } from "./network-sidecar.ts";
 import type {
 	AgentRetryContext,
 	EffectiveNetworkSettings,
@@ -59,6 +59,16 @@ interface ActiveRequestRecord {
 	context: NetworkRequestContext;
 }
 
+export interface NetworkRuntimeResetResult {
+	mode: EffectiveNetworkSettings["mode"];
+	sidecarEnabled: boolean;
+	sidecarReady: boolean;
+	sidecarHealthState?: SidecarState["healthState"];
+	sidecarBaseUrl?: string;
+	clearedActiveRequests: number;
+	clearedPendingRetryPaths: number;
+}
+
 export class NetworkManager {
 	private readonly settingsManager: SettingsManager;
 	private settings: EffectiveNetworkSettings;
@@ -93,6 +103,27 @@ export class NetworkManager {
 
 	getEffectiveSettings(): EffectiveNetworkSettings {
 		return this.settings;
+	}
+
+	async resetRuntimeState(): Promise<NetworkRuntimeResetResult> {
+		const clearedActiveRequests = this.activeRequests.size;
+		const clearedPendingRetryPaths = this.pendingRetryPaths.size;
+		this.activeRequests.clear();
+		this.pendingRetryPaths.clear();
+		this.lastKnownPath = "direct";
+		this.dispatcher.reset();
+		await this.sidecarManager.reset();
+		await this.applySettings();
+		const sidecarState = this.sidecarManager.getState();
+		return {
+			mode: this.settings.mode,
+			sidecarEnabled: sidecarState.enabled,
+			sidecarReady: sidecarState.ready,
+			sidecarHealthState: sidecarState.healthState,
+			sidecarBaseUrl: sidecarState.baseUrl,
+			clearedActiveRequests,
+			clearedPendingRetryPaths,
+		};
 	}
 
 	beginRequest(url: string | URL, options: NetworkRequestOptions): NetworkRequestContext {

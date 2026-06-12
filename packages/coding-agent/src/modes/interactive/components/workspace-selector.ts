@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, normalize, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, normalize, parse, resolve, sep } from "node:path";
 import { Container, type Focusable, getKeybindings, Input, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -49,6 +49,12 @@ function shortenHomePath(targetPath: string): string {
 		return `~${normalizedTarget.slice(normalizedHome.length)}`;
 	}
 	return targetPath;
+}
+
+function lastPathSegment(targetPath: string): string {
+	const normalized = normalize(targetPath);
+	const name = basename(normalized);
+	return name || parse(normalized).root || normalized;
 }
 
 function stripQuotes(value: string): string {
@@ -253,7 +259,7 @@ export class WorkspaceSelectorComponent extends Container implements Focusable {
 				kind: "known",
 				cwd: workspace.cwd,
 				label: workspace.label,
-				description: shortenHomePath(workspace.cwd),
+				description: lastPathSegment(workspace.cwd),
 			});
 			if (items.length >= 40) break;
 		}

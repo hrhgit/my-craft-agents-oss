@@ -9,6 +9,7 @@
 - Added the local `web_fetch` built-in tool and a persisted `webSearch` setting for supported provider built-in web search.
 - Added built-in active session/workspace tracking for `/switch`, with workspace-first selection and path browsing.
 - Added `pi mux` as an experimental terminal multiplexer for running multiple independent RPC-backed Pi sessions concurrently.
+- Added `/network-reset` to clear in-process network routing state and restart the sidecar without starting a new session.
 
 ### Changed
 

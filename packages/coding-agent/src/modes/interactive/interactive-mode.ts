@@ -280,16 +280,32 @@ function cleanOneLine(text: string | undefined, maxLength: number): string {
 	return `${clean.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
+function workspaceDisplayName(cwd: string): string {
+	const normalized = path.normalize(cwd);
+	return path.basename(normalized) || path.parse(normalized).root || normalized;
+}
+
+function parseActivityTimestamp(value: string | Date | undefined): number | undefined {
+	if (!value) return undefined;
+	const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
+	return Number.isNaN(time) ? undefined : time;
+}
+
 function formatActivityTimestamp(value: string | Date | undefined): string {
-	if (!value) return "unknown";
-	const date = value instanceof Date ? value : new Date(value);
-	if (Number.isNaN(date.getTime())) return "unknown";
+	const time = parseActivityTimestamp(value);
+	if (time === undefined) return "unknown";
+	const date = new Date(time);
 	const pad = (part: number) => part.toString().padStart(2, "0");
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function sessionDisplayTitle(session: SessionInfo): string {
 	return cleanOneLine(session.name || session.firstMessage || session.id, 80) || session.id;
+}
+
+function compareSessionsByModifiedDesc(a: SessionInfo, b: SessionInfo): number {
+	const modifiedDelta = b.modified.getTime() - a.modified.getTime();
+	return modifiedDelta !== 0 ? modifiedDelta : a.path.localeCompare(b.path);
 }
 
 function addWorkspaceSummary(
@@ -311,6 +327,17 @@ function addWorkspaceSummary(
 	return summary;
 }
 
+function getWorkspaceActivityTime(workspace: WorkspaceSummary): number {
+	const sessionTime = parseActivityTimestamp(workspace.lastSessionModified);
+	const usedTime = parseActivityTimestamp(workspace.lastUsedAt);
+	return Math.max(sessionTime ?? 0, usedTime ?? 0);
+}
+
+function getWorkspaceActivityDate(workspace: WorkspaceSummary): Date | undefined {
+	const time = getWorkspaceActivityTime(workspace);
+	return time > 0 ? new Date(time) : undefined;
+}
+
 function buildWorkspaceSummaries(
 	sessions: SessionInfo[],
 	history: WorkspaceHistoryRecord[],
@@ -329,7 +356,8 @@ function buildWorkspaceSummaries(
 	}
 	for (const workspace of history) {
 		if (!isExistingDirectory(workspace.cwd)) continue;
-		const summary = addWorkspaceSummary(workspaces, workspace.cwd, currentCwd);
+		const summary = workspaces.get(pathKey(workspace.cwd));
+		if (!summary) continue;
 		summary.firstUsedAt =
 			summary.firstUsedAt && summary.firstUsedAt < workspace.firstUsedAt
 				? summary.firstUsedAt
@@ -339,22 +367,14 @@ function buildWorkspaceSummaries(
 	}
 	for (const activeSession of activeSessions) {
 		if (!isExistingDirectory(activeSession.cwd)) continue;
-		const summary = addWorkspaceSummary(workspaces, activeSession.cwd, currentCwd);
+		const summary = workspaces.get(pathKey(activeSession.cwd));
+		if (!summary) continue;
 		summary.activeCount++;
 		if (activeSession.status === "running") summary.runningCount++;
 	}
-	const timestamp = (workspace: WorkspaceSummary): number => {
-		const values = [workspace.lastSessionModified?.toISOString(), workspace.lastUsedAt]
-			.filter((value): value is string => typeof value === "string")
-			.map((value) => new Date(value).getTime())
-			.filter((value) => !Number.isNaN(value));
-		return values.length > 0 ? Math.max(...values) : 0;
-	};
 	return Array.from(workspaces.values()).sort((a, b) => {
-		if (a.current !== b.current) return a.current ? -1 : 1;
-		if (a.runningCount !== b.runningCount) return b.runningCount - a.runningCount;
-		if (a.activeCount !== b.activeCount) return b.activeCount - a.activeCount;
-		return timestamp(b) - timestamp(a);
+		const activityDelta = getWorkspaceActivityTime(b) - getWorkspaceActivityTime(a);
+		return activityDelta !== 0 ? activityDelta : a.cwd.localeCompare(b.cwd);
 	});
 }
 
@@ -2314,7 +2334,7 @@ export class InteractiveMode {
 	private showExtensionSelector(
 		title: string,
 		options: string[],
-		opts?: ExtensionUIDialogOptions,
+		opts?: ExtensionUIDialogOptions & { maxVisible?: number },
 	): Promise<string | undefined> {
 		return new Promise((resolve) => {
 			if (opts?.signal?.aborted) {
@@ -2341,7 +2361,12 @@ export class InteractiveMode {
 					this.hideExtensionSelector();
 					resolve(undefined);
 				},
-				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
+				{
+					tui: this.ui,
+					timeout: opts?.timeout,
+					maxVisible: opts?.maxVisible,
+					onToggleToolsExpanded: () => this.toggleToolOutputExpansion(),
+				},
 			);
 
 			this.editorContainer.clear();
@@ -2894,6 +2919,11 @@ export class InteractiveMode {
 			if (text === "/reload") {
 				this.editor.setText("");
 				await this.handleReloadCommand();
+				return;
+			}
+			if (text === "/network-reset") {
+				this.editor.setText("");
+				await this.handleNetworkResetCommand();
 				return;
 			}
 			if (text === "/debug") {
@@ -3862,7 +3892,18 @@ export class InteractiveMode {
 		await this.queueEditorMessage("steer");
 	}
 
+	private shouldSubmitFollowUpInput(text: string): boolean {
+		return text.startsWith("/") || text.startsWith("!");
+	}
+
 	private async handleFollowUp(): Promise<void> {
+		const text = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
+		if ((this.session.isStreaming || this.session.isCompacting) && this.shouldSubmitFollowUpInput(text)) {
+			this.editor.setText("");
+			await Promise.resolve(this.editor.onSubmit?.(text));
+			return;
+		}
+
 		await this.queueEditorMessage("followUp");
 	}
 
@@ -4920,8 +4961,7 @@ export class InteractiveMode {
 		else if (workspace.activeCount > 0) labels.push(`${workspace.activeCount} active`);
 		if (workspace.sessionCount > 0) labels.push(`${workspace.sessionCount} sessions`);
 		const labelText = labels.length > 0 ? ` [${labels.join(", ")}]` : "";
-		const last = workspace.lastSessionModified ?? workspace.lastUsedAt;
-		return `Workspace: ${shortenHomePath(workspace.cwd)}${labelText} | ${formatActivityTimestamp(last)}`;
+		return `${workspaceDisplayName(workspace.cwd)}${labelText} | ${formatActivityTimestamp(getWorkspaceActivityDate(workspace))}`;
 	}
 
 	private sessionOptionLabel(session: SessionInfo, activeSessions: ActiveSessionRecord[]): string {
@@ -4983,14 +5023,16 @@ export class InteractiveMode {
 			return;
 		}
 
-		const workspaceSessions = sessions.filter((session) => session.cwd && pathKey(session.cwd) === pathKey(cwd));
+		const workspaceSessions = sessions
+			.filter((session) => session.cwd && pathKey(session.cwd) === pathKey(cwd))
+			.sort(compareSessionsByModifiedDesc);
 		if (workspaceSessions.length === 0) {
 			await this.switchToNewWorkspaceSession(cwd);
 			return;
 		}
 
 		const newOption = `New session in ${shortenHomePath(cwd)}`;
-		const sessionChoices = workspaceSessions.slice(0, 40).map((session) => ({
+		const sessionChoices = workspaceSessions.map((session) => ({
 			session,
 			label: this.sessionOptionLabel(session, activeSessions),
 		}));
@@ -5007,7 +5049,7 @@ export class InteractiveMode {
 			sessionByOption.set(label, choice.session);
 			return label;
 		});
-		const selected = await this.showExtensionSelector("Switch", [newOption, ...sessionOptions]);
+		const selected = await this.showExtensionSelector("Switch", [newOption, ...sessionOptions], { maxVisible: 10 });
 		if (!selected) return;
 		if (selected === newOption) {
 			await this.switchToNewWorkspaceSession(cwd);
@@ -5582,6 +5624,31 @@ export class InteractiveMode {
 		} catch (error) {
 			dismissReloadBox(previousEditor as Component);
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	private async handleNetworkResetCommand(): Promise<void> {
+		if (this.session.isStreaming) {
+			this.showWarning("Wait for the current response to finish before resetting network state.");
+			return;
+		}
+		if (this.session.isCompacting) {
+			this.showWarning("Wait for compaction to finish before resetting network state.");
+			return;
+		}
+
+		try {
+			const result = await this.runtimeHost.services.networkManager.resetRuntimeState();
+			const sidecarStatus = result.sidecarEnabled
+				? result.sidecarReady
+					? `sidecar ready${result.sidecarBaseUrl ? ` at ${result.sidecarBaseUrl}` : ""}`
+					: `sidecar ${result.sidecarHealthState ?? "not started"}`
+				: "sidecar disabled";
+			this.showStatus(
+				`Network state reset (${result.mode}; ${sidecarStatus}; cleared ${result.clearedActiveRequests} active request${result.clearedActiveRequests === 1 ? "" : "s"} and ${result.clearedPendingRetryPaths} pending retry route${result.clearedPendingRetryPaths === 1 ? "" : "s"})`,
+			);
+		} catch (error) {
+			this.showError(`Network reset failed: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 

@@ -12,6 +12,7 @@ import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 export interface ExtensionSelectorOptions {
 	tui?: TUI;
 	timeout?: number;
+	maxVisible?: number;
 	onToggleToolsExpanded?: () => void;
 }
 
@@ -25,6 +26,7 @@ export class ExtensionSelectorComponent extends Container {
 	private baseTitle: string;
 	private countdown: CountdownTimer | undefined;
 	private onToggleToolsExpanded: (() => void) | undefined;
+	private maxVisible: number | undefined;
 
 	constructor(
 		title: string,
@@ -39,6 +41,7 @@ export class ExtensionSelectorComponent extends Container {
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
 		this.onToggleToolsExpanded = opts?.onToggleToolsExpanded;
+		this.maxVisible = opts?.maxVisible ? Math.max(1, Math.floor(opts.maxVisible)) : undefined;
 		this.baseTitle = title;
 
 		this.addChild(new DynamicBorder());
@@ -79,12 +82,25 @@ export class ExtensionSelectorComponent extends Container {
 
 	private updateList(): void {
 		this.listContainer.clear();
-		for (let i = 0; i < this.options.length; i++) {
+		const maxVisible = this.maxVisible ?? this.options.length;
+		const startIndex = Math.max(
+			0,
+			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.options.length - maxVisible),
+		);
+		const endIndex = Math.min(startIndex + maxVisible, this.options.length);
+
+		for (let i = startIndex; i < endIndex; i++) {
 			const isSelected = i === this.selectedIndex;
 			const text = isSelected
 				? theme.fg("accent", "→ ") + theme.fg("accent", this.options[i])
 				: `  ${theme.fg("text", this.options[i])}`;
 			this.listContainer.addChild(new Text(text, 1, 0));
+		}
+
+		if (startIndex > 0 || endIndex < this.options.length) {
+			this.listContainer.addChild(
+				new Text(theme.fg("muted", `  (${this.selectedIndex + 1}/${this.options.length})`), 0, 0),
+			);
 		}
 	}
 

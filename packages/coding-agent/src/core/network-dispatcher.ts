@@ -26,6 +26,7 @@ export interface NetworkDispatcherController {
 	noteSuccess(context: NetworkRequestContext): void;
 	noteFailure(context: NetworkRequestContext): void;
 	rebuild(path: NetworkRoutePath): Promise<boolean>;
+	reset(): void;
 	destroy(): Promise<void>;
 	getCircuitState(path: NetworkRoutePath): CircuitState;
 	getSidecarAvailable(): boolean;
@@ -200,6 +201,12 @@ export class NetworkRouteDispatcher implements NetworkDispatcherController {
 		replacement.failures = current.failures;
 		replacement.cooldownUntil = current.cooldownUntil;
 		return true;
+	}
+
+	reset(): void {
+		this.states.direct = this.createState("direct");
+		this.states.sidecar = this.createState("sidecar");
+		this.sidecarAvailable = false;
 	}
 
 	async destroy(): Promise<void> {

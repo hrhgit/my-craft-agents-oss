@@ -508,6 +508,14 @@ export class SidecarManager {
 		this.state.healthState = "down";
 	}
 
+	async reset(): Promise<void> {
+		await this.stop();
+		this.state = {
+			enabled: this.settings.sidecar.enabled,
+			ready: false,
+		};
+	}
+
 	async refreshHealth(): Promise<SidecarHealthSnapshot | undefined> {
 		if (!this.state.baseUrl) {
 			return undefined;

@@ -2675,14 +2675,14 @@ export class AgentSession {
 		if (/rate.?limit|too many requests|429/i.test(errorMessage)) {
 			return { reason: "rate_limit" };
 		}
-		if (/500|502|503|504|service.?unavailable|server.?error|internal.?error/i.test(errorMessage)) {
+		if (/500|502|503|504|service.?unavailable|server.?error|internal.?error|upstream.?error/i.test(errorMessage)) {
 			return { reason: "server" };
 		}
 		if (/timed? out|timeout/i.test(errorMessage)) {
 			return { reason: "timeout", details: this._extractRetryDetailFromErrorMessage(errorMessage) };
 		}
 		if (
-			/network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|econnreset|tls|websocket.?closed|websocket.?error|other side closed/i.test(
+			/network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|econnreset|tls|websocket.?closed|websocket.?error|other side closed|(?:openai api error:\s*)?terminated/i.test(
 				errorMessage,
 			)
 		) {
@@ -2746,8 +2746,8 @@ export class AgentSession {
 
 		const err = message.errorMessage;
 		if (this._isNonRetryableProviderLimitError(err)) return false;
-		// Match: overloaded_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, stream_read_error, HTTP/2 closed before response, terminated, retry delay exceeded
-		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|stream_read_error|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
+		// Match: overloaded_error, upstream_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, stream_read_error, HTTP/2 closed before response, terminated, retry delay exceeded
+		return /overloaded|upstream.?error|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|stream_read_error|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
 			err,
 		);
 	}
