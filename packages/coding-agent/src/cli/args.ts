@@ -229,7 +229,6 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} update [source|self|pi]   Update pi and installed extensions
   ${APP_NAME} list                      List installed extensions from settings
   ${APP_NAME} config                    Open TUI to enable/disable package resources
-  ${APP_NAME} mux [options]             Run multiple independent Pi RPC workers in one terminal
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list
 
 ${chalk.bold("Options:")}
@@ -278,9 +277,6 @@ Extensions can register additional flags.${extensionFlagsText}
 ${chalk.bold("Examples:")}
   # Interactive mode
   ${APP_NAME}
-
-  # Multiplex multiple independent sessions
-  ${APP_NAME} mux --model openai/gpt-4o
 
   # Interactive mode with initial prompt
   ${APP_NAME} "List all .ts files in src/"

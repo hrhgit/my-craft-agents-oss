@@ -1,6 +1,6 @@
 import { type AgentMessage, uuidv7 } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Message, TextContent, Usage } from "@earendil-works/pi-ai";
-import { randomUUID } from "crypto";
+import type { ImageContent, Message, TextContent, Usage } from "@earendil-works/pi-ai/types";
+import { createHash, randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
@@ -9,13 +9,14 @@ import {
 	mkdirSync,
 	openSync,
 	readdirSync,
+	readFileSync,
 	readSync,
 	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir, stat } from "fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 import lockfile from "proper-lockfile";
 import { createInterface } from "readline";
@@ -462,11 +463,225 @@ export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultA
 	return sessionDir;
 }
 
+const SESSION_CACHE_VERSION = 1;
 const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
+const SESSION_ENTRY_CACHE_MAX_FILE_BYTES = 8 * 1024 * 1024;
 const SESSION_FILE_LOCK_STALE_MS = 30_000;
 const SESSION_FILE_LOCK_RETRY_DELAY_MS = 25;
 const SESSION_FILE_LOCK_RETRY_COUNT = 1_400;
 const SESSION_FILE_LOCK_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+const sessionEntriesMemoryCache = new Map<
+	string,
+	{ sourceMtimeMs: number; sourceSize: number; entries: FileEntry[] }
+>();
+
+interface CachedSessionEntriesPayload {
+	version: typeof SESSION_CACHE_VERSION;
+	sourcePath: string;
+	sourceMtimeMs: number;
+	sourceSize: number;
+	entries: FileEntry[];
+}
+
+interface CachedSessionInfoPayload {
+	version: typeof SESSION_CACHE_VERSION;
+	sourcePath: string;
+	sourceMtimeMs: number;
+	sourceSize: number;
+	sessionInfo: {
+		path: string;
+		id: string;
+		cwd: string;
+		name?: string;
+		parentSessionPath?: string;
+		created: string;
+		modified: string;
+		messageCount: number;
+		firstMessage: string;
+		allMessagesText: string;
+	};
+}
+
+function hashSessionCacheKey(filePath: string): string {
+	return createHash("sha1").update(normalizePath(filePath)).digest("hex");
+}
+
+function getSessionCacheRoot(agentDir: string = getDefaultAgentDir()): string {
+	return join(resolvePath(agentDir), ".cache", "session-manager");
+}
+
+function getSessionEntriesCachePath(filePath: string, agentDir: string = getDefaultAgentDir()): string {
+	return join(getSessionCacheRoot(agentDir), "entries", `${hashSessionCacheKey(filePath)}.json`);
+}
+
+function getSessionInfoCachePath(filePath: string, agentDir: string = getDefaultAgentDir()): string {
+	return join(getSessionCacheRoot(agentDir), "info", `${hashSessionCacheKey(filePath)}.json`);
+}
+
+function hasValidSessionHeader(entries: FileEntry[]): boolean {
+	if (entries.length === 0) return true;
+	const header = entries[0];
+	return header.type === "session" && typeof (header as { id?: unknown }).id === "string";
+}
+
+function writeCacheFileSync(filePath: string, content: string): void {
+	mkdirSync(resolve(filePath, ".."), { recursive: true });
+	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}.tmp`;
+	writeFileSync(tempPath, content, "utf-8");
+	try {
+		renameSync(tempPath, filePath);
+	} catch (error) {
+		rmSync(tempPath, { force: true });
+		throw error;
+	}
+}
+
+async function writeCacheFile(filePath: string, content: string): Promise<void> {
+	await mkdir(resolve(filePath, ".."), { recursive: true });
+	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}.tmp`;
+	await writeFile(tempPath, content, "utf-8");
+	try {
+		renameSync(tempPath, filePath);
+	} catch (error) {
+		rmSync(tempPath, { force: true });
+		throw error;
+	}
+}
+
+function readCachedSessionEntries(
+	resolvedFilePath: string,
+	sourceMtimeMs: number,
+	sourceSize: number,
+): FileEntry[] | undefined {
+	const memory = sessionEntriesMemoryCache.get(resolvedFilePath);
+	if (memory && memory.sourceMtimeMs === sourceMtimeMs && memory.sourceSize === sourceSize) {
+		return memory.entries;
+	}
+	if (sourceSize > SESSION_ENTRY_CACHE_MAX_FILE_BYTES) {
+		return undefined;
+	}
+	const cachePath = getSessionEntriesCachePath(resolvedFilePath);
+	if (!existsSync(cachePath)) {
+		return undefined;
+	}
+	try {
+		const payload = JSON.parse(readFileSync(cachePath, "utf-8")) as CachedSessionEntriesPayload;
+		if (
+			payload.version !== SESSION_CACHE_VERSION ||
+			payload.sourcePath !== resolvedFilePath ||
+			payload.sourceMtimeMs !== sourceMtimeMs ||
+			payload.sourceSize !== sourceSize ||
+			!Array.isArray(payload.entries) ||
+			!hasValidSessionHeader(payload.entries)
+		) {
+			return undefined;
+		}
+		sessionEntriesMemoryCache.set(resolvedFilePath, {
+			sourceMtimeMs,
+			sourceSize,
+			entries: payload.entries,
+		});
+		return payload.entries;
+	} catch {
+		return undefined;
+	}
+}
+
+function writeSessionEntriesCache(
+	resolvedFilePath: string,
+	sourceMtimeMs: number,
+	sourceSize: number,
+	entries: FileEntry[],
+): void {
+	if (sourceSize > SESSION_ENTRY_CACHE_MAX_FILE_BYTES || !hasValidSessionHeader(entries)) {
+		return;
+	}
+	sessionEntriesMemoryCache.set(resolvedFilePath, { sourceMtimeMs, sourceSize, entries });
+	const payload: CachedSessionEntriesPayload = {
+		version: SESSION_CACHE_VERSION,
+		sourcePath: resolvedFilePath,
+		sourceMtimeMs,
+		sourceSize,
+		entries,
+	};
+	try {
+		writeCacheFileSync(getSessionEntriesCachePath(resolvedFilePath), `${JSON.stringify(payload)}\n`);
+	} catch {
+		// Cache writes must not block session loading.
+	}
+}
+
+function serializeSessionInfo(info: SessionInfo): CachedSessionInfoPayload["sessionInfo"] {
+	return {
+		path: info.path,
+		id: info.id,
+		cwd: info.cwd,
+		name: info.name,
+		parentSessionPath: info.parentSessionPath,
+		created: info.created.toISOString(),
+		modified: info.modified.toISOString(),
+		messageCount: info.messageCount,
+		firstMessage: info.firstMessage,
+		allMessagesText: info.allMessagesText,
+	};
+}
+
+function deserializeSessionInfo(serialized: CachedSessionInfoPayload["sessionInfo"]): SessionInfo {
+	return {
+		path: serialized.path,
+		id: serialized.id,
+		cwd: serialized.cwd,
+		name: serialized.name,
+		parentSessionPath: serialized.parentSessionPath,
+		created: new Date(serialized.created),
+		modified: new Date(serialized.modified),
+		messageCount: serialized.messageCount,
+		firstMessage: serialized.firstMessage,
+		allMessagesText: serialized.allMessagesText,
+	};
+}
+
+async function readCachedSessionInfo(
+	resolvedFilePath: string,
+	sourceMtimeMs: number,
+	sourceSize: number,
+): Promise<SessionInfo | undefined> {
+	const cachePath = getSessionInfoCachePath(resolvedFilePath);
+	try {
+		const payload = JSON.parse(await readFile(cachePath, "utf-8")) as CachedSessionInfoPayload;
+		if (
+			payload.version !== SESSION_CACHE_VERSION ||
+			payload.sourcePath !== resolvedFilePath ||
+			payload.sourceMtimeMs !== sourceMtimeMs ||
+			payload.sourceSize !== sourceSize
+		) {
+			return undefined;
+		}
+		return deserializeSessionInfo(payload.sessionInfo);
+	} catch {
+		return undefined;
+	}
+}
+
+async function writeSessionInfoCache(
+	resolvedFilePath: string,
+	sourceMtimeMs: number,
+	sourceSize: number,
+	info: SessionInfo,
+): Promise<void> {
+	const payload: CachedSessionInfoPayload = {
+		version: SESSION_CACHE_VERSION,
+		sourcePath: resolvedFilePath,
+		sourceMtimeMs,
+		sourceSize,
+		sessionInfo: serializeSessionInfo(info),
+	};
+	try {
+		await writeCacheFile(getSessionInfoCachePath(resolvedFilePath), `${JSON.stringify(payload)}\n`);
+	} catch {
+		// Cache writes must not block session listing.
+	}
+}
 
 function sleepSync(ms: number): void {
 	Atomics.wait(SESSION_FILE_LOCK_SLEEP_BUFFER, 0, 0, ms);
@@ -557,6 +772,12 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	const resolvedFilePath = normalizePath(filePath);
 	if (!existsSync(resolvedFilePath)) return [];
 
+	const sourceStats = statSync(resolvedFilePath);
+	const cachedEntries = readCachedSessionEntries(resolvedFilePath, sourceStats.mtimeMs, sourceStats.size);
+	if (cachedEntries) {
+		return cachedEntries;
+	}
+
 	const entries: FileEntry[] = [];
 	const fd = openSync(resolvedFilePath, "r");
 	try {
@@ -594,6 +815,7 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 		return [];
 	}
 
+	writeSessionEntriesCache(resolvedFilePath, sourceStats.mtimeMs, sourceStats.size, entries);
 	return entries;
 }
 
@@ -679,7 +901,13 @@ function getMessageActivityTime(entry: SessionMessageEntry): number | undefined 
 
 async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 	try {
-		const stats = await stat(filePath);
+		const resolvedFilePath = normalizePath(filePath);
+		const stats = await stat(resolvedFilePath);
+		const cachedInfo = await readCachedSessionInfo(resolvedFilePath, stats.mtimeMs, stats.size);
+		if (cachedInfo) {
+			return cachedInfo;
+		}
+
 		let header: SessionHeader | null = null;
 		let messageCount = 0;
 		let firstMessage = "";
@@ -688,7 +916,7 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 		let lastActivityTime: number | undefined;
 
 		const rl = createInterface({
-			input: createReadStream(filePath, { encoding: "utf8" }),
+			input: createReadStream(resolvedFilePath, { encoding: "utf8" }),
 			crlfDelay: Infinity,
 		});
 
@@ -740,8 +968,8 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 					? new Date(headerTime)
 					: stats.mtime;
 
-		return {
-			path: filePath,
+		const sessionInfo: SessionInfo = {
+			path: resolvedFilePath,
 			id: header.id,
 			cwd,
 			name,
@@ -752,6 +980,8 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 			firstMessage: firstMessage || "(no messages)",
 			allMessagesText: allMessages.join(" "),
 		};
+		await writeSessionInfoCache(resolvedFilePath, stats.mtimeMs, stats.size, sessionInfo);
+		return sessionInfo;
 	} catch {
 		return null;
 	}

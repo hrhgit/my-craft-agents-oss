@@ -133,6 +133,23 @@ Additional paths via `settings.json`:
 }
 ```
 
+Extension entries can also choose when they load:
+
+```json
+{
+  "extensions": [
+    { "path": "/path/to/editor-ui.ts", "activation": "startup" },
+    { "path": "/path/to/model-tools.ts", "activation": "beforeFirstRequest" },
+    { "path": "/path/to/optional-command.ts", "activation": "lazy" }
+  ]
+}
+```
+
+Activation values:
+- `startup`: loaded before the first interactive screen. Use this only when the extension must affect startup UI, startup model/provider selection, or immediate session setup.
+- `beforeFirstRequest`: loaded after the first screen is shown, but before the first real model request is sent. This is the default for extension paths that do not specify `activation`.
+- `lazy`: discovered but not loaded during startup or first-request preparation. Use this for resources that are activated by a later explicit flow.
+
 To share extensions via npm or git as pi packages, see [packages.md](packages.md).
 
 ## Available Imports
@@ -177,7 +194,7 @@ export default function (pi: ExtensionAPI) {
 
 Extensions are loaded via [jiti](https://github.com/unjs/jiti), so TypeScript works without compilation.
 
-If the factory returns a `Promise`, pi awaits it before continuing startup. That means async initialization completes before `session_start`, before `resources_discover`, and before provider registrations queued via `pi.registerProvider()` are flushed.
+If the factory returns a `Promise`, pi awaits it before continuing with that extension's activation stage. For `startup` extensions this still blocks startup. For `beforeFirstRequest` extensions, it blocks the first model request instead of the first screen.
 
 ### Async factory functions
 

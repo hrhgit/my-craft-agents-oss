@@ -3,7 +3,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model } from "@earendil-works/pi-ai";
+import type { ImageContent, Model } from "@earendil-works/pi-ai/types";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
@@ -22,6 +22,7 @@ import type {
 	ContextUsage,
 	Extension,
 	ExtensionActions,
+	ExtensionActivation,
 	ExtensionCommandContext,
 	ExtensionCommandContextActions,
 	ExtensionContext,
@@ -149,6 +150,10 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 				: undefined;
 
 export type ExtensionErrorListener = (error: ExtensionError) => void;
+
+interface ExtensionEmitOptions {
+	activations?: readonly ExtensionActivation[];
+}
 
 export type NewSessionHandler = (options?: {
 	cwd?: string;
@@ -495,8 +500,13 @@ export class ExtensionRunner {
 		}
 	}
 
-	hasHandlers(eventType: string): boolean {
+	private shouldEmitToExtension(extension: Extension, options?: ExtensionEmitOptions): boolean {
+		return !options?.activations || options.activations.includes(extension.activation);
+	}
+
+	hasHandlers(eventType: string, options?: ExtensionEmitOptions): boolean {
 		for (const ext of this.extensions) {
+			if (!this.shouldEmitToExtension(ext, options)) continue;
 			const handlers = ext.handlers.get(eventType);
 			if (handlers && handlers.length > 0) {
 				return true;
@@ -687,11 +697,15 @@ export class ExtensionRunner {
 		);
 	}
 
-	async emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+	async emit<TEvent extends RunnerEmitEvent>(
+		event: TEvent,
+		options?: ExtensionEmitOptions,
+	): Promise<RunnerEmitResult<TEvent>> {
 		const ctx = this.createContext();
 		let result: SessionBeforeEventResult | undefined;
 
 		for (const ext of this.extensions) {
+			if (!this.shouldEmitToExtension(ext, options)) continue;
 			const handlers = ext.handlers.get(event.type);
 			if (!handlers || handlers.length === 0) continue;
 

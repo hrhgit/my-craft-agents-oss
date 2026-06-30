@@ -53,7 +53,7 @@ Edit directly or use `/settings` for common options.
 
 `enableInstallTelemetry` only controls the anonymous install/update ping to `https://pi.dev/api/report-install`. Opting out of telemetry does not disable update checks; Pi can still fetch `https://pi.dev/api/latest-version` to look for the latest version.
 
-Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including update checks, package update checks, and install/update telemetry.
+Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Package update checks are disabled by default and only run when `PI_CHECK_PACKAGE_UPDATES=1`/`true`/`yes` is set; `PI_SKIP_PACKAGE_UPDATE_CHECK=1` force-disables them. Set `PI_SKIP_TMUX_CHECK=1` to skip the tmux keyboard setup check. Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including update checks, package update checks, and install/update telemetry.
 
 ### Warnings
 
@@ -231,13 +231,26 @@ Paths in `~/.pi/agent/settings.json` resolve relative to `~/.pi/agent`. Paths in
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `packages` | array | `[]` | npm/git packages to load resources from |
-| `extensions` | string[] | `[]` | Local extension file paths or directories |
+| `extensions` | array | `[]` | Local extension file paths, directories, or objects with `path` and `activation` |
 | `skills` | string[] | `[]` | Local skill file paths or directories |
 | `prompts` | string[] | `[]` | Local prompt template paths or directories |
 | `themes` | string[] | `[]` | Local theme file paths or directories |
 | `enableSkillCommands` | boolean | `true` | Register skills as `/skill:name` commands |
 
 Arrays support glob patterns and exclusions. Use `!pattern` to exclude. Use `+path` to force-include an exact path and `-path` to force-exclude an exact path.
+
+Extension entries may use object form to control activation:
+
+```json
+{
+  "extensions": [
+    { "path": "./extensions/editor-ui.ts", "activation": "startup" },
+    { "path": "./extensions/model-tools.ts", "activation": "beforeFirstRequest" }
+  ]
+}
+```
+
+`activation` can be `startup`, `beforeFirstRequest`, or `lazy`. Unspecified extension entries default to `beforeFirstRequest`, so they do not delay the first screen. `beforeFirstRequest` extensions still finish loading before Pi sends the first model request.
 
 #### packages
 

@@ -108,6 +108,19 @@ describe("DefaultPackageManager", () => {
 			expect(result.extensions.some((r) => r.path === extPath && r.enabled)).toBe(true);
 		});
 
+		it("should preserve extension activation from settings object entries", async () => {
+			const extDir = join(agentDir, "extensions");
+			mkdirSync(extDir, { recursive: true });
+			const extPath = join(extDir, "startup.ts");
+			writeFileSync(extPath, "export default function() {}");
+			settingsManager.setExtensionPaths([{ path: "extensions/startup.ts", activation: "startup" }]);
+
+			const result = await packageManager.resolve();
+			const extension = result.extensions.find((r) => r.path === extPath);
+			expect(extension?.enabled).toBe(true);
+			expect(extension?.metadata.activation).toBe("startup");
+		});
+
 		it("should resolve skill paths from settings", async () => {
 			const skillDir = join(agentDir, "skills", "my-skill");
 			mkdirSync(skillDir, { recursive: true });
@@ -173,6 +186,7 @@ Content`,
 			process.env.HOME = tempDir;
 
 			try {
+				mkdirSync(join(tempDir, ".git"), { recursive: true });
 				const sharedDir = join(tempDir, "shared-resources");
 				const sharedExtensionsDir = join(sharedDir, "extensions");
 				const sharedSkillsDir = join(sharedDir, "skills");

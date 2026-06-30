@@ -10,7 +10,7 @@ import type {
 	ChatCompletionSystemMessageParam,
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
-import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { calculateCost, clampThinkingLevel } from "../model-utils.ts";
 import {
 	appendSdkTransportDiagnostic,
 	createSdkRequestOptions,

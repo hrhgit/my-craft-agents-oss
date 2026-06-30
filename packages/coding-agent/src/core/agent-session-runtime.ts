@@ -20,6 +20,11 @@ export interface CreateAgentSessionRuntimeResult extends CreateAgentSessionResul
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 }
 
+type RuntimeResourceLoadOptions = {
+	deferResourceLoad?: boolean;
+	persistInitialState?: boolean;
+};
+
 /**
  * Creates a full runtime for a target cwd and session manager.
  *
@@ -73,10 +78,9 @@ export class AgentSessionRuntime {
 	private _session: AgentSession;
 	private _services: AgentSessionServices;
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
+	private readonly resourceLoadOptions: RuntimeResourceLoadOptions;
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
-	private _workspaceLoaded: boolean;
-	private workspaceLoadPromise?: Promise<void>;
 
 	constructor(
 		_session: AgentSession,
@@ -84,14 +88,14 @@ export class AgentSessionRuntime {
 		createRuntime: CreateAgentSessionRuntimeFactory,
 		_diagnostics: AgentSessionRuntimeDiagnostic[] = [],
 		_modelFallbackMessage?: string,
-		_workspaceLoaded = true,
+		resourceLoadOptions: RuntimeResourceLoadOptions = {},
 	) {
 		this._session = _session;
 		this._services = _services;
 		this.createRuntime = createRuntime;
+		this.resourceLoadOptions = resourceLoadOptions;
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
-		this._workspaceLoaded = _workspaceLoaded;
 	}
 
 	get services(): AgentSessionServices {
@@ -115,7 +119,7 @@ export class AgentSessionRuntime {
 	}
 
 	get isWorkspaceLoaded(): boolean {
-		return this._workspaceLoaded;
+		return true;
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
@@ -184,7 +188,6 @@ export class AgentSessionRuntime {
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;
-		this._workspaceLoaded = true;
 	}
 
 	private async finishSessionReplacement(withSession?: (ctx: ReplacedSessionContext) => Promise<void>): Promise<void> {
@@ -196,35 +199,17 @@ export class AgentSessionRuntime {
 		}
 	}
 
-	private async loadWorkspaceOnce(): Promise<void> {
-		if (this._workspaceLoaded) {
-			return;
-		}
-
-		const sessionManager = this.session.sessionManager;
-		const targetSessionFile = sessionManager.getSessionFile();
-		const result = await this.createRuntime({
-			cwd: this.cwd,
-			agentDir: this.services.agentDir,
-			sessionManager,
-			sessionStartEvent: { type: "session_start", reason: "startup" },
-			persistInitialState: true,
-		});
-		await this.teardownCurrent("reload", targetSessionFile);
-		this.apply(result);
-		await this.finishSessionReplacement();
+	async loadWorkspace(): Promise<void> {
+		await this.session.prepareForFirstRequest();
 	}
 
-	async loadWorkspace(): Promise<void> {
-		if (this._workspaceLoaded) {
-			return;
-		}
-		if (!this.workspaceLoadPromise) {
-			this.workspaceLoadPromise = this.loadWorkspaceOnce().finally(() => {
-				this.workspaceLoadPromise = undefined;
-			});
-		}
-		await this.workspaceLoadPromise;
+	private createReplacementRuntime(
+		options: Parameters<CreateAgentSessionRuntimeFactory>[0],
+	): Promise<CreateAgentSessionRuntimeResult> {
+		return this.createRuntime({
+			...options,
+			...this.resourceLoadOptions,
+		});
 	}
 
 	async switchSession(
@@ -241,7 +226,7 @@ export class AgentSessionRuntime {
 		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile());
 		this.apply(
-			await this.createRuntime({
+			await this.createReplacementRuntime({
 				cwd: sessionManager.getCwd(),
 				agentDir: this.services.agentDir,
 				sessionManager,
@@ -274,7 +259,7 @@ export class AgentSessionRuntime {
 
 		await this.teardownCurrent("new", sessionManager.getSessionFile());
 		this.apply(
-			await this.createRuntime({
+			await this.createReplacementRuntime({
 				cwd: targetCwd,
 				agentDir: this.services.agentDir,
 				sessionManager,
@@ -328,7 +313,7 @@ export class AgentSessionRuntime {
 				sessionManager.newSession({ parentSession: currentSessionFile });
 				await this.teardownCurrent("fork", sessionManager.getSessionFile());
 				this.apply(
-					await this.createRuntime({
+					await this.createReplacementRuntime({
 						cwd: this.cwd,
 						agentDir: this.services.agentDir,
 						sessionManager,
@@ -346,7 +331,7 @@ export class AgentSessionRuntime {
 			}
 			await this.teardownCurrent("fork", sessionManager.getSessionFile());
 			this.apply(
-				await this.createRuntime({
+				await this.createReplacementRuntime({
 					cwd: sessionManager.getCwd(),
 					agentDir: this.services.agentDir,
 					sessionManager,
@@ -365,7 +350,7 @@ export class AgentSessionRuntime {
 		}
 		await this.teardownCurrent("fork", sessionManager.getSessionFile());
 		this.apply(
-			await this.createRuntime({
+			await this.createReplacementRuntime({
 				cwd: this.cwd,
 				agentDir: this.services.agentDir,
 				sessionManager,
@@ -409,7 +394,7 @@ export class AgentSessionRuntime {
 		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile());
 		this.apply(
-			await this.createRuntime({
+			await this.createReplacementRuntime({
 				cwd: sessionManager.getCwd(),
 				agentDir: this.services.agentDir,
 				sessionManager,
@@ -456,7 +441,10 @@ export async function createAgentSessionRuntime(
 		createRuntime,
 		result.diagnostics,
 		result.modelFallbackMessage,
-		!options.deferResourceLoad,
+		{
+			deferResourceLoad: options.deferResourceLoad,
+			persistInitialState: options.persistInitialState,
+		},
 	);
 }
 

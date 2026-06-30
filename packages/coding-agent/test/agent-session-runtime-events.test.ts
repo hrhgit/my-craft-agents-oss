@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
@@ -12,6 +12,7 @@ import {
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionActivityRegistry } from "../src/core/session-activity-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 import type {
 	ExtensionFactory,
 	SessionBeforeForkEvent,
@@ -187,7 +188,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		]);
 	});
 
-	it("hydrates a deferred workspace without persisting placeholder state", async () => {
+	it("prepares deferred request resources without persisting placeholder state", async () => {
 		const tempDir = join(tmpdir(), `pi-runtime-deferred-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		const sessionDir = join(tempDir, "sessions");
 		mkdirSync(sessionDir, { recursive: true });
@@ -254,7 +255,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 			}
 		});
 
-		expect(runtimeHost.isWorkspaceLoaded).toBe(false);
+		expect(runtimeHost.isWorkspaceLoaded).toBe(true);
 		expect(runtimeHost.session.resourceLoader.getExtensions().extensions).toEqual([]);
 		expect(runtimeHost.session.sessionManager.getEntries()).toEqual([]);
 
@@ -267,6 +268,139 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 			"model_change",
 			"thinking_level_change",
 		]);
+	});
+
+	it("keeps deferred resource loading for replacement sessions", async () => {
+		const tempDir = join(tmpdir(), `pi-runtime-replacement-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const sessionDir = join(tempDir, "sessions");
+		mkdirSync(sessionDir, { recursive: true });
+
+		const faux = registerFauxProvider();
+		const authStorage = AuthStorage.inMemory();
+		authStorage.setRuntimeApiKey(faux.getModel().provider, "faux-key");
+		const seenOptions: Array<{ deferResourceLoad?: boolean; persistInitialState?: boolean }> = [];
+
+		const createRuntime: CreateAgentSessionRuntimeFactory = async ({
+			cwd,
+			sessionManager,
+			sessionStartEvent,
+			deferResourceLoad,
+			persistInitialState,
+		}) => {
+			seenOptions.push({ deferResourceLoad, persistInitialState });
+			const services = await createAgentSessionServices({
+				cwd,
+				agentDir: tempDir,
+				authStorage,
+				deferResourceLoad,
+				resourceLoaderOptions: {
+					noSkills: true,
+					noPromptTemplates: true,
+					noThemes: true,
+				},
+			});
+			return {
+				...(await createAgentSessionFromServices({
+					services,
+					sessionManager,
+					sessionStartEvent,
+					model: faux.getModel(),
+					persistInitialState,
+				})),
+				services,
+				diagnostics: services.diagnostics,
+			};
+		};
+
+		const runtimeHost = await createAgentSessionRuntime(createRuntime, {
+			cwd: tempDir,
+			agentDir: tempDir,
+			sessionManager: SessionManager.create(tempDir, sessionDir),
+			deferResourceLoad: true,
+			persistInitialState: false,
+		});
+		cleanups.push(async () => {
+			await runtimeHost.dispose();
+			faux.unregister();
+			if (existsSync(tempDir)) {
+				rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
+
+		await runtimeHost.newSession();
+
+		expect(seenOptions).toEqual([
+			{ deferResourceLoad: true, persistInitialState: false },
+			{ deferResourceLoad: true, persistInitialState: false },
+		]);
+	});
+
+	it("registers startup extension providers before deferred request resources", async () => {
+		const tempDir = join(
+			tmpdir(),
+			`pi-runtime-startup-provider-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		);
+		const extensionDir = join(tempDir, "extensions");
+		mkdirSync(extensionDir, { recursive: true });
+		writeFileSync(
+			join(extensionDir, "startup-provider.ts"),
+			`
+export default function (pi) {
+  pi.registerProvider("startup-provider", {
+    baseUrl: "https://startup-provider.invalid/v1",
+    apiKey: "$STARTUP_PROVIDER_API_KEY",
+    api: "openai-completions",
+    models: [{
+      id: "startup-model",
+      name: "Startup Model",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 4096
+    }]
+  });
+}
+`,
+			"utf-8",
+		);
+
+		const authStorage = AuthStorage.inMemory();
+		authStorage.setRuntimeApiKey("startup-provider", "startup-key");
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		settingsManager.setExtensionPaths([{ path: "extensions/startup-provider.ts", activation: "startup" }]);
+
+		const services = await createAgentSessionServices({
+			cwd: tempDir,
+			agentDir: tempDir,
+			authStorage,
+			settingsManager,
+			deferResourceLoad: true,
+			resourceLoaderOptions: {
+				noSkills: true,
+				noPromptTemplates: true,
+				noThemes: true,
+			},
+		});
+		const runtime = await createAgentSessionFromServices({
+			services,
+			sessionManager: SessionManager.create(tempDir),
+			persistInitialState: false,
+		});
+
+		cleanups.push(async () => {
+			runtime.session.dispose();
+			if (existsSync(tempDir)) {
+				rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
+
+		expect(services.resourceLoader.getExtensions().extensions.map((extension) => extension.activation)).toEqual([
+			"startup",
+		]);
+		expect(services.modelRegistry.find("startup-provider", "startup-model")?.id).toBe("startup-model");
+		expect(runtime.session.model?.provider).toBe("startup-provider");
+		expect(runtime.session.model?.id).toBe("startup-model");
 	});
 
 	it("can create a new session in a different cwd", async () => {

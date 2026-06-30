@@ -23,7 +23,7 @@ import {
 import { type HttpHandler, type HttpHandlerOptions, type HttpRequest, HttpResponse } from "@smithy/core/protocols";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DocumentType, MetadataBearer } from "@smithy/types";
-import { calculateCost } from "../models.ts";
+import { calculateCost } from "../model-utils.ts";
 import { appendSdkTransportDiagnostic, formatSdkTransportError } from "../transport/sdk-request.ts";
 import type {
 	Api,

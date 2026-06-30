@@ -6,7 +6,8 @@
  */
 
 import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
+import { modelsAreEqual } from "@earendil-works/pi-ai/model-utils";
+import type { ImageContent } from "@earendil-works/pi-ai/types";
 import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
@@ -29,6 +30,7 @@ import { KeybindingsManager } from "./core/keybindings.ts";
 import type { ModelRegistry } from "./core/model-registry.ts";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
+import { checkForPackageUpdateNames } from "./core/package-update-checker.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
 	formatMissingSessionCwdPrompt,
@@ -40,7 +42,7 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
-import { InteractiveMode, runMuxMode, runPrintMode, runRpcMode } from "./modes/index.ts";
+import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -485,11 +487,6 @@ export async function main(args: string[], options?: MainOptions) {
 		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
 	}
 
-	if (args[0] === "mux") {
-		await runMuxMode(args.slice(1));
-		return;
-	}
-
 	if (await handlePackageCommand(args)) {
 		return;
 	}
@@ -669,6 +666,9 @@ export async function main(args: string[], options?: MainOptions) {
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
 			persistInitialState,
+			onRuntimeDiagnostics: (newDiagnostics) => {
+				diagnostics.push(...newDiagnostics);
+			},
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
@@ -765,6 +765,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialImages,
 			initialMessages: parsed.messages,
 			verbose: parsed.verbose,
+			checkForPackageUpdates: checkForPackageUpdateNames,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();

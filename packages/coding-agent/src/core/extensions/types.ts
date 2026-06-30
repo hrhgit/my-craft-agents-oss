@@ -15,6 +15,7 @@ import type {
 	ThinkingLevel,
 	ToolExecutionMode,
 } from "@earendil-works/pi-agent-core";
+import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai/oauth";
 import type {
 	Api,
 	AssistantMessageEvent,
@@ -22,12 +23,10 @@ import type {
 	Context,
 	ImageContent,
 	Model,
-	OAuthCredentials,
-	OAuthLoginCallbacks,
 	SimpleStreamOptions,
 	TextContent,
 	ToolResultMessage,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/types";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -527,6 +526,15 @@ export interface SessionStartEvent {
 	previousSessionFile?: string;
 }
 
+/** Fired after an interactive session has been bound and rendered enough for non-critical background work. */
+export interface SessionReadyEvent {
+	type: "session_ready";
+	/** Matches the session_start reason for the currently bound session. */
+	reason: SessionStartEvent["reason"];
+	/** Previously active session file. Present for "new", "resume", and "fork". */
+	previousSessionFile?: string;
+}
+
 /** Fired before switching to another session (can be cancelled) */
 export interface SessionBeforeSwitchEvent {
 	type: "session_before_switch";
@@ -598,6 +606,7 @@ export interface SessionTreeEvent {
 
 export type SessionEvent =
 	| SessionStartEvent
+	| SessionReadyEvent
 	| SessionBeforeSwitchEvent
 	| SessionBeforeForkEvent
 	| SessionBeforeCompactEvent
@@ -1122,6 +1131,7 @@ export interface ExtensionAPI {
 
 	on(event: "resources_discover", handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>): void;
 	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): void;
+	on(event: "session_ready", handler: ExtensionHandler<SessionReadyEvent>): void;
 	on(
 		event: "session_before_switch",
 		handler: ExtensionHandler<SessionBeforeSwitchEvent, SessionBeforeSwitchResult>,
@@ -1417,6 +1427,8 @@ export type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
 // Loaded Extension Types
 // ============================================================================
 
+export type ExtensionActivation = "startup" | "beforeFirstRequest" | "lazy";
+
 export interface RegisteredTool {
 	definition: ToolDefinition;
 	sourceInfo: SourceInfo;
@@ -1575,6 +1587,7 @@ export interface Extension {
 	path: string;
 	resolvedPath: string;
 	sourceInfo: SourceInfo;
+	activation: ExtensionActivation;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;

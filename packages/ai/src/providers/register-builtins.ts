@@ -402,5 +402,3 @@ export function resetApiProviders(): void {
 	clearApiProviders();
 	registerBuiltInApiProviders();
 }
-
-registerBuiltInApiProviders();

@@ -1,7 +1,23 @@
-import "./providers/register-builtins.ts";
-
-import { getApiProvider } from "./api-registry.ts";
+import { clearApiProviders, getApiProvider, registerApiProvider } from "./api-registry.ts";
 import { getEnvApiKey } from "./env-api-keys.ts";
+import {
+	streamAnthropic,
+	streamAzureOpenAIResponses,
+	streamGoogle,
+	streamGoogleVertex,
+	streamMistral,
+	streamOpenAICodexResponses,
+	streamOpenAICompletions,
+	streamOpenAIResponses,
+	streamSimpleAnthropic,
+	streamSimpleAzureOpenAIResponses,
+	streamSimpleGoogle,
+	streamSimpleGoogleVertex,
+	streamSimpleMistral,
+	streamSimpleOpenAICodexResponses,
+	streamSimpleOpenAICompletions,
+	streamSimpleOpenAIResponses,
+} from "./providers/register-builtins.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -14,6 +30,57 @@ import type {
 } from "./types.ts";
 
 export { getEnvApiKey } from "./env-api-keys.ts";
+export { registerBuiltInApiProviders, resetApiProviders } from "./providers/register-builtins.ts";
+
+function registerDefaultApiProviders(): void {
+	registerApiProvider({
+		api: "anthropic-messages",
+		stream: streamAnthropic,
+		streamSimple: streamSimpleAnthropic,
+	});
+	registerApiProvider({
+		api: "openai-completions",
+		stream: streamOpenAICompletions,
+		streamSimple: streamSimpleOpenAICompletions,
+	});
+	registerApiProvider({
+		api: "mistral-conversations",
+		stream: streamMistral,
+		streamSimple: streamSimpleMistral,
+	});
+	registerApiProvider({
+		api: "openai-responses",
+		stream: streamOpenAIResponses,
+		streamSimple: streamSimpleOpenAIResponses,
+	});
+	registerApiProvider({
+		api: "azure-openai-responses",
+		stream: streamAzureOpenAIResponses,
+		streamSimple: streamSimpleAzureOpenAIResponses,
+	});
+	registerApiProvider({
+		api: "openai-codex-responses",
+		stream: streamOpenAICodexResponses,
+		streamSimple: streamSimpleOpenAICodexResponses,
+	});
+	registerApiProvider({
+		api: "google-generative-ai",
+		stream: streamGoogle,
+		streamSimple: streamSimpleGoogle,
+	});
+	registerApiProvider({
+		api: "google-vertex",
+		stream: streamGoogleVertex,
+		streamSimple: streamSimpleGoogleVertex,
+	});
+}
+
+export function resetDefaultApiProviders(): void {
+	clearApiProviders();
+	registerDefaultApiProviders();
+}
+
+registerDefaultApiProviders();
 
 function hasExplicitApiKey(apiKey: string | undefined): apiKey is string {
 	return typeof apiKey === "string" && apiKey.trim().length > 0;

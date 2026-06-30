@@ -3,7 +3,6 @@
  */
 
 export { InteractiveMode, type InteractiveModeOptions } from "./interactive/interactive-mode.ts";
-export { runMuxMode } from "./mux-mode.ts";
 export { type PrintModeOptions, runPrintMode } from "./print-mode.ts";
 export {
 	type ModelInfo,

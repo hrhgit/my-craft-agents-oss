@@ -187,6 +187,63 @@ Project skill`,
 			expect(extensionsResult.extensions[0].path).toBe(join(cwd, ".pi", "extensions", "shared.ts"));
 		});
 
+		it("should defer beforeFirstRequest extensions and skills until request phase", async () => {
+			const settingsManager = SettingsManager.inMemory({
+				extensions: [
+					{ path: "extensions/startup.ts", activation: "startup" },
+					{ path: "extensions/request.ts", activation: "beforeFirstRequest" },
+				],
+			});
+			const extensionsDir = join(agentDir, "extensions");
+			const skillDir = join(agentDir, "skills", "request-skill");
+			mkdirSync(extensionsDir, { recursive: true });
+			mkdirSync(skillDir, { recursive: true });
+			writeFileSync(
+				join(extensionsDir, "startup.ts"),
+				`export default function(pi) {
+	pi.registerCommand("startup", {
+		description: "startup",
+		handler: async () => {},
+	});
+}`,
+			);
+			writeFileSync(
+				join(extensionsDir, "request.ts"),
+				`export default function(pi) {
+	pi.registerCommand("request", {
+		description: "request",
+		handler: async () => {},
+	});
+}`,
+			);
+			writeFileSync(
+				join(skillDir, "SKILL.md"),
+				`---
+name: request-skill
+description: Request skill
+---
+Skill body.`,
+			);
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+			await loader.reload({ phase: "startup" });
+
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual([
+				join(agentDir, "extensions", "startup.ts"),
+			]);
+			expect(loader.getSkills().skills).toEqual([]);
+
+			await loader.loadPhase("beforeFirstRequest");
+
+			expect(
+				loader
+					.getExtensions()
+					.extensions.map((extension) => extension.path)
+					.sort(),
+			).toEqual([join(agentDir, "extensions", "request.ts"), join(agentDir, "extensions", "startup.ts")].sort());
+			expect(loader.getSkills().skills.some((skill) => skill.name === "request-skill")).toBe(true);
+		});
+
 		it("should keep both extensions loaded when command names collide", async () => {
 			const userExtDir = join(agentDir, "extensions");
 			const projectExtDir = join(cwd, ".pi", "extensions");

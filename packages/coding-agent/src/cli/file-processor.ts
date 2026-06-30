@@ -5,7 +5,7 @@
  */
 
 import { access, readFile, stat } from "node:fs/promises";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai/types";
 import chalk from "chalk";
 import { isAbsolute, resolve } from "path";
 import { fileURLToPath } from "url";

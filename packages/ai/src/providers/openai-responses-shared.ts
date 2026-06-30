@@ -12,7 +12,7 @@ import type {
 	ResponseReasoningItem,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
-import { calculateCost } from "../models.ts";
+import { calculateCost } from "../model-utils.ts";
 import type {
 	Api,
 	AssistantMessage,

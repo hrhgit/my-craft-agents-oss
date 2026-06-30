@@ -49,6 +49,58 @@
 		"./bedrock-provider": {
 			"types": "./dist/bedrock-provider.d.ts",
 			"import": "./dist/bedrock-provider.js"
+		},
+		"./api-registry": {
+			"types": "./dist/api-registry.d.ts",
+			"import": "./dist/api-registry.js"
+		},
+		"./env-api-keys": {
+			"types": "./dist/env-api-keys.d.ts",
+			"import": "./dist/env-api-keys.js"
+		},
+		"./model-utils": {
+			"types": "./dist/model-utils.d.ts",
+			"import": "./dist/model-utils.js"
+		},
+		"./models": {
+			"types": "./dist/models.d.ts",
+			"import": "./dist/models.js"
+		},
+		"./providers/register-builtins": {
+			"types": "./dist/providers/register-builtins.d.ts",
+			"import": "./dist/providers/register-builtins.js"
+		},
+		"./session-resources": {
+			"types": "./dist/session-resources.d.ts",
+			"import": "./dist/session-resources.js"
+		},
+		"./stream": {
+			"types": "./dist/stream.d.ts",
+			"import": "./dist/stream.js"
+		},
+		"./transport/errors": {
+			"types": "./dist/transport/errors.d.ts",
+			"import": "./dist/transport/errors.js"
+		},
+		"./types": {
+			"types": "./dist/types.d.ts",
+			"import": "./dist/types.js"
+		},
+		"./utils/diagnostics": {
+			"types": "./dist/utils/diagnostics.d.ts",
+			"import": "./dist/utils/diagnostics.js"
+		},
+		"./utils/event-stream": {
+			"types": "./dist/utils/event-stream.d.ts",
+			"import": "./dist/utils/event-stream.js"
+		},
+		"./utils/overflow": {
+			"types": "./dist/utils/overflow.d.ts",
+			"import": "./dist/utils/overflow.js"
+		},
+		"./web-search": {
+			"types": "./dist/web-search.d.ts",
+			"import": "./dist/web-search.js"
 		}
 	},
 	"bin": {

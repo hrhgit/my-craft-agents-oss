@@ -8,8 +8,8 @@
 - Added `ctrl+y` redo support for the interactive editor.
 - Added the local `web_fetch` built-in tool and a persisted `webSearch` setting for supported provider built-in web search.
 - Added built-in active session/workspace tracking for `/switch`, with workspace-first selection and path browsing.
-- Added `pi mux` as an experimental terminal multiplexer for running multiple independent RPC-backed Pi sessions concurrently.
 - Added `/network-reset` to clear in-process network routing state and restart the sidecar without starting a new session.
+- Added extension activation stages so extensions can load at startup, before the first model request, or lazily.
 
 ### Changed
 
@@ -18,6 +18,8 @@
 - Changed coding-agent build and release artifacts to include prebuilt Go sidecar binaries for supported platforms.
 - Changed the default system prompt to include concise tool-use discipline for reducing redundant exploration, repeated failures, and path-guessing.
 - Changed large-file `read` preflight to use file metadata before reading content.
+- Changed interactive startup to defer skills, prompt templates, context files, themes, and non-startup extensions until the first request preparation step.
+- Changed startup package update checks to stay disabled unless `PI_CHECK_PACKAGE_UPDATES=1` is set.
 
 ### Fixed
 
@@ -25,11 +27,13 @@
 - Fixed sidecar-backed HTTP fetches to stream `text/event-stream` responses incrementally instead of buffering until the upstream response completes.
 - Fixed extension access to the shared session activity registry so background agents use the active runtime `agentDir` instead of falling back to the global config directory, and updated the subagent example to publish logical agent activity while delegated tasks run.
 - Fixed `/switch` workspace tracking to prune removed temp workspaces and immediately record switched sessions under the selected workspace.
+- Fixed the Node CLI bundle startup crash when Markdown rendering lazily loads `marked` from the published `pi-coding-agent` package.
 - Fixed opening and listing very large JSONL session files by reading session entries line-by-line instead of materializing the full file as one string ([#5231](https://github.com/earendil-works/pi/issues/5231)).
 - Fixed edit path recovery to auto-recover only from successful read history while leaving observed search/list paths available for read recovery.
 
 ### Removed
 
+- Removed the experimental `pi mux` terminal multiplexer mode.
 - Removed the experimental built-in tool result deduplication short-circuiting.
 
 ## [0.78.0] - 2026-05-29

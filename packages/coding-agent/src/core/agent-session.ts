@@ -23,21 +23,17 @@ import type {
 	AgentTool,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai";
-import {
-	clampThinkingLevel,
-	cleanupSessionResources,
-	getSupportedThinkingLevels,
-	isContextOverflow,
-	modelsAreEqual,
-	resetApiProviders,
-	streamSimple,
-	supportsBuiltinWebSearch,
-} from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels, modelsAreEqual } from "@earendil-works/pi-ai/model-utils";
+import { cleanupSessionResources } from "@earendil-works/pi-ai/session-resources";
+import { resetDefaultApiProviders, streamSimple } from "@earendil-works/pi-ai/stream";
+import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/types";
+import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
+import { supportsBuiltinWebSearch } from "@earendil-works/pi-ai/web-search";
 import { theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
+import type { AgentSessionRuntimeDiagnostic } from "./agent-session-services.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
@@ -53,6 +49,7 @@ import {
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { applyExtensionFlagValues } from "./extension-flags.ts";
 import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
@@ -81,6 +78,7 @@ import {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import { findInitialModel } from "./model-resolver.ts";
 import type { NetworkManager } from "./network-manager.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
@@ -203,6 +201,10 @@ export interface AgentSessionConfig {
 	sessionStartEvent?: SessionStartEvent;
 	/** Unified network manager for dispatcher lifecycle and retry preparation. */
 	networkManager?: NetworkManager;
+	/** CLI/runtime extension flag values, applied again after deferred extensions load. */
+	extensionFlagValues?: Map<string, boolean | string>;
+	/** Receives diagnostics discovered after deferred resources load. */
+	onRuntimeDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
 }
 
 export interface ExtensionBindings {
@@ -346,6 +348,10 @@ export class AgentSession {
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
+	private _extensionFlagValues?: Map<string, boolean | string>;
+	private _onRuntimeDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
+	private _requestResourcesReady = false;
+	private _requestResourcesPromise?: Promise<void>;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -364,6 +370,8 @@ export class AgentSession {
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 		this._networkManager = config.networkManager;
+		this._extensionFlagValues = config.extensionFlagValues;
+		this._onRuntimeDiagnostics = config.onRuntimeDiagnostics;
 		this._sessionActivityRegistry = SessionActivityRegistry.create(config.agentDir);
 
 		// Always subscribe to agent events for internal handling
@@ -836,6 +844,10 @@ export class AgentSession {
 		return this.agent.state.systemPrompt;
 	}
 
+	get requestResourcesReady(): boolean {
+		return this._requestResourcesReady;
+	}
+
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
@@ -1127,6 +1139,8 @@ export class AgentSession {
 		let messages: AgentMessage[] | undefined;
 
 		try {
+			await this.prepareForFirstRequest();
+
 			// Handle extension commands first (execute immediately, even during streaming)
 			// Extension commands manage their own LLM interaction via pi.sendMessage()
 			if (expandPromptTemplates && text.startsWith("/")) {
@@ -2243,6 +2257,117 @@ export class AgentSession {
 		return this.settingsManager.getCompactionEnabled();
 	}
 
+	async emitSessionReady(): Promise<void> {
+		if (!this._extensionRunner.hasHandlers("session_ready")) {
+			return;
+		}
+		await this._extensionRunner.emit({
+			type: "session_ready",
+			reason: this._sessionStartEvent.reason,
+			previousSessionFile: this._sessionStartEvent.previousSessionFile,
+		});
+	}
+
+	private _recordRuntimeDiagnostics(diagnostics: AgentSessionRuntimeDiagnostic[]): void {
+		if (diagnostics.length === 0) {
+			return;
+		}
+		this._onRuntimeDiagnostics?.(diagnostics);
+	}
+
+	private _persistInitialModelStateIfNeeded(): void {
+		const existingSession = this.sessionManager.buildSessionContext();
+		if (existingSession.messages.length > 0 || !this.model) {
+			return;
+		}
+
+		const entries = this.sessionManager.getEntries();
+		const hasModelChange = entries.some((entry) => entry.type === "model_change");
+		const hasThinkingLevelChange = entries.some((entry) => entry.type === "thinking_level_change");
+		if (!hasModelChange) {
+			this.sessionManager.appendModelChange(this.model.provider, this.model.id);
+		}
+		if (!hasThinkingLevelChange) {
+			this.sessionManager.appendThinkingLevelChange(this.agent.state.thinkingLevel);
+		}
+	}
+
+	private async _ensureModelSelectedAfterDeferredLoad(): Promise<void> {
+		if (this.model) {
+			this._refreshCurrentModelFromRegistry();
+			this._persistInitialModelStateIfNeeded();
+			return;
+		}
+
+		const existingSession = this.sessionManager.buildSessionContext();
+		if (existingSession.model) {
+			const restoredModel = this._modelRegistry.find(existingSession.model.provider, existingSession.model.modelId);
+			if (restoredModel && this._modelRegistry.hasConfiguredAuth(restoredModel)) {
+				this.agent.state.model = restoredModel;
+				this.agent.state.thinkingLevel = clampThinkingLevel(
+					restoredModel,
+					(existingSession.thinkingLevel as ThinkingLevel | undefined) ??
+						this.settingsManager.getDefaultThinkingLevel() ??
+						DEFAULT_THINKING_LEVEL,
+				) as ThinkingLevel;
+				return;
+			}
+		}
+
+		const result = await findInitialModel({
+			scopedModels: this._scopedModels,
+			isContinuing: this.agent.state.messages.length > 0,
+			defaultProvider: this.settingsManager.getDefaultProvider(),
+			defaultModelId: this.settingsManager.getDefaultModel(),
+			defaultThinkingLevel: this.settingsManager.getDefaultThinkingLevel(),
+			modelRegistry: this._modelRegistry,
+		});
+		if (!result.model) {
+			return;
+		}
+		this.agent.state.model = result.model;
+		this.agent.state.thinkingLevel = clampThinkingLevel(result.model, result.thinkingLevel) as ThinkingLevel;
+		this._persistInitialModelStateIfNeeded();
+	}
+
+	private async _prepareRequestResourcesOnce(): Promise<void> {
+		const loaded = await (this._resourceLoader.loadPhase?.("beforeFirstRequest") ?? Promise.resolve(false));
+		await this._networkManager?.initialize();
+		if (!loaded) {
+			this._requestResourcesReady = true;
+			return;
+		}
+
+		const extensionsResult = this._resourceLoader.getExtensions();
+		const previousFlagValues = this._extensionRunner.getFlagValues();
+		for (const [name, value] of previousFlagValues) {
+			extensionsResult.runtime.flagValues.set(name, value);
+		}
+		this._recordRuntimeDiagnostics(applyExtensionFlagValues(this._resourceLoader, this._extensionFlagValues));
+		this._buildRuntime({
+			activeToolNames: this.getActiveToolNames(),
+			flagValues: extensionsResult.runtime.flagValues,
+			includeAllExtensionTools: true,
+		});
+
+		await this._extensionRunner.emit(this._sessionStartEvent, { activations: ["beforeFirstRequest"] });
+		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
+		await this._ensureModelSelectedAfterDeferredLoad();
+		await this._networkManager?.applySettings();
+		this.refreshSystemPrompt();
+		this._requestResourcesReady = true;
+	}
+
+	async prepareForFirstRequest(): Promise<void> {
+		if (this._requestResourcesReady) {
+			return;
+		}
+		this._requestResourcesPromise ??= this._prepareRequestResourcesOnce().finally(() => {
+			this._requestResourcesPromise = undefined;
+		});
+		await this._requestResourcesPromise;
+	}
+
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
 		if (bindings.uiContext !== undefined) {
 			this._extensionUIContext = bindings.uiContext;
@@ -2263,6 +2388,26 @@ export class AgentSession {
 		this._applyExtensionBindings(this._extensionRunner);
 		await this._extensionRunner.emit(this._sessionStartEvent);
 		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
+	}
+
+	applyExtensionBindings(bindings: ExtensionBindings): void {
+		if (bindings.uiContext !== undefined) {
+			this._extensionUIContext = bindings.uiContext;
+		}
+		if (bindings.commandContextActions !== undefined) {
+			this._extensionCommandContextActions = bindings.commandContextActions;
+		}
+		if (bindings.abortHandler !== undefined) {
+			this._extensionAbortHandler = bindings.abortHandler;
+		}
+		if (bindings.shutdownHandler !== undefined) {
+			this._extensionShutdownHandler = bindings.shutdownHandler;
+		}
+		if (bindings.onError !== undefined) {
+			this._extensionErrorListener = bindings.onError;
+		}
+
+		this._applyExtensionBindings(this._extensionRunner);
 	}
 
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
@@ -2614,7 +2759,7 @@ export class AgentSession {
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
 		await this._networkManager?.applySettings();
-		resetApiProviders();
+		resetDefaultApiProviders();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),

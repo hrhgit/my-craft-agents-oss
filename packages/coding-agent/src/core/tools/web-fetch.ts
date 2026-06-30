@@ -1,9 +1,10 @@
 import { lookup as dnsLookup } from "node:dns/promises";
+import { createRequire } from "node:module";
 import { isIP } from "node:net";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
-import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
+import type { Readability as ReadabilityInstance } from "@mozilla/readability";
+import type { ConstructorOptions, JSDOM as JSDOMInstance } from "jsdom";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
@@ -16,6 +17,7 @@ const HARD_MAX_CHARS = 32000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_REDIRECTS = 5;
+const require = createRequire(import.meta.url);
 
 const SUPPORTED_HTML_TYPES = new Set(["text/html", "application/xhtml+xml"]);
 const UNSUPPORTED_BINARY_PREFIXES = ["image/"];
@@ -42,6 +44,31 @@ export interface WebFetchToolDetails {
 }
 
 type LookupRecord = { address: string; family: number };
+
+type ReadabilityConstructor = new (document: Document) => ReadabilityInstance;
+
+interface ReadabilityModule {
+	Readability: ReadabilityConstructor;
+}
+
+type JSDOMConstructor = new (html?: string, options?: ConstructorOptions) => JSDOMInstance;
+
+interface JSDOMModule {
+	JSDOM: JSDOMConstructor;
+}
+
+let readabilityModule: ReadabilityModule | undefined;
+let jsdomModule: JSDOMModule | undefined;
+
+function getReadabilityConstructor(): ReadabilityConstructor {
+	readabilityModule ??= require("@mozilla/readability") as ReadabilityModule;
+	return readabilityModule.Readability;
+}
+
+function getJSDOMConstructor(): JSDOMConstructor {
+	jsdomModule ??= require("jsdom") as JSDOMModule;
+	return jsdomModule.JSDOM;
+}
 
 export interface WebFetchOperations {
 	fetch: (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -102,6 +129,8 @@ function isUnsupportedBinary(contentType: string): boolean {
 }
 
 function extractHtmlContent(html: string, finalUrl: string, mode: WebFetchMode): { title: string; body: string } {
+	const JSDOM = getJSDOMConstructor();
+
 	if (mode === "raw") {
 		const dom = new JSDOM(html, { url: finalUrl });
 		try {
@@ -127,6 +156,7 @@ function extractHtmlContent(html: string, finalUrl: string, mode: WebFetchMode):
 			};
 		}
 
+		const Readability = getReadabilityConstructor();
 		const article = new Readability(document).parse();
 		return {
 			title: normalizeText(article?.title || fallbackTitle),

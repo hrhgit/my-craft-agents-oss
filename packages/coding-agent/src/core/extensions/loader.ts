@@ -8,8 +8,6 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
-import * as _bundledPiAi from "@earendil-works/pi-ai";
-import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import type { KeyId } from "@earendil-works/pi-tui";
 import * as _bundledPiTui from "@earendil-works/pi-tui";
 import { createJiti } from "jiti/static";
@@ -19,10 +17,8 @@ import { createJiti } from "jiti/static";
 import * as _bundledTypebox from "typebox";
 import * as _bundledTypeboxCompile from "typebox/compile";
 import * as _bundledTypeboxValue from "typebox/value";
-import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
-// NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
-// avoiding a circular dependency. Extensions can import from @earendil-works/pi-coding-agent.
-import * as _bundledPiCodingAgent from "../../index.ts";
+import { CONFIG_DIR_NAME, getAgentDir, getPackageDir, isBunBinary } from "../../config.ts";
+import * as _bundledPiCodingAgentExtensionApi from "../../extension-api.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
@@ -30,6 +26,7 @@ import { execCommand } from "../exec.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import type {
 	Extension,
+	ExtensionActivation,
 	ExtensionAPI,
 	ExtensionFactory,
 	ExtensionRuntime,
@@ -40,27 +37,34 @@ import type {
 	ToolDefinition,
 } from "./types.ts";
 
-/** Modules available to extensions via virtualModules (for compiled Bun binary) */
-const VIRTUAL_MODULES: Record<string, unknown> = {
-	typebox: _bundledTypebox,
-	"typebox/compile": _bundledTypeboxCompile,
-	"typebox/value": _bundledTypeboxValue,
-	"@sinclair/typebox": _bundledTypebox,
-	"@sinclair/typebox/compile": _bundledTypeboxCompile,
-	"@sinclair/typebox/value": _bundledTypeboxValue,
-	"@earendil-works/pi-agent-core": _bundledPiAgentCore,
-	"@earendil-works/pi-tui": _bundledPiTui,
-	"@earendil-works/pi-ai": _bundledPiAi,
-	"@earendil-works/pi-ai/oauth": _bundledPiAiOauth,
-	"@earendil-works/pi-coding-agent": _bundledPiCodingAgent,
-	"@mariozechner/pi-agent-core": _bundledPiAgentCore,
-	"@mariozechner/pi-tui": _bundledPiTui,
-	"@mariozechner/pi-ai": _bundledPiAi,
-	"@mariozechner/pi-ai/oauth": _bundledPiAiOauth,
-	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
-};
-
 const require = createRequire(import.meta.url);
+
+let _virtualModules: Record<string, unknown> | undefined;
+
+function getVirtualModules(): Record<string, unknown> {
+	if (_virtualModules) return _virtualModules;
+	const _bundledPiAi = require("@earendil-works/pi-ai") as unknown;
+	const _bundledPiAiOauth = require("@earendil-works/pi-ai/oauth") as unknown;
+	_virtualModules = {
+		typebox: _bundledTypebox,
+		"typebox/compile": _bundledTypeboxCompile,
+		"typebox/value": _bundledTypeboxValue,
+		"@sinclair/typebox": _bundledTypebox,
+		"@sinclair/typebox/compile": _bundledTypeboxCompile,
+		"@sinclair/typebox/value": _bundledTypeboxValue,
+		"@earendil-works/pi-agent-core": _bundledPiAgentCore,
+		"@earendil-works/pi-tui": _bundledPiTui,
+		"@earendil-works/pi-ai": _bundledPiAi,
+		"@earendil-works/pi-ai/oauth": _bundledPiAiOauth,
+		"@earendil-works/pi-coding-agent": _bundledPiCodingAgentExtensionApi,
+		"@mariozechner/pi-agent-core": _bundledPiAgentCore,
+		"@mariozechner/pi-tui": _bundledPiTui,
+		"@mariozechner/pi-ai": _bundledPiAi,
+		"@mariozechner/pi-ai/oauth": _bundledPiAiOauth,
+		"@mariozechner/pi-coding-agent": _bundledPiCodingAgentExtensionApi,
+	};
+	return _virtualModules;
+}
 
 /**
  * Get aliases for jiti (used in Node.js/development mode).
@@ -71,14 +75,14 @@ let _aliases: Record<string, string> | null = null;
 function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
-	const __dirname = path.dirname(fileURLToPath(import.meta.url));
-	const packageIndex = path.resolve(__dirname, "../..", "index.js");
+	const packageDir = getPackageDir();
+	const packageIndex = path.join(packageDir, "dist", "index.js");
 
 	const typeboxEntry = require.resolve("typebox");
 	const typeboxCompileEntry = require.resolve("typebox/compile");
 	const typeboxValueEntry = require.resolve("typebox/value");
 
-	const packagesRoot = path.resolve(__dirname, "../../../../");
+	const packagesRoot = path.resolve(packageDir, "..");
 	const resolveWorkspaceOrImport = (workspaceRelativePath: string, specifier: string): string => {
 		const workspacePath = path.join(packagesRoot, workspaceRelativePath);
 		if (fs.existsSync(workspacePath)) {
@@ -331,10 +335,11 @@ function createExtensionAPI(
 async function loadExtensionModule(extensionPath: string) {
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
+		fsCache: path.join(getAgentDir(), ".cache", "jiti"),
 		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
 		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
 		// In Node.js/dev: use aliases to resolve to node_modules paths
-		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
+		...(isBunBinary ? { virtualModules: getVirtualModules(), tryNative: false } : { alias: getAliases() }),
 	});
 
 	const module = await jiti.import(extensionPath, { default: true });
@@ -345,7 +350,11 @@ async function loadExtensionModule(extensionPath: string) {
 /**
  * Create an Extension object with empty collections.
  */
-function createExtension(extensionPath: string, resolvedPath: string): Extension {
+function createExtension(
+	extensionPath: string,
+	resolvedPath: string,
+	activation: ExtensionActivation = "beforeFirstRequest",
+): Extension {
 	const source =
 		extensionPath.startsWith("<") && extensionPath.endsWith(">")
 			? extensionPath.slice(1, -1).split(":")[0] || "temporary"
@@ -356,6 +365,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		path: extensionPath,
 		resolvedPath,
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
+		activation,
 		handlers: new Map(),
 		tools: new Map(),
 		messageRenderers: new Map(),
@@ -370,6 +380,7 @@ async function loadExtension(
 	cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
+	activation?: ExtensionActivation,
 ): Promise<{ extension: Extension | null; error: string | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
 
@@ -379,7 +390,7 @@ async function loadExtension(
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
 
-		const extension = createExtension(extensionPath, resolvedPath);
+		const extension = createExtension(extensionPath, resolvedPath, activation);
 		const api = createExtensionAPI(extension, runtime, cwd, eventBus);
 		await factory(api);
 
@@ -399,26 +410,30 @@ export async function loadExtensionFromFactory(
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
 	extensionPath = "<inline>",
+	activation: ExtensionActivation = "beforeFirstRequest",
 ): Promise<Extension> {
-	const extension = createExtension(extensionPath, extensionPath);
+	const extension = createExtension(extensionPath, extensionPath, activation);
 	const resolvedCwd = resolvePath(cwd);
 	const api = createExtensionAPI(extension, runtime, resolvedCwd, eventBus);
 	await factory(api);
 	return extension;
 }
 
-/**
- * Load extensions from paths.
- */
-export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
+export async function loadExtensionsIntoRuntime(
+	paths: string[],
+	cwd: string,
+	eventBus: EventBus,
+	runtime: ExtensionRuntime,
+	activationByPath?: Map<string, ExtensionActivation>,
+): Promise<Pick<LoadExtensionsResult, "extensions" | "errors">> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
 	const resolvedCwd = resolvePath(cwd);
-	const resolvedEventBus = eventBus ?? createEventBus();
-	const runtime = createExtensionRuntime();
 
 	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(extPath, resolvedCwd, resolvedEventBus, runtime);
+		const resolvedPath = resolvePath(extPath, resolvedCwd, { normalizeUnicodeSpaces: true });
+		const activation = activationByPath?.get(extPath) ?? activationByPath?.get(resolvedPath);
+		const { extension, error } = await loadExtension(extPath, resolvedCwd, eventBus, runtime, activation);
 
 		if (error) {
 			errors.push({ path: extPath, error });
@@ -429,6 +444,28 @@ export async function loadExtensions(paths: string[], cwd: string, eventBus?: Ev
 			extensions.push(extension);
 		}
 	}
+
+	return { extensions, errors };
+}
+
+/**
+ * Load extensions from paths.
+ */
+export async function loadExtensions(
+	paths: string[],
+	cwd: string,
+	eventBus?: EventBus,
+	activationByPath?: Map<string, ExtensionActivation>,
+): Promise<LoadExtensionsResult> {
+	const extensions: Extension[] = [];
+	const errors: Array<{ path: string; error: string }> = [];
+	const resolvedCwd = resolvePath(cwd);
+	const resolvedEventBus = eventBus ?? createEventBus();
+	const runtime = createExtensionRuntime();
+
+	const loaded = await loadExtensionsIntoRuntime(paths, resolvedCwd, resolvedEventBus, runtime, activationByPath);
+	extensions.push(...loaded.extensions);
+	errors.push(...loaded.errors);
 
 	return {
 		extensions,

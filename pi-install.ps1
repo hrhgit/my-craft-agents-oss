@@ -35,6 +35,21 @@ function Invoke-NpmCommand {
 	}
 }
 
+function Invoke-NpmCommandCapture {
+	param(
+		[Parameter(Mandatory = $true)]
+		[string[]]$Arguments
+	)
+
+	$output = & $npmCommand.Source @Arguments
+	$exitCode = $LASTEXITCODE
+	if ($exitCode -ne 0) {
+		exit $exitCode
+	}
+
+	return $output
+}
+
 function Invoke-NpmCommandInDirectory {
 	param(
 		[Parameter(Mandatory = $true)]
@@ -60,17 +75,71 @@ function Invoke-NpmBuildInDirectory {
 	Invoke-NpmCommandInDirectory -Directory $Directory -Arguments @("run", "build")
 }
 
+function New-TemporaryDirectory {
+	$tempDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("pi-install-" + [System.Guid]::NewGuid().ToString("N"))
+	$null = New-Item -ItemType Directory -Path $tempDirectory
+	return $tempDirectory
+}
+
+function Invoke-NpmPackInDirectory {
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$Directory,
+		[Parameter(Mandatory = $true)]
+		[string]$Destination
+	)
+
+	Push-Location (Join-Path $repoRoot $Directory)
+	try {
+		$output = Invoke-NpmCommandCapture -Arguments @("pack", "--json", "--pack-destination", $Destination)
+		$packed = $output | ConvertFrom-Json
+		if (-not $packed) {
+			throw "Failed to pack npm package in $Directory."
+		}
+		if ($packed -is [System.Array]) {
+			return Join-Path $Destination $packed[0].filename
+		}
+		return Join-Path $Destination $packed.filename
+	} finally {
+		Pop-Location
+	}
+}
+
 $installCli = -not $WebOnly
 $installWeb = $WebOnly
+$cliPackages = @(
+	"@earendil-works/pi-tui",
+	"@earendil-works/pi-ai",
+	"@earendil-works/pi-agent-core",
+	"@earendil-works/pi-coding-agent"
+)
+$cliPackageDirectories = @(
+	"packages/tui",
+	"packages/ai",
+	"packages/agent",
+	"packages/coding-agent"
+)
+$localBuildDirectory = $null
 
 Push-Location $repoRoot
 try {
 	if ($installCli) {
-		Write-Host "Building pi CLI packages..."
-		Invoke-NpmBuildInDirectory -Directory "packages/tui"
-		Invoke-NpmBuildInDirectory -Directory "packages/ai"
-		Invoke-NpmBuildInDirectory -Directory "packages/agent"
-		Invoke-NpmBuildInDirectory -Directory "packages/coding-agent"
+		$localBuildDirectory = New-TemporaryDirectory
+		$tarballDirectory = Join-Path $localBuildDirectory "tarballs"
+		$null = New-Item -ItemType Directory -Path $tarballDirectory
+
+		Write-Host "Building local pi packages from the current workspace..."
+		foreach ($directory in $cliPackageDirectories) {
+			Invoke-NpmBuildInDirectory -Directory $directory
+		}
+
+		Write-Host "Packing local pi packages..."
+		$cliTarballs = @()
+		foreach ($directory in $cliPackageDirectories) {
+			$cliTarballs += Invoke-NpmPackInDirectory -Directory $directory -Destination $tarballDirectory
+		}
+
+		Write-Host "Installing local pi packages globally..."
 	}
 
 	if ($installWeb) {
@@ -79,8 +148,8 @@ try {
 	}
 
 	if ($installCli) {
-		Write-Host "Linking pi globally..."
-		Invoke-NpmCommandInDirectory -Directory "packages/coding-agent" -Arguments @("link")
+		Invoke-NpmCommand -Arguments (@("uninstall", "-g") + $cliPackages)
+		Invoke-NpmCommand -Arguments (@("install", "-g") + $cliTarballs + @("--ignore-scripts"))
 	}
 
 	if ($installWeb) {
@@ -89,10 +158,10 @@ try {
 	}
 
 	if ($installCli -and $installWeb) {
-		Write-Host "pi and pi-web have been built and linked globally."
+		Write-Host "pi has been installed from local workspace packages; pi-web has been built and linked globally."
 		Write-Host "Open a new shell and run 'pi --version' and 'pi-web --help' to verify."
 	} elseif ($installCli) {
-		Write-Host "pi has been built and linked globally."
+		Write-Host "pi has been installed from local workspace packages."
 		Write-Host "Open a new shell and run 'pi --version' to verify."
 	} else {
 		Write-Host "pi-web has been built and linked globally."
@@ -100,4 +169,7 @@ try {
 	}
 } finally {
 	Pop-Location
+	if ($localBuildDirectory -and (Test-Path $localBuildDirectory)) {
+		Remove-Item -LiteralPath $localBuildDirectory -Recurse -Force
+	}
 }

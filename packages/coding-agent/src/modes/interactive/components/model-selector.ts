@@ -1,4 +1,5 @@
-import { type Model, modelsAreEqual } from "@earendil-works/pi-ai";
+import { modelsAreEqual } from "@earendil-works/pi-ai/model-utils";
+import type { Model } from "@earendil-works/pi-ai/types";
 import {
 	Container,
 	type Focusable,

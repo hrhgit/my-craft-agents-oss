@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai/types";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import { applyExtensionFlagValues } from "./extension-flags.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { NetworkManager } from "./network-manager.ts";
@@ -60,6 +61,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
 	persistInitialState?: boolean;
+	onRuntimeDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
 }
 
 /**
@@ -76,55 +78,28 @@ export interface AgentSessionServices {
 	modelRegistry: ModelRegistry;
 	networkManager: NetworkManager;
 	resourceLoader: ResourceLoader;
+	extensionFlagValues?: Map<string, boolean | string>;
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 }
 
-function applyExtensionFlagValues(
+function registerPendingExtensionProviders(
 	resourceLoader: ResourceLoader,
-	extensionFlagValues: Map<string, boolean | string> | undefined,
-): AgentSessionRuntimeDiagnostic[] {
-	if (!extensionFlagValues) {
-		return [];
-	}
-
-	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
+	modelRegistry: ModelRegistry,
+	diagnostics: AgentSessionRuntimeDiagnostic[],
+): void {
 	const extensionsResult = resourceLoader.getExtensions();
-	const registeredFlags = new Map<string, { type: "boolean" | "string" }>();
-	for (const extension of extensionsResult.extensions) {
-		for (const [name, flag] of extension.flags) {
-			registeredFlags.set(name, { type: flag.type });
+	for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
+		try {
+			modelRegistry.registerProvider(name, config);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			diagnostics.push({
+				type: "error",
+				message: `Extension "${extensionPath}" error: ${message}`,
+			});
 		}
 	}
-
-	const unknownFlags: string[] = [];
-	for (const [name, value] of extensionFlagValues) {
-		const flag = registeredFlags.get(name);
-		if (!flag) {
-			unknownFlags.push(name);
-			continue;
-		}
-		if (flag.type === "boolean") {
-			extensionsResult.runtime.flagValues.set(name, true);
-			continue;
-		}
-		if (typeof value === "string") {
-			extensionsResult.runtime.flagValues.set(name, value);
-			continue;
-		}
-		diagnostics.push({
-			type: "error",
-			message: `Extension flag "--${name}" requires a value`,
-		});
-	}
-
-	if (unknownFlags.length > 0) {
-		diagnostics.push({
-			type: "error",
-			message: `Unknown option${unknownFlags.length === 1 ? "" : "s"}: ${unknownFlags.map((name) => `--${name}`).join(", ")}`,
-		});
-	}
-
-	return diagnostics;
+	extensionsResult.runtime.pendingProviderRegistrations = [];
 }
 
 /**
@@ -149,22 +124,15 @@ export async function createAgentSessionServices(
 	});
 
 	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
-	if (!options.deferResourceLoad) {
+	if (options.deferResourceLoad) {
+		await resourceLoader.loadPhase?.("startup");
+		registerPendingExtensionProviders(resourceLoader, modelRegistry, diagnostics);
+		diagnostics.push(
+			...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues, { ignoreUnknown: true }),
+		);
+	} else {
 		await resourceLoader.reload();
-
-		const extensionsResult = resourceLoader.getExtensions();
-		for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
-			try {
-				modelRegistry.registerProvider(name, config);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				diagnostics.push({
-					type: "error",
-					message: `Extension "${extensionPath}" error: ${message}`,
-				});
-			}
-		}
-		extensionsResult.runtime.pendingProviderRegistrations = [];
+		registerPendingExtensionProviders(resourceLoader, modelRegistry, diagnostics);
 		diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 		await networkManager.initialize();
 	}
@@ -177,6 +145,7 @@ export async function createAgentSessionServices(
 		modelRegistry,
 		networkManager,
 		resourceLoader,
+		extensionFlagValues: options.extensionFlagValues,
 		diagnostics,
 	};
 }
@@ -209,5 +178,7 @@ export async function createAgentSessionFromServices(
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
 		persistInitialState: options.persistInitialState,
+		extensionFlagValues: options.services.extensionFlagValues,
+		onRuntimeDiagnostics: options.onRuntimeDiagnostics,
 	});
 }

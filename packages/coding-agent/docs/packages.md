@@ -130,6 +130,21 @@ Add a `pi` manifest to `package.json` or use conventional directories. Include t
 
 Paths are relative to the package root. Arrays support glob patterns and `!exclusions`.
 
+Extension manifest entries may use object form to control when an extension loads:
+
+```json
+{
+  "pi": {
+    "extensions": [
+      { "path": "./extensions/editor-ui.ts", "activation": "startup" },
+      { "path": "./extensions/model-tools.ts", "activation": "beforeFirstRequest" }
+    ]
+  }
+}
+```
+
+`startup` extensions load before the first screen. `beforeFirstRequest` extensions load after the first screen but before the first model request. `lazy` extensions are left for later explicit activation. String extension entries default to `beforeFirstRequest`.
+
 ### Gallery Metadata
 
 The [package gallery](https://pi.dev/packages) displays packages tagged with `pi-package`. Add `video` or `image` fields to show a preview:
@@ -212,6 +227,7 @@ Filter what a package loads using the object form in settings:
 - `+path` force-includes an exact path.
 - `-path` force-excludes an exact path.
 - Filters layer on top of the manifest. They narrow down what is already allowed.
+- Extension filter entries may also be objects with `path` and `activation`.
 
 ## Enable and Disable Resources
 

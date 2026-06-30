@@ -62,6 +62,7 @@ export {
 	type SessionBeforeSwitchEvent,
 	type SessionBeforeTreeEvent,
 	type SessionCompactEvent,
+	type SessionReadyEvent,
 	type SessionShutdownEvent,
 	type SessionStartEvent,
 	type SessionTreeEvent,

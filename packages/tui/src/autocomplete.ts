@@ -67,7 +67,7 @@ function findUnclosedQuoteStart(text: string): number | null {
 	return inQuotes ? quoteStart : null;
 }
 
-function isTokenStart(text: string, index: number): boolean {
+function isPathTokenStart(text: string, index: number): boolean {
 	return index === 0 || PATH_DELIMITERS.has(text[index - 1] ?? "");
 }
 
@@ -78,13 +78,10 @@ function extractQuotedPrefix(text: string): string | null {
 	}
 
 	if (quoteStart > 0 && text[quoteStart - 1] === "@") {
-		if (!isTokenStart(text, quoteStart - 1)) {
-			return null;
-		}
 		return text.slice(quoteStart - 1);
 	}
 
-	if (!isTokenStart(text, quoteStart)) {
+	if (!isPathTokenStart(text, quoteStart)) {
 		return null;
 	}
 
@@ -290,10 +287,13 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const atPrefix = this.extractAtPrefix(textBeforeCursor);
 		if (atPrefix) {
 			const { rawPrefix, isQuotedPrefix } = parsePathPrefix(atPrefix);
-			const suggestions = await this.getFuzzyFileSuggestions(rawPrefix, {
+			let suggestions = await this.getFuzzyFileSuggestions(rawPrefix, {
 				isQuotedPrefix,
 				signal: options.signal,
 			});
+			if (suggestions.length === 0) {
+				suggestions = this.getFileSuggestions(atPrefix);
+			}
 			if (suggestions.length === 0) return null;
 
 			return {
@@ -463,11 +463,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			return quotedPrefix;
 		}
 
-		const lastDelimiterIndex = findLastDelimiter(text);
-		const tokenStart = lastDelimiterIndex === -1 ? 0 : lastDelimiterIndex + 1;
-
-		if (text[tokenStart] === "@") {
-			return text.slice(tokenStart);
+		const atIndex = text.lastIndexOf("@");
+		if (atIndex !== -1) {
+			return text.slice(atIndex);
 		}
 
 		return null;

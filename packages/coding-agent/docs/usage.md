@@ -277,6 +277,9 @@ pi --exclude-tools ask_question
 | `PI_PACKAGE_DIR` | Override package directory, useful for Nix/Guix store paths |
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package update checks, and install/update telemetry |
 | `PI_SKIP_VERSION_CHECK` | Skip the Pi version update check at startup. This prevents the `pi.dev` latest-version request |
+| `PI_CHECK_PACKAGE_UPDATES` | Enable package update checks at startup when set to `1`/`true`/`yes`; disabled by default |
+| `PI_SKIP_PACKAGE_UPDATE_CHECK` | Skip package update checks even if `PI_CHECK_PACKAGE_UPDATES` is set |
+| `PI_SKIP_TMUX_CHECK` | Skip the tmux keyboard setup check at startup |
 | `PI_TELEMETRY` | Override install/update telemetry: `1`/`true`/`yes` or `0`/`false`/`no`. This does not disable update checks |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache where supported |
 | `VISUAL`, `EDITOR` | External editor for Ctrl+G |

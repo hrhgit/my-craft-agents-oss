@@ -20,7 +20,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
-import { clampThinkingLevel } from "../models.ts";
+import { clampThinkingLevel } from "../model-utils.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import { createTransportDiagnostic } from "../transport/diagnostics.ts";
 import { classifyTransportError, TransportError } from "../transport/errors.ts";

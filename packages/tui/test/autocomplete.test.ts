@@ -211,6 +211,22 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(values?.includes("@src/index.ts"));
 		});
 
+		test("extracts @ query from the middle of text", async () => {
+			setupFolder(baseDir, {
+				files: {
+					"README.md": "readme",
+				},
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			const line = "帮我看@read";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			assert.strictEqual(result?.prefix, "@read");
+			const values = result?.items.map((item) => item.value);
+			assert.ok(values?.includes("@README.md"));
+		});
+
 		test("matches deeply nested paths", async () => {
 			setupFolder(baseDir, {
 				files: {
@@ -470,6 +486,22 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.notEqual(result, null, "Should return suggestions for ./ directory path");
 			const values = result?.items.map((item) => item.value);
 			assert.ok(values?.includes("./src/"), `Expected ./src/ in ${JSON.stringify(values)}`);
+		});
+
+		test("falls back to path completion for @ suggestions without fd", async () => {
+			setupFolder(baseDir, {
+				files: {
+					"README.md": "readme",
+				},
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			const line = "请读@REA";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			assert.strictEqual(result?.prefix, "@REA");
+			const values = result?.items.map((item) => item.value);
+			assert.ok(values?.includes("@README.md"), `Expected @README.md in ${JSON.stringify(values)}`);
 		});
 	});
 

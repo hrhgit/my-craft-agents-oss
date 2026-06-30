@@ -23,6 +23,7 @@
 				"ignore": "7.0.5",
 				"jiti": "2.7.0",
 				"jsdom": "27.3.0",
+				"marked": "15.0.12",
 				"minimatch": "10.2.5",
 				"proper-lockfile": "4.1.2",
 				"typebox": "1.1.38",
@@ -33,7 +34,7 @@
 				"@mariozechner/clipboard": "0.3.9"
 			},
 			"bin": {
-				"pi": "dist/cli.js"
+				"pi": "dist/cli.bundle.js"
 			},
 			"engines": {
 				"node": ">=22.19.0"

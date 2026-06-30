@@ -1066,8 +1066,10 @@ export class Editor implements Component, Focusable {
 			if (char === "/" && this.isAtStartOfMessage()) {
 				this.tryTriggerAutocomplete();
 			}
-			// Auto-trigger for symbol-based completion like @ or # at token boundaries
-			else if (char === "@" || char === "#") {
+			// Auto-trigger @ file references anywhere, while preserving token-boundary behavior for # completions.
+			else if (char === "@") {
+				this.tryTriggerAutocomplete();
+			} else if (char === "#") {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
 				const charBeforeSymbol = textBeforeCursor[textBeforeCursor.length - 2];
@@ -1084,7 +1086,7 @@ export class Editor implements Component, Focusable {
 					this.tryTriggerAutocomplete();
 				}
 				// Check if we're in a symbol-based completion context like @ or #
-				else if (textBeforeCursor.match(/(?:^|[\s])[@#][^\s]*$/)) {
+				else if (textBeforeCursor.match(/@[^\s]*$/) || textBeforeCursor.match(/(?:^|[\s])#[^\s]*$/)) {
 					this.tryTriggerAutocomplete();
 				}
 			}
@@ -1267,7 +1269,7 @@ export class Editor implements Component, Focusable {
 				this.tryTriggerAutocomplete();
 			}
 			// Symbol-based completion context like @ or #
-			else if (textBeforeCursor.match(/(?:^|[\s])[@#][^\s]*$/)) {
+			else if (textBeforeCursor.match(/@[^\s]*$/) || textBeforeCursor.match(/(?:^|[\s])#[^\s]*$/)) {
 				this.tryTriggerAutocomplete();
 			}
 		}
@@ -1631,7 +1633,7 @@ export class Editor implements Component, Focusable {
 				this.tryTriggerAutocomplete();
 			}
 			// Symbol-based completion context like @ or #
-			else if (textBeforeCursor.match(/(?:^|[\s])[@#][^\s]*$/)) {
+			else if (textBeforeCursor.match(/@[^\s]*$/) || textBeforeCursor.match(/(?:^|[\s])#[^\s]*$/)) {
 				this.tryTriggerAutocomplete();
 			}
 		}
@@ -2139,7 +2141,7 @@ export class Editor implements Component, Focusable {
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-		const isSymbolAutocompleteContext = /(?:^|[ \t])(?:@(?:"[^"]*|[^\s]*)|#[^\s]*)$/.test(textBeforeCursor);
+		const isSymbolAutocompleteContext = /@(?:"[^"]*|[^\s]*)$|(?:^|[ \t])#[^\s]*$/.test(textBeforeCursor);
 		return isSymbolAutocompleteContext ? ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS : 0;
 	}
 

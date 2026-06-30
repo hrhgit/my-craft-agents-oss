@@ -8,16 +8,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import {
-	type AssistantMessage,
-	getProviders,
-	type ImageContent,
-	type Message,
-	type Model,
-	type OAuthProviderId,
-	type OAuthSelectPrompt,
-	type TextContent,
-} from "@earendil-works/pi-ai";
+import type { OAuthProviderId, OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
+import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/types";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -54,14 +46,18 @@ import { extractImageAttachmentsFromText } from "../../cli/file-processor.ts";
 import {
 	APP_NAME,
 	APP_TITLE,
-	getAgentDir,
 	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
-import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import {
+	type AgentSession,
+	type AgentSessionEvent,
+	type ExtensionBindings,
+	parseSkillBlock,
+} from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -79,7 +75,6 @@ import { formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.ts";
-import { DefaultPackageManager } from "../../core/package-manager.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import {
@@ -90,6 +85,7 @@ import {
 } from "../../core/session-activity-registry.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionContext, type SessionInfo, SessionManager } from "../../core/session-manager.ts";
+import type { SettingsManager } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -100,6 +96,7 @@ import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipb
 import { parseGitUrl } from "../../utils/git.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
+import { SerialTaskQueue } from "../../utils/serial-task-queue.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { ArminComponent } from "./components/armin.ts";
@@ -243,6 +240,12 @@ interface WorkspaceSummary {
 	lastSessionModified?: Date;
 }
 
+type WorkspaceSummaries = {
+	sessions: SessionInfo[];
+	activeSessions: ActiveSessionRecord[];
+	workspaces: WorkspaceSummary[];
+};
+
 function pathKey(targetPath: string): string {
 	const resolved = path.resolve(targetPath);
 	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
@@ -380,6 +383,19 @@ function buildWorkspaceSummaries(
 
 const SESSION_ACTIVITY_HEARTBEAT_MS = 30_000;
 const SESSION_ACTIVITY_LEASE_MS = 90_000;
+const DEFAULT_SESSION_READY_DELAY_MS = 1500;
+
+function readSessionReadyDelayMs(): number {
+	const raw = process.env.PI_SESSION_READY_DELAY_MS;
+	if (!raw) return DEFAULT_SESSION_READY_DELAY_MS;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_SESSION_READY_DELAY_MS;
+}
+
+function isTruthyEnvFlag(value: string | undefined): boolean {
+	if (!value) return false;
+	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
 
 function hasDefaultModelProvider(providerId: string): providerId is keyof typeof defaultModelPerProvider {
 	return providerId in defaultModelPerProvider;
@@ -387,7 +403,7 @@ function hasDefaultModelProvider(providerId: string): providerId is keyof typeof
 
 const BEDROCK_PROVIDER_ID = "amazon-bedrock";
 
-const BUILT_IN_MODEL_PROVIDERS = new Set<string>(getProviders());
+const BUILT_IN_MODEL_PROVIDERS = new Set<string>();
 
 export function isApiKeyLoginProvider(
 	providerId: string,
@@ -419,6 +435,8 @@ export interface InteractiveModeOptions {
 	initialMessages?: string[];
 	/** Force verbose startup (overrides quietStartup setting) */
 	verbose?: boolean;
+	/** Optional cold-path package update checker, only wired by the full CLI. */
+	checkForPackageUpdates?: (options: { cwd: string; settingsManager: SettingsManager }) => Promise<string[]>;
 }
 
 export class InteractiveMode {
@@ -459,6 +477,10 @@ export class InteractiveMode {
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
 	private workspaceLoadPromise: Promise<void> | undefined;
+	private readonly backgroundTaskQueue = new SerialTaskQueue();
+	private sessionGeneration = 0;
+	private sessionReadyTimer: ReturnType<typeof setTimeout> | undefined;
+	private sessionReadyGeneration = 0;
 
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
@@ -554,6 +576,8 @@ export class InteractiveMode {
 		this.options = options;
 		this.sessionActivityRegistry = SessionActivityRegistry.create(runtimeHost.services.agentDir);
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
+			this.sessionGeneration++;
+			this.cancelSessionReadyEvent();
 			this.resetExtensionUI();
 		});
 		this.runtimeHost.setRebindSession(async () => {
@@ -868,11 +892,16 @@ export class InteractiveMode {
 			// Initialize extensions first so resources are shown before messages
 			await this.rebindCurrentSession();
 		} else {
-			await this.ensureWorkspaceLoaded();
+			void this.ensureWorkspaceLoaded().catch((error) => {
+				const message = error instanceof Error ? error.message : String(error);
+				this.showError(`Workspace load failed: ${message}`);
+			});
 		}
 
 		// Render initial messages AFTER showing loaded resources
 		this.renderInitialMessages();
+		this.scheduleSessionReadyEvent();
+		this.preloadRequestResources();
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -903,6 +932,43 @@ export class InteractiveMode {
 		}
 	}
 
+	private scheduleStartupBackgroundChecks(): void {
+		// Start cold background checks through a serial queue so interactive data can be promoted.
+		if (!isTruthyEnvFlag(process.env.PI_SKIP_VERSION_CHECK) && !isTruthyEnvFlag(process.env.PI_OFFLINE)) {
+			this.scheduleBackgroundTask("version-check", () => checkForNewPiVersion(this.version), {
+				priority: "low",
+			}).then((newRelease) => {
+				if (newRelease) {
+					this.showNewVersionNotification(newRelease);
+				}
+			});
+		}
+
+		if (
+			!isTruthyEnvFlag(process.env.PI_SKIP_PACKAGE_UPDATE_CHECK) &&
+			isTruthyEnvFlag(process.env.PI_CHECK_PACKAGE_UPDATES) &&
+			this.options.checkForPackageUpdates
+		) {
+			this.scheduleBackgroundTask("package-update-check", () => this.checkForPackageUpdates(), {
+				priority: "low",
+			}).then((updates) => {
+				if (updates.length > 0) {
+					this.showPackageUpdateNotification(updates);
+				}
+			});
+		}
+
+		if (!isTruthyEnvFlag(process.env.PI_SKIP_TMUX_CHECK)) {
+			this.scheduleBackgroundTask("tmux-keyboard-check", () => this.checkTmuxKeyboardSetup(), {
+				priority: "low",
+			}).then((warning) => {
+				if (warning) {
+					this.showWarning(warning);
+				}
+			});
+		}
+	}
+
 	/**
 	 * Run the interactive mode. This is the main entry point.
 	 * Initializes the UI, shows warnings, processes initial messages, and starts the interactive loop.
@@ -912,26 +978,8 @@ export class InteractiveMode {
 		await this.publishSessionActivity(this.session.isStreaming ? "running" : "idle");
 		this.startSessionActivityHeartbeat();
 
-		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newRelease) => {
-			if (newRelease) {
-				this.showNewVersionNotification(newRelease);
-			}
-		});
-
-		// Start package update check asynchronously
-		this.checkForPackageUpdates().then((updates) => {
-			if (updates.length > 0) {
-				this.showPackageUpdateNotification(updates);
-			}
-		});
-
-		// Check tmux keyboard setup asynchronously
-		this.checkTmuxKeyboardSetup().then((warning) => {
-			if (warning) {
-				this.showWarning(warning);
-			}
-		});
+		this.preloadWorkspaceSummaries();
+		this.scheduleStartupBackgroundChecks();
 
 		// Show startup warnings
 		const { migratedProviders, initialMessage, initialImages, initialMessages } = this.options;
@@ -1041,15 +1089,16 @@ export class InteractiveMode {
 		if (process.env.PI_OFFLINE) {
 			return [];
 		}
+		const checkForPackageUpdates = this.options.checkForPackageUpdates;
+		if (!checkForPackageUpdates) {
+			return [];
+		}
 
 		try {
-			const packageManager = new DefaultPackageManager({
+			return await checkForPackageUpdates({
 				cwd: this.sessionManager.getCwd(),
-				agentDir: getAgentDir(),
 				settingsManager: this.settingsManager,
 			});
-			const updates = await packageManager.checkForAvailableUpdates();
-			return updates.map((update) => update.displayName);
 		} catch {
 			return [];
 		}
@@ -1726,12 +1775,9 @@ export class InteractiveMode {
 		}
 	}
 
-	/**
-	 * Initialize the extension system with TUI-based UI context.
-	 */
-	private async bindCurrentSessionExtensions(): Promise<void> {
+	private createExtensionBindings(): ExtensionBindings {
 		const uiContext = this.createExtensionUIContext();
-		await this.session.bindExtensions({
+		return {
 			uiContext,
 			abortHandler: () => {
 				this.restoreQueuedMessagesToEditor({ abort: true });
@@ -1804,15 +1850,32 @@ export class InteractiveMode {
 			onError: (error: ExtensionError) => {
 				this.showExtensionError(error.extensionPath, error.error, error.stack);
 			},
-		});
+		};
+	}
 
+	private refreshCurrentSessionExtensionUI(options: { showLoadedResources?: boolean } = {}): void {
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.setupAutocompleteProvider();
 
 		const extensionRunner = this.session.extensionRunner;
 		this.setupExtensionShortcuts(extensionRunner);
-		this.showLoadedResources({ force: false, showDiagnosticsWhenQuiet: true });
+		if (options.showLoadedResources) {
+			this.showLoadedResources({ force: false, showDiagnosticsWhenQuiet: true });
+		}
 		this.showStartupNoticesIfNeeded();
+	}
+
+	/**
+	 * Initialize the extension system with TUI-based UI context.
+	 */
+	private async bindCurrentSessionExtensions(): Promise<void> {
+		await this.session.bindExtensions(this.createExtensionBindings());
+		this.refreshCurrentSessionExtensionUI({ showLoadedResources: true });
+	}
+
+	private applyCurrentSessionExtensionBindings(): void {
+		this.session.applyExtensionBindings(this.createExtensionBindings());
+		this.refreshCurrentSessionExtensionUI({ showLoadedResources: true });
 	}
 
 	private applyRuntimeSettings(): void {
@@ -1831,6 +1894,28 @@ export class InteractiveMode {
 			this.editor.setPaddingX?.(editorPaddingX);
 			this.editor.setAutocompleteMaxVisible?.(autocompleteMaxVisible);
 		}
+	}
+
+	private cancelSessionReadyEvent(): void {
+		this.sessionReadyGeneration++;
+		if (this.sessionReadyTimer) {
+			clearTimeout(this.sessionReadyTimer);
+			this.sessionReadyTimer = undefined;
+		}
+	}
+
+	private scheduleSessionReadyEvent(): void {
+		this.cancelSessionReadyEvent();
+		const session = this.session;
+		const generation = this.sessionReadyGeneration;
+		this.sessionReadyTimer = setTimeout(() => {
+			this.sessionReadyTimer = undefined;
+			if (generation !== this.sessionReadyGeneration || this.session !== session) {
+				return;
+			}
+			void session.emitSessionReady();
+		}, readSessionReadyDelayMs());
+		this.sessionReadyTimer.unref?.();
 	}
 
 	private async rebindCurrentSession(): Promise<void> {
@@ -1897,6 +1982,80 @@ export class InteractiveMode {
 		await this.workspaceLoadPromise;
 	}
 
+	private scheduleRequestResourceLoad(options: { priority?: "low" | "normal" | "high" } = {}): Promise<void> {
+		const session = this.session;
+		const generation = this.sessionGeneration;
+		const wasReady = session.requestResourcesReady;
+		return this.scheduleBackgroundTask(
+			`request-resources:${generation}`,
+			async () => {
+				await session.prepareForFirstRequest();
+				if (generation !== this.sessionGeneration || this.session !== session) {
+					return;
+				}
+				if (!wasReady) {
+					this.applyCurrentSessionExtensionBindings();
+				}
+				await this.updateAvailableProviderCount();
+				this.updateEditorBorderColor();
+				this.footer.invalidate();
+				this.ui.requestRender();
+			},
+			options,
+		);
+	}
+
+	private async prepareRequestResources(showLoader: boolean): Promise<void> {
+		const requestResourcesPromise = this.scheduleRequestResourceLoad({ priority: "high" });
+		if (!showLoader) {
+			await requestResourcesPromise;
+			return;
+		}
+
+		const loader = new Loader(
+			this.ui,
+			(spinner) => theme.fg("accent", spinner),
+			(text) => theme.fg("muted", text),
+			"Preparing request resources...",
+		);
+		this.statusContainer.clear();
+		this.statusContainer.addChild(loader);
+		this.ui.requestRender();
+		try {
+			await requestResourcesPromise;
+		} finally {
+			loader.stop();
+			this.statusContainer.clear();
+			this.ui.requestRender();
+		}
+	}
+
+	private scheduleBackgroundTask<T>(
+		key: string,
+		run: () => Promise<T>,
+		options: { priority?: "low" | "normal" | "high" } = {},
+	): Promise<T> {
+		return this.backgroundTaskQueue.schedule(key, run, options);
+	}
+
+	private preloadWorkspaceSummaries(): void {
+		void this.loadWorkspaceSummaries({ priority: "normal" }).catch(() => {});
+	}
+
+	private preloadRequestResources(): void {
+		const generation = this.sessionGeneration;
+		const timer = setTimeout(() => {
+			if (generation !== this.sessionGeneration) {
+				return;
+			}
+			void this.scheduleRequestResourceLoad({ priority: "low" }).catch((error) => {
+				const message = error instanceof Error ? error.message : String(error);
+				this.showError(`Request resource load failed: ${message}`);
+			});
+		}, 0);
+		timer.unref?.();
+	}
+
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
 		const message = error instanceof Error ? error.message : String(error);
 		this.showError(`${prefix}: ${message}`);
@@ -1914,6 +2073,9 @@ export class InteractiveMode {
 		this.pendingTools.clear();
 		this.renderInitialMessages();
 		void this.publishSessionActivity(this.session.isStreaming ? "running" : "idle");
+		this.preloadWorkspaceSummaries();
+		this.preloadRequestResources();
+		this.scheduleSessionReadyEvent();
 	}
 
 	/**
@@ -2816,7 +2978,6 @@ export class InteractiveMode {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
 			if (!text) return;
-			await this.ensureWorkspaceLoaded();
 
 			// Handle commands
 			if (text === "/settings") {
@@ -2969,6 +3130,8 @@ export class InteractiveMode {
 					return;
 				}
 			}
+
+			await this.prepareRequestResources(true);
 
 			// Queue input during compaction (extension commands execute immediately)
 			if (this.session.isCompacting) {
@@ -4801,6 +4964,7 @@ export class InteractiveMode {
 					const originalOnEscape = this.defaultEditor.onEscape;
 
 					if (wantsSummary) {
+						await this.prepareRequestResources(true);
 						this.defaultEditor.onEscape = () => {
 							this.session.abortBranchSummary();
 						};
@@ -4983,21 +5147,30 @@ export class InteractiveMode {
 		return `Session: ${sessionDisplayTitle(session)}${labelText} | ${session.messageCount} messages | ${formatActivityTimestamp(session.modified)}`;
 	}
 
-	private async loadWorkspaceSummaries(): Promise<{
-		sessions: SessionInfo[];
-		activeSessions: ActiveSessionRecord[];
-		workspaces: WorkspaceSummary[];
-	}> {
-		const [sessions, activeSessions, workspaceHistory] = await Promise.all([
-			this.listVisibleSessions(),
-			this.sessionActivityRegistry.listActiveSessions(),
-			this.sessionActivityRegistry.listWorkspaces(),
-		]);
-		return {
-			sessions,
-			activeSessions,
-			workspaces: buildWorkspaceSummaries(sessions, workspaceHistory, activeSessions, this.sessionManager.getCwd()),
-		};
+	private async loadWorkspaceSummaries(
+		options: { priority?: "low" | "normal" | "high" } = {},
+	): Promise<WorkspaceSummaries> {
+		return await this.scheduleBackgroundTask(
+			"workspace-summaries",
+			async () => {
+				const [sessions, activeSessions, workspaceHistory] = await Promise.all([
+					this.listVisibleSessions(),
+					this.sessionActivityRegistry.listActiveSessions(),
+					this.sessionActivityRegistry.listWorkspaces(),
+				]);
+				return {
+					sessions,
+					activeSessions,
+					workspaces: buildWorkspaceSummaries(
+						sessions,
+						workspaceHistory,
+						activeSessions,
+						this.sessionManager.getCwd(),
+					),
+				};
+			},
+			options,
+		);
 	}
 
 	private getSwitchCommandQuery(text: string): string {
@@ -5108,7 +5281,7 @@ export class InteractiveMode {
 		}
 
 		const query = this.getSwitchCommandQuery(text);
-		const { sessions, activeSessions, workspaces } = await this.loadWorkspaceSummaries();
+		const { sessions, activeSessions, workspaces } = await this.loadWorkspaceSummaries({ priority: "high" });
 
 		if (query) {
 			const direct = this.resolveWorkspaceArgument(query);
@@ -6239,6 +6412,8 @@ export class InteractiveMode {
 			this.showWarning("Nothing to compact (no messages yet)");
 			return;
 		}
+
+		await this.prepareRequestResources(true);
 
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();

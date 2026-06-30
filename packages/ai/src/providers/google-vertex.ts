@@ -7,7 +7,7 @@ import {
 	type ThinkingConfig,
 	ThinkingLevel,
 } from "@google/genai";
-import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { calculateCost, clampThinkingLevel } from "../model-utils.ts";
 import { appendSdkTransportDiagnostic, formatSdkTransportError } from "../transport/sdk-request.ts";
 import type {
 	Api,

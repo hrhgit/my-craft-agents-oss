@@ -6,7 +6,7 @@ import type {
 	ContentChunk,
 	FunctionTool,
 } from "@mistralai/mistralai/models/components";
-import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { calculateCost, clampThinkingLevel } from "../model-utils.ts";
 import { DEFAULT_MAX_RETRY_DELAY_MS } from "../transport/retry.ts";
 import { appendSdkTransportDiagnostic, formatSdkTransportError } from "../transport/sdk-request.ts";
 import type {

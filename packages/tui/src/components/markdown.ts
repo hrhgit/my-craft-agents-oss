@@ -1,31 +1,49 @@
-import { Marked, type Token, Tokenizer, type Tokens } from "marked";
+import { createRequire } from "node:module";
+import type { Tokenizer as BaseTokenizer, Marked as MarkedParser, Token, Tokens } from "marked";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
+const require = createRequire(import.meta.url);
 
-class StrictStrikethroughTokenizer extends Tokenizer {
-	override del(src: string): Tokens.Del | undefined {
-		const match = STRICT_STRIKETHROUGH_REGEX.exec(src);
-		if (!match) {
-			return undefined;
-		}
+type MarkedConstructor = new () => MarkedParser;
+type TokenizerConstructor = new () => BaseTokenizer;
 
-		const text = match[2];
-		return {
-			type: "del",
-			raw: match[0],
-			text,
-			tokens: this.lexer.inlineTokens(text),
-		};
-	}
+interface MarkedModule {
+	Marked: MarkedConstructor;
+	Tokenizer: TokenizerConstructor;
 }
 
-const markdownParser = new Marked();
-markdownParser.setOptions({
-	tokenizer: new StrictStrikethroughTokenizer(),
-});
+let markdownParser: MarkedParser | undefined;
+
+function getMarkdownParser(): MarkedParser {
+	if (markdownParser) return markdownParser;
+	const { Marked, Tokenizer } = require("marked") as MarkedModule;
+
+	class StrictStrikethroughTokenizer extends Tokenizer {
+		override del(src: string): Tokens.Del | undefined {
+			const match = STRICT_STRIKETHROUGH_REGEX.exec(src);
+			if (!match) {
+				return undefined;
+			}
+
+			const text = match[2];
+			return {
+				type: "del",
+				raw: match[0],
+				text,
+				tokens: this.lexer.inlineTokens(text),
+			};
+		}
+	}
+
+	markdownParser = new Marked();
+	markdownParser.setOptions({
+		tokenizer: new StrictStrikethroughTokenizer(),
+	});
+	return markdownParser;
+}
 
 /**
  * Default text styling for markdown content.
@@ -144,7 +162,7 @@ export class Markdown implements Component {
 		const normalizedText = this.text.replace(/\t/g, "   ");
 
 		// Parse markdown to HTML-like tokens
-		const tokens = markdownParser.lexer(normalizedText);
+		const tokens = getMarkdownParser().lexer(normalizedText);
 
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];

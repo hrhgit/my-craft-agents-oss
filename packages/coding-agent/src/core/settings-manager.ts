@@ -3,6 +3,7 @@ import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import type { ExtensionActivation } from "./extensions/types.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import type { NetworkSettings } from "./network-types.ts";
 
@@ -66,11 +67,13 @@ export type PackageSource =
 	| string
 	| {
 			source: string;
-			extensions?: string[];
+			extensions?: Array<string | { path: string; activation?: ExtensionActivation }>;
 			skills?: string[];
 			prompts?: string[];
 			themes?: string[];
 	  };
+
+export type ExtensionPathSource = string | { path: string; activation?: ExtensionActivation };
 
 export interface Settings {
 	lastChangelogVersion?: string;
@@ -92,7 +95,7 @@ export interface Settings {
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
-	extensions?: string[]; // Array of local extension file paths or directories
+	extensions?: ExtensionPathSource[]; // Array of local extension file paths/directories, optionally with activation
 	skills?: string[]; // Array of local skill file paths or directories
 	prompts?: string[]; // Array of local prompt template paths or directories
 	themes?: string[]; // Array of local theme file paths or directories
@@ -889,17 +892,17 @@ export class SettingsManager {
 		this.saveProjectSettings(projectSettings);
 	}
 
-	getExtensionPaths(): string[] {
+	getExtensionPaths(): ExtensionPathSource[] {
 		return [...(this.settings.extensions ?? [])];
 	}
 
-	setExtensionPaths(paths: string[]): void {
+	setExtensionPaths(paths: ExtensionPathSource[]): void {
 		this.globalSettings.extensions = paths;
 		this.markModified("extensions");
 		this.save();
 	}
 
-	setProjectExtensionPaths(paths: string[]): void {
+	setProjectExtensionPaths(paths: ExtensionPathSource[]): void {
 		const projectSettings = structuredClone(this.projectSettings);
 		projectSettings.extensions = paths;
 		this.markProjectModified("extensions");

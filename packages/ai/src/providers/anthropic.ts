@@ -6,7 +6,7 @@ import type {
 	MessageParam,
 	RawMessageStreamEvent,
 } from "@anthropic-ai/sdk/resources/messages.js";
-import { calculateCost } from "../models.ts";
+import { calculateCost } from "../model-utils.ts";
 import {
 	appendSdkTransportDiagnostic,
 	createSdkRequestOptions,

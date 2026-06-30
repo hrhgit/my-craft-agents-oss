@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import {
-	clampThinkingLevel,
-	createAssistantMessageEventStream,
-	type Message,
-	type Model,
-	streamSimple,
-} from "@earendil-works/pi-ai";
+import { clampThinkingLevel } from "@earendil-works/pi-ai/model-utils";
+import { streamSimple } from "@earendil-works/pi-ai/stream";
+import type { Message, Model } from "@earendil-works/pi-ai/types";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -96,6 +93,10 @@ export interface CreateAgentSessionOptions {
 	sessionStartEvent?: SessionStartEvent;
 	/** Persist initial model/thinking entries for a new session. Default: true. */
 	persistInitialState?: boolean;
+	/** CLI/runtime extension flag values, applied after deferred extensions load. */
+	extensionFlagValues?: Map<string, boolean | string>;
+	/** Receives diagnostics discovered after deferred resources load. */
+	onRuntimeDiagnostics?: (diagnostics: Array<{ type: "info" | "warning" | "error"; message: string }>) => void;
 }
 
 /** Result from createAgentSession */
@@ -506,6 +507,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 		networkManager,
+		extensionFlagValues: options.extensionFlagValues,
+		onRuntimeDiagnostics: options.onRuntimeDiagnostics,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

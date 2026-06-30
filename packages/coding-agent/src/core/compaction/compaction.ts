@@ -6,8 +6,15 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
-import { completeSimple } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/stream";
+import type {
+	AssistantMessage,
+	Context,
+	Message,
+	Model,
+	SimpleStreamOptions,
+	Usage,
+} from "@earendil-works/pi-ai/types";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,

@@ -123,8 +123,9 @@ export type {
 	SessionBeforeTreeResult,
 	SessionCompactEvent,
 	SessionEvent,
-	SessionShutdownEvent,
 	// Events - Session
+	SessionReadyEvent,
+	SessionShutdownEvent,
 	SessionStartEvent,
 	SessionTreeEvent,
 	SetActiveToolsHandler,

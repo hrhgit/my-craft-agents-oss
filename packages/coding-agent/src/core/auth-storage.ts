@@ -6,13 +6,8 @@
  * try to refresh tokens simultaneously.
  */
 
-import {
-	findEnvKeys,
-	getEnvApiKey,
-	type OAuthCredentials,
-	type OAuthLoginCallbacks,
-	type OAuthProviderId,
-} from "@earendil-works/pi-ai";
+import { findEnvKeys, getEnvApiKey } from "@earendil-works/pi-ai/env-api-keys";
+import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderId } from "@earendil-works/pi-ai/oauth";
 import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
