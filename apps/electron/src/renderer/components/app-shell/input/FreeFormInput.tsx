@@ -112,17 +112,26 @@ function formatFollowUpChipText(text: string, fallback: string, maxLength = 50):
     : normalized
 }
 
+// SDK triggers compaction at ~77.5% of the context window (e.g. ~155k for a 200k window).
+// Both the ContextUsageRing and the warning badge compute against this threshold so their
+// percentages stay consistent — 100% means compaction is imminent.
+const COMPACTION_THRESHOLD_RATIO = 0.775
+
 function getContextUsagePercent(
   contextStatus: FreeFormInputProps['contextStatus'],
   currentModel: string,
-): { percent: number | null; inputTokens?: number; contextWindow?: number } {
+): { percent: number | null; inputTokens?: number; compactionThreshold?: number; contextWindow?: number } {
   const effectiveContextWindow = contextStatus?.contextWindow || getModelContextWindow(currentModel)
-  if (!contextStatus?.inputTokens || !effectiveContextWindow) {
-    return { percent: null, inputTokens: contextStatus?.inputTokens, contextWindow: effectiveContextWindow }
+  const compactionThreshold = effectiveContextWindow
+    ? Math.round(effectiveContextWindow * COMPACTION_THRESHOLD_RATIO)
+    : undefined
+  if (!contextStatus?.inputTokens || !compactionThreshold) {
+    return { percent: null, inputTokens: contextStatus?.inputTokens, compactionThreshold, contextWindow: effectiveContextWindow }
   }
   return {
-    percent: Math.min(99, Math.round((contextStatus.inputTokens / effectiveContextWindow) * 100)),
+    percent: Math.min(99, Math.round((contextStatus.inputTokens / compactionThreshold) * 100)),
     inputTokens: contextStatus.inputTokens,
+    compactionThreshold,
     contextWindow: effectiveContextWindow,
   }
 }
@@ -165,8 +174,8 @@ function ContextUsageRing({
         </div>
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">
-        {usage.inputTokens && usage.contextWindow
-          ? `${formatTokenCount(usage.inputTokens)} / ${formatTokenCount(usage.contextWindow)} tokens (${usage.percent}%)`
+        {usage.inputTokens && usage.compactionThreshold
+          ? `${formatTokenCount(usage.inputTokens)} / ${formatTokenCount(usage.compactionThreshold)} tokens (${usage.percent}% to compaction)`
           : 'Context usage unavailable'}
       </TooltipContent>
     </Tooltip>
@@ -2012,10 +2021,6 @@ export function FreeFormInput({
             <TooltipContent side="top">Plan mode</TooltipContent>
           </Tooltip>
           )}
-          <ContextUsageRing
-            contextStatus={contextStatus}
-            currentModel={currentModel}
-          />
           {compactMode && (
           <div className="flex items-center gap-1 min-w-0 shrink overflow-hidden">
           {onPermissionModeChange && (
@@ -2260,6 +2265,12 @@ export function FreeFormInput({
 
           {/* Right side: Model + Send - never shrink so they're always visible */}
           <div className="flex items-center shrink-0">
+          {/* Context usage ring - placed before model selector so it reads as
+              "how full is the context" relative to the active model. */}
+          <ContextUsageRing
+            contextStatus={contextStatus}
+            currentModel={currentModel}
+          />
           {/* 5. Model/Connection Selector - Hidden in compact mode (EditPopover embedding) */}
           {!compactMode && (
           <DropdownMenu open={modelDropdownOpen} onOpenChange={setModelDropdownOpen}>
@@ -2619,21 +2630,12 @@ export function FreeFormInput({
             disabled={thinkingDisabled}
           />
 
-          {/* 5.5 Context Usage Warning Badge - shows when approaching auto-compaction threshold */}
+          {/* 5.5 Context Usage Warning Badge - shows when approaching auto-compaction threshold.
+              Reuses getContextUsagePercent so the ring and badge always agree. */}
           {(() => {
-            // Calculate usage percentage based on compaction threshold (~77.5% of context window),
-            // not the full context window - this gives users meaningful warnings before compaction kicks in.
-            // SDK triggers compaction at ~155k tokens for a 200k context window.
-            // Falls back to known per-model context window when SDK hasn't reported usage yet.
-            const effectiveContextWindow = contextStatus?.contextWindow || getModelContextWindow(currentModel)
-            const compactionThreshold = effectiveContextWindow
-              ? Math.round(effectiveContextWindow * 0.775)
-              : null
-            const usagePercent = contextStatus?.inputTokens && compactionThreshold
-              ? Math.min(99, Math.round((contextStatus.inputTokens / compactionThreshold) * 100))
-              : null
+            const usage = getContextUsagePercent(contextStatus, currentModel)
+            const usagePercent = usage.percent
             // Show badge when >= 80% of compaction threshold AND not currently compacting
-            // Hide for Codex and Copilot models which don't support context compaction
             const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting
 
             if (!showWarning) return null

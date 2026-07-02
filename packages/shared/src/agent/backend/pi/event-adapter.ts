@@ -322,6 +322,14 @@ export class PiEventAdapter extends BaseEventAdapter {
         // SessionManager uses this to correlate the follow-up `pi_turn_anchor`
         // event to the Craft assistant message created here (#782).
         const sdkMessageId = (event as { sdkMessageId?: string }).sdkMessageId ?? msg?.id;
+        // Active model's context window, forwarded by pi-agent-server. Lets us
+        // compute usage percent for models absent from craft's MODEL_REGISTRY
+        // (custom-endpoint, pi-prefixed, OpenRouter, etc.). Updated each turn
+        // so set_model mid-session is tracked.
+        const forwardedModelContextWindow = (event as { modelContextWindow?: number }).modelContextWindow;
+        if (typeof forwardedModelContextWindow === 'number' && forwardedModelContextWindow > 0) {
+          this.contextWindow = forwardedModelContextWindow;
+        }
         if (msg?.role !== 'assistant') break;
 
         // Surface API errors — Pi SDK sets stopReason: 'error' and errorMessage on failures

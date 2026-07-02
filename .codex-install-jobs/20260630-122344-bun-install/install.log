@@ -1,8 +1,0 @@
-[job] 20260630-122344-bun-install
-[cwd] E:\_workSpace\_Agents\craft-agent
-[command] bun install
-[started_at] 2026-06-30T12:23:45
-
-bun install v1.3.13 (bf2e2cec)
-Resolving dependencies
-Resolved, downloaded and extracted [168]

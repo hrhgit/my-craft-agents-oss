@@ -36,6 +36,11 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # OSS sync temp directory
 .oss-sync-temp/
 
+# Local planning / tool artifacts
+.trae/
+.codex-install-jobs/
+session_mgr.diff
+
 # IntelliJ based IDEs
 .idea
 

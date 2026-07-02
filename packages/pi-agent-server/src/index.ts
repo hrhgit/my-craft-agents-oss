@@ -1330,12 +1330,22 @@ function handleSessionEvent(event: AgentSessionEvent): void {
       // `pi_turn_anchor` event is delivered to the main process in the right
       // order (after this `message_end`, before the next event).
       const sdkMessageId = (msg as { id?: string }).id;
-      if (sdkMessageId) {
+      // Forward the active model's contextWindow so the main-process event
+      // adapter can compute usage percent even for models not in craft's local
+      // MODEL_REGISTRY (custom-endpoint, pi-prefixed, OpenRouter, etc.).
+      // Sourced here (not at session creation) so set_model mid-session is tracked.
+      const modelContextWindow = piSession?.agent?.state?.model?.contextWindow;
+      const enrich: Record<string, unknown> = {};
+      if (sdkMessageId) enrich.sdkMessageId = sdkMessageId;
+      if (typeof modelContextWindow === 'number') enrich.modelContextWindow = modelContextWindow;
+      if (Object.keys(enrich).length > 0) {
         forwardedEvent = {
           ...(event as Record<string, unknown>),
-          sdkMessageId,
+          ...enrich,
         } as unknown as OutboundAgentEvent;
+      }
 
+      if (sdkMessageId) {
         const sessionManagerSnapshot = piSession.sessionManager;
         queueMicrotask(() => {
           // Defensive: session may have been disposed between the message_end
