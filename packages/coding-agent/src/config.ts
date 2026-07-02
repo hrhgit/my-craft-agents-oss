@@ -27,6 +27,7 @@ export const isBunRuntime = !!process.versions.bun;
 // =============================================================================
 
 export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
+export type UpdateChannel = "official" | "fork";
 
 interface SelfUpdateCommandStep {
 	command: string;
@@ -294,6 +295,9 @@ export function getSelfUpdateCommand(
 	npmCommand?: string[],
 	updatePackageName = packageName,
 ): SelfUpdateCommand | undefined {
+	if (!usesOfficialUpdateChannel()) {
+		return undefined;
+	}
 	const method = detectInstallMethod();
 	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
 	if (!command || !isManagedByGlobalPackageManager(method, packageName, npmCommand) || !isSelfUpdatePathWritable()) {
@@ -307,6 +311,9 @@ export function getSelfUpdateUnavailableInstruction(
 	npmCommand?: string[],
 	updatePackageName = packageName,
 ): string {
+	if (!usesOfficialUpdateChannel()) {
+		return "Self-update is disabled for this fork. Update it from your fork's source checkout or release process.";
+	}
 	const method = detectInstallMethod();
 	if (method === "bun-binary") {
 		return `Download from: https://github.com/earendil-works/pi-mono/releases/latest`;
@@ -322,6 +329,9 @@ export function getSelfUpdateUnavailableInstruction(
 }
 
 export function getUpdateInstruction(packageName: string): string {
+	if (!usesOfficialUpdateChannel()) {
+		return getSelfUpdateUnavailableInstruction(packageName);
+	}
 	const method = detectInstallMethod();
 	const command = getSelfUpdateCommandForMethod(method, packageName);
 	if (command) {
@@ -449,17 +459,37 @@ interface PackageJson {
 	piConfig?: {
 		name?: string;
 		configDir?: string;
+		updateChannel?: UpdateChannel;
+		versionSuffix?: string;
 	};
+}
+
+function normalizeUpdateChannel(value: string | undefined): UpdateChannel | undefined {
+	if (value === "official" || value === "fork") {
+		return value;
+	}
+	return undefined;
 }
 
 const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
 
 const piConfigName: string | undefined = pkg.piConfig?.name;
+const configuredUpdateChannel = normalizeUpdateChannel(pkg.piConfig?.updateChannel) ?? "official";
+const configuredVersionSuffix = pkg.piConfig?.versionSuffix?.trim() ?? "";
 export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent";
 export const APP_NAME: string = piConfigName || "pi";
 export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
 export const VERSION: string = pkg.version || "0.0.0";
+export const DISPLAY_VERSION: string = configuredVersionSuffix ? `${VERSION}${configuredVersionSuffix}` : VERSION;
+
+export function getUpdateChannel(): UpdateChannel {
+	return normalizeUpdateChannel(process.env.PI_UPDATE_CHANNEL) ?? configuredUpdateChannel;
+}
+
+export function usesOfficialUpdateChannel(): boolean {
+	return getUpdateChannel() === "official";
+}
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;

@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { CONFIG_DIR_NAME, getPackageDir } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
@@ -447,6 +447,16 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 		this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
+
+		// Filter out extensions disabled via settings.json (extensionConfig.<name>.enabled = false
+		// or extensions.<name>.enabled = false for craft compatibility)
+		const filteredExtensions = this.extensionsResult.extensions.filter((ext) => {
+			const extName = this.extractExtensionName(ext, metadataByPath);
+			if (!extName) return true; // keep extensions whose name can't be determined
+			return this.settingsManager.isExtensionEnabled(extName, true);
+		});
+		this.extensionsResult = { ...this.extensionsResult, extensions: filteredExtensions };
+
 		this.applyExtensionSourceInfo(this.extensionsResult.extensions, metadataByPath);
 
 		const shouldLoadRequestResources = phase !== "startup";
@@ -867,6 +877,33 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return theme;
 		});
 		this.themeDiagnostics = resolvedThemes.diagnostics;
+	}
+
+	/**
+	 * Derive an extension's name for settings lookup.
+	 *
+	 * Priority: metadataByPath source (real package name) > sourceInfo.source
+	 * (if meaningful) > path basename without extension.
+	 */
+	private extractExtensionName(ext: Extension, metadataByPath?: Map<string, PathMetadata>): string | undefined {
+		// 1. If metadata is available, look up the real source (package name)
+		if (metadataByPath) {
+			const meta = metadataByPath.get(ext.path);
+			if (meta?.source && meta.source !== "local" && meta.source !== "cli" && meta.source !== "auto") {
+				return meta.source;
+			}
+		}
+		// 2. Use sourceInfo.source if it's a meaningful name
+		const source = ext.sourceInfo?.source;
+		if (source && source !== "local" && source !== "cli" && source !== "auto" && source !== "temporary") {
+			return source;
+		}
+		// 3. Fall back to deriving from path basename (without extension)
+		const p = ext.path || ext.resolvedPath;
+		if (!p) return undefined;
+		const base = basename(p);
+		const withoutExt = base.replace(/\.(ts|js|mjs|cjs)$/, "");
+		return withoutExt || undefined;
 	}
 
 	private applyExtensionSourceInfo(extensions: Extension[], metadataByPath: Map<string, PathMetadata>): void {

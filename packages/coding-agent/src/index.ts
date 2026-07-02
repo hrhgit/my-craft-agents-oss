@@ -134,11 +134,14 @@ export type {
 	WorkingIndicatorOptions,
 	WriteToolCallEvent,
 } from "./core/extensions/index.ts";
+// Headless UI context (for RPC / embedded modes without a TUI)
 export {
 	createExtensionRuntime,
+	createHeadlessUIContext,
 	defineTool,
 	discoverAndLoadExtensions,
 	ExtensionRunner,
+	type HeadlessUITransport,
 	isBashToolResult,
 	isEditToolResult,
 	isFindToolResult,

@@ -278,6 +278,35 @@ Object form filters which resources to load:
 
 See [packages.md](packages.md) for package management details.
 
+#### extensionConfig
+
+Per-extension namespace configuration keyed by extension name. Allows overriding the model, toggling enable/disable, and setting concurrency limits for individual extensions.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `extensionConfig.<name>.model` | string | - | Model override for this extension |
+| `extensionConfig.<name>.enabled` | boolean | `true` | When `false`, the extension is skipped during loading |
+| `extensionConfig.<name>.concurrency` | number | - | Concurrency limit for this extension's operations |
+
+```json
+{
+  "extensionConfig": {
+    "repo-memory": {
+      "model": "gpt-5.5",
+      "enabled": true,
+      "concurrency": 4
+    },
+    "trace-audit": {
+      "enabled": false
+    }
+  }
+}
+```
+
+Extensions with `enabled: false` are filtered out during resource loading — their tools, commands, and flags are not registered. When `enabled` is absent, the extension defaults to enabled.
+
+**Compatibility note:** Craft Agent historically writes these values under the `extensions` field as a namespace object (e.g., `extensions.repo-memory.model`). The Pi SDK reads from both `extensionConfig.<name>` (preferred) and `extensions.<name>` (legacy/craft) for the `model`, `enabled`, and `concurrency` keys. The `extensions` field as a path array (for loading local extension files) remains unchanged.
+
 ## Example
 
 ```json

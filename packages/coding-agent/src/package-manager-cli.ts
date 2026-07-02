@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
 import {
 	APP_NAME,
+	DISPLAY_VERSION,
 	detectInstallMethod,
 	getAgentDir,
 	getPackageDir,
@@ -10,6 +11,7 @@ import {
 	getSelfUpdateUnavailableInstruction,
 	PACKAGE_NAME,
 	type SelfUpdateCommand,
+	usesOfficialUpdateChannel,
 	VERSION,
 } from "./config.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
@@ -119,18 +121,18 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update pi and installed packages.
+Update ${usesOfficialUpdateChannel() ? "pi and installed packages" : "installed packages"}.
 
 Options:
-  --self                  Update pi only
+  --self                  ${usesOfficialUpdateChannel() ? "Update pi only" : "Self-update is disabled for this fork"}
   --extensions            Update installed packages only
   --extension <source>    Update one package only
-  --force                 Reinstall pi even if the current version is latest
+  --force                 ${usesOfficialUpdateChannel() ? "Reinstall pi even if the current version is latest" : "Reserved for self-update; ignored in fork mode"}
 
 Short forms:
-  ${APP_NAME} update                Update pi and all extensions
+  ${APP_NAME} update                Update ${usesOfficialUpdateChannel() ? "pi and all extensions" : "extensions"}
   ${APP_NAME} update <source>       Update one package
-  ${APP_NAME} update pi             Update pi only (self works as alias to pi)
+  ${APP_NAME} update pi             ${usesOfficialUpdateChannel() ? "Update pi only (self works as alias to pi)" : "Self-update is disabled for this fork"}
 `);
 			return;
 
@@ -334,10 +336,15 @@ function printSelfUpdateNote(note: string): void {
 interface SelfUpdatePlan {
 	packageName: string;
 	shouldRun: boolean;
+	disabled?: boolean;
 	note?: string;
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
+	if (!usesOfficialUpdateChannel()) {
+		return { packageName: PACKAGE_NAME, shouldRun: false, disabled: true };
+	}
+
 	if (force) {
 		return { packageName: PACKAGE_NAME, shouldRun: true };
 	}
@@ -352,7 +359,7 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 		return { packageName: PACKAGE_NAME, shouldRun: true };
 	}
 
-	console.log(chalk.green(`${APP_NAME} is already up to date (v${VERSION})`));
+	console.log(chalk.green(`${APP_NAME} is already up to date (v${DISPLAY_VERSION})`));
 	return { packageName: PACKAGE_NAME, shouldRun: false };
 }
 
@@ -539,6 +546,11 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 				}
 				if (updateTargetIncludesSelf(target)) {
 					const selfUpdatePlan = await getSelfUpdatePlan(options.force);
+					if (selfUpdatePlan.disabled) {
+						printSelfUpdateUnavailable(selfUpdateNpmCommand, selfUpdatePlan.packageName);
+						process.exitCode = 1;
+						return true;
+					}
 					if (!selfUpdatePlan.shouldRun) {
 						return true;
 					}

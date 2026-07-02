@@ -46,10 +46,12 @@ import { extractImageAttachmentsFromText } from "../../cli/file-processor.ts";
 import {
 	APP_NAME,
 	APP_TITLE,
+	DISPLAY_VERSION,
 	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
 	getShareViewerUrl,
+	usesOfficialUpdateChannel,
 	VERSION,
 } from "../../config.ts";
 import {
@@ -583,7 +585,7 @@ export class InteractiveMode {
 		this.runtimeHost.setRebindSession(async () => {
 			await this.rebindCurrentSession();
 		});
-		this.version = VERSION;
+		this.version = DISPLAY_VERSION;
 		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
@@ -1183,7 +1185,7 @@ export class InteractiveMode {
 	}
 
 	private reportInstallTelemetry(version: string): void {
-		if (process.env.PI_OFFLINE) {
+		if (process.env.PI_OFFLINE || !usesOfficialUpdateChannel()) {
 			return;
 		}
 

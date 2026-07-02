@@ -13,6 +13,7 @@ describe("package commands", () => {
 	let originalCwd: string;
 	let originalAgentDir: string | undefined;
 	let originalPiPackageDir: string | undefined;
+	let originalUpdateChannel: string | undefined;
 	let originalExitCode: typeof process.exitCode;
 	let originalExecPath: string;
 
@@ -33,6 +34,7 @@ describe("package commands", () => {
 		originalCwd = process.cwd();
 		originalAgentDir = process.env[ENV_AGENT_DIR];
 		originalPiPackageDir = process.env.PI_PACKAGE_DIR;
+		originalUpdateChannel = process.env.PI_UPDATE_CHANNEL;
 		originalExitCode = process.exitCode;
 		originalExecPath = process.execPath;
 		process.exitCode = undefined;
@@ -53,6 +55,11 @@ describe("package commands", () => {
 			delete process.env.PI_PACKAGE_DIR;
 		} else {
 			process.env.PI_PACKAGE_DIR = originalPiPackageDir;
+		}
+		if (originalUpdateChannel === undefined) {
+			delete process.env.PI_UPDATE_CHANNEL;
+		} else {
+			process.env.PI_UPDATE_CHANNEL = originalUpdateChannel;
 		}
 		Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
 		rmSync(tempDir, { recursive: true, force: true });
@@ -135,6 +142,9 @@ describe("package commands", () => {
 	});
 
 	it("uses global npmCommand and current package name for forced self updates without checking the api", async () => {
+		process.env.PI_UPDATE_CHANNEL = "official";
+		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.PI_OFFLINE;
 		const globalPrefix = join(tempDir, "global-prefix");
 		const projectPrefix = join(tempDir, "project-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
@@ -185,6 +195,9 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 	});
 
 	it("uses the current package name when the update check omits packageName", async () => {
+		process.env.PI_UPDATE_CHANNEL = "official";
+		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.PI_OFFLINE;
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
@@ -227,6 +240,9 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 	});
 
 	it("installs the active package name from the update check during self-update", async () => {
+		process.env.PI_UPDATE_CHANNEL = "official";
+		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.PI_OFFLINE;
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
@@ -278,6 +294,9 @@ else {
 	});
 
 	it("fails self-update when renamed npm package installation fails", async () => {
+		process.env.PI_UPDATE_CHANNEL = "official";
+		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.PI_OFFLINE;
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm-fail.cjs");
@@ -354,6 +373,25 @@ if(args.includes("install")) process.exit(23);
 		} finally {
 			errorSpy.mockRestore();
 			logSpy.mockRestore();
+		}
+	});
+
+	it("disables self-update when running on the fork update channel", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(main(["update", "--self"])).resolves.toBeUndefined();
+
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(process.exitCode).toBe(1);
+			expect(fetchMock).not.toHaveBeenCalled();
+			expect(stderr).toContain("Self-update is disabled for this fork");
+		} finally {
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
 		}
 	});
 });

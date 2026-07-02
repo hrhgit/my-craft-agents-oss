@@ -9,6 +9,7 @@ import {
 
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 const originalOffline = process.env.PI_OFFLINE;
+const originalUpdateChannel = process.env.PI_UPDATE_CHANNEL;
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -22,6 +23,11 @@ afterEach(() => {
 	} else {
 		process.env.PI_OFFLINE = originalOffline;
 	}
+	if (originalUpdateChannel === undefined) {
+		delete process.env.PI_UPDATE_CHANNEL;
+	} else {
+		process.env.PI_UPDATE_CHANNEL = originalUpdateChannel;
+	}
 });
 
 describe("version checks", () => {
@@ -34,6 +40,9 @@ describe("version checks", () => {
 	});
 
 	it("returns only newer versions", async () => {
+		process.env.PI_UPDATE_CHANNEL = "official";
+		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -42,6 +51,9 @@ describe("version checks", () => {
 	});
 
 	it("uses the pi.dev version check api with a pi user agent", async () => {
+		process.env.PI_UPDATE_CHANNEL = "official";
+		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -58,6 +70,9 @@ describe("version checks", () => {
 	});
 
 	it("returns the active package metadata from the version check api", async () => {
+		process.env.PI_UPDATE_CHANNEL = "official";
+		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () =>
 			Response.json({
 				packageName: "@new-scope/pi",
@@ -73,13 +88,25 @@ describe("version checks", () => {
 	});
 
 	it("returns update notes from the version check api", async () => {
+		process.env.PI_UPDATE_CHANNEL = "official";
+		delete process.env.PI_SKIP_VERSION_CHECK;
+		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () => Response.json({ note: " **Read this** ", version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({ note: "**Read this**", version: "1.2.4" });
 	});
 
+	it("skips api calls when fork update channel disables official checks", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getLatestPiVersion("1.2.3")).resolves.toBeUndefined();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it("skips api calls when version checks are disabled", async () => {
+		process.env.PI_UPDATE_CHANNEL = "official";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);

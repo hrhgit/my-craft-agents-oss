@@ -4,6 +4,8 @@
 
 export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.ts";
 export type { SourceInfo } from "../source-info.ts";
+// Headless UI context (for RPC / embedded modes without a TUI)
+export { createHeadlessUIContext, type HeadlessUITransport } from "./headless-ui-context.ts";
 export {
 	createExtensionRuntime,
 	discoverAndLoadExtensions,

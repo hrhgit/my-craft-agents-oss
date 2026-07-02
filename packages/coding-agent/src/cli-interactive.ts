@@ -16,7 +16,7 @@ import { type Args, parseArgs } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { selectSession } from "./cli/session-picker.ts";
-import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
+import { APP_NAME, DISPLAY_VERSION, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -418,7 +418,7 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 	time("parseArgs");
 
 	if (parsed.version) {
-		console.log(VERSION);
+		console.log(DISPLAY_VERSION);
 		process.exit(0);
 	}
 

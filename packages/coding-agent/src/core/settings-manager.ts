@@ -75,6 +75,20 @@ export type PackageSource =
 
 export type ExtensionPathSource = string | { path: string; activation?: ExtensionActivation };
 
+/**
+ * Per-extension namespace configuration.
+ *
+ * Stored under `extensionConfig.<name>` in settings.json (the typed, preferred
+ * location). Craft Agent historically writes these values under the `extensions`
+ * field as a namespace object (`extensions.<name>.{model,enabled,concurrency}`);
+ * the getter methods below check both locations for compatibility.
+ */
+export interface ExtensionNamespaceSettings {
+	model?: string;
+	enabled?: boolean;
+	concurrency?: number;
+}
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -96,6 +110,7 @@ export interface Settings {
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	extensions?: ExtensionPathSource[]; // Array of local extension file paths/directories, optionally with activation
+	extensionConfig?: Record<string, ExtensionNamespaceSettings>; // Per-extension namespace config (model/enabled/concurrency), keyed by extension name
 	skills?: string[]; // Array of local skill file paths or directories
 	prompts?: string[]; // Array of local prompt template paths or directories
 	themes?: string[]; // Array of local theme file paths or directories
@@ -893,7 +908,11 @@ export class SettingsManager {
 	}
 
 	getExtensionPaths(): ExtensionPathSource[] {
-		return [...(this.settings.extensions ?? [])];
+		const ext = this.settings.extensions;
+		if (Array.isArray(ext)) {
+			return [...ext];
+		}
+		return [];
 	}
 
 	setExtensionPaths(paths: ExtensionPathSource[]): void {
@@ -907,6 +926,85 @@ export class SettingsManager {
 		projectSettings.extensions = paths;
 		this.markProjectModified("extensions");
 		this.saveProjectSettings(projectSettings);
+	}
+
+	/**
+	 * Read the namespace config entry for a given extension name.
+	 *
+	 * Checks the typed `extensionConfig.<name>` field first, then falls back to
+	 * the `extensions` field when it is used as a namespace object (Craft Agent
+	 * compatibility — craft writes `extensions.<name>.{model,enabled,concurrency}`
+	 * directly).
+	 */
+	getExtensionConfig(name: string): ExtensionNamespaceSettings | undefined {
+		return this.getExtensionNamespaceEntry(name);
+	}
+
+	private getExtensionNamespaceEntry(name: string): ExtensionNamespaceSettings | undefined {
+		// Primary: typed extensionConfig field
+		const fromConfig = this.settings.extensionConfig?.[name];
+		if (fromConfig) {
+			return fromConfig;
+		}
+		// Fallback: craft writes extensions as a namespace object keyed by extension name
+		const extRaw = this.settings.extensions as unknown;
+		if (!Array.isArray(extRaw) && extRaw !== null && typeof extRaw === "object") {
+			const entry = (extRaw as Record<string, ExtensionNamespaceSettings>)[name];
+			if (entry && typeof entry === "object") {
+				return entry;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * Set namespace config for a given extension name (writes to the typed
+	 * `extensionConfig` field). Existing keys for the same extension are merged.
+	 */
+	setExtensionConfig(name: string, config: Partial<ExtensionNamespaceSettings>): void {
+		if (!this.globalSettings.extensionConfig) {
+			this.globalSettings.extensionConfig = {};
+		}
+		const existing = this.globalSettings.extensionConfig[name] ?? {};
+		this.globalSettings.extensionConfig[name] = { ...existing, ...config };
+		this.markModified("extensionConfig", name);
+		this.save();
+	}
+
+	/**
+	 * Check whether an extension is enabled. Returns `fallback` (default `true`)
+	 * when the `enabled` flag is absent, so all extensions default to enabled.
+	 */
+	isExtensionEnabled(name: string, fallback = true): boolean {
+		const entry = this.getExtensionNamespaceEntry(name);
+		if (entry?.enabled !== undefined) {
+			return entry.enabled;
+		}
+		return fallback;
+	}
+
+	/**
+	 * Read the model override for a given extension. Returns `fallback` when
+	 * the `model` field is absent or empty.
+	 */
+	getExtensionModel(name: string, fallback?: string): string | undefined {
+		const entry = this.getExtensionNamespaceEntry(name);
+		if (entry?.model?.trim()) {
+			return entry.model;
+		}
+		return fallback;
+	}
+
+	/**
+	 * Read the concurrency limit for a given extension. Returns `fallback` when
+	 * the `concurrency` field is absent or invalid.
+	 */
+	getExtensionConcurrency(name: string, fallback?: number): number | undefined {
+		const entry = this.getExtensionNamespaceEntry(name);
+		if (entry?.concurrency !== undefined && Number.isFinite(entry.concurrency)) {
+			return entry.concurrency;
+		}
+		return fallback;
 	}
 
 	getSkillPaths(): string[] {
