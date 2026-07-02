@@ -317,7 +317,7 @@ describe('session branch rollback on preflight failure', () => {
     expect(poolStopCalled).toBe(true)
   })
 
-  it('fails branch creation when parent claude sdk session id is missing', async () => {
+  it('fails branch creation when parent provider session id is missing', async () => {
     const source = storedById.get('source-1')
     source.sdkSessionId = undefined
     storedById.set('source-1', source)

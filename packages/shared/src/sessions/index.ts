@@ -32,6 +32,8 @@ export {
   getSessionFilePath,
   getSessionAttachmentsPath,
   getSessionPlansPath,
+  getPiNativeSessionDir,
+  getPiNativeSessionFilePath,
   ensureAttachmentsDir,
   // ID generation
   generateSessionId,
@@ -80,6 +82,17 @@ export {
   sessionPersistenceQueue,
   // Header metadata signature (for self-triggered event suppression)
   getHeaderMetadataSignature,
+  // Shared Pi session storage mode
+  setSharedPiSessionStorageEnabled,
+  getSharedPiSessionStorageEnabled,
+  setSharedPiSessionsDirForTests,
+  ensureSharedPiTreeSessionFile,
+  // Pi CLI sessions (shell mode — shared with Craft in full-passthrough mode)
+  listPiCliSessions,
+  listPiProjectSessions,
+  readPiSessionFile,
+  findPiSessionFile,
+  loadPiSessionMessages,
 } from './storage.ts';
 
 // JSONL helpers (for direct access if needed)
@@ -89,6 +102,16 @@ export {
   writeSessionJsonl,
   createSessionHeader,
 } from './jsonl.ts';
+
+// Tree JSONL shared session projection (Pi/Craft unified history format)
+export {
+  looksLikeTreeSessionJsonl,
+  readTreeSessionJsonl,
+  readTreeSessionAsStoredSession,
+  readTreeSessionMetadata,
+  writeTreeSessionCraftMetadata,
+  projectTreeSessionMessages,
+} from './tree-jsonl.ts';
 
 // Field utilities
 export { pickSessionFields } from './utils.ts';

@@ -1,8 +1,8 @@
 /**
  * PromptBuilder - System Prompt and Context Building
  *
- * Provides utilities for building system prompts and context blocks that both
- * ClaudeAgent and PiAgent can use. Handles workspace capabilities, recovery
+ * Provides utilities for building system prompts and context blocks that
+ * agent backends can use. Handles workspace capabilities, recovery
  * context, and user preferences formatting.
  *
  * Key responsibilities:

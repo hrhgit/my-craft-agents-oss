@@ -3,8 +3,6 @@ export * from './oauth-flow-types.ts';
 export * from './oauth-flow-store.ts';
 export * from './callback-page.ts';
 export * from './callback-server.ts';
-export * from './chatgpt-oauth.ts';
-export * from './chatgpt-oauth-config.ts';
 export * from './claude-oauth.ts';
 export * from './claude-oauth-config.ts';
 export * from './claude-token.ts';

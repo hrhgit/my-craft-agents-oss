@@ -22,9 +22,9 @@ import { compactAutomationHistorySync } from './history-store.ts';
 import { createLogger } from '../utils/debug.ts';
 import { WorkspaceEventBus, type EventPayloadMap } from './event-bus.ts';
 import { PromptHandler, EventLogHandler, WebhookHandler, type AutomationsConfigProvider } from './handlers/index.ts';
-import { type AutomationsConfig, type AutomationEvent, type AutomationMatcher, type PendingPrompt, type WebhookActionResult, type AppEvent, type AgentEvent, type SdkAutomationCallbackMatcher, type SdkAutomationInput } from './types.ts';
+import { type AutomationsConfig, type AutomationEvent, type AutomationMatcher, type PendingPrompt, type WebhookActionResult, type AppEvent, type AgentEvent, type AgentAutomationInput } from './types.ts';
 import { validateAutomationsConfig } from './validation.ts';
-import { matcherMatchesSdk } from './utils.ts';
+import { matcherMatchesAgentEvent } from './utils.ts';
 import { SchedulerService, type SchedulerTickPayload } from '../scheduler/scheduler-service.ts';
 
 const log = createLogger('automation-system');
@@ -56,6 +56,17 @@ export interface AutomationSystemOptions {
   onError?: (event: AutomationEvent, error: Error) => void;
   /** Called when events are lost after retries */
   onEventLost?: (events: string[], error: Error) => void;
+  /**
+   * 是否将 prompt automation 委托给 pi prompt-automation 扩展执行。
+   * 对应配置项 `piExtensions.delegatePromptAutomation`，默认 false（craft 自行处理）。
+   * 启用后 prompt action 走 {@link onDelegatePrompts} 回调而非 {@link onPromptsReady}。
+   */
+  delegatePromptAutomation?: boolean;
+  /**
+   * 委托给 pi prompt-automation 扩展执行时的回调。
+   * 仅当 {@link delegatePromptAutomation} 为 true 时被调用。
+   */
+  onDelegatePrompts?: (prompts: PendingPrompt[]) => void | Promise<void>;
 }
 
 // ============================================================================
@@ -251,6 +262,8 @@ export class AutomationSystem implements AutomationsConfigProvider {
         workspaceRootPath: this.options.workspaceRootPath,
         onPromptsReady: this.options.onPromptsReady,
         onError: this.options.onError,
+        delegatePromptAutomation: this.options.delegatePromptAutomation,
+        onDelegatePrompts: this.options.onDelegatePrompts,
       },
       this
     );
@@ -475,9 +488,8 @@ export class AutomationSystem implements AutomationsConfigProvider {
   // ============================================================================
 
   /**
-   * Execute agent event automations directly (without going through the Claude SDK).
-   * This is the backend-agnostic entry point for non-Claude backends (Codex, Copilot, Pi)
-   * to fire agent events from automations.json.
+   * Execute agent event automations directly from backend runtime events.
+   * This is the backend-agnostic entry point for agent events from automations.json.
    *
    * For each matching automation matcher, builds env vars and evaluates matching.
    * Command execution has been removed — all automation actions now go through prompt-based
@@ -487,7 +499,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
    * @param signal - Optional AbortSignal for cancelling automation execution on abort
    * @returns Number of matched matchers (for diagnostics/testing)
    */
-  async executeAgentEvent(event: AgentEvent, input: SdkAutomationInput, signal?: AbortSignal): Promise<number> {
+  async executeAgentEvent(event: AgentEvent, input: AgentAutomationInput, signal?: AbortSignal): Promise<number> {
     if (!this.config) return 0;
 
     const matchers = this.config.automations[event];
@@ -496,32 +508,17 @@ export class AutomationSystem implements AutomationsConfigProvider {
     let matchedCount = 0;
 
     for (const matcher of matchers) {
-      if (!matcherMatchesSdk(matcher, event, input)) continue;
+      if (!matcherMatchesAgentEvent(matcher, event, input)) continue;
 
       matchedCount++;
 
       // Note: Command execution has been removed. Prompt-based execution for
-      // non-Claude backends is not yet implemented. This method currently only
+      // backend events is not yet implemented. This method currently only
       // validates matching (including condition gating) — actual execution is a no-op.
       log.debug(`[AutomationSystem] Matched ${event} automation (prompt-based execution pending)`);
     }
 
     return matchedCount;
-  }
-
-  // ============================================================================
-  // SDK Automation Integration
-  // ============================================================================
-
-  /**
-   * Build SDK hook callbacks from automations.json definitions.
-   *
-   * Command execution has been removed — all automation actions now go through prompt-based
-   * execution (creating agent sessions via PromptHandler). Agent event automations are not
-   * currently supported via prompts, so this returns empty.
-   */
-  buildSdkHooks(): Partial<Record<AgentEvent, SdkAutomationCallbackMatcher[]>> {
-    return {};
   }
 
   // ============================================================================

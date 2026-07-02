@@ -175,9 +175,7 @@ Every `AgentBackend.queryLlm(request: LLMQueryRequest)` implementation MUST:
 - honor `request.systemPrompt`
 
 SHOULD:
-- honor `request.outputSchema` (at minimum via prompt injection — see
-  `buildCallLlmRequest` in `agent/llm-tool.ts`, which already handles this
-  pre-backend)
+- honor `request.outputSchema` (at minimum via prompt injection)
 
 MAY:
 - honor `request.maxTokens` and `request.temperature` if the underlying SDK

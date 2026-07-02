@@ -2,11 +2,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Read the SDK plugin name from .claude-plugin/plugin.json.
+ * Read the plugin name from .claude-plugin/plugin.json.
  *
- * The Claude SDK identifies plugins by the `name` field in this manifest,
+ * The plugin runtime identifies plugins by the `name` field in this manifest,
  * NOT by path.basename() of the plugin directory. All skill qualification
- * and system prompt references must use this name to match what the SDK expects.
+ * and system prompt references must use this name to match runtime expectations.
  *
  * @returns The plugin name, or null if the manifest doesn't exist or is unreadable
  */

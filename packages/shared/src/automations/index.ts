@@ -4,7 +4,6 @@
  * Slim barrel file that re-exports from decomposed modules:
  * - types.ts: All type definitions
  * - validation.ts: Config validation functions
- * - sdk-bridge.ts: SDK environment variable building
  * - utils.ts: Shared utilities (toSnakeCase, expandEnvVars, etc.)
  * - automation-system.ts: AutomationSystem facade (main entry point)
  * - event-bus.ts: WorkspaceEventBus
@@ -34,9 +33,7 @@ export type {
   PendingPrompt,
   AutomationResult,
   AutomationsValidationResult,
-  SdkAutomationInput,
-  SdkAutomationCallback,
-  SdkAutomationCallbackMatcher,
+  AgentAutomationInput,
   SessionMetadataSnapshot,
   TimeCondition,
   StateCondition,
@@ -55,12 +52,6 @@ export {
   validateAutomationsContent,
   validateAutomations,
 } from './validation.ts';
-
-// ============================================================================
-// SDK Bridge
-// ============================================================================
-
-export { buildEnvFromSdkInput } from './sdk-bridge.ts';
 
 // ============================================================================
 // Utilities

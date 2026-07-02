@@ -126,24 +126,7 @@ export const CHANNEL_MAP = {
   getAuthState: invoke(RPC_CHANNELS.onboarding.GET_AUTH_STATE),
   getSetupNeeds: invoke(RPC_CHANNELS.onboarding.GET_AUTH_STATE, r => r.setupNeeds),
   startWorkspaceMcpOAuth: invoke(RPC_CHANNELS.onboarding.START_MCP_OAUTH),
-  startClaudeOAuth: invoke(RPC_CHANNELS.onboarding.START_CLAUDE_OAUTH),
-  exchangeClaudeCode: invoke(RPC_CHANNELS.onboarding.EXCHANGE_CLAUDE_CODE),
-  hasClaudeOAuthState: invoke(RPC_CHANNELS.onboarding.HAS_CLAUDE_OAUTH_STATE),
-  clearClaudeOAuthState: invoke(RPC_CHANNELS.onboarding.CLEAR_CLAUDE_OAUTH_STATE),
   deferSetup: invoke(RPC_CHANNELS.onboarding.DEFER_SETUP),
-
-  // ChatGPT OAuth
-  startChatGptOAuth: invoke(RPC_CHANNELS.chatgpt.START_OAUTH),
-  cancelChatGptOAuth: invoke(RPC_CHANNELS.chatgpt.CANCEL_OAUTH),
-  getChatGptAuthStatus: invoke(RPC_CHANNELS.chatgpt.GET_AUTH_STATUS),
-  chatGptLogout: invoke(RPC_CHANNELS.chatgpt.LOGOUT),
-
-  // GitHub Copilot OAuth
-  startCopilotOAuth: invoke(RPC_CHANNELS.copilot.START_OAUTH),
-  cancelCopilotOAuth: invoke(RPC_CHANNELS.copilot.CANCEL_OAUTH),
-  getCopilotAuthStatus: invoke(RPC_CHANNELS.copilot.GET_AUTH_STATUS),
-  copilotLogout: invoke(RPC_CHANNELS.copilot.LOGOUT),
-  onCopilotDeviceCode: listener(RPC_CHANNELS.copilot.DEVICE_CODE),
 
   // Server info (REMOTE_ELIGIBLE)
   getServerHomeDir: invoke(RPC_CHANNELS.server.HOME_DIR),
@@ -165,6 +148,16 @@ export const CHANNEL_MAP = {
   getPiApiKeyProviders: invoke(RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS),
   getPiProviderBaseUrl: invoke(RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL),
   getPiProviderModels: invoke(RPC_CHANNELS.pi.GET_PROVIDER_MODELS),
+
+  // Pi global config (~/.pi/agent/) — pure Pi + custom provider mode
+  getPiGlobalProviders: invoke(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDERS),
+  getPiGlobalSettings: invoke(RPC_CHANNELS.pi.GET_GLOBAL_SETTINGS),
+  getPiGlobalProvider: invoke(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER),
+  savePiGlobalProvider: invoke(RPC_CHANNELS.pi.SAVE_GLOBAL_PROVIDER),
+  deletePiGlobalProvider: invoke(RPC_CHANNELS.pi.DELETE_GLOBAL_PROVIDER),
+  setPiGlobalDefault: invoke(RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT),
+  fetchModelsForEndpoint: invoke(RPC_CHANNELS.pi.FETCH_MODELS_FOR_ENDPOINT),
+  onPiGlobalChanged: listener(RPC_CHANNELS.pi.GLOBAL_CHANGED),
 
   // Session-specific model
   getSessionModel: invoke(RPC_CHANNELS.sessions.GET_MODEL),
@@ -247,6 +240,9 @@ export const CHANNEL_MAP = {
   // LLM connections change listener
   onLlmConnectionsChanged: listener(RPC_CHANNELS.llmConnections.CHANGED),
 
+  // Refresh models for a single LLM connection (triggers ModelRefreshService)
+  refreshLlmConnectionModels: invoke(RPC_CHANNELS.llmConnections.REFRESH_MODELS),
+
   // Views
   listViews: invoke(RPC_CHANNELS.views.LIST),
   saveViews: invoke(RPC_CHANNELS.views.SAVE),
@@ -298,6 +294,22 @@ export const CHANNEL_MAP = {
   // Tools settings
   getBrowserToolEnabled: invoke(RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED),
   setBrowserToolEnabled: invoke(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED),
+
+  // Pi Extensions 集成开关（控制全局 pi 扩展加载与 automation 委托）
+  getPiExtensionsEnabled: invoke(RPC_CHANNELS.piExtensions.GET_ENABLED),
+  setPiExtensionsEnabled: invoke(RPC_CHANNELS.piExtensions.SET_ENABLED),
+  getPiExtensionsDelegatePromptAutomation: invoke(RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION),
+  setPiExtensionsDelegatePromptAutomation: invoke(RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION),
+  getPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.GET_SETTINGS),
+  setPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.SET_SETTINGS),
+  updatePiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS),
+  getPiExtensionStates: invoke(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES),
+  setPiExtensionEnabled: invoke(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED),
+
+  // Pi 扩展事件桥接：监听 extension_* / remoteui_request 事件，回传 remoteui 响应
+  onExtensionEvent: listener(RPC_CHANNELS.extensions.EVENT),
+  sendRemoteUIResponse: invoke(RPC_CHANNELS.extensions.REMOTEUI_RESPONSE),
+  invokeExtensionCommand: invoke(RPC_CHANNELS.extensions.COMMAND_INVOKE),
 
   // Prompt caching & context
   getExtendedPromptCache: invoke(RPC_CHANNELS.caching.GET_EXTENDED_PROMPT_CACHE),

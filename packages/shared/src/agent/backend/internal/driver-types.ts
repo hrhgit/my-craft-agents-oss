@@ -29,6 +29,9 @@ export interface BackendRuntimePayload extends Record<string, unknown> {
   customEndpoint?: { api: string; supportsImages?: boolean };
   /** Models registered for a custom endpoint. Strings default to 128K context; objects allow overrides. */
   customModels?: Array<string | { id: string; contextWindow?: number; supportsImages?: boolean }>;
+  /** API key from ~/.pi/agent/models.json for pi_compat custom-endpoint providers.
+   *  Passed to the subprocess via init.apiKey so registerProvider() validation passes. */
+  customEndpointApiKey?: string;
 }
 
 export interface BackendResolutionContext {

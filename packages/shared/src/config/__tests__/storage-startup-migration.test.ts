@@ -93,6 +93,11 @@ function readPiApiKeyConnection(configPath: string): any {
   return migrated.llmConnections.find((c: any) => c.slug === 'pi-api-key')
 }
 
+function readPiAnthropicConnection(configPath: string): any {
+  const migrated = JSON.parse(readFileSync(configPath, 'utf-8'))
+  return migrated.llmConnections.find((c: any) => c.slug === 'pi-anthropic')
+}
+
 function getModelIds(connection: any): string[] {
   return (connection.models ?? []).map((m: any) => typeof m === 'string' ? m : m.id)
 }
@@ -306,16 +311,18 @@ describe('legacy Opus migration to default Opus (integration)', () => {
 
     runMigration(configDir)
 
-    const connection = findConnection(configPath, 'anthropic')
+    const connection = readPiAnthropicConnection(configPath)
     const ids = modelIdsOf(connection)
-    expect(connection.defaultModel).toBe('claude-opus-4-8')
-    expect(ids).toContain('claude-opus-4-8')
-    expect(ids).toContain('claude-opus-4-7')
+    expect(connection.providerType).toBe('pi')
+    expect(connection.piAuthProvider).toBe('anthropic')
+    expect(connection.defaultModel).toBe(PI_ANTHROPIC_OPUS_DEFAULT)
+    expect(ids).toContain(PI_ANTHROPIC_OPUS_DEFAULT)
+    expect(ids).toContain('pi/claude-opus-4-7')
     expect(ids).not.toContain('claude-opus-4-6')
-    expect(ids.filter(id => id === 'claude-opus-4-8')).toHaveLength(1)
-    const opus = connection.models.find((m: any) => (typeof m === 'string' ? m : m.id) === 'claude-opus-4-8')
+    expect(ids).not.toContain('pi/claude-opus-4-6')
+    const opus = connection.models.find((m: any) => (typeof m === 'string' ? m : m.id) === PI_ANTHROPIC_OPUS_DEFAULT)
     expect(typeof opus).toBe('object')
-    expect(opus.name).toBe('Opus 4.8')
+    expect(opus.name).toBe(PI_ANTHROPIC_OPUS_DEFAULT_NAME)
   })
 
   it('migrates direct Anthropic Opus 4.5 defaults straight to Opus 4.8', () => {
@@ -335,14 +342,17 @@ describe('legacy Opus migration to default Opus (integration)', () => {
 
     runMigration(configDir)
 
-    const connection = findConnection(configPath, 'anthropic')
+    const connection = readPiAnthropicConnection(configPath)
     const ids = modelIdsOf(connection)
-    expect(connection.defaultModel).toBe('claude-opus-4-8')
-    expect(ids).toContain('claude-opus-4-8')
+    expect(connection.providerType).toBe('pi')
+    expect(connection.piAuthProvider).toBe('anthropic')
+    expect(connection.defaultModel).toBe(PI_ANTHROPIC_OPUS_DEFAULT)
+    expect(ids).toContain(PI_ANTHROPIC_OPUS_DEFAULT)
     expect(ids).not.toContain('claude-opus-4-5-20251101')
+    expect(ids).not.toContain('pi/claude-opus-4-5-20251101')
   })
 
-  it('migrates previous direct Anthropic Opus 4.7 defaults to Opus 4.8 while keeping 4.7 selectable', () => {
+  it('preserves previous direct Anthropic Opus 4.7 selection through Pi migration while keeping 4.7 selectable', () => {
     const { configDir, workspaceRoot, configPath } = setupWorkspaceConfigDir()
 
     writeRootConfig(configPath, workspaceRoot, [
@@ -370,9 +380,15 @@ describe('legacy Opus migration to default Opus (integration)', () => {
 
     runMigration(configDir)
 
-    const anthropic = findConnection(configPath, 'anthropic')
-    expect(anthropic.defaultModel).toBe('claude-opus-4-8')
-    expect(modelIdsOf(anthropic)).toEqual(['claude-opus-4-8', 'claude-opus-4-7', 'claude-sonnet-4-6'])
+    const anthropic = readPiAnthropicConnection(configPath)
+    const anthropicIds = modelIdsOf(anthropic)
+    expect(anthropic.providerType).toBe('pi')
+    expect(anthropic.piAuthProvider).toBe('anthropic')
+    expect(anthropic.modelSelectionMode).toBe('automaticallySyncedFromProvider')
+    expect(anthropic.defaultModel).toBe('pi/claude-opus-4-7')
+    expect(anthropicIds).toContain(PI_ANTHROPIC_OPUS_DEFAULT)
+    expect(anthropicIds).toContain('pi/claude-opus-4-7')
+    expect(anthropicIds).toContain('pi/claude-sonnet-4-6')
 
     const pi = readPiApiKeyConnection(configPath)
     expect(pi.defaultModel).toBe('pi/claude-opus-4-7')

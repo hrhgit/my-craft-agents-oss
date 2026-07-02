@@ -43,6 +43,20 @@ export interface PromptHandlerOptions {
   onPromptsReady?: (prompts: PendingPrompt[]) => void;
   /** Called when a prompt execution fails */
   onError?: (event: AutomationEvent, error: Error) => void;
+  /**
+   * 是否将 prompt automation 委托给 pi prompt-automation 扩展执行。
+   * 对应配置项 `piExtensions.delegatePromptAutomation`，默认 false（由 craft 自行处理）。
+   * 启用后优先调用 {@link onDelegatePrompts} 而非 {@link onPromptsReady}。
+   */
+  delegatePromptAutomation?: boolean;
+  /**
+   * 委托给 pi prompt-automation 扩展执行时的回调。
+   *
+   * 仅当 {@link delegatePromptAutomation} 为 true 时被调用。该回调负责向 pi 子进程
+   * 发送 `extension_command_invoke` 消息触发 prompt-automation 的命令（如
+   * `/schedule-prompt`）。实际的 RPC 桥接由 Task 2 的 pi-extension-bridge 实现。
+   */
+  onDelegatePrompts?: (prompts: PendingPrompt[]) => void | Promise<void>;
 }
 
 /** Options for creating an EventLogHandler */

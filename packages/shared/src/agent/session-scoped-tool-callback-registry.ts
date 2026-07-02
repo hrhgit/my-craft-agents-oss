@@ -10,7 +10,6 @@
  * browser pane functions) as they become available.
  */
 
-import type { LLMQueryRequest, LLMQueryResult } from './llm-tool.ts';
 import type { SpawnSessionFn } from './spawn-session-tool.ts';
 import type { BrowserPaneFns } from './browser-tools.ts';
 import type { AuthRequest } from '@craft-agent/session-tools-core';
@@ -31,12 +30,6 @@ export interface SessionScopedToolCallbacks {
    * The auth UI should be shown and execution paused.
    */
   onAuthRequest?: (request: AuthRequest) => void;
-
-  /**
-   * Agent-native LLM query callback for call_llm tool (OAuth path).
-   * Each agent backend sets this to its own queryLlm implementation.
-   */
-  queryFn?: (request: LLMQueryRequest) => Promise<LLMQueryResult>;
 
   /**
    * Callback for spawn_session tool — creates an independent session and sends initial prompt.

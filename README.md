@@ -18,7 +18,7 @@ To understand what Craft Agents does and how it works watch this video.
 ## Why Craft Agents was built
 Craft Agents is a tool we built so that we (at craft.do) can work effectively with agents. It enables intuitive multitasking, no-fluff connection to any API or Service, sharing sessions, and a more document (vs code) centric workflow - in a beautiful and fluid UI.
 
-It uses the Claude Agent SDK and the Pi SDK side by side—building on what we found great and improving areas where we've desired improvements.
+It uses the Pi SDK agent backend with provider-compatible connections for Claude, Gemini, Codex/OpenAI, Copilot, and custom endpoints.
 
 It's built with Agent Native software principles in mind, and is highly customisable out of the box. One of the first of its kind.
 
@@ -384,6 +384,8 @@ bun run typecheck:all
 # Logs are automatically enabled in development
 ```
 
+On Windows, you can also double-click [`start-quick-test.cmd`](./start-quick-test.cmd) from the repo root to launch the Electron hot-reload development build. To switch modes from a terminal, run `start-quick-test.cmd start`, `start-quick-test.cmd server-dev`, or `start-quick-test.cmd webui-dev`.
+
 ### Environment Variables
 
 OAuth integrations (Slack, Microsoft) require credentials baked into the build. Create a `.env` file:
@@ -464,14 +466,14 @@ Craft Agents supports multiple ways to connect to LLM providers:
 
 | Provider | Auth | Notes |
 |----------|------|-------|
-| **Anthropic** | API key or Claude Max/Pro OAuth | Direct Claude connection via the Claude Agent SDK |
+| **Anthropic** | API key or Claude Max/Pro OAuth | Claude connection through the Pi provider runtime |
 | **Google AI Studio** | API key | Gemini models with native Google Search grounding built in |
 | **ChatGPT Plus / Pro** | Codex OAuth | Sign in with your ChatGPT subscription — uses OpenAI's Codex models |
 | **GitHub Copilot** | OAuth (device code) | One-click authentication with your Copilot subscription |
 
 ### Third-Party & Self-Hosted Providers
 
-Additional providers are supported through the **Claude / Anthropic API Key** connection by choosing a custom endpoint:
+Additional providers are supported through compatible provider connections by choosing a custom endpoint:
 
 | Provider | Endpoint | Notes |
 |----------|----------|-------|
@@ -482,10 +484,9 @@ Additional providers are supported through the **Claude / Anthropic API Key** co
 
 ### Architecture
 
-Craft Agents uses two agent backends:
+Craft Agents uses a single agent backend:
 
-- **Claude** — powered by the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk), which natively supports custom base URLs and provider routing. Anthropic API key, Claude Max/Pro OAuth, and all third-party endpoints use this backend.
-- **Pi** — powered by the Pi SDK, which handles Google AI Studio, ChatGPT Plus (Codex OAuth), GitHub Copilot OAuth, and OpenAI API key connections. Pi connections route through their own provider infrastructure.
+- **Pi** — powered by the Pi SDK, which handles Anthropic-compatible Claude connections, Google AI Studio, ChatGPT Plus (Codex OAuth), GitHub Copilot OAuth, OpenAI API key connections, and custom provider endpoints. Legacy `anthropic` provider identifiers are kept as compatibility aliases and route through this backend.
 
 ## Configuration
 
@@ -575,8 +576,7 @@ craftagents://action/new-chat                  # Create new session
 | Layer | Technology |
 |-------|------------|
 | Runtime | [Bun](https://bun.sh/) |
-| AI | [@anthropic-ai/claude-agent-sdk](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) |
-| AI (Pi) | Pi SDK agent server |
+| AI | Pi SDK agent server and provider runtime |
 | Desktop | [Electron](https://www.electronjs.org/) + React |
 | UI | [shadcn/ui](https://ui.shadcn.com/) + Tailwind CSS v4 |
 | Build | esbuild (main) + Vite (renderer) |
@@ -611,10 +611,6 @@ Logs are written to:
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-### Third-Party Licenses
-
-This project uses the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk), which is subject to [Anthropic's Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms).
 
 ### Trademark
 

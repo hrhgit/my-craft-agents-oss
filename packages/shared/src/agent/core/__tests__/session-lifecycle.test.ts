@@ -2,7 +2,7 @@
  * Tests for SessionLifecycleManager
  *
  * Tests the session state tracking and abort handling
- * used by both ClaudeAgent and PiAgent.
+ * used by agent backends.
  */
 import { describe, it, expect, beforeEach } from 'bun:test';
 import {

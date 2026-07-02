@@ -534,6 +534,16 @@ export interface UseInlineSlashCommandOptions {
   activeCommands?: SlashCommandId[]
   recentFolders?: string[]
   homeDir?: string
+  /**
+   * 额外注入的 section（如 pi 扩展命令）。
+   * 会追加到内置 section（modes / commands / folders）之后；
+   * 空数组的 section 会被自动过滤掉。
+   *
+   * 注：items 中的 SlashCommand.id 受 SlashCommandId 联合类型约束，
+   * 调用方注入扩展命令时需用类型断言（如 `id: 'ext:foo' as SlashCommandId`），
+   * 并在 onSelectCommand 中识别自定义前缀。
+   */
+  extraSections?: SlashSection[]
 }
 
 export interface UseInlineSlashCommandReturn {
@@ -555,6 +565,7 @@ export function useInlineSlashCommand({
   activeCommands = [],
   recentFolders = [],
   homeDir,
+  extraSections,
 }: UseInlineSlashCommandOptions): UseInlineSlashCommandReturn {
   const [isOpen, setIsOpen] = React.useState(false)
   const [filter, setFilter] = React.useState('')
@@ -603,8 +614,18 @@ export function useInlineSlashCommand({
       })
     }
 
+    // 追加调用方注入的额外 section（如 pi 扩展命令）；
+    // 过滤掉无 items 的 section 以避免出现空标题。
+    if (extraSections && extraSections.length > 0) {
+      for (const section of extraSections) {
+        if (section.items && section.items.length > 0) {
+          result.push(section)
+        }
+      }
+    }
+
     return result
-  }, [recentFolders, homeDir])
+  }, [recentFolders, homeDir, extraSections])
 
   const handleInputChange = React.useCallback((value: string, cursorPosition: number) => {
     // Store current state for handleSelect

@@ -80,8 +80,8 @@ describe('main-process i18n bootstrap', () => {
       const { persisted, resolved } = JSON.parse(r.stdout)
       expect(persisted).toBeNull()
       // Without LanguageDetector and without a hydration call, main-process i18n
-      // sits at fallbackLng — which is what made title generation default to English.
-      expect(resolved).toBe('en')
+      // sits at fallbackLng.
+      expect(resolved).toBe('zh-Hans')
     } finally {
       rmSync(configDir, { recursive: true, force: true })
     }

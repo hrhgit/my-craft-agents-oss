@@ -34,9 +34,9 @@ export interface McpValidationResult {
  * Pattern for valid property names in tool input schemas.
  * Must match: letters, numbers, underscores, dots, hyphens (1-64 chars)
  *
- * This pattern is enforced server-side by the Anthropic API.
+ * This pattern is enforced server-side by Anthropic-compatible tool validation.
  * It is NOT defined in the MCP specification (which has no naming constraints).
- * It is NOT exported by @anthropic-ai/sdk or @anthropic-ai/claude-agent-sdk.
+ * Keep it local so validation stays independent of provider SDK packages.
  *
  * API error when violated:
  * "tools.0.custom.input_schema.properties: Property keys should match pattern '^[a-zA-Z0-9_.-]{1,64}$'"

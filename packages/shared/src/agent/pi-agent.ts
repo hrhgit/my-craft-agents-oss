@@ -23,6 +23,7 @@ import type {
   BackendConfig,
   BackendRuntimeUpdate,
   ChatOptions,
+  ExtensionBridgeEvent,
   SdkMcpServerConfig,
 } from './backend/types.ts';
 import { AbortReason } from './backend/types.ts';
@@ -50,8 +51,7 @@ import { getCoAuthorPreference } from '../config/preferences.ts';
 // Credential manager for token storage
 import { getCredentialManager } from '../credentials/manager.ts';
 
-// ChatGPT OAuth token refresh (used when Pi routes ChatGPT auth)
-import { refreshChatGptTokens } from '../auth/chatgpt-oauth.ts';
+import { refreshClaudeToken } from '../auth/claude-token.ts';
 
 // Session-scoped tool callbacks (for SubmitPlan, source auth, etc.)
 import {
@@ -72,10 +72,10 @@ import {
   SESSION_TOOL_REGISTRY,
   type ToolResult as SessionToolResult,
 } from '@craft-agent/session-tools-core';
-import { createClaudeContext, type SessionToolContext } from './claude-context.ts';
+import { createSessionToolContext, type SessionToolContext } from './session-tool-context.ts';
 import { getPermissionModeDiagnostics } from './mode-manager.ts';
 
-// call_llm pre-execution pipeline
+// call_llm pre-execution pipeline (已移除——双方均不保留)
 
 // McpClientPool for source tool proxying (centralized pool from main process)
 import type { McpClientPool } from '../mcp/mcp-pool.ts';
@@ -85,7 +85,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 // Session storage (plans folder path)
-import { getSessionDataPath, getSessionPath, getSessionPlansPath } from '../sessions/storage.ts';
+import { getSessionDataPath, getSessionFilePath, getSessionPath, getSessionPlansPath, getPiNativeSessionDir } from '../sessions/storage.ts';
 
 // Error typing
 import { parseError, type AgentError } from './errors.ts';
@@ -93,7 +93,7 @@ import { parseError, type AgentError } from './errors.ts';
 // Centralized PreToolUse pipeline
 import { runPreToolUseChecks, type PreToolUseCheckResult } from './core/pre-tool-use.ts';
 import { getRtkPath } from './core/rtk-detector.ts';
-import { getRtkEnabled, getBrowserToolEnabled } from '../config/storage.ts';
+import { getRtkEnabled, getBrowserToolEnabled, getPiShellFullPassthrough } from '../config/storage.ts';
 import type { RtkContext } from './core/rtk-rewrite.ts';
 
 // Workspace slug extraction for skill qualification
@@ -110,7 +110,6 @@ import { saveBinaryResponse } from '../utils/binary-detection.ts';
 
 /** Backend-executed session tools currently supported by PiAgent. */
 export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
-  'call_llm',
   'spawn_session',
   'browser_tool',
 ]);
@@ -169,9 +168,6 @@ export class PiAgent extends BaseAgent {
 
   // Pi session ID (managed by subprocess, reported back)
   private piSessionId: string | null = null;
-
-  // Callback server port (managed by subprocess)
-  private callbackPort: number = 0;
 
   // State
   private _isProcessing: boolean = false;
@@ -326,9 +322,6 @@ export class PiAgent extends BaseAgent {
     if (modelDef?.contextWindow) {
       this.adapter.setContextWindow(modelDef.contextWindow);
     }
-    if (config.miniModel) {
-      this.adapter.setMiniModel(config.miniModel);
-    }
 
     // Set session dir on adapter for concurrent-safe toolMetadataStore lookups
     if (config.session?.id && config.workspace.rootPath) {
@@ -410,6 +403,27 @@ export class PiAgent extends BaseAgent {
     const sessionDir = this.config.session
       ? join(this.config.workspace.rootPath, 'sessions', sessionId)
       : undefined;
+    const sessionPath = this.config.session
+      ? getSessionPath(this.config.workspace.rootPath, sessionId)
+      : '';
+    const piSessionFile = this.config.session
+      ? getSessionFilePath(
+          this.config.workspace.rootPath,
+          sessionId,
+          this.config.session.workingDirectory,
+          this.config.session.createdAt,
+        )
+      : undefined;
+    const piSessionDir = this.config.session
+      ? getPiNativeSessionDir(this.config.workspace.rootPath, this.config.session.workingDirectory)
+      : undefined;
+    const plansFolderPath = getSessionPlansPath(this.config.workspace.rootPath, sessionId);
+    const workingDirectory = this.config.session?.workingDirectory || cwd;
+
+    // agentDir 始终指向 ~/.pi/agent（加载全局 pi 扩展）。
+    // 不再通过 prepareCraftPiExtensionAgentDir 复制+patch：pi 扩展已原生支持
+    // 从 settings.json 读取模型配置，repo-memory 已原生支持 stop 命令。
+    // 保留 init.agentDir 字段用于测试覆盖（子进程默认用 ~/.pi/agent）。
 
     // Build spawn args — optionally preload the network interceptor
     // for tool metadata injection/capture across all API formats.
@@ -435,14 +449,23 @@ export class PiAgent extends BaseAgent {
     }
 
     // Retrieve auth credentials for the subprocess.
-    // Custom endpoint mode must NOT fall back to global API keys — keyless local endpoints
-    // are valid, and non-local endpoints should fail explicitly instead of using unrelated creds.
+    // Custom endpoint mode must NOT fall back to the GLOBAL Anthropic API key — keyless
+    // local endpoints are valid, and non-local endpoints should use their own configured
+    // key. For pi_compat connections, the apiKey comes from ~/.pi/agent/models.json
+    // (read by piDriver.buildRuntime and stored in runtime.customEndpointApiKey).
     const piAuth = await this.getPiAuth();
     const isCustomEndpointMode = !!runtime.customEndpoint;
-    const legacyApiKey = (!piAuth && !isCustomEndpointMode) ? await this.getApiKey() : undefined;
-    if (isCustomEndpointMode && !piAuth) {
-      this.debug('Custom endpoint mode: no provider credential configured, sending empty API key');
+    let legacyApiKey: string | undefined;
+    if (!piAuth) {
+      if (isCustomEndpointMode && runtime.customEndpointApiKey) {
+        // pi_compat custom-endpoint: use apiKey from ~/.pi/agent/models.json
+        legacyApiKey = runtime.customEndpointApiKey;
+      } else if (!isCustomEndpointMode) {
+        legacyApiKey = (await this.getApiKey()) ?? undefined;
+      }
     }
+    // Custom endpoint 模式下若无 piAuth 且无 customEndpointApiKey，传空 legacyApiKey：
+    // 子进程的 resolveCustomEndpointApiKey() 会对 localhost 端点使用 'not-needed' 占位符。
 
     // Derive AWS env vars from the piAuth credential (single fetch, no race).
     const awsEnv = this.buildAwsEnv(piAuth, runtime);
@@ -499,11 +522,8 @@ export class PiAgent extends BaseAgent {
       this.eventQueue.complete();
     });
 
-    const sessionPath = this.config.session
-      ? getSessionPath(this.config.workspace.rootPath, sessionId)
-      : '';
-    const plansFolderPath = getSessionPlansPath(this.config.workspace.rootPath, sessionId);
-    const workingDirectory = this.config.session?.workingDirectory || cwd;
+    // 读取 pi 壳模式开关：默认 true（完全 Pi 透传）。为 false 时回退到 Craft 独立身份。
+    const piShellFullPassthrough = getPiShellFullPassthrough();
 
     // Send init command (flat structure matching subprocess InboundMessage type)
     this.send({
@@ -515,6 +535,8 @@ export class PiAgent extends BaseAgent {
       workspaceRootPath: this.config.workspace.rootPath,
       sessionId,
       sessionPath,
+      piSessionFile,
+      piSessionDir,
       workingDirectory,
       plansFolderPath,
       miniModel: this.config.miniModel,
@@ -528,7 +550,12 @@ export class PiAgent extends BaseAgent {
       // Branch params for Pi SDK session fork
       branchFromSdkSessionId: this.config.session?.branchFromSdkSessionId,
       branchFromSessionPath: this.config.session?.branchFromSessionPath,
+      branchFromPiSessionFile: this.config.session?.branchFromPiSessionFile,
       branchFromSdkTurnId: this.config.session?.branchFromSdkTurnId,
+      // Pi 壳模式开关：默认 true（完全 Pi 透传）
+      piShellFullPassthrough,
+      // agentDir 不再由主进程覆盖：子进程默认用 ~/.pi/agent（加载全局扩展）。
+      // init.agentDir 字段仍保留在协议中，用于测试场景显式指定临时目录。
     });
 
     // Wait for subprocess to report ready
@@ -545,8 +572,9 @@ export class PiAgent extends BaseAgent {
     }
 
     // Register session-scoped tools as proxy tools in the subprocess.
-    // These tools (SubmitPlan, config_validate, source auth, call_llm, etc.)
+    // These tools (SubmitPlan, config_validate, source auth, spawn_session, etc.)
     // are executed in the main process when the LLM calls them.
+    // call_llm 已移除（双方均不保留，pi 不再提供 call_llm 扩展）。
     this.assertBackendSessionToolParity();
     let sessionToolDefs = getSessionToolProxyDefs();
 
@@ -556,14 +584,6 @@ export class PiAgent extends BaseAgent {
     // inconsistently depending on backend.
     if (!getBrowserToolEnabled()) {
       sessionToolDefs = sessionToolDefs.filter(d => d.name !== 'mcp__session__browser_tool');
-    }
-
-    // Patch call_llm description with provider-specific model hint
-    if (this.config.miniModel) {
-      const callLlmDef = sessionToolDefs.find(d => d.name === 'mcp__session__call_llm');
-      if (callLlmDef) {
-        callLlmDef.description += `\n\nDefault fast model for this session: ${this.config.miniModel}. Omit the model parameter to use it automatically.`;
-      }
     }
 
     this.send({
@@ -720,7 +740,7 @@ export class PiAgent extends BaseAgent {
 
   /**
    * Refresh OAuth tokens and push updated credentials to the running subprocess.
-   * Handles both Copilot (Pi SDK) and ChatGPT Plus token refresh.
+   * Handles Anthropic-via-Pi, Copilot, and ChatGPT OAuth connections.
    */
   private async refreshAndPushTokens(): Promise<void> {
     if (this.config.authType !== 'oauth') return;
@@ -757,7 +777,20 @@ export class PiAgent extends BaseAgent {
       }
 
       try {
-        if (piAuthProvider === 'github-copilot') {
+        if (piAuthProvider === 'anthropic') {
+          const newTokens = await refreshClaudeToken(stored.refreshToken);
+          await credentialManager.setLlmOAuth(slug, {
+            accessToken: newTokens.accessToken,
+            refreshToken: newTokens.refreshToken,
+            expiresAt: newTokens.expiresAt,
+          });
+          await credentialManager.setClaudeOAuthCredentials({
+            accessToken: newTokens.accessToken,
+            refreshToken: newTokens.refreshToken,
+            expiresAt: newTokens.expiresAt,
+            source: 'native',
+          });
+        } else if (piAuthProvider === 'github-copilot') {
           // Copilot: refresh the short-lived Copilot token using the GitHub access token
           const { refreshGitHubCopilotToken } = await import('@earendil-works/pi-ai/oauth');
           const newCreds = await refreshGitHubCopilotToken(stored.refreshToken);
@@ -767,14 +800,9 @@ export class PiAgent extends BaseAgent {
             expiresAt: newCreds.expires,
           });
         } else {
-          // ChatGPT Plus: use existing refresh utility
-          const newTokens = await refreshChatGptTokens(stored.refreshToken);
-          await credentialManager.setLlmOAuth(slug, {
-            accessToken: newTokens.accessToken,
-            idToken: newTokens.idToken,
-            refreshToken: newTokens.refreshToken,
-            expiresAt: newTokens.expiresAt,
-          });
+          this.debug(`No token refresh logic for piAuthProvider=${piAuthProvider} — re-auth required`);
+          this.onBackendAuthRequired?.('Token refresh not supported for this provider — please sign in again');
+          return;
         }
         this.debug('Token refresh successful');
 
@@ -874,8 +902,7 @@ export class PiAgent extends BaseAgent {
 
     switch (type) {
       case 'ready':
-        // Subprocess initialized, callback server listening
-        this.callbackPort = (msg.callbackPort as number) || 0;
+        // Subprocess initialized
         if (msg.sessionId) {
           this.piSessionId = msg.sessionId as string;
           this.config.onSdkSessionIdUpdate?.(this.piSessionId!);
@@ -961,6 +988,16 @@ export class PiAgent extends BaseAgent {
           this.config.onSdkSessionIdUpdate?.(this.piSessionId!);
         }
         break;
+
+      // 扩展事件桥接：转发子进程的扩展事件到主进程回调
+      case 'extension_notify':
+      case 'extension_widget':
+      case 'extension_command_registered':
+      case 'remoteui_request': {
+        const event = msg as unknown as ExtensionBridgeEvent;
+        this.config.onExtensionEvent?.(event);
+        break;
+      }
 
       case 'error': {
         const errorCode = typeof msg.code === 'string' ? msg.code : undefined;
@@ -1298,7 +1335,6 @@ export class PiAgent extends BaseAgent {
         return;
       }
 
-      case 'call_llm_intercept':
       case 'spawn_session_intercept':
         // These tools are proxy tools handled via tool_execute_request — just allow
         this.send({ type: 'pre_tool_use_response', requestId, action: 'allow' });
@@ -1405,7 +1441,6 @@ export class PiAgent extends BaseAgent {
    * Route a proxy tool call to the appropriate handler based on tool name.
    *
    * - Session tools (SubmitPlan, config_validate, etc.) -> session-tools-core handlers
-   * - call_llm -> preExecuteCallLlm (BaseAgent)
    * - mcp__* tools -> MCP server proxy (TODO)
    * - api_* tools -> API source proxy (TODO)
    *
@@ -1448,7 +1483,7 @@ export class PiAgent extends BaseAgent {
     const workspacePath = this.config.workspace.rootPath;
     const workspaceId = this.config.workspace.id;
 
-    this._sessionToolContext = createClaudeContext({
+    this._sessionToolContext = createSessionToolContext({
       sessionId,
       workspacePath,
       workspaceId,
@@ -1476,17 +1511,6 @@ export class PiAgent extends BaseAgent {
     args: Record<string, unknown>,
   ): Promise<{ content: string; isError: boolean }> {
     try {
-      // call_llm uses the shared pre-execution pipeline from BaseAgent
-      if (toolName === 'call_llm') {
-        try {
-          const result = await this.preExecuteCallLlm(args);
-          return { content: result.text || '(Model returned empty response)', isError: false };
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          return { content: `call_llm failed: ${msg}`, isError: true };
-        }
-      }
-
       // spawn_session uses the shared pre-execution pipeline from BaseAgent
       if (toolName === 'spawn_session') {
         try {
@@ -1888,6 +1912,26 @@ export class PiAgent extends BaseAgent {
     });
   }
 
+  // ============================================================
+  // 扩展桥接：向子进程发送扩展相关指令
+  // ============================================================
+
+  /**
+   * 回复 remoteui:request。payload=null 表示取消。
+   * 由渲染进程通过 IPC → SessionManager → 此方法转发到子进程。
+   */
+  sendRemoteUIResponse(requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): void {
+    this.send({ type: 'remoteui_response', requestId, payload, reason });
+  }
+
+  /**
+   * 调用扩展注册的命令。
+   * 限制：当前子进程暂未实现完整命令调用，此方法仅发送指令。
+   */
+  sendExtensionCommandInvoke(commandId: string, args?: string): void {
+    this.send({ type: 'extension_command_invoke', commandId, args });
+  }
+
   /**
    * Ensure branched Pi sessions are backend-ready before first user message.
    * Called by SessionManager during branch creation to avoid creating
@@ -1944,7 +1988,6 @@ export class PiAgent extends BaseAgent {
       mergeSessionScopedToolCallbacks(sessionId, {
         onPlanSubmitted: (planPath) => this.onPlanSubmitted?.(planPath),
         onAuthRequest: (request) => this.onAuthRequest?.(request),
-        queryFn: (request) => this.queryLlm(request),
       });
     }
 
@@ -1992,15 +2035,19 @@ export class PiAgent extends BaseAgent {
       }
 
       // Build system prompt
-      const systemPrompt = getSystemPrompt(
-        undefined, // pinnedPreferencesPrompt
-        this.config.debugMode,
-        this.config.workspace.rootPath,
-        this.config.session?.workingDirectory,
-        this.config.systemPromptPreset,
-        'Craft Agents Backend', // backendName
-        getCoAuthorPreference() // respect user's includeCoAuthoredBy preference (#576)
-      );
+      // 壳模式（fullPassthrough）下跳过 Craft system prompt，使用 Pi 原生 system prompt。
+      const piShellPassthrough = getPiShellFullPassthrough();
+      const systemPrompt = piShellPassthrough
+        ? ''
+        : getSystemPrompt(
+            undefined, // pinnedPreferencesPrompt
+            this.config.debugMode,
+            this.config.workspace.rootPath,
+            this.config.session?.workingDirectory,
+            this.config.systemPromptPreset,
+            'Craft Agents Backend', // backendName
+            getCoAuthorPreference() // respect user's includeCoAuthoredBy preference (#576)
+          );
 
       // Build context from sources
       const sourceContext = this.sourceManager.formatSourceState();
@@ -2052,10 +2099,12 @@ export class PiAgent extends BaseAgent {
       // re-stamps the prefix every turn and drops cacheRead to 0. Volatile blocks
       // ride the user-message tail instead — exactly as the Claude path already
       // does (buildTextPrompt / buildSDKUserMessage append context to the tail).
-      const fullSystemPrompt = [
-        systemPrompt,
-        ...stableParts,
-      ].filter(Boolean).join('\n\n');
+      const fullSystemPrompt = piShellPassthrough
+        ? ''
+        : [
+            systemPrompt,
+            ...stableParts,
+          ].filter(Boolean).join('\n\n');
 
       // User message: volatile context + attachments + the actual message
       // (skill read directive is already prepended to message by BaseAgent.chat())
@@ -2420,7 +2469,6 @@ export class PiAgent extends BaseAgent {
     }
     this.subprocessReady = null;
     this.subprocessReadyResolve = null;
-    this.callbackPort = 0;
     this.preToolMetadataByCallId.clear();
     this.adapter.resetOverflowState();
 
@@ -2453,7 +2501,6 @@ export class PiAgent extends BaseAgent {
 
     this.subprocessReady = null;
     this.subprocessReadyResolve = null;
-    this.callbackPort = 0;
     this.preToolMetadataByCallId.clear();
 
     // Clear any in-flight overflow-recovery state so a stale fallback timer
@@ -2498,11 +2545,11 @@ export class PiAgent extends BaseAgent {
 
   /**
    * Execute an LLM query via the subprocess.
-   * Used by session-scoped tool callbacks (call_llm).
+   * Used by runMiniCompletion (title generation, conversation summary, etc.).
    *
    * Sends the full LLMQueryRequest over the `llm_query` RPC so the subprocess's
    * model-aware queryLlm() can honor `request.model`, `request.systemPrompt`,
-   * and (transitively via buildCallLlmRequest) `request.outputSchema`.
+   * and `request.outputSchema`.
    * See packages/shared/CLAUDE.md → "queryLlm backend contract" and
    * packages/pi-agent-server/src/index.ts → handleLlmQuery for the invariant.
    */

@@ -137,12 +137,12 @@ export function formatPreferencesForPrompt(): string {
   const prefs = loadPreferences();
 
   // Derive language from the app's i18n setting (Appearance > Language).
-  const langCode = (i18n.resolvedLanguage ?? 'en') as LanguageCode;
+  const langCode = (i18n.resolvedLanguage ?? 'zh-Hans') as LanguageCode;
   const langEntry = LOCALE_REGISTRY[langCode];
-  const langName = langEntry?.nativeName ?? 'English';
+  const langName = langEntry?.nativeName ?? '简体中文';
 
   if (Object.keys(prefs).length === 0 ||
-      (!prefs.name && !prefs.timezone && !prefs.location && !prefs.notes && langCode === 'en')) {
+      (!prefs.name && !prefs.timezone && !prefs.location && !prefs.notes && langCode === 'zh-Hans')) {
     return '';
   }
 
@@ -208,9 +208,9 @@ export function formatPreferencesDisplay(): string {
       lines.push('- Location: (not set)');
     }
 
-    const displayLangCode = (i18n.resolvedLanguage ?? 'en') as LanguageCode;
+    const displayLangCode = (i18n.resolvedLanguage ?? 'zh-Hans') as LanguageCode;
     const displayLangEntry = LOCALE_REGISTRY[displayLangCode];
-    lines.push(`- Language: ${displayLangEntry?.nativeName ?? 'English'} (via Appearance settings)`);
+    lines.push(`- Language: ${displayLangEntry?.nativeName ?? '简体中文'} (via Appearance settings)`);
 
     if (hasNotes) {
       lines.push('', '**Notes**', prefs.notes!);

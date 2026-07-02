@@ -339,12 +339,11 @@ export interface SessionToolContext {
    * Activate a source in the running session: add to enabledSourceSlugs,
    * build its MCP/API servers, apply to the agent.
    *
-   * Only available in backends that run alongside SessionManager (Claude in-process, Pi subprocess).
+   * Only available in backends that can coordinate with SessionManager (Pi subprocess today).
    * Codex and other backends leave this undefined — callers should degrade gracefully (restart required).
    *
-   * `availability` is always `'next-turn'` when activation succeeds: both Claude SDK
-   * (frozen `mcpServers` at `query()` start) and Pi (subprocess reloads proxy tools
-   * on the next `handlePrompt`) require the current turn to end before new tools
+   * `availability` is always `'next-turn'` when activation succeeds: Pi reloads proxy
+   * tools on the next `handlePrompt`, so the current turn must end before new tools
    * are callable. The backend handles this via the existing source_activated + auto_retry
    * machinery — the current turn is aborted and the renderer resends the user's
    * original message with a `[{slug} activated]` suffix.

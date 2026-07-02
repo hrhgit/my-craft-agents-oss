@@ -14,15 +14,18 @@
  * separate process, avoiding bundling issues in the Electron main process.
  */
 
-import http from 'node:http';
 import { createInterface } from 'node:readline';
-import { join } from 'node:path';
-import { mkdirSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { mkdirSync, readdirSync, statSync, existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 // Pi SDK
 import {
   createAgentSession,
+  createEventBus,
+  DefaultResourceLoader,
   SessionManager as PiSessionManager,
   AuthStorage as PiAuthStorage,
   ModelRegistry as PiModelRegistry,
@@ -33,6 +36,7 @@ import {
   createGrepToolDefinition,
   createFindToolDefinition,
   createLsToolDefinition,
+  createHeadlessUIContext,
 } from '@earendil-works/pi-coding-agent';
 import type {
   AgentSession,
@@ -40,6 +44,8 @@ import type {
   AgentToolResult,
   AuthCredential,
   CreateAgentSessionOptions,
+  EventBus,
+  ExtensionUIContext,
   ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 
@@ -55,6 +61,38 @@ import { setBedrockProviderModule } from '@earendil-works/pi-ai';
 import { bedrockProviderModule } from '@earendil-works/pi-ai/bedrock-provider';
 setBedrockProviderModule(bedrockProviderModule);
 
+// Set PI_PACKAGE_DIR so Pi SDK's resource-loader.ts can resolve
+// dist/core/package-manager.js at runtime. In bundled mode, getPackageDir()
+// walks up from __dirname (pi-agent-server/dist/) and returns pi-agent-server/,
+// where dist/core/ doesn't exist. Pointing to the actual Pi coding-agent
+// package (which has a built dist/) fixes the runtime require() in
+// getPackageManager(). Same class of issue as the Bedrock provider above.
+try {
+  const __require = createRequire(import.meta.url);
+  const __piMainPath = __require.resolve('@earendil-works/pi-coding-agent');
+  process.env.PI_PACKAGE_DIR = dirname(dirname(realpathSync(__piMainPath)));
+} catch {
+  // Fallback: require.resolve may fail due to exports field restrictions.
+  // Walk up from this file to find node_modules/@earendil-works/pi-coding-agent
+  // and resolve the symlink to get the real package directory.
+  try {
+    let __dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 10; i++) {
+      const __candidate = join(__dir, 'node_modules', '@earendil-works', 'pi-coding-agent');
+      if (existsSync(__candidate)) {
+        const __real = realpathSync(__candidate);
+        if (existsSync(join(__real, 'dist', 'core', 'package-manager.js'))) {
+          process.env.PI_PACKAGE_DIR = __real;
+        }
+        break;
+      }
+      __dir = dirname(__dir);
+    }
+  } catch {
+    // Fallback: PI_PACKAGE_DIR unset, getPackageDir() uses default logic
+  }
+}
+
 // Model resolution (extracted for testability + custom-endpoint precedence)
 import { resolvePiModel, isDeniedMiniModelId, isModelNotFoundError } from './model-resolution.ts';
 import { pickProviderAppropriateMiniModel } from './pick-mini-model.ts';
@@ -69,10 +107,11 @@ import {
 // Direct source imports from shared (bundled by bun build)
 import { handleLargeResponse, estimateTokens, tokenLimitFor } from '../../shared/src/utils/large-response.ts';
 import { getSessionPlansPath, getSessionPath } from '../../shared/src/sessions/storage.ts';
-import { buildCallLlmRequest, withTimeout, LLM_QUERY_TIMEOUT_MS } from '../../shared/src/agent/llm-tool.ts';
+import { withTimeout, LLM_QUERY_TIMEOUT_MS } from '../../shared/src/agent/llm-tool.ts';
 import type { LLMQueryRequest, LLMQueryResult } from '../../shared/src/agent/llm-tool.ts';
 import { PI_TOOL_NAME_MAP, THINKING_TO_PI } from '../../shared/src/agent/backend/pi/constants.ts';
 import { getDefaultSummarizationModel } from '../../shared/src/config/models.ts';
+import { readPiGlobalAuth } from '../../shared/src/config/pi-global-config.ts';
 import { createWebFetchTool } from './tools/web-fetch.ts';
 import { resolveSearchProvider } from './tools/search/resolve-provider.ts';
 import { createSearchTool } from './tools/search/create-search-tool.ts';
@@ -102,6 +141,8 @@ interface InitMessage {
   workspaceRootPath: string;
   sessionId: string;
   sessionPath: string;
+  piSessionFile?: string;
+  piSessionDir?: string;
   workingDirectory: string;
   plansFolderPath: string;
   miniModel?: string;
@@ -112,10 +153,23 @@ interface InitMessage {
   baseUrl?: string;
   branchFromSdkSessionId?: string;
   branchFromSessionPath?: string;
+  branchFromPiSessionFile?: string;
   branchFromSdkTurnId?: string;
   customEndpoint?: { api: CustomEndpointApi; supportsImages?: boolean };
   customModels?: Array<string | { id: string; contextWindow?: number; supportsImages?: boolean }>;
   piAuth?: { provider: string; credential: PiCredential };
+  /**
+   * 是否启用全局 pi 扩展加载。默认 true。
+   * - true（或未传）：pi-agent-server 使用 ~/.pi/agent 作为 agentDir，加载全局扩展。
+   * - false：主进程应同时传 agentDir 指向 session 临时目录，回退到隔离模式。
+   */
+  piExtensionsEnabled?: boolean;
+  /**
+   * 是否启用完全 Pi 透传（壳模式）。默认 true。
+   * - true：使用 Pi 原生 system prompt，不应用 Craft 身份覆盖。
+   * - false：回退到 Craft 独立身份模式（应用 applySystemPromptOverride）。
+   */
+  piShellFullPassthrough?: boolean;
 }
 
 interface RuntimeConfigUpdateMessage {
@@ -147,6 +201,10 @@ type InboundMessage =
   | RuntimeConfigUpdateMessage
   | { type: 'steer'; message: string }
   | { type: 'token_update'; piAuth: { provider: string; credential: PiCredential } }
+  // 扩展桥接：主进程调用扩展注册的命令
+  | { type: 'extension_command_invoke'; commandId: string; args?: string }
+  // 扩展桥接：主进程回复 remoteui:request（payload=null 表示取消）
+  | { type: 'remoteui_response'; requestId: string; payload: unknown | null; reason?: 'cancelled' | 'no_remote' | 'disconnected' }
   | { type: 'shutdown' };
 
 /** Proxy tool definition from main process */
@@ -170,7 +228,7 @@ type EnrichedToolExecutionStartEvent = Extract<AgentSessionEvent, { type: 'tool_
 type OutboundAgentEvent = AgentSessionEvent | EnrichedToolExecutionStartEvent;
 
 /** Messages to main process (stdout) */
-interface OutboundReady { type: 'ready'; sessionId: string | null; callbackPort: number }
+interface OutboundReady { type: 'ready'; sessionId: string | null }
 interface OutboundEvent { type: 'event'; event: OutboundAgentEvent }
 interface OutboundPreToolUseReq {
   type: 'pre_tool_use_request';
@@ -218,6 +276,47 @@ interface OutboundRuntimeConfigUpdateResult {
 interface OutboundSessionIdUpdate { type: 'session_id_update'; sessionId: string }
 interface OutboundError { type: 'error'; message: string; code?: string }
 
+// ============================================================
+// 扩展桥接消息类型（ExtensionAPI → Craft 事件桥接层）
+// ============================================================
+
+/** 扩展通知（对应 ui.notify）*/
+interface OutboundExtensionNotify {
+  type: 'extension_notify';
+  message: string;
+  notificationType?: 'info' | 'warning' | 'error';
+  source?: string;
+}
+/** 扩展 widget 更新（对应 ui.setWidget）*/
+interface OutboundExtensionWidget {
+  type: 'extension_widget';
+  key: string;
+  content: string[] | undefined;
+  placement?: 'aboveEditor' | 'belowEditor';
+  source?: string;
+}
+/** 扩展命令注册通知 */
+interface OutboundExtensionCommandRegistered {
+  type: 'extension_command_registered';
+  name: string;
+  description?: string;
+  source: string;
+}
+/** RemoteUI 请求（扩展通过 pi.events.emit("remoteui:request") 发起）*/
+interface OutboundRemoteUIRequest {
+  type: 'remoteui_request';
+  requestId: string;
+  kind: 'select' | 'editor';
+  title: string;
+  message?: string;
+  options?: Array<{ title: string; description?: string }>;
+  allowMultiple?: boolean;
+  allowFreeform?: boolean;
+  allowComment?: boolean;
+  prefill?: string;
+  source: string;
+}
+
 type OutboundMessage =
   | OutboundReady
   | OutboundEvent
@@ -231,7 +330,12 @@ type OutboundMessage =
   | OutboundSetAutoCompactionResult
   | OutboundRuntimeConfigUpdateResult
   | OutboundSessionIdUpdate
-  | OutboundError;
+  | OutboundError
+  // 扩展桥接消息
+  | OutboundExtensionNotify
+  | OutboundExtensionWidget
+  | OutboundExtensionCommandRegistered
+  | OutboundRemoteUIRequest;
 
 // ============================================================
 // State
@@ -241,6 +345,10 @@ let piSession: AgentSession | null = null;
 let piModelRegistry: PiModelRegistry | null = null;
 let moduleAuthStorage: PiAuthStorage | null = null;
 let unsubscribeEvents: (() => void) | null = null;
+
+// 扩展事件桥接：共享 EventBus，用于订阅 pi 扩展发出的 remoteui:request 等事件
+let extensionEventBus: EventBus | null = null;
+let unsubscribeExtensionEvents: (() => void) | null = null;
 
 // Init config (set on 'init' message)
 let initConfig: Extract<InboundMessage, { type: 'init' }> | null = null;
@@ -258,24 +366,8 @@ const pendingSessionToolCalls = new Map<string, { toolName: string; arguments: R
 // Proxy tool definitions from main process
 let proxyToolDefs: ProxyToolDef[] = [];
 
-// Speculative prefetch for read-only tools (enables parallel execution despite Pi SDK's sequential loop).
-// When the LLM emits multiple call_llm tool calls in a single message, we fire all requests
-// to the main process in parallel on message_end (before executeToolCalls iterates sequentially).
-// Each proxy tool's execute() then hits the cache instead of sending a new request.
-const PREFETCHABLE_TOOLS = new Set(['call_llm']);
-const prefetchCache = new Map<string, Promise<{ content: string; isError: boolean }>>();
-
-function isPrefetchableTool(toolName: string): boolean {
-  const stripped = toolName.replace(/^(mcp__session__|session__)/, '');
-  return PREFETCHABLE_TOOLS.has(stripped);
-}
-
 // Flag: proxy tools changed since last session creation — session needs recreation
 let toolsChanged = false;
-
-// Callback server for call_llm
-let callbackServer: http.Server | null = null;
-let callbackPort = 0;
 
 // ============================================================
 // JSONL I/O
@@ -307,57 +399,6 @@ function findMostRecentSessionFile(sessionDir: string): string | null {
 }
 
 // ============================================================
-// Callback Server (for call_llm from session MCP server)
-// ============================================================
-
-async function startCallbackServer(): Promise<void> {
-  if (callbackServer) return;
-
-  const server = http.createServer(async (req, res) => {
-    if (req.method !== 'POST' || req.url !== '/call-llm') {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
-    try {
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(chunk as Buffer);
-      const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>;
-
-      debugLog('Received call_llm request via callback server');
-      const result = await preExecuteCallLlm(body);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      debugLog(`call_llm via callback failed: ${msg}`);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: msg }));
-    }
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      callbackPort = typeof addr === 'object' && addr ? addr.port : 0;
-      debugLog(`Callback server listening on 127.0.0.1:${callbackPort}`);
-      resolve();
-    });
-    server.on('error', reject);
-  });
-
-  callbackServer = server;
-}
-
-function stopCallbackServer(): void {
-  if (callbackServer) {
-    callbackServer.close();
-    callbackServer = null;
-    callbackPort = 0;
-  }
-}
-
-// ============================================================
 // Pi Session Management
 // ============================================================
 
@@ -366,6 +407,78 @@ function resolvedCwd(): string {
   if (wd.startsWith('~/')) return join(homedir(), wd.slice(2));
   if (wd === '~') return homedir();
   return wd;
+}
+
+/**
+ * 解析 pi 扩展开关。
+ * 优先级：initConfig.piExtensionsEnabled > 环境变量 CRAFT_PI_EXTENSIONS_ENABLED > 默认 true。
+ * 默认 true（加载全局扩展），为 false 时回退到隔离模式。
+ */
+function isPiExtensionsEnabled(): boolean {
+  if (initConfig?.piExtensionsEnabled !== undefined) {
+    return initConfig.piExtensionsEnabled !== false;
+  }
+  const envVal = process.env.CRAFT_PI_EXTENSIONS_ENABLED;
+  if (envVal !== undefined) {
+    return envVal !== 'false';
+  }
+  return true;
+}
+
+/**
+ * 解析 pi 壳模式开关（完全 Pi 透传）。
+ * 优先级：initConfig.piShellFullPassthrough > 默认 true。
+ * 为 true 时使用 Pi 原生 system prompt，不应用 Craft 身份覆盖。
+ */
+function isPiShellFullPassthrough(): boolean {
+  if (initConfig?.piShellFullPassthrough !== undefined) {
+    return initConfig.piShellFullPassthrough !== false;
+  }
+  return true;
+}
+
+/**
+ * 解析 agentDir：
+ * - 显式传入 agentDir 时优先使用（向后兼容，主进程可强制指定隔离路径）
+ * - piExtensionsEnabled = true（默认）：使用 ~/.pi/agent（加载全局扩展）
+ * - piExtensionsEnabled = false：回退到 session 临时目录（隔离模式）
+ */
+function resolveAgentDir(): string | undefined {
+  // 显式传入的 agentDir 优先（向后兼容）
+  if (initConfig?.agentDir) {
+    return initConfig.agentDir;
+  }
+  if (isPiExtensionsEnabled()) {
+    // 默认：加载全局 pi 扩展
+    return join(homedir(), '.pi', 'agent');
+  }
+  // 隔离模式：使用 session 临时目录
+  if (initConfig?.sessionPath) {
+    return join(initConfig.sessionPath, '.pi-agent');
+  }
+  return undefined;
+}
+
+/**
+ * 创建桥接 ExtensionUIContext：将 ui.notify / ui.setWidget 等调用通过 JSONL
+ * 转发到主进程，由主进程转 IPC 到 renderer 渲染。
+ *
+ * 实现委托给 Pi SDK 官方的 `createHeadlessUIContext`：它内置了 stub theme、
+ * widget 工厂渲染、select/confirm/input/editor 安全降级，以及 TUI no-op 方法。
+ * 此处仅提供 transport 适配——把 Pi 发出的事件复用模块作用域的 `send` 函数
+ * （JSONL over stdio）转发到主进程。
+ *
+ * select/confirm/input/editor 的交互式对话框仍通过 remoteui:request 事件桥接
+ * （见 extensionEventBus 订阅），headless context 仅提供安全降级返回值。
+ */
+function createBridgeUIContext(): ExtensionUIContext {
+  return createHeadlessUIContext({
+    send(event) {
+      // 复用模块作用域的 send（JSONL over stdio）；Pi 发出的事件字段与
+      // OutboundExtensionNotify/OutboundExtensionWidget 完全匹配。
+      send(event as unknown as OutboundMessage);
+    },
+  });
 }
 
 // Helper: derive preferCustomEndpoint flag from init config
@@ -479,6 +592,22 @@ function createAuthenticatedRegistry(): {
   // Only create a new one on first call or after re-init.
   if (!moduleAuthStorage) {
     moduleAuthStorage = PiAuthStorage.inMemory();
+    // Task 6 后 ~/.pi/agent/auth.json 是 pi 凭证的唯一数据源（SoT）。
+    // 子进程在创建 in-memory AuthStorage 后，主动从 auth.json 加载所有凭证，
+    // 这样主进程不再需要为 pi 连接从 credentials.enc 读取并注入凭证。
+    // 主进程传来的 piAuth（若有）会在下方覆盖 auth.json 中的同名凭证，用于 OAuth 刷新。
+    const authFile = readPiGlobalAuth();
+    if (authFile?.providers) {
+      let loadedCount = 0;
+      for (const [providerKey, cred] of Object.entries(authFile.providers)) {
+        if (!cred || typeof cred !== 'object' || !cred.type) continue;
+        moduleAuthStorage.set(providerKey, cred as unknown as AuthCredential);
+        loadedCount++;
+      }
+      if (loadedCount > 0) {
+        debugLog(`Loaded ${loadedCount} credential(s) from ~/.pi/agent/auth.json`);
+      }
+    }
   }
   const authStorage = moduleAuthStorage;
   if (initConfig?.piAuth) {
@@ -580,27 +709,75 @@ async function ensureSession(): Promise<AgentSession> {
     tools: toolAllowlist,
   };
 
-  // Extension isolation: set agentDir to a temp directory under session path
-  // to prevent loading global Pi extensions from ~/.pi/agent
-  if (initConfig.sessionPath) {
-    const agentDir = initConfig.agentDir || join(initConfig.sessionPath, '.pi-agent');
-    mkdirSync(agentDir, { recursive: true });
-    sessionOptions.agentDir = agentDir;
+  // 解析 agentDir：
+  // - 显式传入时优先（向后兼容，主进程可强制指定隔离路径）
+  // - piExtensionsEnabled = true（默认）：~/.pi/agent（加载全局扩展）
+  // - piExtensionsEnabled = false：session 临时目录（隔离模式）
+  const resolvedAgentDir = resolveAgentDir();
+  if (resolvedAgentDir) {
+    mkdirSync(resolvedAgentDir, { recursive: true });
+    sessionOptions.agentDir = resolvedAgentDir;
+  }
 
-    // Session resume: use a per-Craft-session directory so the Pi SDK can
-    // persist and resume its own session across subprocess restarts.
-    // continueRecent() loads the existing session if one exists, otherwise
-    // creates a new one — so this handles both first-run and resume.
-    const sessionDir = join(initConfig.sessionPath, '.pi-sessions');
+  // 扩展事件桥接：当启用全局扩展时，创建共享 EventBus 并通过 DefaultResourceLoader 注入。
+  // EventBus 订阅扩展发出的 remoteui:request 事件（select/editor 对话框），转发给主进程。
+  // ui.notify / ui.setWidget 通过 session.extensionRunner.setUIContext() 注入桥接
+  // ExtensionUIContext（见下方 ensureSession 末尾），由 createBridgeUIContext() 实现。
+  const extensionsEnabled = isPiExtensionsEnabled();
+  if (extensionsEnabled && resolvedAgentDir) {
+    // 清理上一次的订阅（session 重建场景）
+    if (unsubscribeExtensionEvents) {
+      unsubscribeExtensionEvents();
+      unsubscribeExtensionEvents = null;
+    }
+
+    extensionEventBus = createEventBus();
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir: resolvedAgentDir,
+      eventBus: extensionEventBus,
+    });
+    await loader.reload();
+    sessionOptions.resourceLoader = loader;
+
+    // 桥接 remoteui:request → 主进程
+    // pi 扩展通过 pi.events.emit("remoteui:request", { requestId, kind, ... }) 请求 UI 交互
+    unsubscribeExtensionEvents = extensionEventBus.on('remoteui:request', (data: unknown) => {
+      const req = data as {
+        requestId: string;
+        kind: 'select' | 'editor';
+        title: string;
+        message?: string;
+        options?: Array<{ title: string; description?: string }>;
+        allowMultiple?: boolean;
+        allowFreeform?: boolean;
+        allowComment?: boolean;
+        prefill?: string;
+        source: string;
+      } | undefined;
+      if (!req || !req.requestId || !req.kind) {
+        debugLog(`[extension-bridge] 忽略格式错误的 remoteui:request: ${JSON.stringify(data).slice(0, 200)}`);
+        return;
+      }
+      send({ type: 'remoteui_request', ...req });
+    });
+
+    debugLog(`[extension-bridge] EventBus 桥接已激活 (agentDir: ${resolvedAgentDir})`);
+  }
+
+  // Session resume: use the shared Pi-native session file when provided.
+  // `sessionPath` remains Craft's sidecar folder for attachments/tool metadata.
+  if (initConfig.sessionPath) {
+    const sessionDir = initConfig.piSessionDir || join(initConfig.sessionPath, '.pi-sessions');
     mkdirSync(sessionDir, { recursive: true });
 
     if (initConfig.branchFromSessionPath) {
       // Branching: fork from the parent session's Pi session file.
       // Branches must not silently degrade to fresh sessions.
       const parentPiSessionDir = join(initConfig.branchFromSessionPath, '.pi-sessions');
-      const parentPiSessionFile = findMostRecentSessionFile(parentPiSessionDir);
+      const parentPiSessionFile = initConfig.branchFromPiSessionFile || findMostRecentSessionFile(parentPiSessionDir);
       if (!parentPiSessionFile) {
-        throw new Error(`Pi branch preflight failed: no parent Pi session file found in ${parentPiSessionDir}`);
+        throw new Error(`Pi branch preflight failed: no parent Pi session file found (native=${initConfig.branchFromPiSessionFile || '<none>'}, legacyDir=${parentPiSessionDir})`);
       }
 
       debugLog(`Forking Pi session from parent: ${parentPiSessionFile}`);
@@ -619,10 +796,11 @@ async function ensureSession(): Promise<AgentSession> {
       }
 
       sessionOptions.sessionManager = forkedSessionManager;
+    } else if (initConfig.piSessionFile) {
+      sessionOptions.sessionManager = PiSessionManager.open(initConfig.piSessionFile, sessionDir, cwd);
     } else {
       sessionOptions.sessionManager = PiSessionManager.continueRecent(cwd, sessionDir);
     }
-
   }
 
   // Set model if specified
@@ -662,11 +840,41 @@ async function ensureSession(): Promise<AgentSession> {
   }
 
   // Create the session — tools flow through customTools + allowlist (see comment above).
-  const { session } = await createAgentSession(sessionOptions);
+  const { session, extensionsResult } = await createAgentSession(sessionOptions);
   piSession = session;
 
   toolsChanged = false;
   debugLog(`Created Pi session: ${session.sessionId} (${wrappedAll.length} tools)`);
+
+  // 注入桥接 ExtensionUIContext：让扩展的 ui.notify / ui.setWidget 调用通过 JSONL 转发到主进程。
+  // 必须使用 applyExtensionBindings() 而非 runner.setUIContext()，因为 Pi SDK 在首次 prompt() 时
+  // 会通过 _applyExtensionBindings() 用 session._extensionUIContext 覆盖 runner 上的 uiContext。
+  // applyExtensionBindings() 将桥接上下文存入 _extensionUIContext，确保覆盖后仍然生效，
+  // 这样 session_start 钩子触发时 hasUI() 返回 true，扩展才会调用 ctx.ui.setWidget()。
+  if (extensionsEnabled) {
+    try {
+      const bridgeUIContext = createBridgeUIContext();
+      (session as any).applyExtensionBindings({ uiContext: bridgeUIContext });
+      debugLog('[extension-bridge] 已注入桥接 ExtensionUIContext (notify + setWidget)');
+    } catch (err) {
+      debugLog(`[extension-bridge] applyExtensionBindings 注入失败: ${err}`);
+    }
+  }
+
+  // 通知主进程已注册的扩展命令（用于 UI 命令面板等）
+  if (extensionsResult?.extensions) {
+    for (const ext of extensionsResult.extensions) {
+      for (const [name, cmd] of ext.commands) {
+        send({
+          type: 'extension_command_registered',
+          name,
+          description: cmd.description,
+          source: ext.path,
+        });
+      }
+    }
+    debugLog(`[extension-bridge] 已注册 ${extensionsResult.extensions.length} 个扩展`);
+  }
 
   // Notify main process of session ID
   send({ type: 'session_id_update', sessionId: session.sessionId });
@@ -839,20 +1047,6 @@ function buildProxyTools(): ToolDefinition<any, any>[] {
       toolCallId: string,
       params: any,
     ): Promise<AgentToolResult<any>> => {
-      // Check speculative prefetch cache first (parallel call_llm optimization).
-      // If this tool was prefetched on message_end, the request is already in-flight —
-      // just await the result instead of sending a duplicate request.
-      const prefetched = prefetchCache.get(toolCallId);
-      if (prefetched) {
-        prefetchCache.delete(toolCallId);
-        debugLog(`Prefetch cache hit for ${def.name} (toolCallId: ${toolCallId})`);
-        const result = await prefetched;
-        return {
-          content: [{ type: 'text', text: result.content }],
-          details: result.isError ? { isError: true } : undefined,
-        };
-      }
-
       const inputObj = params as Record<string, unknown>;
 
       // Permission checking via main process
@@ -881,7 +1075,7 @@ function buildProxyTools(): ToolDefinition<any, any>[] {
 }
 
 // ============================================================
-// LLM Query (ephemeral session for call_llm + mini completions)
+// LLM Query (ephemeral session for mini completions)
 // ============================================================
 
 async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
@@ -1076,14 +1270,6 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   }
 }
 
-async function preExecuteCallLlm(input: Record<string, unknown>): Promise<LLMQueryResult> {
-  const sessionPath = initConfig
-    ? getSessionPath(initConfig.workspaceRootPath, initConfig.sessionId)
-    : undefined;
-  const request = await buildCallLlmRequest(input, { backendName: 'Pi', sessionPath });
-  return queryLlm(request);
-}
-
 async function runMiniCompletion(prompt: string): Promise<string | null> {
   try {
     const result = await queryLlm({ prompt });
@@ -1159,42 +1345,27 @@ function handleSessionEvent(event: AgentSessionEvent): void {
           }
           const sdkTurnAnchor = sessionManagerSnapshot.getLeafId();
           if (!sdkTurnAnchor) return;
-          send({
-            type: 'event',
-            event: {
-              type: 'pi_turn_anchor',
-              sdkMessageId,
-              sdkTurnAnchor,
-            } as unknown as OutboundAgentEvent,
-          });
-        });
-      }
+			send({
+				type: 'event',
+				event: {
+					type: 'pi_turn_anchor',
+					sdkMessageId,
+					sdkTurnAnchor,
+				} as unknown as OutboundAgentEvent,
+			});
+		});
+	}
+    }
 
-      // Speculative prefetch: if the assistant message contains 2+ prefetchable tool calls,
-      // fire all requests to the main process in parallel NOW, before executeToolCalls
-      // iterates sequentially. Each proxy tool's execute() will hit the cache.
-      const content = (msg as { content?: Array<{ type: string; id?: string; name?: string; arguments?: unknown }> }).content;
-      if (Array.isArray(content)) {
-        const prefetchableToolCalls = content.filter(
-          (c) => c.type === 'toolCall' && c.name && isPrefetchableTool(c.name),
-        );
-        if (prefetchableToolCalls.length >= 2) {
-          debugLog(`Prefetching ${prefetchableToolCalls.length} parallel ${prefetchableToolCalls[0].name} calls`);
-          for (const tc of prefetchableToolCalls) {
-            const requestId = `prefetch-${tc.id}`;
-            const promise = new Promise<{ content: string; isError: boolean }>((resolve) => {
-              pendingToolExecutions.set(requestId, { resolve });
-            });
-            send({
-              type: 'tool_execute_request',
-              requestId,
-              toolName: tc.name!,
-              args: (tc.arguments ?? {}) as Record<string, unknown>,
-            });
-            prefetchCache.set(tc.id!, promise);
-          }
-        }
-      }
+    if (msg?.role === 'user') {
+      queueMicrotask(() => {
+        send({
+          type: 'event',
+          event: {
+            type: 'pi_user_message_persisted',
+          } as unknown as OutboundAgentEvent,
+        });
+      });
     }
   }
 
@@ -1246,6 +1417,11 @@ async function handleInit(msg: Extract<InboundMessage, { type: 'init' }>): Promi
       unsubscribeEvents();
       unsubscribeEvents = null;
     }
+    if (unsubscribeExtensionEvents) {
+      unsubscribeExtensionEvents();
+      unsubscribeExtensionEvents = null;
+    }
+    extensionEventBus = null;
     piSession.dispose();
     piSession = null;
     moduleAuthStorage = null; // Reset so createAuthenticatedRegistry() creates fresh storage
@@ -1261,13 +1437,9 @@ async function handleInit(msg: Extract<InboundMessage, { type: 'init' }>): Promi
     debugLog(`Set AZURE_OPENAI_BASE_URL=${msg.baseUrl}`);
   }
 
-  // Start callback server for call_llm (idempotent — skips if already running)
-  await startCallbackServer();
-
   send({
     type: 'ready',
     sessionId: null,
-    callbackPort,
   });
 }
 
@@ -1407,9 +1579,6 @@ async function handleAbort(): Promise<void> {
     pending.resolve({ action: 'block', reason: 'Aborted' });
   }
   pendingPreToolUse.clear();
-
-  // Clear speculative prefetch cache — in-flight prefetches will resolve but never be consumed
-  prefetchCache.clear();
 }
 
 async function handleMiniCompletion(msg: Extract<InboundMessage, { type: 'mini_completion' }>): Promise<void> {
@@ -1621,6 +1790,35 @@ async function handleSetThinkingLevel(msg: Extract<InboundMessage, { type: 'set_
   }
 }
 
+async function handleExtensionCommandInvoke(
+  msg: Extract<InboundMessage, { type: 'extension_command_invoke' }>,
+): Promise<void> {
+  if (!piSession) {
+    debugLog(`[extension-bridge] command ignored — no active session (${msg.commandId})`);
+    return;
+  }
+
+  const runner = (piSession as any).extensionRunner;
+  if (!runner || typeof runner.getCommand !== 'function' || typeof runner.createCommandContext !== 'function') {
+    debugLog(`[extension-bridge] command ignored — extension runner is unavailable (${msg.commandId})`);
+    return;
+  }
+
+  const command = runner.getCommand(msg.commandId);
+  if (!command || typeof command.handler !== 'function') {
+    debugLog(`[extension-bridge] command not found: ${msg.commandId}`);
+    return;
+  }
+
+  try {
+    const ctx = runner.createCommandContext();
+    await command.handler(msg.args ?? '', ctx);
+    debugLog(`[extension-bridge] command executed: ${msg.commandId}`);
+  } catch (error) {
+    debugLog(`[extension-bridge] command failed (${msg.commandId}): ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function handleShutdown(): void {
   debugLog('Shutdown requested');
 
@@ -1630,14 +1828,18 @@ function handleShutdown(): void {
     unsubscribeEvents = null;
   }
 
+  // 清理扩展事件桥接订阅
+  if (unsubscribeExtensionEvents) {
+    unsubscribeExtensionEvents();
+    unsubscribeExtensionEvents = null;
+  }
+  extensionEventBus = null;
+
   // Dispose session
   if (piSession) {
     piSession.dispose();
     piSession = null;
   }
-
-  // Stop callback server
-  stopCallbackServer();
 
   // Reject pending promises
   for (const [, pending] of pendingPreToolUse) {
@@ -1736,6 +1938,31 @@ async function processMessage(msg: InboundMessage): Promise<void> {
       } else {
         debugLog('token_update received but no authStorage initialized');
       }
+      break;
+
+    case 'remoteui_response': {
+      // 主进程回复 remoteui:request — 在 EventBus 上发射 remoteui:response 或 remoteui:cancel
+      if (!extensionEventBus) {
+        debugLog('[extension-bridge] remoteui_response 收到但无活跃 EventBus');
+        break;
+      }
+      if (msg.payload === null) {
+        // 取消：发射 remoteui:cancel
+        extensionEventBus.emit('remoteui:cancel', { requestId: msg.requestId });
+        debugLog(`[extension-bridge] 已发射 remoteui:cancel (requestId: ${msg.requestId}, reason: ${msg.reason ?? 'cancelled'})`);
+      } else {
+        extensionEventBus.emit('remoteui:response', {
+          requestId: msg.requestId,
+          payload: msg.payload,
+          reason: msg.reason,
+        });
+        debugLog(`[extension-bridge] 已发射 remoteui:response (requestId: ${msg.requestId})`);
+      }
+      break;
+    }
+
+    case 'extension_command_invoke':
+      await handleExtensionCommandInvoke(msg);
       break;
 
     case 'shutdown':

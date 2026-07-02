@@ -8,7 +8,7 @@ $ElectronDir = Split-Path -Parent $ScriptDir
 $RootDir = Split-Path -Parent (Split-Path -Parent $ElectronDir)
 
 # Configuration
-$BunVersion = "bun-v1.3.9"  # Pinned version for reproducible builds
+$BunVersion = "bun-v1.3.14"  # Pinned version for reproducible builds
 
 Write-Host "=== Building Craft Agents Windows Installer using electron-builder ===" -ForegroundColor Cyan
 
@@ -69,10 +69,10 @@ Start-Sleep -Seconds 2
 
 # 1. Clean previous build artifacts (with retry for locked files)
 Write-Host "Cleaning previous builds..."
+# 注意:vendor\bun\ 不在此清理列表中,以便复用已下载的 bun.exe,避免每次打包都重新下载。
 $foldersToClean = @(
-    "$ElectronDir\vendor",
     "$ElectronDir\node_modules\@anthropic-ai",
-    "$ElectronDir\packages",
+    "$ElectronDir\resources\pi-agent-server",
     "$ElectronDir\release"
 )
 foreach ($folder in $foldersToClean) {
@@ -91,128 +91,87 @@ foreach ($folder in $foldersToClean) {
     }
 }
 
-# 2. Install dependencies
-Write-Host "Installing dependencies..."
-Push-Location $RootDir
-try {
-    bun install
-} finally {
-    Pop-Location
-}
+# 2. Skip `bun install`
+# craft 的 package.json 用 `file:../pi/packages/...` 协议依赖本地 Pi 仓库,
+# bun 1.3.13/1.3.14 在 Windows 上解析 `file:../` 路径时会剥掉 `../` 前缀(已知 bug),
+# 导致 `bun install` 失败并破坏已有的 node_modules symlink。
+# 开发环境已装好依赖(含指向 E:\_workSpace\_Agents\pi\packages\* 的 symlink),
+# 构建只需复用现有 node_modules,因此跳过安装步骤。
+Write-Host "Skipping 'bun install' (reusing dev node_modules with Pi symlinks)" -ForegroundColor Yellow
 
-# 3. Download Bun binary for Windows
+# 3. Download Bun binary for Windows (cached by version marker file)
 # Use baseline build - works on all x64 CPUs (no AVX2 requirement)
-Write-Host "Downloading Bun $BunVersion for Windows x64 (baseline)..."
-New-Item -ItemType Directory -Force -Path "$ElectronDir\vendor\bun" | Out-Null
+# 复用策略:在 vendor\bun\.version 中记录已下载的版本,匹配则跳过下载,避免重复下载约 50MB。
+$BunExePath = "$ElectronDir\vendor\bun\bun.exe"
+$BunVersionMarker = "$ElectronDir\vendor\bun\.version"
 
-$BunDownload = "bun-windows-x64-baseline"
-$TempDir = Join-Path $env:TEMP "bun-download-$(Get-Random)"
-New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
-
-try {
-    # Download binary and checksums
-    $ZipUrl = "https://github.com/oven-sh/bun/releases/download/$BunVersion/$BunDownload.zip"
-    $ChecksumUrl = "https://github.com/oven-sh/bun/releases/download/$BunVersion/SHASUMS256.txt"
-
-    Write-Host "Downloading from $ZipUrl..."
-    Invoke-WebRequest -Uri $ZipUrl -OutFile "$TempDir\$BunDownload.zip"
-    Invoke-WebRequest -Uri $ChecksumUrl -OutFile "$TempDir\SHASUMS256.txt"
-
-    # Verify checksum
-    Write-Host "Verifying checksum..."
-    $ExpectedHash = (Get-Content "$TempDir\SHASUMS256.txt" | Select-String "$BunDownload.zip").ToString().Split(" ")[0]
-    $ActualHash = (Get-FileHash "$TempDir\$BunDownload.zip" -Algorithm SHA256).Hash.ToLower()
-
-    if ($ActualHash -ne $ExpectedHash) {
-        throw "Checksum verification failed! Expected: $ExpectedHash, Got: $ActualHash"
+$BunCached = $false
+if (Test-Path $BunExePath -and Test-Path $BunVersionMarker) {
+    $CachedVersion = (Get-Content $BunVersionMarker -ErrorAction SilentlyContinue).Trim()
+    if ($CachedVersion -eq $BunVersion) {
+        Write-Host "Bun $BunVersion already cached at $BunExePath, skipping download" -ForegroundColor Green
+        $BunCached = $true
+    } else {
+        Write-Host "Cached Bun version ($CachedVersion) != target ($BunVersion), re-downloading..." -ForegroundColor Yellow
     }
-    Write-Host "Checksum verified successfully" -ForegroundColor Green
-
-    # Extract and install using robocopy for better file handle management
-    Write-Host "Extracting Bun..."
-    Expand-Archive -Path "$TempDir\$BunDownload.zip" -DestinationPath $TempDir -Force
-
-    # Unblock in temp first (before copy)
-    Unblock-File -Path "$TempDir\$BunDownload\bun.exe" -ErrorAction SilentlyContinue
-
-    # Use robocopy with retries - handles transient file locks better than Copy-Item
-    # /R:5 = 5 retries, /W:3 = 3 second wait between retries, /NP = no progress, /NFL /NDL = quiet
-    Write-Host "Copying bun.exe with robocopy..."
-    $robocopyResult = robocopy "$TempDir\$BunDownload" "$ElectronDir\vendor\bun" "bun.exe" /R:5 /W:3 /NP /NFL /NDL
-    # Robocopy exit codes: 0-7 are success, 8+ are errors
-    if ($LASTEXITCODE -ge 8) {
-        throw "robocopy failed with exit code $LASTEXITCODE"
-    }
-
-    $BunExePath = "$ElectronDir\vendor\bun\bun.exe"
-    Write-Host "Bun extracted to: $BunExePath" -ForegroundColor Green
-
-    # Give Windows time to release any file handles from the copy
-    Write-Host "Waiting for file handles to release..."
-    Start-Sleep -Seconds 3
-} finally {
-    Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 }
 
-# 4. Copy SDK from root node_modules (monorepo hoisting).
-# Since SDK 0.2.113: thin core + per-platform binary package.
-# See apps/electron/scripts/build-dmg.sh for the full rationale.
-$SdkSource = "$RootDir\node_modules\@anthropic-ai\claude-agent-sdk"
-if (-not (Test-Path $SdkSource)) {
-    Write-Host "ERROR: SDK core not found at $SdkSource" -ForegroundColor Red
-    Write-Host "Run 'bun install' from the repository root first."
-    exit 1
-}
-Write-Host "Copying SDK core..."
-New-Item -ItemType Directory -Force -Path "$ElectronDir\node_modules\@anthropic-ai" | Out-Null
-Remove-Item -Recurse -Force "$ElectronDir\node_modules\@anthropic-ai\claude-agent-sdk" -ErrorAction SilentlyContinue
-Copy-Item -Recurse -Force $SdkSource "$ElectronDir\node_modules\@anthropic-ai\"
+if (-not $BunCached) {
+    Write-Host "Downloading Bun $BunVersion for Windows x64 (baseline)..."
+    New-Item -ItemType Directory -Force -Path "$ElectronDir\vendor\bun" | Out-Null
 
-# 4a. Resolve the target arch's binary package (cross-fetch from npm if absent).
-# Target arch is hard-coded x64 — Windows arm64 is not currently shipped.
-$SdkBinPkg = "claude-agent-sdk-win32-x64"
-$SdkBinSource = "$RootDir\node_modules\@anthropic-ai\$SdkBinPkg"
-if (-not (Test-Path $SdkBinSource)) {
-    Write-Host "Cross-arch build: $SdkBinPkg not in node_modules — fetching from npm..."
-    $SdkVersion = (node -p "require('$RootDir/package.json'.replace(/\\/g, '/')).dependencies['@anthropic-ai/claude-agent-sdk']").Trim('"')
-    $PkgTmp = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($env:TEMP, [System.Guid]::NewGuid().ToString()))
+    $BunDownload = "bun-windows-x64-baseline"
+    $TempDir = Join-Path $env:TEMP "bun-download-$(Get-Random)"
+    New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+
     try {
-        Push-Location $PkgTmp
-        npm pack "@anthropic-ai/$SdkBinPkg@$SdkVersion" | Out-Null
-        $Tarball = Get-ChildItem -Filter "anthropic-ai-*.tgz" | Select-Object -First 1
-        tar -xzf $Tarball.Name
-        Pop-Location
-        New-Item -ItemType Directory -Force -Path $SdkBinSource | Out-Null
-        Copy-Item -Recurse -Force "$PkgTmp\package\*" $SdkBinSource
+        # Download binary and checksums
+        $ZipUrl = "https://github.com/oven-sh/bun/releases/download/$BunVersion/$BunDownload.zip"
+        $ChecksumUrl = "https://github.com/oven-sh/bun/releases/download/$BunVersion/SHASUMS256.txt"
+
+        Write-Host "Downloading from $ZipUrl..."
+        Invoke-WebRequest -Uri $ZipUrl -OutFile "$TempDir\$BunDownload.zip"
+        Invoke-WebRequest -Uri $ChecksumUrl -OutFile "$TempDir\SHASUMS256.txt"
+
+        # Verify checksum
+        Write-Host "Verifying checksum..."
+        $ExpectedHash = (Get-Content "$TempDir\SHASUMS256.txt" | Select-String "$BunDownload.zip").ToString().Split(" ")[0]
+        $ActualHash = (Get-FileHash "$TempDir\$BunDownload.zip" -Algorithm SHA256).Hash.ToLower()
+
+        if ($ActualHash -ne $ExpectedHash) {
+            throw "Checksum verification failed! Expected: $ExpectedHash, Got: $ActualHash"
+        }
+        Write-Host "Checksum verified successfully" -ForegroundColor Green
+
+        # Extract and install using robocopy for better file handle management
+        Write-Host "Extracting Bun..."
+        Expand-Archive -Path "$TempDir\$BunDownload.zip" -DestinationPath $TempDir -Force
+
+        # Unblock in temp first (before copy)
+        Unblock-File -Path "$TempDir\$BunDownload\bun.exe" -ErrorAction SilentlyContinue
+
+        # Use robocopy with retries - handles transient file locks better than Copy-Item
+        # /R:5 = 5 retries, /W:3 = 3 second wait between retries, /NP = no progress, /NFL /NDL = quiet
+        Write-Host "Copying bun.exe with robocopy..."
+        $robocopyResult = robocopy "$TempDir\$BunDownload" "$ElectronDir\vendor\bun" "bun.exe" /R:5 /W:3 /NP /NFL /NDL
+        # Robocopy exit codes: 0-7 are success, 8+ are errors
+        if ($LASTEXITCODE -ge 8) {
+            throw "robocopy failed with exit code $LASTEXITCODE"
+        }
+
+        # Write version marker for future cache hits
+        Set-Content -Path $BunVersionMarker -Value $BunVersion -NoNewline
+        Write-Host "Bun extracted to: $BunExePath" -ForegroundColor Green
+
+        # Give Windows time to release any file handles from the copy
+        Write-Host "Waiting for file handles to release..."
+        Start-Sleep -Seconds 3
     } finally {
-        Remove-Item -Recurse -Force $PkgTmp -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
     }
 }
 
-if (-not (Test-Path $SdkBinSource)) {
-    Write-Host "ERROR: SDK native binary package ($SdkBinPkg) not found at $SdkBinSource" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "Staging SDK native binary as claude-agent-sdk-binary alias..."
-$AliasDest = "$ElectronDir\node_modules\@anthropic-ai\claude-agent-sdk-binary"
-Remove-Item -Recurse -Force $AliasDest -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $AliasDest | Out-Null
-Copy-Item -Recurse -Force "$SdkBinSource\*" $AliasDest
-
-$BinPath = "$AliasDest\claude.exe"
-if (-not (Test-Path $BinPath)) {
-    Write-Host "ERROR: Native binary not found at $BinPath" -ForegroundColor Red
-    exit 1
-}
-$BinSize = (Get-Item $BinPath).Length
-if ($BinSize -lt 50000000) {
-    Write-Host "ERROR: claude.exe is only $BinSize bytes (expected ~210 MB)" -ForegroundColor Red
-    exit 1
-}
-Write-Host "  Native binary: $([math]::Round($BinSize / 1MB)) MB"
-
-# 5. Copy ripgrep (sourced from @vscode/ripgrep since 0.2.113).
+# 4. Copy ripgrep.
 $RgSource = "$RootDir\node_modules\@vscode\ripgrep"
 if (-not (Test-Path $RgSource) -or -not (Test-Path "$RgSource\bin\rg.exe")) {
     Write-Host "ERROR: @vscode/ripgrep not installed or postinstall did not run" -ForegroundColor Red
@@ -224,8 +183,7 @@ New-Item -ItemType Directory -Force -Path "$ElectronDir\node_modules\@vscode" | 
 Remove-Item -Recurse -Force "$ElectronDir\node_modules\@vscode\ripgrep" -ErrorAction SilentlyContinue
 Copy-Item -Recurse -Force $RgSource "$ElectronDir\node_modules\@vscode\"
 
-# 6. Copy network interceptor sources (for Pi subprocess; Claude no longer
-#    uses --preload — Phase 2 will move that to SDK hooks or a local proxy).
+# 5. Copy network interceptor sources for the Pi subprocess.
 $InterceptorSource = "$RootDir\packages\shared\src\unified-network-interceptor.ts"
 if (-not (Test-Path $InterceptorSource)) {
     Write-Host "ERROR: Interceptor not found at $InterceptorSource" -ForegroundColor Red
@@ -244,44 +202,65 @@ foreach ($dep in @("interceptor-common.ts", "feature-flags.ts", "interceptor-req
 # 6. Build Electron app
 Write-Host "Building Electron app..."
 
-# Build main process with OAuth credentials
-Write-Host "  Building main process..."
-$MainArgs = @(
-    "apps/electron/src/main/index.ts",
-    "--bundle",
-    "--platform=node",
-    "--format=cjs",
-    "--outfile=apps/electron/dist/main.cjs",
-    "--external:electron",
-    # SDK 0.3.x is pure ESM and calls createRequire(import.meta.url) at module init.
-    # esbuild's CJS bundling leaves import.meta.url undefined for inlined ESM, crashing
-    # the app on load (ERR_INVALID_ARG_VALUE). Externalize it so Node loads it natively
-    # as ESM — the SDK core is staged into the app's node_modules above (step 4).
-    # Must stay in sync with package.json build:main and scripts/electron-dev.ts.
-    "--external:@anthropic-ai/claude-agent-sdk"
-)
-# Add OAuth defines if env vars are set
-if ($env:GOOGLE_OAUTH_CLIENT_ID) {
-    $MainArgs += "--define:process.env.GOOGLE_OAUTH_CLIENT_ID=`"'$env:GOOGLE_OAUTH_CLIENT_ID'`""
-}
-if ($env:GOOGLE_OAUTH_CLIENT_SECRET) {
-    $MainArgs += "--define:process.env.GOOGLE_OAUTH_CLIENT_SECRET=`"'$env:GOOGLE_OAUTH_CLIENT_SECRET'`""
-}
-if ($env:SLACK_OAUTH_CLIENT_ID) {
-    $MainArgs += "--define:process.env.SLACK_OAUTH_CLIENT_ID=`"'$env:SLACK_OAUTH_CLIENT_ID'`""
-}
-if ($env:SLACK_OAUTH_CLIENT_SECRET) {
-    $MainArgs += "--define:process.env.SLACK_OAUTH_CLIENT_SECRET=`"'$env:SLACK_OAUTH_CLIENT_SECRET'`""
-}
-if ($env:MICROSOFT_OAUTH_CLIENT_ID) {
-    $MainArgs += "--define:process.env.MICROSOFT_OAUTH_CLIENT_ID=`"'$env:MICROSOFT_OAUTH_CLIENT_ID'`""
-}
+# Build main process + all subprocesses (session-mcp-server, pi-agent-server,
+# interceptor, WhatsApp worker) via the canonical build script.
+# This ensures --alias flags (node-fetch, abort-controller) and build defines
+# (OAuth, Sentry) are applied consistently with `bun run electron:build`.
+Write-Host "  Building main process + subprocesses..."
 Push-Location $RootDir
 try {
-    & npx esbuild @MainArgs
+    bun run electron:build:main
     if ($LASTEXITCODE -ne 0) { throw "Main process build failed" }
 } finally {
     Pop-Location
+}
+
+# Copy Pi Agent Server (subprocess for Pi SDK sessions) into packaged resources.
+# electron-builder.yml includes `resources/pi-agent-server/**/*`, so the dist
+# bundle + koffi native binary must exist here before `npx electron-builder` runs.
+# Mirrors scripts/build/common.ts:copyPiAgentServer() (which is only used by the
+# standalone server build path, not the Electron path).
+$PiAgentSrcDir = "$RootDir\packages\pi-agent-server\dist"
+$PiAgentDestDir = "$ElectronDir\resources\pi-agent-server"
+if (Test-Path "$PiAgentSrcDir\index.js") {
+    Write-Host "  Copying Pi Agent Server to resources..."
+    New-Item -ItemType Directory -Force -Path $PiAgentDestDir | Out-Null
+
+    # 1. Copy index.js (bundled ESM bundle, inlines all deps except koffi)
+    Copy-Item "$PiAgentSrcDir\index.js" "$PiAgentDestDir\index.js" -Force
+
+    # 2. Copy koffi (external native N-API module, resolved via node_modules at runtime)
+    $KoffiSrc = "$RootDir\node_modules\koffi"
+    if (Test-Path $KoffiSrc) {
+        $KoffiDest = "$PiAgentDestDir\node_modules\koffi"
+        New-Item -ItemType Directory -Force -Path $KoffiDest | Out-Null
+
+        # Copy koffi JS files
+        foreach ($entry in @('package.json', 'index.js', 'indirect.js', 'index.d.ts', 'lib')) {
+            $src = Join-Path $KoffiSrc $entry
+            if (Test-Path $src) {
+                Copy-Item $src (Join-Path $KoffiDest $entry) -Recurse -Force
+            }
+        }
+
+        # Copy only the target platform's native binary (~4MB instead of ~80MB)
+        # koffi's build dir uses `${platform}_${arch}` format (e.g. win32_x64)
+        $NativeSrc = "$KoffiSrc\build\koffi\win32_x64"
+        if (Test-Path $NativeSrc) {
+            $NativeDest = "$KoffiDest\build\koffi\win32_x64"
+            New-Item -ItemType Directory -Force -Path $NativeDest | Out-Null
+            Copy-Item "$NativeSrc\*" $NativeDest -Recurse -Force
+            Write-Host "  Pi Agent Server copied (index.js + koffi/win32_x64)" -ForegroundColor Green
+        } else {
+            # Fallback: copy all platform binaries
+            Copy-Item "$KoffiSrc\build" "$KoffiDest\build" -Recurse -Force
+            Write-Host "  Pi Agent Server copied (index.js + koffi all-platforms fallback)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  WARNING: koffi not found in node_modules, Pi SDK sessions may not work" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  WARNING: pi-agent-server/dist/index.js not found, Pi SDK sessions will not work" -ForegroundColor Yellow
 }
 
 # Build preload

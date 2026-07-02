@@ -229,9 +229,9 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
     canRetry: true,
   },
   sdk_binary_missing: {
-    title: 'Claude Code binary missing from app bundle',
+    title: 'Agent runtime missing from app bundle',
     message:
-      'The Claude Agent SDK binary expected on disk is not present. ' +
+      'The agent runtime expected on disk is not present. ' +
       'This usually means the app bundle is incomplete (interrupted download, partial update, ' +
       'or a security tool removed it). Reinstalling Craft Agents typically fixes this.',
     actions: [

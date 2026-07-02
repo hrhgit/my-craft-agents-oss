@@ -33,14 +33,14 @@ export function expandPath(inputPath: string, basePath?: string): string {
     return home;
   }
 
-  // Handle ~/ prefix
-  if (expanded.startsWith('~/')) {
+  // Handle ~/ and ~\ prefixes
+  if (expanded.startsWith('~/') || expanded.startsWith('~\\')) {
     expanded = join(home, expanded.slice(2));
   }
 
   // Handle ${HOME} and $HOME variables
   expanded = expanded.replace(/\$\{HOME\}/g, home);
-  expanded = expanded.replace(/\$HOME(?=\/|$)/g, home);
+  expanded = expanded.replace(/\$HOME(?=\/|\\|$)/g, home);
 
   // If still not absolute, resolve from base path
   if (!isAbsolute(expanded)) {

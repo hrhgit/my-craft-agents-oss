@@ -124,10 +124,18 @@ export class PromptHandler implements AutomationHandler {
 
     }
 
-    // Deliver prompts via callback
-    if (pendingPrompts.length > 0 && this.options.onPromptsReady) {
-      log.debug(`[PromptHandler] Delivering ${pendingPrompts.length} prompts`);
-      this.options.onPromptsReady(pendingPrompts);
+    // 交付 prompts：若启用 pi 委托则走 onDelegatePrompts，否则走默认的 onPromptsReady
+    if (pendingPrompts.length > 0) {
+      if (this.options.delegatePromptAutomation && this.options.onDelegatePrompts) {
+        // piExtensions.delegatePromptAutomation === true：委托给 pi prompt-automation 扩展
+        // 实际通过 extension_command_invoke RPC 触发 prompt-automation 命令（如 /schedule-prompt），
+        // RPC 桥接由 Task 2 的 pi-extension-bridge 实现。
+        log.debug(`[PromptHandler] Delegating ${pendingPrompts.length} prompts to pi prompt-automation`);
+        await this.options.onDelegatePrompts(pendingPrompts);
+      } else if (this.options.onPromptsReady) {
+        log.debug(`[PromptHandler] Delivering ${pendingPrompts.length} prompts`);
+        this.options.onPromptsReady(pendingPrompts);
+      }
     }
   }
 

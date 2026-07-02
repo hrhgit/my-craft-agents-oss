@@ -61,11 +61,11 @@ Sentry.init({
 // Initialize i18n for main process (menus, dialogs, etc.)
 //
 // The main-process i18n instance has no detection plugin (no localStorage in Node)
-// — it always starts at `fallbackLng: 'en'`. We hydrate it here from the persisted
+// — it always starts at `fallbackLng: 'zh-Hans'`. We hydrate it here from the persisted
 // `uiLanguage` preference, which is maintained by the `i18n:changeLanguage` IPC
 // handler whenever the user changes Appearance → Language. Without this, the
 // renderer would restore its language from localStorage on every restart while
-// the main process silently stayed at English — breaking session title language,
+// the main process silently stayed at the fallback language — breaking session title language,
 // the system prompt's "Preferred language" line, and the native menu.
 import { setupI18n, i18n, SUPPORTED_LANGUAGE_CODES, type LanguageCode } from '@craft-agent/shared/i18n'
 import { getPersistedUiLanguage, setPersistedUiLanguage } from '@craft-agent/shared/config'
@@ -387,7 +387,7 @@ app.whenReady().then(async () => {
   // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
   setBundledAssetsRoot(__dirname)
 
-  // Initialize backend runtime bootstrapping (Codex vendor root, Claude SDK runtime paths).
+  // Initialize backend runtime bootstrapping (Codex vendor root, Pi agent server paths).
   initializeBackendHostRuntime({
     hostRuntime: {
       appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
@@ -1090,13 +1090,9 @@ app.whenReady().then(async () => {
     // before-quit firing; saving from before-quit alone would overwrite
     // window-state.json with an empty array.
     setBeforeUpdateQuitHook(() => captureAndSaveWindowState('pre-update'))
-    if (app.isPackaged) {
-      checkForUpdatesOnLaunch().catch(err => {
-        mainLog.error('[auto-update] Launch check failed:', err)
-      })
-    } else {
-      mainLog.info('[auto-update] Skipping auto-update in dev mode')
-    }
+    // Auto-update check on launch disabled (local fork, no remote tracking)
+    // Manual "Check for Updates" via menu remains available.
+    mainLog.info('[auto-update] Launch auto-update check disabled (local build)')
 
     // Process pending deep link from cold start
     if (pendingDeepLink) {

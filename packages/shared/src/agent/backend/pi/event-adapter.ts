@@ -78,12 +78,6 @@ export class PiEventAdapter extends BaseEventAdapter {
   // Model context window for usage_update events
   private contextWindow: number | undefined;
 
-  // Mini model ID for call_llm display default (#596).
-  // Used when the caller didn't specify an explicit model — we fill args.model
-  // on the tool_start event so the UI shows the effective default instead of
-  // leaving the badge blank.
-  private miniModel: string | undefined;
-
   // Track last usage for emitting with complete event
   private lastUsage: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost: { total: number } } | undefined;
 
@@ -188,16 +182,6 @@ export class PiEventAdapter extends BaseEventAdapter {
   }
 
   /**
-   * Set the mini model ID for call_llm badge default.
-   * When the agent's call_llm invocation omits `args.model`, we fill it with
-   * this so the UI badge shows the effective default instead of nothing.
-   * Explicit `args.model` values from the agent are always preserved.
-   */
-  setMiniModel(model: string | undefined): void {
-    this.miniModel = model;
-  }
-
-  /**
    * Generate a unique sub-turnId for a text block within the current turn.
    */
   private nextSubTurnId(prefix: string): string {
@@ -232,6 +216,11 @@ export class PiEventAdapter extends BaseEventAdapter {
           sdkTurnAnchor: e.sdkTurnAnchor,
         };
       }
+      return;
+    }
+
+    if ((event as { type?: string }).type === 'pi_user_message_persisted') {
+      yield { type: 'pi_user_message_persisted' };
       return;
     }
 
@@ -409,13 +398,6 @@ export class PiEventAdapter extends BaseEventAdapter {
         // Normalize Pi field names to Claude Code format for UI compatibility
         // (diff stats, diff overlay, document routing all expect Claude Code format)
         const args = this.normalizeToolInput(toolName, (event.args ?? {}) as Record<string, unknown>);
-
-        // For call_llm, fill in the default display model when the caller didn't
-        // specify one — Pi's call_llm defaults to miniModel. We only fill the gap;
-        // we never overwrite an explicit agent-provided model (that was the #596 bug).
-        if (toolName.includes('call_llm') && this.miniModel && !args.model) {
-          args.model = this.miniModel;
-        }
 
         // Canonical metadata from subprocess event payload (interceptor/bridge-authoritative path).
         const eventMeta = this.extractToolMetadataFromEvent(event);

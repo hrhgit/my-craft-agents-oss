@@ -2,8 +2,7 @@
  * Base Event Adapter
  *
  * Abstract base class for provider-specific event adapters. Provides shared
- * state management (Maps, lifecycle) used by ClaudeEventAdapter and
- * PiEventAdapter.
+ * state management (Maps, lifecycle) used by PiEventAdapter.
  *
  * Subclasses implement provider-specific event dispatch (adapt*() methods)
  * while inheriting:

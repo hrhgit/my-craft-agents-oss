@@ -28,7 +28,7 @@ export function parseTestConnectionError(msg: string): string {
     return 'Cannot connect to API server. Check the URL and ensure the server is running.'
   }
   if (lower.includes('no api key found for')) {
-    return 'Provider mismatch during setup. Select a provider preset in Craft Agents Backend API Key mode, or use Anthropic API Key mode for arbitrary compatible endpoints.'
+    return 'Provider mismatch during setup. Select a provider preset in Pi API Key mode, or use a compatible custom endpoint.'
   }
   if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('authentication')) {
     return 'Invalid API key'
@@ -53,7 +53,7 @@ export function parseTestConnectionError(msg: string): string {
  * Guard against ambiguous Pi custom endpoint tests where no provider routing is selected.
  */
 export function validateSetupTestInput(params: {
-  provider: 'anthropic' | 'pi'
+  provider: 'pi'
   baseUrl?: string
   piAuthProvider?: string
 }): { valid: true } | { valid: false; error: string } {
@@ -61,7 +61,7 @@ export function validateSetupTestInput(params: {
   if (params.provider === 'pi' && hasCustomEndpoint && !params.piAuthProvider) {
     return {
       valid: false,
-      error: 'Custom endpoint in Craft Agents Backend mode requires selecting a provider preset. For arbitrary Anthropic-compatible endpoints, use Anthropic API Key mode.',
+      error: 'Custom endpoint in Pi API Key mode requires selecting a provider preset.',
     }
   }
 
@@ -137,30 +137,14 @@ export const BUILT_IN_CONNECTION_TEMPLATES: Record<string, {
   authType: LlmConnection['authType'] | ((hasCustomEndpoint: boolean) => LlmConnection['authType'])
   piAuthProvider?: string
 }> = {
-  'anthropic-api': {
-    name: (h) => h ? 'Custom Anthropic-Compatible' : 'Anthropic (API Key)',
-    providerType: (h) => h ? 'pi_compat' : 'anthropic',
+  'pi-anthropic': {
+    name: (h) => h ? 'Custom Anthropic-Compatible' : 'Pi (Anthropic)',
+    providerType: (h) => h ? 'pi_compat' : 'pi',
     authType: (h) => h ? 'api_key_with_endpoint' : 'api_key',
-  },
-  'claude-max': {
-    name: 'Claude Max',
-    providerType: 'anthropic',
-    authType: 'oauth',
-  },
-  'chatgpt-plus': {
-    name: 'ChatGPT Plus',
-    providerType: 'pi',
-    authType: 'oauth',
-    piAuthProvider: 'openai-codex',
-  },
-  'github-copilot': {
-    name: 'GitHub Copilot',
-    providerType: 'pi',
-    authType: 'oauth',
-    piAuthProvider: 'github-copilot',
+    piAuthProvider: 'anthropic',
   },
   'pi-api-key': {
-    name: 'Craft Agents Backend (API Key)',
+    name: 'Pi (API Key)',
     providerType: 'pi',
     authType: 'api_key',
     // piAuthProvider set dynamically from setup.piAuthProvider

@@ -1,6 +1,6 @@
 # Craft Agents Electron App
 
-The primary desktop interface for Craft Agents, built with Electron + React. Provides a multi-session inbox with chat interface for interacting with Claude via Craft workspaces.
+The primary desktop interface for Craft Agents, built with Electron + React. Provides a multi-session inbox with chat interface for interacting with AI providers via Craft workspaces.
 
 ## Quick Start
 
@@ -48,37 +48,13 @@ apps/electron/
 
 ## Key Learnings & Gotchas
 
-### 1. SDK Path Resolution (CRITICAL)
+### 1. Backend Runtime Resolution (CRITICAL)
 
-The Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) spawns a native `claude` binary from a per-platform optional dependency (`@anthropic-ai/claude-agent-sdk-{platform}-{arch}`). Packaged Electron builds must point the SDK at the staged binary because normal optional-dependency resolution does not work inside the packaged resource layout.
+Packaged Electron builds start the Pi agent server and related subprocesses from staged app resources. `packages/shared/src/agent/backend/internal/runtime-resolver.ts` resolves those runtime entry points for development and packaged layouts.
 
-**Runtime resolution:** `packages/shared/src/agent/backend/internal/runtime-resolver.ts` probes the build-script alias first:
+Provider credentials are loaded through the shared configuration and credential store before sessions are started. Anthropic-compatible Claude connections, Google AI Studio, Codex/OpenAI, Copilot, and custom endpoints all route through the Pi backend.
 
-```text
-node_modules/@anthropic-ai/claude-agent-sdk-binary/{claude,claude.exe}
-```
-
-and falls back to the real per-arch package in dev. Once resolved, `applyAnthropicRuntimeBootstrap()` calls `setPathToClaudeCodeExecutable(path)` before any Claude agents are created.
-
-### 2. Authentication Environment Setup (CRITICAL)
-
-The SDK requires authentication environment variables to be set BEFORE creating agents. The Electron app must do this explicitly during initialization.
-
-```typescript
-import { getAuthState } from '../../../src/auth/state'
-
-// In initialize():
-const authState = await getAuthState()
-const { billing } = authState
-
-if (billing.type === 'oauth_token' && billing.claudeOAuthToken) {
-  process.env.CLAUDE_CODE_OAUTH_TOKEN = billing.claudeOAuthToken
-} else if (billing.apiKey) {
-  process.env.ANTHROPIC_API_KEY = billing.apiKey
-}
-```
-
-### 3. AgentEvent Type Mismatches
+### 2. AgentEvent Type Mismatches
 
 The `AgentEvent` types from `CraftAgent` use different property names than you might expect:
 

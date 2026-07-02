@@ -118,7 +118,6 @@ export const DOC_REFS = {
   pdfPreview: `${APP_ROOT}/docs/pdf-preview.md`,
   imagePreview: `${APP_ROOT}/docs/image-preview.md`,
   markdownPreview: `${APP_ROOT}/docs/markdown-preview.md`,
-  llmTool: `${APP_ROOT}/docs/llm-tool.md`,
   browserTools: `${APP_ROOT}/docs/browser-tools.md`,
   craftCli: `${APP_ROOT}/docs/craft-cli.md`,
   docsDir: `${APP_ROOT}/docs/`,

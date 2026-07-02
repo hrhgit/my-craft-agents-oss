@@ -23,6 +23,13 @@ import type { ThinkingLevel } from '../agent/thinking-levels.ts';
 import { isValidThinkingLevel, normalizeThinkingLevel } from '../agent/thinking-levels.ts';
 import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
 import { type ConfigDefaults } from './config-defaults-schema.ts';
+import {
+  createDefaultPiExtensionSettings,
+  mergePiExtensionSettings,
+  normalizePiExtensionSettings,
+  type PiExtensionSettings,
+  type StoredPiExtensionSettings,
+} from './pi-extension-settings.ts';
 import { isValidThemeFile } from './validators.ts';
 
 // Re-export CONFIG_DIR for convenience (centralized in paths.ts)
@@ -80,6 +87,12 @@ export interface StoredConfig {
   allowRemoteEvaluate?: boolean;  // Allow remote agents to call `browser_tool evaluate` on local browser (default: true).
   // Prompt caching & context
   extendedPromptCache?: boolean;  // Use 1h prompt cache TTL instead of 5m (default: false)
+  // Pi 扩展集成开关：控制全局 pi 扩展加载与 prompt 自动化委托
+  piExtensions?: StoredPiExtensionSettings;
+  // Pi 壳模式：Craft 作为 Pi 的薄壳，完全透传 Pi 身份/会话/技能
+  piShell?: {
+    fullPassthrough?: boolean;  // 完全 Pi 透传：使用 Pi 原生 system prompt，移除 Craft 身份覆盖。默认 true。
+  };
   enable1MContext?: boolean;  // Enable 1M context window for supported models (default: false — opt-in; requires Anthropic Tier 4+)
   // Token optimization
   rtkEnabled?: boolean;  // Route Bash commands through rtk to compress tool output (default: false). https://github.com/rtk-ai/rtk
@@ -125,6 +138,10 @@ const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
     extendedPromptCache: false,
     browserToolEnabled: true,
     allowRemoteEvaluate: true,
+    piExtensions: createDefaultPiExtensionSettings(),
+    piShell: {
+      fullPassthrough: true,
+    },
   },
   workspaceDefaults: {
     thinkingLevel: 'medium',
@@ -540,6 +557,118 @@ export function setAllowRemoteEvaluate(allowed: boolean): void {
   const config = loadStoredConfig();
   if (!config) return;
   config.allowRemoteEvaluate = allowed;
+  saveConfig(config);
+}
+
+// ============================================================
+// Pi Extensions 集成开关
+// 默认值来自 config-defaults.json (piExtensions.enabled / piExtensions.delegatePromptAutomation)
+// ============================================================
+
+function getDefaultPiExtensionSettings(): PiExtensionSettings {
+  const defaults = loadConfigDefaults();
+  return normalizePiExtensionSettings(defaults.defaults.piExtensions);
+}
+
+/**
+ * 获取完整 Pi 扩展设置。
+ * 兼容旧配置：若 config.json 里只有 enabled/delegatePromptAutomation，也会补齐新字段。
+ */
+export function getPiExtensionSettings(): PiExtensionSettings {
+  const defaults = getDefaultPiExtensionSettings();
+  const config = loadStoredConfig();
+  return normalizePiExtensionSettings(config?.piExtensions, defaults);
+}
+
+/**
+ * 覆盖保存完整 Pi 扩展设置。
+ */
+export function setPiExtensionSettings(settings: StoredPiExtensionSettings): PiExtensionSettings {
+  const config = loadStoredConfig();
+  const normalized = normalizePiExtensionSettings(settings, getDefaultPiExtensionSettings());
+  if (!config) return normalized;
+  config.piExtensions = normalized;
+  saveConfig(config);
+  return normalized;
+}
+
+/**
+ * 局部更新 Pi 扩展设置。
+ */
+export function updatePiExtensionSettings(patch: StoredPiExtensionSettings): PiExtensionSettings {
+  const current = getPiExtensionSettings();
+  const next = mergePiExtensionSettings(current, patch);
+  const config = loadStoredConfig();
+  if (!config) return next;
+  config.piExtensions = next;
+  saveConfig(config);
+  return next;
+}
+
+/**
+ * 是否启用全局 pi 扩展加载（~/.pi/agent/extensions/）。
+ * 默认 true。为 false 时 pi-agent-server 回退到隔离模式（agentDir 指向 session 临时目录）。
+ */
+export function getPiExtensionsEnabled(): boolean {
+  return getPiExtensionSettings().enabled;
+}
+
+/**
+ * 设置是否启用全局 pi 扩展加载。
+ */
+export function setPiExtensionsEnabled(enabled: boolean): void {
+  updatePiExtensionSettings({ enabled });
+}
+
+/**
+ * 是否将 automation 的 prompt 触发执行路径委托给 pi prompt-automation 扩展。
+ * 默认 false。
+ */
+export function getPiExtensionsDelegatePromptAutomation(): boolean {
+  const config = loadStoredConfig();
+  if (config?.piExtensions?.delegatePromptAutomation !== undefined) {
+    return Boolean(config.piExtensions.delegatePromptAutomation);
+  }
+  // 透传（壳）模式下默认委托给 Pi 扩展；否则默认 false
+  if (getPiShellFullPassthrough()) {
+    return true;
+  }
+  return getPiExtensionSettings().delegatePromptAutomation;
+}
+
+/**
+ * 设置是否委托 automation prompt 给 pi prompt-automation 扩展。
+ */
+export function setPiExtensionsDelegatePromptAutomation(delegate: boolean): void {
+  updatePiExtensionSettings({ delegatePromptAutomation: delegate });
+}
+
+// ============================================================
+// Pi 壳模式开关
+// 默认值来自 config-defaults.json (piShell.fullPassthrough)
+// ============================================================
+
+/**
+ * 是否启用完全 Pi 透传（壳模式）。
+ * 默认 true。为 true 时使用 Pi 原生 system prompt，移除 Craft 身份覆盖；
+ * 为 false 时回退到 Craft 独立身份模式（应用 applySystemPromptOverride）。
+ */
+export function getPiShellFullPassthrough(): boolean {
+  const config = loadStoredConfig();
+  if (config?.piShell?.fullPassthrough !== undefined) {
+    return config.piShell.fullPassthrough;
+  }
+  const defaults = loadConfigDefaults();
+  return defaults.defaults.piShell?.fullPassthrough ?? true;
+}
+
+/**
+ * 设置是否启用完全 Pi 透传（壳模式）。
+ */
+export function setPiShellFullPassthrough(enabled: boolean): void {
+  const config = loadStoredConfig();
+  if (!config) return;
+  config.piShell = { ...(config.piShell ?? {}), fullPassthrough: enabled };
   saveConfig(config);
 }
 
@@ -1651,6 +1780,75 @@ function migrateCodexCopilotToPi(config: StoredConfig): boolean {
   return changed;
 }
 
+function migrateAnthropicConnectionsToPi(config: StoredConfig): boolean {
+  if (!config.llmConnections) return false;
+
+  let changed = false;
+  let needsDefaultReset = false;
+
+  for (const connection of config.llmConnections) {
+    if (connection.providerType !== 'anthropic') continue;
+
+    const oldSlug = connection.slug;
+    const isOAuth = connection.authType === 'oauth';
+    const nextSlug = isOAuth ? 'pi-anthropic-oauth' : 'pi-anthropic';
+
+    connection.providerType = 'pi';
+    connection.piAuthProvider = 'anthropic';
+    connection.slug = nextSlug;
+    connection.name = isOAuth ? 'Pi (Anthropic OAuth)' : 'Pi (Anthropic)';
+    connection.modelSelectionMode = connection.modelSelectionMode ?? 'automaticallySyncedFromProvider';
+
+    const providerDefaults = getDefaultModelsForConnection('pi', 'anthropic');
+    const providerDefaultIds = normalizeModelIds(providerDefaults as Array<{ id: string } | string>);
+
+    if (!connection.models || connection.models.length === 0) {
+      connection.models = providerDefaults;
+    } else {
+      const migratedModels: Array<string | ModelDefinition> = connection.models
+        .map(model => {
+          if (typeof model === 'string') {
+            const bare = model.startsWith('pi/') ? model.slice(3) : model;
+            return `pi/${normalizeDeprecatedModelId(bare)}`;
+          }
+          const bare = model.id.startsWith('pi/') ? model.id.slice(3) : model.id;
+          return {
+            ...model,
+            id: `pi/${normalizeDeprecatedModelId(bare)}`,
+            provider: 'pi' as const,
+          };
+        })
+        .filter(model => providerDefaultIds.includes(typeof model === 'string' ? model : model.id));
+      connection.models = migratedModels;
+      if (migratedModels.length === 0) {
+        connection.models = providerDefaults;
+      }
+    }
+
+    if (connection.defaultModel) {
+      const bare = connection.defaultModel.startsWith('pi/') ? connection.defaultModel.slice(3) : connection.defaultModel;
+      connection.defaultModel = `pi/${normalizeDeprecatedModelId(bare)}`;
+    }
+
+    if (connection.defaultModel && connection.models && !normalizeModelIds(connection.models).includes(connection.defaultModel)) {
+      connection.defaultModel = getDefaultModelForConnection('pi', 'anthropic');
+    }
+
+    if (config.defaultLlmConnection === oldSlug) {
+      config.defaultLlmConnection = nextSlug;
+      needsDefaultReset = true;
+    }
+
+    changed = true;
+  }
+
+  if (changed && needsDefaultReset) {
+    ensureDefaultLlmConnection(config);
+  }
+
+  return changed;
+}
+
 /**
  * Backfill models and defaultModel on ALL connections.
  * Ensures built-in connections (anthropic, openai) always have models populated,
@@ -2314,6 +2512,11 @@ export function migrateLegacyLlmConnectionsConfig(): void {
       needsSave = true;
     }
 
+    // Phase 1a-ter: Migrate legacy Anthropic/Claude connections to Pi-backed Anthropic.
+    if (migrateAnthropicConnectionsToPi(config)) {
+      needsSave = true;
+    }
+
     // Phase 1b: Normalize legacy Opus IDs/defaults before Pi model-list filtering.
     if (migrateLegacyOpusToDefaultOpus(config)) {
       needsSave = true;
@@ -2371,13 +2574,15 @@ export function migrateLegacyLlmConnectionsConfig(): void {
     let migrated: LlmConnection | null = null;
 
     if (legacyAuthType === 'oauth_token') {
-      // Claude Max OAuth
+      // Legacy Anthropic OAuth → Pi-backed Anthropic OAuth
       migrated = {
-        slug: 'claude-max',
-        name: 'Claude Max',
-        providerType: 'anthropic',
+        slug: 'pi-anthropic-oauth',
+        name: 'Pi (Anthropic OAuth)',
+        providerType: 'pi',
         authType: 'oauth',
-        models: getDefaultModelsForConnection('anthropic'),
+        piAuthProvider: 'anthropic',
+        modelSelectionMode: 'automaticallySyncedFromProvider',
+        models: getDefaultModelsForConnection('pi', 'anthropic'),
         createdAt: Date.now(),
       };
     } else if (legacyAuthType === 'codex_oauth') {
@@ -2405,25 +2610,28 @@ export function migrateLegacyLlmConnectionsConfig(): void {
         createdAt: Date.now(),
       };
     } else if (legacyAuthType === 'api_key') {
-      // Anthropic API Key - check if custom endpoint (compat mode → pi_compat)
+      // Legacy Anthropic API Key - now routes through Pi
       const hasCustomEndpoint = !!legacyBaseUrl;
       if (hasCustomEndpoint) {
         migrated = {
-          slug: 'anthropic-api',
+          slug: 'pi-anthropic',
           name: 'Custom Anthropic-Compatible',
           providerType: 'pi_compat',
           authType: 'api_key_with_endpoint',
+          piAuthProvider: 'anthropic',
           customEndpoint: { api: 'anthropic-messages' },
           models: getDefaultModelsForConnection('pi_compat'),
           createdAt: Date.now(),
         };
       } else {
         migrated = {
-          slug: 'anthropic-api',
-          name: 'Anthropic (API Key)',
-          providerType: 'anthropic',
+          slug: 'pi-anthropic',
+          name: 'Pi (Anthropic)',
+          providerType: 'pi',
           authType: 'api_key',
-          models: getDefaultModelsForConnection('anthropic'),
+          piAuthProvider: 'anthropic',
+          modelSelectionMode: 'automaticallySyncedFromProvider',
+          models: getDefaultModelsForConnection('pi', 'anthropic'),
           createdAt: Date.now(),
         };
       }
@@ -2546,8 +2754,8 @@ function ensureDefaultLlmConnection(config: StoredConfig): boolean {
  * Called on app startup (async operation, credentials use encrypted storage).
  *
  * Migration mapping:
- * - claude_oauth::global → llm_oauth::claude-max
- * - anthropic_api_key::global → llm_api_key::anthropic-api
+ * - claude_oauth::global → llm_oauth::pi-anthropic-oauth
+ * - anthropic_api_key::global → llm_api_key::pi-anthropic
  *
  * After successful migration, legacy credentials are deleted to prevent
  * stale data and reduce credential store clutter.
@@ -2556,18 +2764,17 @@ export async function migrateLegacyCredentials(): Promise<void> {
   const manager = getCredentialManager();
   const debug = (await import('../utils/debug.ts')).debug;
 
-  // Migrate Claude OAuth: claude_oauth::global → llm_oauth::claude-max
+  // Migrate Claude OAuth: claude_oauth::global → llm_oauth::pi-anthropic-oauth
   const legacyClaudeOAuth = await manager.getClaudeOAuthCredentials();
   if (legacyClaudeOAuth?.accessToken) {
-    // Only migrate if llm_oauth::claude-max doesn't exist yet
-    const existingLlmOAuth = await manager.getLlmOAuth('claude-max');
+    const existingLlmOAuth = await manager.getLlmOAuth('pi-anthropic-oauth');
     if (!existingLlmOAuth) {
-      await manager.setLlmOAuth('claude-max', {
+      await manager.setLlmOAuth('pi-anthropic-oauth', {
         accessToken: legacyClaudeOAuth.accessToken,
         refreshToken: legacyClaudeOAuth.refreshToken,
         expiresAt: legacyClaudeOAuth.expiresAt,
       });
-      debug('[storage] Migrated legacy Claude OAuth to llm_oauth::claude-max');
+      debug('[storage] Migrated legacy Claude OAuth to llm_oauth::pi-anthropic-oauth');
 
       // Delete legacy credential after successful migration
       // Global credentials use just the type - the key format is {type}::global
@@ -2580,14 +2787,13 @@ export async function migrateLegacyCredentials(): Promise<void> {
     }
   }
 
-  // Migrate Anthropic API key: anthropic_api_key::global → llm_api_key::anthropic-api
+  // Migrate Anthropic API key: anthropic_api_key::global → llm_api_key::pi-anthropic
   const legacyApiKey = await manager.getApiKey();
   if (legacyApiKey) {
-    // Only migrate if llm_api_key::anthropic-api doesn't exist yet
-    const existingLlmApiKey = await manager.getLlmApiKey('anthropic-api');
+    const existingLlmApiKey = await manager.getLlmApiKey('pi-anthropic');
     if (!existingLlmApiKey) {
-      await manager.setLlmApiKey('anthropic-api', legacyApiKey);
-      debug('[storage] Migrated legacy Anthropic API key to llm_api_key::anthropic-api');
+      await manager.setLlmApiKey('pi-anthropic', legacyApiKey);
+      debug('[storage] Migrated legacy Anthropic API key to llm_api_key::pi-anthropic');
 
       // Delete legacy credential after successful migration
       // Global credentials use just the type - the key format is {type}::global

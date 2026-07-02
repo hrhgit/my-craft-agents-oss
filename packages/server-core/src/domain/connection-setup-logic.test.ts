@@ -115,16 +115,16 @@ describe('resolveCustomEndpointSetup', () => {
 // per-connection submenu in Settings → AI shows a checkmark on the right item
 // out of the box (no read-time fallback needed for fresh connections).
 describe('createBuiltInConnection seeds midStreamBehavior', () => {
-  it("Anthropic API key → 'queue' (Claude's emulated steer is fragile)", () => {
-    const conn = createBuiltInConnection('anthropic-api')
-    expect(conn.providerType).toBe('anthropic')
-    expect(conn.midStreamBehavior).toBe('queue')
+  it("Pi (Anthropic) API key → 'steer'", () => {
+    const conn = createBuiltInConnection('pi-anthropic')
+    expect(conn.providerType).toBe('pi')
+    expect(conn.midStreamBehavior).toBe('steer')
   })
 
-  it("Claude Max OAuth → 'queue' (still uses Claude SDK)", () => {
-    const conn = createBuiltInConnection('claude-max')
-    expect(conn.providerType).toBe('anthropic')
-    expect(conn.midStreamBehavior).toBe('queue')
+  it("Pi (Anthropic) custom endpoint becomes pi_compat → 'steer'", () => {
+    const conn = createBuiltInConnection('pi-anthropic', 'http://localhost:11434/v1')
+    expect(conn.providerType).toBe('pi_compat')
+    expect(conn.midStreamBehavior).toBe('steer')
   })
 
   it("ChatGPT Plus → 'steer' (Pi backend, native polite steer)", () => {
@@ -136,12 +136,6 @@ describe('createBuiltInConnection seeds midStreamBehavior', () => {
   it("Pi API key (Craft Agents Backend) → 'steer'", () => {
     const conn = createBuiltInConnection('pi-api-key')
     expect(conn.providerType).toBe('pi')
-    expect(conn.midStreamBehavior).toBe('steer')
-  })
-
-  it("anthropic-api with custom endpoint becomes pi_compat → 'steer'", () => {
-    const conn = createBuiltInConnection('anthropic-api', 'http://localhost:11434/v1')
-    expect(conn.providerType).toBe('pi_compat')
     expect(conn.midStreamBehavior).toBe('steer')
   })
 })

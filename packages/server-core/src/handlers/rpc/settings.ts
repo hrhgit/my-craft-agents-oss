@@ -39,6 +39,13 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL,
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
+  RPC_CHANNELS.piExtensions.GET_ENABLED,
+  RPC_CHANNELS.piExtensions.SET_ENABLED,
+  RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION,
+  RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION,
+  RPC_CHANNELS.piExtensions.GET_SETTINGS,
+  RPC_CHANNELS.piExtensions.SET_SETTINGS,
+  RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
   RPC_CHANNELS.settings.GET_NETWORK_PROXY,
   RPC_CHANNELS.dialog.OPEN_FOLDER,
 ] as const
@@ -353,6 +360,61 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED, async (_ctx, enabled: boolean) => {
     const { setBrowserToolEnabled } = await import('@craft-agent/shared/config/storage')
     setBrowserToolEnabled(enabled)
+  })
+
+  // ============================================================
+  // Pi Extensions 集成开关（控制全局 pi 扩展加载与 automation 委托）
+  // ============================================================
+
+  server.handle(RPC_CHANNELS.piExtensions.GET_ENABLED, async () => {
+    const { getPiExtensionsEnabled } = await import('@craft-agent/shared/config/storage')
+    return getPiExtensionsEnabled()
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.SET_ENABLED, async (_ctx, enabled: boolean) => {
+    const { setPiExtensionsEnabled } = await import('@craft-agent/shared/config/storage')
+    setPiExtensionsEnabled(enabled)
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION, async () => {
+    const { getPiExtensionsDelegatePromptAutomation } = await import('@craft-agent/shared/config/storage')
+    return getPiExtensionsDelegatePromptAutomation()
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION, async (_ctx, delegate: boolean) => {
+    const { setPiExtensionsDelegatePromptAutomation } = await import('@craft-agent/shared/config/storage')
+    setPiExtensionsDelegatePromptAutomation(delegate)
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.GET_SETTINGS, async () => {
+    const { getPiExtensionSettings } = await import('@craft-agent/shared/config/storage')
+    return getPiExtensionSettings()
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.SET_SETTINGS, async (_ctx, settings: import('@craft-agent/shared/config').StoredPiExtensionSettings) => {
+    const { setPiExtensionSettings } = await import('@craft-agent/shared/config/storage')
+    return setPiExtensionSettings(settings)
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS, async (_ctx, patch: import('@craft-agent/shared/config').StoredPiExtensionSettings) => {
+    const { updatePiExtensionSettings } = await import('@craft-agent/shared/config/storage')
+    return updatePiExtensionSettings(patch)
+  })
+
+  // 逐扩展启停：读写 ~/.pi/agent/settings.json 的 extensions.<name>.enabled
+  server.handle(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES, async () => {
+    const { readPiExtensionEnabled } = await import('@craft-agent/shared/config/pi-global-config')
+    const { PI_MIGRATED_EXTENSION_IDS } = await import('@craft-agent/shared/config/pi-extension-settings')
+    const states: Record<string, boolean> = {}
+    for (const id of PI_MIGRATED_EXTENSION_IDS) {
+      states[id] = readPiExtensionEnabled(id, true)
+    }
+    return states
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED, async (_ctx, payload: { name: string; enabled: boolean }) => {
+    const { writePiExtensionEnabled } = await import('@craft-agent/shared/config/pi-global-config')
+    writePiExtensionEnabled(payload.name, payload.enabled)
   })
 
   // ============================================================

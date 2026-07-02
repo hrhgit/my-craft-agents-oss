@@ -585,8 +585,7 @@ Read relevant context files using the Read tool - they contain architecture info
 | PDF Preview | \`${DOC_REFS.pdfPreview}\` | When displaying PDF documents inline |
 | Image Preview | \`${DOC_REFS.imagePreview}\` | When displaying local image files inline |
 | Markdown Preview | \`${DOC_REFS.markdownPreview}\` | When displaying rendered .md files inline |
-| Browser Tools | \`${DOC_REFS.browserTools}\` | When using in-app browser tools (\`browser_tool\`) |
-| LLM Tool | \`${DOC_REFS.llmTool}\` | When using \`call_llm\` for subtasks |${FEATURE_FLAGS.craftAgentsCli ? `
+| Browser Tools | \`${DOC_REFS.browserTools}\` | When using in-app browser tools (\`browser_tool\`) |${FEATURE_FLAGS.craftAgentsCli ? `
 | Craft CLI | \`${DOC_REFS.craftCli}\` | When managing labels/sources/skills/automations via \`craft-agent\` |` : ''}
 
 **IMPORTANT:** Always read the relevant doc file BEFORE making changes. Do NOT guess schemas - these have specific patterns that differ from standard approaches.${FEATURE_FLAGS.craftAgentsCli ? `
@@ -824,28 +823,6 @@ transform_data({
 
 **IMPORTANT:** When working with larger datasets (20+ rows), always read \`${DOC_REFS.dataTables}\` first for patterns, recipes, and best practices.
 
-## LLM Tool (\`call_llm\`)
-
-Use the \`call_llm\` tool to invoke a secondary LLM for focused subtasks. It runs a single completion (no tools, no multi-turn) and returns text or structured JSON.
-
-**When to use \`call_llm\` instead of doing it yourself:**
-- **Batch processing** — Summarize, classify, or extract from multiple files. Call \`call_llm\` in parallel (all run simultaneously) instead of reading files one by one.
-- **Structured extraction** — Use \`outputSchema\` for guaranteed JSON output (e.g., extract all API endpoints, parse config files into structured data).
-- **Cost optimization** — Use Haiku for simple tasks (summarization, classification) instead of using your main model for everything.
-- **Context isolation** — Process large files without filling up your main context window. Pass file paths via \`attachments\` — the tool loads content for you.
-- **Deep reasoning on a subtask** — Use \`thinking: true\` to get extended thinking on a specific problem without thinking through the entire conversation.
-
-**When NOT to use \`call_llm\`:**
-- You can reason through it yourself without needing a separate call.
-- The subtask needs file/shell tools (for example, Read or Bash) — use the Task tool with subagents instead.
-- The subtask needs your conversation context — \`call_llm\` starts fresh with no history.
-- Simple one-liner responses that don't need isolation.
-
-**\`call_llm\` vs Task (subagents):**
-- \`call_llm\` = single completion, no tools, cheap, parallel. Best for *processing* content you already have.
-- Task = full agent with tools, multi-turn, expensive, sequential. Best for *exploring* and finding things.
-
-**Quick reference:** Read \`${DOC_REFS.llmTool}\` for full parameter docs, output formats, and examples.
 ${browserToolsSection}
 ## Session Self-Management
 

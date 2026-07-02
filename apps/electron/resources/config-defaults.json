@@ -11,7 +11,70 @@
     "richToolDescriptions": true,
     "extendedPromptCache": false,
     "browserToolEnabled": true,
-    "allowRemoteEvaluate": true
+    "allowRemoteEvaluate": true,
+    "piExtensions": {
+      "enabled": true,
+      "delegatePromptAutomation": false,
+      "extensions": {
+        "ask_user": { "enabled": true },
+        "plan-mode": { "enabled": true },
+        "prompt-automation": { "enabled": true },
+        "provider-payload-capture": { "enabled": true },
+        "pwsh-preflight": { "enabled": true },
+        "pwsh-utf8": { "enabled": true },
+        "repo-memory": { "enabled": true },
+        "subagent": { "enabled": true },
+        "trace-audit": { "enabled": true },
+        "yourself": { "enabled": true },
+        "ambiguity-dictionary": { "enabled": true },
+        "auto-continue-openai-errors": { "enabled": true },
+        "notify": { "enabled": true },
+        "web-search-footer": { "enabled": true }
+      },
+      "subagent": {
+        "defaultModel": "stepfun/step-3.7-flash",
+        "reviewEnabled": true,
+        "reviewModel": "stepfun/step-3.7-flash"
+      },
+      "traceAudit": {
+        "defaultModel": "stepfun/step-3.7-flash",
+        "concurrency": 2,
+        "reviewSubagentEnabled": true,
+        "showStatusBadge": true
+      },
+      "yourself": {
+        "model": "stepfun/step-3.7-flash",
+        "showStatusBadge": true
+      },
+      "repoMemory": {
+        "model": "stepfun/step-3.7-flash",
+        "showStatusBadge": true
+      },
+      "promptAutomation": {
+        "widgetVisible": true,
+        "defaultJobScope": "session"
+      },
+      "planMode": {
+        "showDiscussionButton": true,
+        "showPlanButton": true,
+        "renderPlanMarkdown": true
+      },
+      "webSearch": {
+        "providerMode": "native-first",
+        "fallbackProvider": "duckduckgo"
+      },
+      "ambiguityDictionary": {
+        "entries": [
+          { "term": "绘画", "meaning": "会话" },
+          { "term": "远程扩展app", "meaning": "E:\\_workSpace\\pi-remote-android" },
+          { "term": "远程app", "meaning": "E:\\_workSpace\\pi-remote-android" },
+          { "term": "mimo", "meaning": "用户自定义配置中的 mimo/mimo-v2.5-pro，不是默认供应商" }
+        ]
+      }
+    },
+    "piShell": {
+      "fullPassthrough": true
+    }
   },
   "workspaceDefaults": {
     "thinkingLevel": "think",

@@ -28,13 +28,6 @@ describe('system prompt guidance', () => {
     expect(prompt).not.toContain('Use the Grep tool (if available)')
     expect(prompt).not.toContain('Grep pattern=')
   })
-
-  it('does not mention Grep in call_llm tool-dependency guidance', () => {
-    const prompt = getSystemPrompt(undefined, undefined, '/tmp/workspace', '/tmp/workspace')
-
-    expect(prompt).toContain('The subtask needs file/shell tools (for example, Read or Bash)')
-    expect(prompt).not.toContain('The subtask needs tools (Read, Bash, Grep)')
-  })
 })
 
 describe('includeCoAuthoredBy handling', () => {

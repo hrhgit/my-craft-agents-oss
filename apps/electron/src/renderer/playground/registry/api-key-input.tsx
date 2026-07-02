@@ -97,19 +97,6 @@ export const apiKeyInputComponents: ComponentEntry[] = [
         },
       },
       {
-        name: 'Via Anthropic API Key flow',
-        description: 'Custom endpoint accessed through Anthropic provider type',
-        props: {
-          providerType: 'anthropic',
-          initialValues: {
-            activePreset: 'custom',
-            baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            connectionDefaultModel: 'qwen3-coder-plus, qwen3-coder-flash',
-            customApi: 'openai-completions',
-          },
-        },
-      },
-      {
         name: 'No Base URL (toggle hidden)',
         description: 'Custom preset but no base URL — protocol toggle should not appear',
         props: {

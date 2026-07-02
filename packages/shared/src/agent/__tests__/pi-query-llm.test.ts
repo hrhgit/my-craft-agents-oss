@@ -1,5 +1,5 @@
 /**
- * Tests for PiAgent.queryLlm — the subprocess RPC that powers `call_llm`.
+ * Tests for PiAgent.queryLlm — the subprocess RPC for agent-native LLM queries.
  *
  * These tests are the drift guard for issue #596. The main-process side used to
  * route queryLlm through the mini_completion envelope which only carried `prompt`,

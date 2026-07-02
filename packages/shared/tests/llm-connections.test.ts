@@ -2,7 +2,7 @@
  * Tests for LLM connection utilities (llm-connections.ts).
  *
  * Focuses on getMiniModel() / findSmallModel() — the provider-aware small
- * model resolution used for title generation, summarization, and call_llm.
+ * model resolution used for title generation, summarization, and mini-completion.
  */
 import { describe, it, expect } from 'bun:test';
 import { getMiniModel, getSummarizationModel, isDeniedMiniModelId } from '../src/config/llm-connections.ts';

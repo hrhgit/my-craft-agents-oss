@@ -74,7 +74,7 @@ craft-agent automation validate
 
 > **Note:** `TodoStateChange` is a deprecated alias for `SessionStatusChange`. Existing configs using the old name will continue to work but will show a deprecation warning during validation.
 
-### Agent Events (passed to Claude SDK)
+### Agent Events
 
 | Event | Trigger | Match Value |
 |-------|---------|-------------|
@@ -128,6 +128,18 @@ Send a prompt to Craft Agent (creates a new session for scheduled prompts).
 ```
 
 The `llmConnection` value is the slug of an LLM connection configured in AI Settings. The `model` value is a model ID supported by the provider. If either is invalid or not found, it gracefully falls back to the workspace default. Both can be used independently or together.
+
+#### Pi Prompt Automation 委托
+
+默认情况下，prompt action 由 craft 的 `AutomationSystem` 自行处理（创建新的 agent 会话）。
+
+启用配置项 `piExtensions.delegatePromptAutomation`（默认 `false`）后，prompt action 的执行会委托给 [pi prompt-automation 扩展](https://github.com/earendil-works/pi) 处理，而不是由 craft 创建会话。启用后：
+
+- `PromptHandler` 收集到待执行的 prompts 时，会通过 `extension_command_invoke` RPC 触发 pi prompt-automation 扩展的命令（如 `/schedule-prompt`），由扩展负责实际执行。
+- craft 的 `AutomationSystem` 仍保留为 workspace 级 UI/RPC/配置层（automations.json 配置、历史、测试、调度），仅 prompt 执行路径发生切换。
+- 该选项默认关闭，不影响现有行为。回滚时将其设回 `false` 即可恢复 craft 自行处理。
+
+> **Note:** 该委托路径依赖 pi 扩展加载与桥接层。若 pi 扩展未加载或桥接层未就绪，启用该选项后 prompts 将不会被执行。详见 [Pi 扩展集成](./pi-extensions.md)（若存在）。
 
 ### Webhook Actions
 

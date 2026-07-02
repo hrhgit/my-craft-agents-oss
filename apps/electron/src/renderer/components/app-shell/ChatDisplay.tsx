@@ -65,6 +65,10 @@ import {
 } from "@craft-agent/ui"
 import { MemoizedAuthRequestCard } from "@/components/chat/AuthRequestCard"
 import { ChatInputZone, type StructuredInputState, type StructuredResponse, type PermissionResponse, type AdminApprovalResponse } from "./input"
+import { ExtensionWidgetZone } from "@/components/extensions/ExtensionWidgetZone"
+import { PlanModeSplitView } from "@/components/extensions/PlanModeSplitView"
+import { PlanProgressWidget } from "@/components/extensions/PlanProgressWidget"
+import { BackgroundAgentBadges } from "@/components/extensions/BackgroundAgentBadges"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { useBackgroundTasks } from "@/hooks/useBackgroundTasks"
 import { useTurnCardExpansion } from "@/hooks/useTurnCardExpansion"
@@ -1491,6 +1495,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     <div ref={zoneRef} className="flex h-full flex-col min-w-0" data-focus-zone="chat">
       {session ? (
         <div className="flex flex-1 flex-col min-h-0 min-w-0 relative">
+          <BackgroundAgentBadges sessionId={session.id} />
           {/* Content layer */}
           <div className="flex flex-1 flex-col min-h-0 min-w-0 relative z-10">
           {/* === MESSAGES AREA: Scrollable list of message bubbles === */}
@@ -1911,6 +1916,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               </ScrollArea>
             </div>
           </div>
+
+          {/* === EXTENSION WIDGET ZONE: pi 扩展 belowEditor widget（编辑器下方、输入框上方） === */}
+          <ExtensionWidgetZone className={CHAT_LAYOUT.maxWidth} />
+
+          {/* === PLAN-MODE SPLIT VIEW: 主计划 + 架构收缩审查（响应式 split 布局） === */}
+          <PlanModeSplitView className={CHAT_LAYOUT.maxWidth} />
+
+          {/* === PLAN-MODE PROGRESS WIDGET: 执行清单进度（已完成/总数 + 进度条） === */}
+          <PlanProgressWidget className={CHAT_LAYOUT.maxWidth} />
 
           {/* === INPUT CONTAINER: FreeForm or Structured Input === */}
           <ChatInputZone

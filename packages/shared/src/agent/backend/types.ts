@@ -59,6 +59,30 @@ export type AgentProvider = ModelProvider;
 // ============================================================
 
 /**
+ * 扩展事件桥接类型：从 pi-agent-server 子进程转发到主进程的扩展事件联合类型。
+ * 对应 pi-agent-server 中的 OutboundExtension* 消息。
+ */
+export type ExtensionBridgeEvent =
+  | { type: 'extension_notify'; message: string; notificationType?: 'info' | 'warning' | 'error'; source?: string }
+  | { type: 'extension_widget'; key: string; content: string[] | undefined; placement?: 'aboveEditor' | 'belowEditor'; source?: string }
+  | { type: 'extension_command_registered'; name: string; description?: string; source: string }
+  | {
+      type: 'remoteui_request';
+      requestId: string;
+      kind: 'select' | 'editor';
+      title: string;
+      message?: string;
+      options?: Array<{ title: string; description?: string }>;
+      allowMultiple?: boolean;
+      allowFreeform?: boolean;
+      allowComment?: boolean;
+      prefill?: string;
+      source: string;
+      /** 发起请求的会话 ID（由 SessionManager 注入，渲染进程据此回传响应） */
+      sessionId?: string;
+    };
+
+/**
  * Permission prompt types for different tool categories.
  */
 export type PermissionRequestType = 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
@@ -272,6 +296,13 @@ export interface CoreBackendConfig {
    */
   onImageResize?: (filePath: string, maxSizeBytes: number) => Promise<string | null>;
 
+  /**
+   * 扩展事件桥接回调：当 pi-agent-server 子进程转发扩展事件（remoteui:request、
+   * extension_notify、extension_widget、extension_command_registered 等）时调用。
+   * 由 SessionManager 通过 eventSink 广播到渲染进程。
+   */
+  onExtensionEvent?: (event: ExtensionBridgeEvent) => void;
+
   /** Enable 1M context window for current Opus models. Default: true. Set false to use 200K and conserve usage limits. */
   enable1MContext?: boolean;
 
@@ -329,7 +360,7 @@ export type SdkMcpServerConfig =
  * Core backend interface - all AI providers must implement this.
  *
  * The interface is designed to:
- * 1. Abstract provider differences (Claude SDK vs OpenAI Responses API)
+ * 1. Abstract provider runtime differences
  * 2. Enable the facade pattern in CraftAgent
  * 3. Support streaming via AsyncGenerator
  * 4. Allow capability-based UI adaptation
@@ -594,6 +625,20 @@ export interface AgentBackend {
    */
   respondToPermission(requestId: string, allowed: boolean, alwaysAllow?: boolean): void;
 
+  /**
+   * 回复 pi 扩展发起的 remoteui:request。
+   * 仅 Pi 后端实现（PiAgent.sendRemoteUIResponse）；其他后端可不实现。
+   * payload=null 表示用户取消。
+   */
+  sendRemoteUIResponse?(requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): void;
+
+  /**
+   * 调用 pi 扩展注册的命令（extension_command_invoke）。
+   * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端可不实现。
+   * args 为 JSON 字符串。
+   */
+  sendExtensionCommandInvoke?(commandId: string, args?: string): void;
+
   // ============================================================
   // Callbacks (set by facade after construction)
   // ============================================================
@@ -635,9 +680,9 @@ export interface AgentBackend {
  */
 export interface BackendConfig extends CoreBackendConfig {
   /**
-   * Provider/SDK to use for this backend.
+   * Provider route to use for this backend.
    * Determines which agent class is instantiated:
-   * - 'anthropic' → ClaudeAgent (Anthropic SDK)
+   * - 'anthropic' → PiAgent legacy alias for Anthropic-compatible connections
    * - 'pi' → PiAgent (Pi via @earendil-works/pi-coding-agent)
    */
   provider: AgentProvider;

@@ -57,8 +57,7 @@ export async function spawnServer(opts?: SpawnServerOptions): Promise<SpawnedSer
   const startupTimeout = opts?.startupTimeout ?? 30_000
   const token = crypto.randomUUID()
 
-  // Strip CLAUDECODE to avoid the Claude Agent SDK's nesting guard rejecting
-  // subprocess launches when the CLI is invoked from within a Claude Code session.
+  // Strip CLAUDECODE so subprocesses do not inherit an outer Claude Code session marker.
   const { CLAUDECODE: _, ...parentEnv } = process.env
   const proc: Subprocess = Bun.spawn(['bun', 'run', serverEntry], {
     env: {

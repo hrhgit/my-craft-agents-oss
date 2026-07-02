@@ -115,6 +115,29 @@ export interface ISessionManager {
   respondToCredential(sessionId: string, requestId: string, response: CredentialResponse): Promise<boolean>
   getSessionPermissionModeState(sessionId: string): PermissionModeState | null
 
+  /**
+   * 回复 pi 扩展发起的 remoteui:request。
+   * 仅 Pi 后端实现（PiAgent.sendRemoteUIResponse）；其他后端可不实现。
+   * payload=null 表示用户取消。
+   */
+  sendRemoteUIResponse(
+    sessionId: string,
+    requestId: string,
+    payload: unknown | null,
+    reason?: 'cancelled' | 'no_remote' | 'disconnected',
+  ): boolean
+
+  /**
+   * 调用 pi 扩展注册的命令（extension_command_invoke）。
+   * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端返回 false。
+   * args 为 JSON 字符串。返回 false 时调用方应回退到原生路径。
+   */
+  invokeExtensionCommand(
+    sessionId: string,
+    commandId: string,
+    args?: string,
+  ): boolean
+
   // ---------------------------------------------------------------------------
   // Plans
   // ---------------------------------------------------------------------------

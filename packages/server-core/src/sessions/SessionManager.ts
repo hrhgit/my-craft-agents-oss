@@ -3,12 +3,14 @@ import { CLIENT_BROWSER_INVOKE } from '@craft-agent/server-core/transport'
 import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput } from '@craft-agent/server-core/handlers'
 import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
+import { createExtensionEventForwarder } from '../handlers/pi-extension-bridge'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
 import { basename, dirname, join } from 'path'
 import { existsSync } from 'fs'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
-import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
+import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
+import type { AgentEvent } from '@craft-agent/core/types'
 import {
   resolveSessionConnection,
   createBackendFromConnection,
@@ -33,6 +35,7 @@ import {
   migrateLegacyCredentials,
   migrateLegacyLlmConnectionsConfig,
   migrateOrphanedDefaultConnections,
+  getPiShellFullPassthrough,
   MODEL_REGISTRY,
   type Workspace,
   type WorkspaceInfo,
@@ -57,9 +60,11 @@ import {
   getSessionPath as getSessionStoragePath,
   ensureSessionDir,
   getSessionFilePath,
+  getSharedPiSessionStorageEnabled,
   generateSessionId,
   sessionPersistenceQueue,
   getHeaderMetadataSignature,
+  setSharedPiSessionStorageEnabled,
   writeSessionJsonl,
   serializeSession,
   validateBundle,
@@ -95,7 +100,8 @@ import { listLabels, loadLabelConfig } from '@craft-agent/shared/labels/storage'
 import { extractLabelId, resolveSessionLabels } from '@craft-agent/shared/labels'
 import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
-import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
+import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot, type PendingPrompt } from '@craft-agent/shared/automations'
+import { FEATURE_FLAGS } from '@craft-agent/shared/feature-flags'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 
 // Import from server-core domain utilities
@@ -597,7 +603,6 @@ async function resolveToolDisplayMeta(
       const internalMcpServers: Record<string, Record<string, string>> = {
         'session': {
           'SubmitPlan': 'Submit Plan',
-          'call_llm': 'LLM Query',
           'config_validate': 'Validate Config',
           'skill_validate': 'Validate Skill',
           'mermaid_validate': 'Validate Mermaid',
@@ -898,6 +903,8 @@ interface ManagedSession {
   branchFromSdkSessionId?: string
   // Parent session's storage path (used only when branchContextStrategy === 'sdk-fork')
   branchFromSessionPath?: string
+  // Parent Pi session JSONL file (used only for shared Pi-native storage)
+  branchFromPiSessionFile?: string
   // Parent session's sdkCwd — needed so the fork subprocess uses the correct
   // ~/.claude/projects/{cwd-hash}/ directory to find the parent's session file.
   branchFromSdkCwd?: string
@@ -1581,6 +1588,22 @@ export class SessionManager implements ISessionManager {
         workspaceRootPath,
         workspaceId,
         enableScheduler: true,
+        // piExtensions.delegatePromptAutomation：启用后 prompt action 委托给 pi prompt-automation 扩展
+        delegatePromptAutomation: FEATURE_FLAGS.delegatePromptAutomation,
+        onDelegatePrompts: async (prompts) => {
+          sessionLog.info(`[Automations] Delegating ${prompts.length} prompt(s) to pi prompt-automation extension`)
+          const delegateSession = this.findActivePiSessionForWorkspace(workspaceRootPath)
+          // 搭桥已就绪（invokeExtensionCommand → PiAgent.sendExtensionCommandInvoke），
+          // 但 subprocess 侧 extension_command_invoke 尚为 no-op（待 Pi prompt-automation
+          // 扩展落地）。当前保底走 Craft 原生 executePromptAutomation，确保不丢失执行。
+          if (delegateSession) {
+            sessionLog.info(`[Automations] Candidate delegate session ${delegateSession} found, but subprocess side is no-op — using native fallback`)
+          } else {
+            sessionLog.warn(`[Automations] No active Pi session for workspace ${workspaceRootPath}, using native fallback`)
+          }
+          // TODO(pi-extensions): subprocess 侧实现后，改为 invokeExtensionCommand + 失败回退。
+          await this.executePromptsNative(workspaceId, workspaceRootPath, prompts)
+        },
         onPromptsReady: async (prompts) => {
           // Execute prompt automations by creating new sessions
           const settled = await Promise.allSettled(
@@ -1740,10 +1763,10 @@ export class SessionManager implements ISessionManager {
    * Reinitialize authentication environment variables.
    * Call this after onboarding or settings changes to pick up new credentials.
    *
-   * SECURITY NOTE: These env vars are propagated to the SDK subprocess via options.ts.
+   * SECURITY NOTE: These env vars are propagated to the agent subprocess.
    * Bun's automatic .env loading is disabled in the subprocess (--env-file=/dev/null)
    * to prevent a user's project .env from injecting ANTHROPIC_API_KEY and overriding
-   * OAuth auth — Claude Code prioritizes API key over OAuth token when both are set.
+   * OAuth auth — Anthropic-compatible providers prioritize API key over OAuth token when both are set.
    * See: https://github.com/lukilabs/craft-agents-oss/issues/39
    */
   /**
@@ -1798,6 +1821,8 @@ export class SessionManager implements ISessionManager {
 
   async initialize(): Promise<void> {
     try {
+      setSharedPiSessionStorageEnabled(getPiShellFullPassthrough())
+
       // Backfill missing `models` arrays on existing LLM connections
       migrateLegacyLlmConnectionsConfig()
 
@@ -2459,6 +2484,8 @@ export class SessionManager implements ISessionManager {
   }
 
   async createSession(workspaceId: string, options?: import('@craft-agent/shared/protocol').CreateSessionOptions): Promise<Session> {
+    setSharedPiSessionStorageEnabled(getPiShellFullPassthrough())
+
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       throw new Error(`Workspace ${workspaceId} not found`)
@@ -2539,6 +2566,7 @@ export class SessionManager implements ISessionManager {
       branchContextStrategy: 'sdk-fork' | 'seeded-fresh-session'
       branchFromSdkSessionId?: string
       branchFromSessionPath?: string
+      branchFromPiSessionFile?: string
       branchFromSdkCwd?: string
       branchFromSdkTurnId?: string
       sourceProvider?: 'anthropic' | 'pi'
@@ -2628,6 +2656,14 @@ export class SessionManager implements ISessionManager {
       const branchFromSessionPath = branchContextStrategy === 'sdk-fork'
         ? getSessionStoragePath(workspaceRootPath, options.branchFromSessionId)
         : undefined
+      const branchFromPiSessionFile = branchContextStrategy === 'sdk-fork' && sourceBackendContext.provider === 'pi' && getSharedPiSessionStorageEnabled()
+        ? getSessionFilePath(
+            workspaceRootPath,
+            options.branchFromSessionId,
+            sourceSession.workingDirectory,
+            sourceSession.createdAt,
+          )
+        : undefined
       // Capture parent's sdkCwd so the child SDK subprocess can find the parent's
       // session file (stored under ~/.claude/projects/{cwd-hash}/).
       const branchFromSdkCwd = branchContextStrategy === 'sdk-fork'
@@ -2703,6 +2739,7 @@ export class SessionManager implements ISessionManager {
         branchContextStrategy,
         branchFromSdkSessionId,
         branchFromSessionPath,
+        branchFromPiSessionFile,
         branchFromSdkCwd,
         branchFromSdkTurnId,
         sourceProvider: sourceBackendContext.provider,
@@ -2758,11 +2795,13 @@ export class SessionManager implements ISessionManager {
       if (validatedBranch.branchContextStrategy === 'sdk-fork') {
         branchedStored.branchFromSdkSessionId = validatedBranch.branchFromSdkSessionId
         branchedStored.branchFromSessionPath = validatedBranch.branchFromSessionPath
+        branchedStored.branchFromPiSessionFile = validatedBranch.branchFromPiSessionFile
         branchedStored.branchFromSdkCwd = validatedBranch.branchFromSdkCwd
         branchedStored.branchFromSdkTurnId = validatedBranch.branchFromSdkTurnId
       } else {
         delete branchedStored.branchFromSdkSessionId
         delete branchedStored.branchFromSessionPath
+        delete branchedStored.branchFromPiSessionFile
         delete branchedStored.branchFromSdkCwd
         delete branchedStored.branchFromSdkTurnId
       }
@@ -2816,6 +2855,7 @@ export class SessionManager implements ISessionManager {
       branchContextStrategy: validatedBranch?.branchContextStrategy,
       branchFromSdkSessionId: validatedBranch?.branchFromSdkSessionId,
       branchFromSessionPath: validatedBranch?.branchFromSessionPath,
+      branchFromPiSessionFile: validatedBranch?.branchFromPiSessionFile,
       branchFromSdkCwd: validatedBranch?.branchFromSdkCwd,
       branchFromSdkTurnId: validatedBranch?.branchFromSdkTurnId,
       branchSeedApplied: validatedBranch ? validatedBranch.branchContextStrategy === 'sdk-fork' : undefined,
@@ -3212,6 +3252,7 @@ export class SessionManager implements ISessionManager {
         sdkSessionId: managed.sdkSessionId,
         branchFromSdkSessionId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkSessionId : undefined,
         branchFromSessionPath: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSessionPath : undefined,
+        branchFromPiSessionFile: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromPiSessionFile : undefined,
         branchFromSdkCwd: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkCwd : undefined,
         branchFromSdkTurnId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkTurnId : undefined,
         branchFromMessageId: managed.branchFromMessageId,
@@ -3231,6 +3272,7 @@ export class SessionManager implements ISessionManager {
         if (managed.branchFromSdkSessionId) {
           sessionLog.info(`Branch fork established for ${managed.id}: child=${sdkSessionId}, retiring parent fork metadata (parent=${managed.branchFromSdkSessionId})`)
           managed.branchFromSdkSessionId = undefined
+          managed.branchFromPiSessionFile = undefined
           managed.branchFromSdkCwd = undefined
           managed.branchFromSdkTurnId = undefined
         } else {
@@ -3250,12 +3292,16 @@ export class SessionManager implements ISessionManager {
       const onBranchForkInvalidated = () => {
         managed.sdkSessionId = undefined
         managed.branchFromSdkSessionId = undefined
+        managed.branchFromPiSessionFile = undefined
         managed.branchFromSdkCwd = undefined
         managed.branchFromSdkTurnId = undefined
         sessionLog.info(`Branch fork invalidated for ${managed.id}: cleared all fork metadata`)
         this.persistSession(managed)
         sessionPersistenceQueue.flush(managed.id)
       }
+
+      // 扩展事件桥接：将 pi-agent-server 子进程的扩展事件转发到渲染进程
+      const onExtensionEvent = createExtensionEventForwarder(this.eventSink, managed.workspace.id, managed.id)
 
       const getRecoveryMessages = () => {
         const relevantMessages = managed.messages
@@ -3377,6 +3423,8 @@ export class SessionManager implements ISessionManager {
           apiServers,
           enabledSlugs,
         },
+        // 扩展事件桥接回调：将 pi-agent-server 子进程的扩展事件转发到渲染进程
+        onExtensionEvent,
         },
       }) as AgentInstance
 
@@ -4183,10 +4231,10 @@ export class SessionManager implements ISessionManager {
               reason: 'Activation failed — source may be unusable (disabled/unauthenticated) or server build failed. Check session logs.',
             }
           }
-          // Both backends need the current turn to end before new tools are visible:
-          // Claude SDK freezes mcpServers at query() start; Pi only picks up new proxy
-          // tool defs on the next handlePrompt (`toolsChanged` flag in pi-agent-server).
-          // Mark a pending restart on the agent — ClaudeAgent/PiAgent consume it after
+          // The current turn must end before new tools are visible:
+          // Pi picks up new proxy tool defs on the next handlePrompt
+          // (`toolsChanged` flag in pi-agent-server).
+          // Mark a pending restart on the agent — PiAgent consumes it after
           // the next tool_result, yield source_activated, and forceAbort. The
           // `source_activated` handler in this class then schedules a server-side
           // resend of the original user message with a "[{slug} activated]" suffix —
@@ -5541,6 +5589,7 @@ export class SessionManager implements ISessionManager {
     // Add user message with stored attachments for persistence
     // Skip if existingMessageId is provided (message was already created when queued)
     let userMessage: Message
+    let ackOnPiPersist = false
     if (existingMessageId) {
       // Find existing message (already added when queued)
       userMessage = managed.messages.find(m => m.id === existingMessageId)!
@@ -5567,7 +5616,6 @@ export class SessionManager implements ISessionManager {
       // `persistSession` is debounced (500ms). #616.
       this.persistSession(managed)
       await this.flushSession(managed.id)
-      onAck?.(userMessage.id)
 
       // Emit user_message event so UI can confirm the optimistic message
       this.sendEvent({
@@ -5577,6 +5625,15 @@ export class SessionManager implements ISessionManager {
         status: 'accepted',
         optimisticMessageId: options?.optimisticMessageId
       }, managed.workspace.id)
+
+      ackOnPiPersist = resolveBackendContext({
+        sessionConnectionSlug: managed.llmConnection,
+        workspaceDefaultConnectionSlug: loadWorkspaceConfig(managed.workspace.rootPath)?.defaults?.defaultLlmConnection,
+        managedModel: managed.model,
+      }).provider === 'pi'
+      if (!ackOnPiPersist) {
+        onAck?.(userMessage.id)
+      }
 
       // If this is the first user message and no title exists, set one immediately
       // AI generation will enhance it later, but we always have a title from the start
@@ -5837,6 +5894,12 @@ export class SessionManager implements ISessionManager {
       sendSpan.mark('chat.starting')
       const chatIterator = agent.chat(effectiveMessage, modelInputAttachments.attachments)
       sessionLog.info('Got chat iterator, starting iteration...')
+      let pendingPiAckMessageId = ackOnPiPersist ? userMessage.id : undefined
+      const ackPiMessageIfPending = () => {
+        if (!pendingPiAckMessageId) return
+        onAck?.(pendingPiAckMessageId)
+        pendingPiAckMessageId = undefined
+      }
 
       for await (const event of chatIterator) {
         // Log events (skip noisy text_delta)
@@ -5852,6 +5915,10 @@ export class SessionManager implements ISessionManager {
 
         // Process the event first
         await this.processEvent(managed, event)
+
+        if (event.type === 'pi_user_message_persisted') {
+          ackPiMessageIfPending()
+        }
 
         // Fallback: Capture SDK session ID if the onSdkSessionIdUpdate callback didn't fire.
         // Primary capture happens in getOrCreateAgent() via onSdkSessionIdUpdate callback,
@@ -5871,6 +5938,11 @@ export class SessionManager implements ISessionManager {
         // Handle complete event - SDK always sends this (even after interrupt)
         // This is the central place where processing ends
         if (event.type === 'complete') {
+          // Defensive fallback: Pi should emit pi_user_message_persisted after
+          // SessionManager.appendMessage(user), but never leave the caller
+          // hanging if an older subprocess misses that bridge event.
+          ackPiMessageIfPending()
+
           // Skip normal completion handling if auth retry is in progress
           // The retry will handle its own completion
           if (managed.authRetryInProgress) {
@@ -6511,6 +6583,96 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
+   * 回复 pi 扩展发起的 remoteui:request。
+   * payload=null 表示用户取消，reason 通常为 "cancelled"。
+   * 仅 Pi 后端支持；非 Pi 后端或会话已销毁时返回 false。
+   */
+  sendRemoteUIResponse(
+    sessionId: string,
+    requestId: string,
+    payload: unknown | null,
+    reason?: 'cancelled' | 'no_remote' | 'disconnected',
+  ): boolean {
+    const managed = this.sessions.get(sessionId)
+    if (managed?.agent) {
+      if (typeof managed.agent.sendRemoteUIResponse !== 'function') {
+        sessionLog.warn(`Cannot respond to remoteui - agent does not support sendRemoteUIResponse for session ${sessionId}`)
+        return false
+      }
+      sessionLog.info(`RemoteUI response for ${requestId}: cancelled=${payload === null}`)
+      managed.agent.sendRemoteUIResponse(requestId, payload, reason)
+      return true
+    } else {
+      sessionLog.warn(`Cannot respond to remoteui - no agent for session ${sessionId}`)
+      return false
+    }
+  }
+
+  /**
+   * 调用 pi 扩展注册的命令（extension_command_invoke）。
+   * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端返回 false。
+   * 返回 false 时调用方应回退到原生路径。
+   */
+  invokeExtensionCommand(sessionId: string, commandId: string, args?: string): boolean {
+    const managed = this.sessions.get(sessionId)
+    if (managed?.agent) {
+      if (typeof managed.agent.sendExtensionCommandInvoke !== 'function') {
+        sessionLog.warn(`[ExtensionBridge] Agent does not support sendExtensionCommandInvoke (session: ${sessionId})`)
+        return false
+      }
+      managed.agent.sendExtensionCommandInvoke(commandId, args)
+      return true
+    }
+    sessionLog.warn(`[ExtensionBridge] No active agent for session ${sessionId}`)
+    return false
+  }
+
+  /**
+   * 查找 workspace 下首个活跃的 Pi 会话 ID（用于 extension 命令委托载体）。
+   * 活跃 = agent 已加载且当前未在处理中。
+   */
+  private findActivePiSessionForWorkspace(workspaceRootPath: string): string | null {
+    for (const [sessionId, managed] of this.sessions) {
+      if (
+        managed.workspace.rootPath === workspaceRootPath &&
+        managed.agent &&
+        !managed.isProcessing
+      ) {
+        return sessionId
+      }
+    }
+    return null
+  }
+
+  /**
+   * 保底路径：原生执行 prompt automation（从 onPromptsReady 逻辑提取）。
+   * 当 delegatePromptAutomation 启用但扩展调用失败/无载体时使用。
+   */
+  private async executePromptsNative(
+    workspaceId: string,
+    workspaceRootPath: string,
+    prompts: PendingPrompt[],
+  ): Promise<void> {
+    await Promise.allSettled(
+      prompts.map((pending) =>
+        this.executePromptAutomation({
+          workspaceId,
+          workspaceRootPath,
+          prompt: pending.prompt,
+          labels: pending.labels,
+          permissionMode: pending.permissionMode,
+          mentions: pending.mentions,
+          llmConnection: pending.llmConnection,
+          model: pending.model,
+          thinkingLevel: pending.thinkingLevel,
+          automationName: pending.automationName,
+          telegramTopic: pending.telegramTopic,
+        }),
+      ),
+    )
+  }
+
+  /**
    * Respond to a pending credential request
    * Returns true if the response was delivered, false if no pending request found
    *
@@ -6812,6 +6974,10 @@ export class SessionManager implements ISessionManager {
     const workspaceId = managed.workspace.id
 
     switch (event.type) {
+      case 'pi_user_message_persisted':
+        // Internal durability signal used by sendMessage ACK handling.
+        break
+
       case 'text_delta':
         managed.streamingText += event.text
         // Queue delta for batched sending (performance: reduces IPC from 50+/sec to ~20/sec)
@@ -6902,19 +7068,6 @@ export class SessionManager implements ISessionManager {
       case 'tool_start': {
         // Format tool input paths to relative for better readability
         const formattedToolInput = formatToolInputPaths(event.input)
-
-        // Resolve call_llm model for TurnCard badge display.
-        // Resolve call_llm model short names to full IDs for display.
-        // Note: Pi sessions override the model in PiEventAdapter (call_llm always uses miniModel).
-        if (event.toolName === 'mcp__session__call_llm' && formattedToolInput?.model) {
-          const shortName = String(formattedToolInput.model)
-          const modelDef = MODEL_REGISTRY.find(m => m.id === shortName)
-            || MODEL_REGISTRY.find(m => m.shortName.toLowerCase() === shortName.toLowerCase())
-            || MODEL_REGISTRY.find(m => m.name.toLowerCase() === shortName.toLowerCase())
-          if (modelDef) {
-            formattedToolInput.model = modelDef.id
-          }
-        }
 
         // Resolve tool display metadata (icon, displayName) for skills/sources
         // Only resolve when we have input (second event for SDK dual-event pattern)

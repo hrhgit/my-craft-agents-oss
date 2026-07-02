@@ -2,6 +2,7 @@ import { join } from 'path'
 import { existsSync, readdirSync, statSync } from 'fs'
 import { RPC_CHANNELS, type SkillFile } from '@craft-agent/shared/protocol'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { resolveSkillDir } from '@craft-agent/shared/skills'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
@@ -41,10 +42,11 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
       return []
     }
 
-    const { getWorkspaceSkillsPath } = await import('@craft-agent/shared/workspaces')
-
-    const skillsDir = getWorkspaceSkillsPath(workspace.rootPath)
-    const skillDir = join(skillsDir, skillSlug)
+    const skillDir = resolveSkillDir(skillSlug, workspace.rootPath)
+    if (!skillDir) {
+      deps.platform.logger?.error(`SKILLS_GET_FILES: Skill not found: ${skillSlug}`)
+      return []
+    }
 
     function scanDirectory(dirPath: string): SkillFile[] {
       try {
@@ -98,10 +100,9 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     if (!workspace) throw new Error('Workspace not found')
     if (workspace.remoteServer) throw new Error('Open in editor is not available for remote workspaces')
 
-    const { getWorkspaceSkillsPath } = await import('@craft-agent/shared/workspaces')
-
-    const skillsDir = getWorkspaceSkillsPath(workspace.rootPath)
-    const skillFile = join(skillsDir, skillSlug, 'SKILL.md')
+    const skillDir = resolveSkillDir(skillSlug, workspace.rootPath)
+    if (!skillDir) throw new Error('Skill not found')
+    const skillFile = join(skillDir, 'SKILL.md')
     await deps.platform.openPath?.(skillFile)
   })
 
@@ -111,10 +112,8 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     if (!workspace) throw new Error('Workspace not found')
     if (workspace.remoteServer) throw new Error('Show in Finder is not available for remote workspaces')
 
-    const { getWorkspaceSkillsPath } = await import('@craft-agent/shared/workspaces')
-
-    const skillsDir = getWorkspaceSkillsPath(workspace.rootPath)
-    const skillDir = join(skillsDir, skillSlug)
+    const skillDir = resolveSkillDir(skillSlug, workspace.rootPath)
+    if (!skillDir) throw new Error('Skill not found')
     await deps.platform.showItemInFolder?.(skillDir)
   })
 }

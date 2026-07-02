@@ -383,7 +383,7 @@ export interface LlmConnectionSetup {
 }
 
 export interface TestLlmConnectionParams {
-  provider: 'anthropic' | 'pi'
+  provider: 'pi'
   apiKey: string
   baseUrl?: string
   model?: string
@@ -524,22 +524,6 @@ export interface WorkspaceSettings {
   localMcpEnabled?: boolean
   defaultLlmConnection?: string
   enabledSourceSlugs?: string[]
-}
-
-// ---------------------------------------------------------------------------
-// Auth result types
-// ---------------------------------------------------------------------------
-
-export interface ClaudeOAuthResult {
-  success: boolean
-  token?: string
-  error?: string
-  /**
-   * Resolved Anthropic identity (issue #838), forwarded to the renderer so it
-   * can thread it into the SETUP payload (which is what persists it). Present
-   * only when the token-exchange response carried identity.
-   */
-  identity?: ClaudeOAuthIdentityDto
 }
 
 // ---------------------------------------------------------------------------

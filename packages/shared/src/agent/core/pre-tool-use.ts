@@ -12,7 +12,7 @@
  * 1. Permission mode check: Block tools disallowed by current mode
  * 2. Source blocking: Block tools from inactive MCP sources
  * 3. Prerequisite check: Block source tools until guide.md is read
- * 4. call_llm detection: Intercept mcp__session__call_llm
+ * 4. spawn_session detection: Intercept mcp__session__spawn_session
  * 5. Input transforms: Path expansion, config validation, skill qualification, metadata stripping
  * 6. Ask-mode prompt decision: Determine if user approval is needed
  */
@@ -598,7 +598,6 @@ export type PreToolUseCheckResult =
       approvalTtlSeconds?: number;
     }
   | { type: 'source_activation_needed'; sourceSlug: string; sourceExists: boolean }
-  | { type: 'call_llm_intercept'; input: Record<string, unknown> }
   | { type: 'spawn_session_intercept'; input: Record<string, unknown> };
 
 /**
@@ -678,7 +677,7 @@ const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
  * 1. Permission mode check (shouldAllowToolInMode)
  * 2. Source blocking (inactive MCP sources)
  * 3. Prerequisite check (guide.md before source tools)
- * 4. call_llm interception
+ * 4. spawn_session interception
  * 5. Input transforms (paths, config validation, skills, metadata)
  * 6. Ask-mode prompt decision
  *
@@ -787,11 +786,9 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   }
 
   // ============================================================
-  // 4. CALL_LLM / SPAWN_SESSION INTERCEPTION
+  // 4. SPAWN_SESSION INTERCEPTION
   // ============================================================
-  if (toolName === 'mcp__session__call_llm') {
-    return { type: 'call_llm_intercept', input };
-  }
+  // call_llm 已移除（双方均不保留）。
   if (toolName === 'mcp__session__spawn_session') {
     return { type: 'spawn_session_intercept', input };
   }

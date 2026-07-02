@@ -126,6 +126,8 @@ import { PanelHeader } from "./PanelHeader"
 import { FabNewChat } from "./FabNewChat"
 import { SendToWorkspaceDialog } from "./SendToWorkspaceDialog"
 import { MessagingDialogHost } from "@/components/messaging/MessagingDialogHost"
+import { RemoteUIModal } from "@/components/extensions/RemoteUIModal"
+import { useRemoteUIRequests } from "@/hooks/useRemoteUIRequests"
 import { EditPopover, getEditConfig, type EditContextKey } from "@/components/ui/EditPopover"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import {
@@ -840,6 +842,9 @@ function AppShellContent({
     handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, confirmDeleteAutomation,
     getAutomationHistory, handleReplayAutomation,
   } = useAutomations(activeWorkspaceId)
+
+  // Pi 扩展 RemoteUI 请求（select / editor 对话框），由 pi 扩展通过 remoteui:request 发起
+  const { currentRequest: remoteUIRequest, respond: respondRemoteUI } = useRemoteUIRequests()
 
   // Whether local MCP servers are enabled (affects stdio source status)
   const [localMcpEnabled, setLocalMcpEnabled] = React.useState(true)
@@ -3559,6 +3564,12 @@ function AppShellContent({
       {/* Messaging dialogs (pairing-code + WA connect) — driven by messagingDialogAtom.
           Mounted here so they survive context-menu / dropdown close. */}
       <MessagingDialogHost />
+
+      {/* Pi 扩展 RemoteUI modal（select / editor），由 remoteui:request 事件驱动。
+          全局唯一，同一时间只显示一个请求。 */}
+      {remoteUIRequest && (
+        <RemoteUIModal request={remoteUIRequest} onRespond={respondRemoteUI} />
+      )}
 
     </AppShellProvider>
   )

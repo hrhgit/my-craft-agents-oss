@@ -337,62 +337,6 @@ function isDocsUpstreamTool(name: string): boolean {
 }
 
 // ============================================================
-// call_llm Handler (backend-specific)
-// ============================================================
-
-async function handleCallLlm(
-  args: Record<string, unknown>,
-  config: SessionConfig,
-): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
-  // Primary path: PreToolUse intercept injects _precomputedResult (works on Codex).
-  const precomputed = args?._precomputedResult as string | undefined;
-
-  if (precomputed) {
-    try {
-      const parsed = JSON.parse(precomputed);
-      if (parsed.error) {
-        return errorResponse(`call_llm failed: ${parsed.error}`);
-      }
-      if (parsed.text !== undefined) {
-        return {
-          content: [{ type: 'text' as const, text: parsed.text || '(Model returned empty response)' }],
-        };
-      }
-      return errorResponse('call_llm: _precomputedResult has unexpected format (missing text field).');
-    } catch {
-      return errorResponse(`call_llm: Failed to parse _precomputedResult: ${precomputed.slice(0, 200)}`);
-    }
-  }
-
-  // Fallback path: HTTP callback to agent (for Copilot where PreToolUse doesn't fire for MCP tools).
-  // Uses callbackPort from CLI arg (--callback-port) or env var (CRAFT_LLM_CALLBACK_PORT).
-  if (config.callbackPort) {
-    try {
-      const resp = await fetch(`http://127.0.0.1:${config.callbackPort}/call-llm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(args),
-        signal: AbortSignal.timeout(CALLBACK_TOOL_TIMEOUT_MS),
-      });
-      const result = await resp.json() as { text?: string; model?: string; error?: string };
-      if (result.error) {
-        return errorResponse(`call_llm failed: ${result.error}`);
-      }
-      return {
-        content: [{ type: 'text' as const, text: result.text || '(Model returned empty response)' }],
-      };
-    } catch (err) {
-      return errorResponse(`call_llm callback failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  return errorResponse(
-    'call_llm requires either PreToolUse intercept (_precomputedResult) or ' +
-    'HTTP callback (CRAFT_LLM_CALLBACK_PORT). Neither is available.'
-  );
-}
-
-// ============================================================
 // spawn_session Handler (backend-specific)
 // ============================================================
 
@@ -529,16 +473,11 @@ async function main() {
     tools: [...createSessionTools(includeDeveloperFeedback), ...docsTools],
   }));
 
-  // Handle tool calls — route via canonical registry, call_llm, or docs upstream
+  // Handle tool calls — route via canonical registry, spawn_session, or docs upstream
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: toolArgs } = request.params;
 
     try {
-      // call_llm has backend-specific execution (precomputed result / HTTP callback)
-      if (name === 'call_llm') {
-        return await handleCallLlm(toolArgs as Record<string, unknown>, config);
-      }
-
       // spawn_session has backend-specific execution (precomputed result / HTTP callback)
       if (name === 'spawn_session') {
         return await handleSpawnSession(toolArgs as Record<string, unknown>, config);

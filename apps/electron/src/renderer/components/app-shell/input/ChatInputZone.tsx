@@ -51,6 +51,7 @@ export function ChatInputZone({
   const [autoOpenLabelId, setAutoOpenLabelId] = React.useState<string | null>(null)
   const shouldShowOptionBadges = showOptionBadges ?? !compactMode
   const inputResetKey = `${sessionId}::${inputProps.structuredInput?.type ?? 'freeform'}`
+  const isPiReadOnlySession = sessionId.startsWith('pi-')
 
   const handleClearDraft = React.useCallback(() => {
     inputProps.onInputChange?.('')
@@ -98,6 +99,12 @@ export function ChatInputZone({
           currentSessionStatus={currentSessionStatus}
           onSessionStatusChange={onSessionStatusChange}
         />
+      )}
+
+      {isPiReadOnlySession && (
+        <div className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          此会话来自 Pi CLI（只读）。发送消息将创建新的 Craft 会话。
+        </div>
       )}
 
       <InputErrorBoundary

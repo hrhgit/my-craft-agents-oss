@@ -51,12 +51,12 @@ describe('session-scoped tool callback merge', () => {
       browserPaneFns,
     });
 
-    const queryFn = async () => ({ text: 'ok', model: 'test' });
-    mergeSessionScopedToolCallbacks(sessionId, { queryFn });
+    const onPlanSubmitted = (_planPath: string) => {};
+    mergeSessionScopedToolCallbacks(sessionId, { onPlanSubmitted });
 
     const merged = getSessionScopedToolCallbacks(sessionId);
     expect(merged).toBeTruthy();
     expect(merged?.browserPaneFns).toBe(browserPaneFns);
-    expect(merged?.queryFn).toBe(queryFn);
+    expect(merged?.onPlanSubmitted).toBe(onPlanSubmitted);
   });
 });

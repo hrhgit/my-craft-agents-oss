@@ -166,6 +166,17 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
 
+  // piExtensions — 本地 app 级 pi 扩展集成开关（不随 workspace 走）
+  RPC_CHANNELS.piExtensions.GET_ENABLED,
+  RPC_CHANNELS.piExtensions.SET_ENABLED,
+  RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION,
+  RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION,
+  RPC_CHANNELS.piExtensions.GET_SETTINGS,
+  RPC_CHANNELS.piExtensions.SET_SETTINGS,
+  RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
+  RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES,
+  RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED,
+
   // browserPane — Electron BrowserView
   RPC_CHANNELS.browserPane.CREATE,
   RPC_CHANNELS.browserPane.DESTROY,
@@ -294,28 +305,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.llmConnections.REFRESH_MODELS,
   RPC_CHANNELS.llmConnections.CHANGED,
 
-  // chatgpt — OAuth via capability passthrough
-  RPC_CHANNELS.chatgpt.START_OAUTH,
-  RPC_CHANNELS.chatgpt.COMPLETE_OAUTH,
-  RPC_CHANNELS.chatgpt.CANCEL_OAUTH,
-  RPC_CHANNELS.chatgpt.GET_AUTH_STATUS,
-  RPC_CHANNELS.chatgpt.LOGOUT,
-
-  // copilot — OAuth via capability passthrough
-  RPC_CHANNELS.copilot.START_OAUTH,
-  RPC_CHANNELS.copilot.CANCEL_OAUTH,
-  RPC_CHANNELS.copilot.GET_AUTH_STATUS,
-  RPC_CHANNELS.copilot.LOGOUT,
-  RPC_CHANNELS.copilot.DEVICE_CODE,
-
-  // Claude OAuth — runs on workspace server so credentials and connection config
-  // end up on the same server that will use them. Browser opening is client-side.
-  // (ChatGPT OAuth stays LOCAL_ONLY — requires localhost callback server.)
-  RPC_CHANNELS.onboarding.START_CLAUDE_OAUTH,
-  RPC_CHANNELS.onboarding.EXCHANGE_CLAUDE_CODE,
-  RPC_CHANNELS.onboarding.HAS_CLAUDE_OAUTH_STATE,
-  RPC_CHANNELS.onboarding.CLEAR_CLAUDE_OAUTH_STATE,
-
   // settings — workspace-level settings
   RPC_CHANNELS.settings.SETUP_LLM_CONNECTION,
   RPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP,
@@ -326,6 +315,14 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS,
   RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL,
   RPC_CHANNELS.pi.GET_PROVIDER_MODELS,
+  RPC_CHANNELS.pi.GET_GLOBAL_PROVIDERS,
+  RPC_CHANNELS.pi.GET_GLOBAL_SETTINGS,
+  RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER,
+  RPC_CHANNELS.pi.SAVE_GLOBAL_PROVIDER,
+  RPC_CHANNELS.pi.DELETE_GLOBAL_PROVIDER,
+  RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT,
+  RPC_CHANNELS.pi.FETCH_MODELS_FOR_ENDPOINT,
+  RPC_CHANNELS.pi.GLOBAL_CHANGED,
 
   // preferences — workspace-level preferences
   RPC_CHANNELS.preferences.READ,
@@ -451,6 +448,13 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.messaging.DISMISS_PENDING_SENDER,
   RPC_CHANNELS.messaging.ALLOW_PENDING_SENDER,
   RPC_CHANNELS.messaging.SET_BINDING_ACCESS,
+
+  // extensions — pi 扩展事件桥接（workspace 范围广播 + 会话级回复）
+  RPC_CHANNELS.extensions.EVENT,
+  RPC_CHANNELS.extensions.REMOTEUI_REQUEST,
+  RPC_CHANNELS.extensions.REMOTEUI_RESPONSE,
+  RPC_CHANNELS.extensions.COMMAND_REGISTERED,
+  RPC_CHANNELS.extensions.COMMAND_INVOKE,
 ])
 
 // ---------------------------------------------------------------------------

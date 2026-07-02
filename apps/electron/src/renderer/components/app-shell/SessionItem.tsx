@@ -60,6 +60,7 @@ export function SessionItem({
   const { hotkey: nextHotkey } = useActionLabel('chat.nextSearchMatch')
   const { hotkey: prevHotkey } = useActionLabel('chat.prevSearchMatch')
   const title = getSessionTitle(item)
+  const isPiSession = item.id.startsWith('pi-')
   // For the active session, prefer logical match count over ripgrep count
   const activeMatch = ctx.activeChatMatchInfo
   const isActiveSession = isSelected && activeMatch?.sessionId === item.id
@@ -237,7 +238,16 @@ export function SessionItem({
           {formatDistanceToNowStrict(new Date(item.lastMessageAt), { locale: shortTimeLocale as Locale, roundingMethod: 'floor' })}
         </span>
       ) : undefined}
-      badges={hasLabels ? <SessionBadges item={item} /> : undefined}
+      badges={
+        <>
+          {isPiSession && (
+            <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium bg-purple-500/10 text-purple-600 dark:bg-purple-400/15 dark:text-purple-300">
+              Pi
+            </span>
+          )}
+          {hasLabels ? <SessionBadges item={item} /> : undefined}
+        </>
+      }
     />
   )
 }

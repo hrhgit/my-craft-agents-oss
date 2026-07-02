@@ -158,10 +158,11 @@ describe('validateSetupTestInput', () => {
     expect(result.valid).toBe(true)
   })
 
-  it('accepts anthropic custom endpoint without piAuthProvider', () => {
+  it('accepts pi setup test input without custom endpoint provider routing', () => {
     const result = validateSetupTestInput({
-      provider: 'anthropic',
+      provider: 'pi',
       baseUrl: 'https://custom.endpoint.com',
+      piAuthProvider: 'anthropic',
     })
     expect(result.valid).toBe(true)
   })

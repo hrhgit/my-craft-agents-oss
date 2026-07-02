@@ -352,54 +352,6 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
     }
   }
 
-  // LLM Query tool (call_llm) → Document overlay with input prompt + output response
-  if (toolName === 'mcp__session__call_llm') {
-    const prompt = (input?.prompt as string) || ''
-    const model = input?.model as string | undefined
-    const systemPrompt = input?.systemPrompt as string | undefined
-    const attachments = input?.attachments as unknown[] | undefined
-    const outputFormat = input?.outputFormat as string | undefined
-    const outputSchema = input?.outputSchema as Record<string, unknown> | undefined
-
-    const sections: string[] = []
-
-    // Input section
-    sections.push('## Prompt')
-
-    // Metadata (only show when present)
-    const meta: string[] = []
-    if (model) meta.push(`**Model:** ${model}`)
-    if (systemPrompt) meta.push(`**System Prompt:** ${systemPrompt}`)
-    if (outputFormat) meta.push(`**Output Format:** ${outputFormat}`)
-    if (outputSchema) meta.push(`**Output Schema:**\n\`\`\`json\n${JSON.stringify(outputSchema, null, 2)}\n\`\`\``)
-    if (attachments && attachments.length > 0) {
-      const paths = attachments
-        .map(a => typeof a === 'string' ? a : (a as { path: string }).path)
-        .filter(Boolean)
-      if (paths.length > 0) meta.push(`**Attachments:** ${paths.join(', ')}`)
-    }
-    if (meta.length > 0) {
-      sections.push(meta.join('\n\n'))
-    }
-
-    sections.push(prompt)
-
-    // Output section
-    if (rawContent) {
-      sections.push('---')
-      sections.push('## Response')
-      sections.push(rawContent)
-    }
-
-    return {
-      type: 'document',
-      content: sections.join('\n\n'),
-      filePath: 'LLM Query',
-      toolName: 'call_llm',
-      error: activity.error,
-    }
-  }
-
   // Try to detect JSON content for unknown tools (MCP tools, WebFetch, etc.)
   // JSON objects/arrays get interactive tree viewer, other content falls through to generic
   const trimmedContent = rawContent.trim()

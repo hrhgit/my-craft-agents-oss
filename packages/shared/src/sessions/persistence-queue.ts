@@ -1,9 +1,16 @@
 import { writeFile, rename, unlink } from 'fs/promises'
 import { dirname } from 'path'
 import type { StoredSession, SessionHeader } from './types.js'
-import { getSessionFilePath, ensureSessionsDir, ensureSessionDir } from './storage.js'
+import {
+  ensureSharedPiTreeSessionFile,
+  getSessionFilePath,
+  getSharedPiSessionStorageEnabled,
+  ensureSessionsDir,
+  ensureSessionDir,
+} from './storage.js'
 import { toPortablePath } from '../utils/paths.js'
 import { createSessionHeader, makeSessionPathPortable, readSessionHeader } from './jsonl.js'
+import { looksLikeTreeSessionJsonl, writeTreeSessionCraftMetadata } from './tree-jsonl.js'
 import { debug } from '../utils/debug.js'
 
 interface PendingWrite {
@@ -95,10 +102,10 @@ class SessionPersistenceQueue {
 
     try {
       const { data } = entry
-      ensureSessionsDir(data.workspaceRootPath)
-      ensureSessionDir(data.workspaceRootPath, sessionId)
+      ensureSessionsDir(data.workspaceRootPath, data.workingDirectory)
+      ensureSessionDir(data.workspaceRootPath, sessionId, data.workingDirectory)
 
-      const filePath = getSessionFilePath(data.workspaceRootPath, sessionId)
+      const filePath = getSessionFilePath(data.workspaceRootPath, sessionId, data.workingDirectory)
 
       // Prepare session with portable paths for cross-machine compatibility
       const storageSession: StoredSession = {
@@ -107,6 +114,27 @@ class SessionPersistenceQueue {
         workingDirectory: data.workingDirectory ? toPortablePath(data.workingDirectory) : undefined,
         sdkCwd: data.sdkCwd ? toPortablePath(data.sdkCwd) : undefined,
         lastUsedAt: Date.now(),
+      }
+
+      if (getSharedPiSessionStorageEnabled()) {
+        const treeFilePath = ensureSharedPiTreeSessionFile(storageSession)
+        if (treeFilePath) {
+          const header = readSessionHeader(treeFilePath)
+          if (header) {
+            this.lastWrittenHeaderSignature.set(sessionId, getHeaderMetadataSignature(header))
+          }
+          debug(`[PersistenceQueue] Updated shared Pi session metadata ${sessionId}`)
+          return
+        }
+      }
+
+      if (looksLikeTreeSessionJsonl(filePath) && writeTreeSessionCraftMetadata(filePath, storageSession)) {
+        const header = readSessionHeader(filePath)
+        if (header) {
+          this.lastWrittenHeaderSignature.set(sessionId, getHeaderMetadataSignature(header))
+        }
+        debug(`[PersistenceQueue] Updated tree session metadata ${sessionId}`)
+        return
       }
 
       // Create JSONL content: header + messages (one per line)

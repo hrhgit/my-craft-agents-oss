@@ -1,15 +1,3 @@
-/**
- * Centralized LLM Connection Validation
- *
- * Validates LLM connections by making a minimal query through the Claude Agent SDK.
- * Uses the same code path as actual agent sessions (query() with maxTurns:1).
- *
- * Follows the pattern established in ClaudeAgent.runMiniCompletion() — env-based
- * credential injection, no tools, minimal system prompt.
- */
-
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import { getDefaultOptions } from '../agent/options.ts';
 import { debug } from '../utils/debug.ts';
 
 export interface LlmValidationConfig {
@@ -21,6 +9,8 @@ export interface LlmValidationConfig {
   oauthToken?: string;
   /** Custom base URL for Anthropic-compatible endpoints */
   baseUrl?: string;
+  /** Optional timeout in milliseconds */
+  timeoutMs?: number;
 }
 
 export interface LlmValidationResult {
@@ -28,73 +18,57 @@ export interface LlmValidationResult {
   error?: string;
 }
 
-/**
- * Validate an Anthropic/Anthropic-compatible LLM connection.
- *
- * Makes a minimal query via the Claude Agent SDK to verify:
- * - Credentials are valid
- * - Model is accessible
- * - Endpoint is reachable
- *
- * @returns Validation result with parsed error message on failure
- */
 export async function validateAnthropicConnection(
-  config: LlmValidationConfig
+  config: LlmValidationConfig,
 ): Promise<LlmValidationResult> {
-  debug('[llm-validation] Validating connection', { model: config.model, hasApiKey: !!config.apiKey, hasOAuth: !!config.oauthToken, baseUrl: config.baseUrl });
+  debug('[llm-validation] Validating connection', {
+    model: config.model,
+    hasApiKey: !!config.apiKey,
+    hasOAuth: !!config.oauthToken,
+    baseUrl: config.baseUrl,
+  });
 
-  // Build env overrides for credentials — avoids mutating process.env
-  const envOverrides: Record<string, string> = {};
+  const baseUrl = (config.baseUrl || 'https://api.anthropic.com').replace(/\/+$/, '');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs ?? 20_000);
 
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+  };
   if (config.apiKey) {
-    envOverrides.ANTHROPIC_API_KEY = config.apiKey;
-    // Clear OAuth to avoid conflicts
-    envOverrides.CLAUDE_CODE_OAUTH_TOKEN = '';
+    headers['x-api-key'] = config.apiKey;
   } else if (config.oauthToken) {
-    envOverrides.CLAUDE_CODE_OAUTH_TOKEN = config.oauthToken;
-    // Clear API key to avoid conflicts
-    envOverrides.ANTHROPIC_API_KEY = '';
+    headers.authorization = `Bearer ${config.oauthToken}`;
   }
-
-  if (config.baseUrl) {
-    envOverrides.ANTHROPIC_BASE_URL = config.baseUrl;
-  }
-
-  const abortController = new AbortController();
 
   try {
-    const options = {
-      ...getDefaultOptions(envOverrides),
-      model: config.model,
-      maxTurns: 1,
-      abortController,
-      systemPrompt: 'Reply with OK.',
-      tools: [] as string[], // No tools
-      persistSession: false,
-    };
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers,
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: 16,
+        messages: [{ role: 'user', content: 'Reply with OK.' }],
+      }),
+    });
 
-    const q = query({ prompt: 'hi', options });
-
-    // Consume the query — we just need it to succeed or fail
-    for await (const msg of q) {
-      if (msg.type === 'assistant') {
-        // Check if the SDK reported an error on the assistant message
-        if (msg.error) {
-          abortController.abort();
-          return { success: false, error: parseValidationError(msg.error) };
-        }
-        // Got a successful response — connection works, abort early
-        abortController.abort();
-        break;
-      }
+    if (response.ok) {
+      return { success: true };
     }
 
-    return { success: true };
+    const body = await response.text().catch(() => '');
+    return {
+      success: false,
+      error: parseValidationError(`${response.status} ${response.statusText} ${body}`.trim()),
+    };
   } catch (error) {
-    abortController.abort();
     const msg = error instanceof Error ? error.message : String(error);
     debug('[llm-validation] Validation failed:', msg);
     return { success: false, error: parseValidationError(msg) };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -106,7 +80,7 @@ export function parseValidationError(msg: string): string {
   const lowerMsg = msg.toLowerCase();
 
   // Connection errors — server unreachable
-  if (lowerMsg.includes('econnrefused') || lowerMsg.includes('enotfound') || lowerMsg.includes('fetch failed')) {
+  if (lowerMsg.includes('econnrefused') || lowerMsg.includes('enotfound') || lowerMsg.includes('fetch failed') || lowerMsg.includes('aborted')) {
     return 'Cannot connect to API server. Check the URL and ensure the server is running.';
   }
 
@@ -145,6 +119,5 @@ export function parseValidationError(msg: string): string {
     return 'API temporarily unavailable. Try again in a few seconds.';
   }
 
-  // Fallback
   return msg.slice(0, 200);
 }

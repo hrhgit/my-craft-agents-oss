@@ -17,6 +17,8 @@ import { join } from 'path';
 import matter from 'gray-matter';
 import type { LoadedSkill, SkillMetadata, SkillSource } from './types.ts';
 import { getWorkspaceSkillsPath } from '../workspaces/storage.ts';
+import { getPiShellFullPassthrough } from '../config/storage.ts';
+import { PI_SKILLS_DIR, PI_PROJECT_SKILLS_DIR } from '../config/paths.ts';
 import {
   validateIconValue,
   findIconFile,
@@ -34,6 +36,70 @@ export const GLOBAL_AGENT_SKILLS_DIR = join(homedir(), '.agents', 'skills');
 
 /** Project-level agent skills relative directory name */
 export const PROJECT_AGENT_SKILLS_DIR = '.agents/skills';
+
+// ============================================================
+// Active skills tiers (Craft vs Pi shell mode)
+// ============================================================
+
+/**
+ * Returns the active skill directories (with source labels) based on the
+ * current shell mode.
+ *
+ * - Craft mode (fullPassthrough=false): global ~/.agents/skills/ < workspace
+ *   {workspace}/skills/ < project {projectRoot}/.agents/skills/
+ * - Pi shell mode (fullPassthrough=true): global ~/.agents/skills/ < global
+ *   ~/.pi/agent/skills/ < project {projectRoot}/.pi/skills/
+ *
+ * Tiers are listed in ascending priority order (later entries override
+ * earlier ones by slug).
+ */
+export function getActiveSkillsTiers(
+  workspaceRoot: string,
+  projectRoot?: string,
+): Array<{ dir: string; source: SkillSource }> {
+  if (getPiShellFullPassthrough()) {
+    // Pi shell mode: shared Pi skill repository
+    const tiers: Array<{ dir: string; source: SkillSource }> = [
+      { dir: GLOBAL_AGENT_SKILLS_DIR, source: 'global' }, // compat (~/.agents/skills/)
+      { dir: PI_SKILLS_DIR, source: 'global' }, // Pi global (~/.pi/agent/skills/)
+    ];
+    if (projectRoot) {
+      tiers.push({ dir: join(projectRoot, PI_PROJECT_SKILLS_DIR), source: 'project' });
+    }
+    return tiers;
+  }
+  // Craft mode: original three-tier layout
+  const tiers: Array<{ dir: string; source: SkillSource }> = [
+    { dir: GLOBAL_AGENT_SKILLS_DIR, source: 'global' },
+    { dir: getWorkspaceSkillsPath(workspaceRoot), source: 'workspace' },
+  ];
+  if (projectRoot) {
+    tiers.push({ dir: join(projectRoot, PROJECT_AGENT_SKILLS_DIR), source: 'project' });
+  }
+  return tiers;
+}
+
+/**
+ * Resolve a skill slug to its directory across active tiers (highest priority
+ * first). Returns null if not found.
+ */
+export function resolveSkillDir(
+  slug: string,
+  workspaceRoot: string,
+  projectRoot?: string,
+): string | null {
+  const tiers = getActiveSkillsTiers(workspaceRoot, projectRoot);
+  // Search in descending priority (project > workspace/global)
+  for (let i = tiers.length - 1; i >= 0; i--) {
+    const tier = tiers[i];
+    if (!tier) continue;
+    const skillDir = join(tier.dir, slug);
+    if (existsSync(skillDir) && statSync(skillDir).isDirectory()) {
+      return skillDir;
+    }
+  }
+  return null;
+}
 
 /**
  * Normalize requiredSources frontmatter to a clean string array.
@@ -175,9 +241,8 @@ function loadSkillsFromDir(skillsDir: string, source: SkillSource): LoadedSkill[
  * @param workspaceRoot - Absolute path to workspace root
  * @param slug - Skill directory name
  */
-export function loadSkill(workspaceRoot: string, slug: string): LoadedSkill | null {
-  const skillsDir = getWorkspaceSkillsPath(workspaceRoot);
-  return loadSkillFromDir(skillsDir, slug, 'workspace');
+export function loadSkill(workspaceRoot: string, slug: string, projectRoot?: string): LoadedSkill | null {
+  return loadSkillBySlug(workspaceRoot, slug, projectRoot);
 }
 
 /**
@@ -223,20 +288,10 @@ export function loadAllSkills(workspaceRoot: string, projectRoot?: string): Load
 
   const skillsBySlug = new Map<string, LoadedSkill>();
 
-  // 1. Global skills (lowest priority): ~/.agents/skills/
-  for (const skill of loadSkillsFromDir(GLOBAL_AGENT_SKILLS_DIR, 'global')) {
-    skillsBySlug.set(skill.slug, skill);
-  }
-
-  // 2. Workspace skills (medium priority)
-  for (const skill of loadWorkspaceSkills(workspaceRoot)) {
-    skillsBySlug.set(skill.slug, skill);
-  }
-
-  // 3. Project skills (highest priority): {projectRoot}/.agents/skills/
-  if (projectRoot) {
-    const projectSkillsDir = join(projectRoot, PROJECT_AGENT_SKILLS_DIR);
-    for (const skill of loadSkillsFromDir(projectSkillsDir, 'project')) {
+  // Load from active tiers (Craft or Pi shell mode) in ascending priority order
+  const tiers = getActiveSkillsTiers(workspaceRoot, projectRoot);
+  for (const { dir, source } of tiers) {
+    for (const skill of loadSkillsFromDir(dir, source)) {
       skillsBySlug.set(skill.slug, skill);
     }
   }
@@ -255,19 +310,15 @@ export function loadAllSkills(workspaceRoot: string, projectRoot?: string): Load
  * @param projectRoot - Optional project root for project-level skills
  */
 export function loadSkillBySlug(workspaceRoot: string, slug: string, projectRoot?: string): LoadedSkill | null {
-  // Highest priority: project-level
-  if (projectRoot) {
-    const projectSkillsDir = join(projectRoot, PROJECT_AGENT_SKILLS_DIR);
-    const skill = loadSkillFromDir(projectSkillsDir, slug, 'project');
+  // Search active tiers in descending priority (project > workspace/global)
+  const tiers = getActiveSkillsTiers(workspaceRoot, projectRoot);
+  for (let i = tiers.length - 1; i >= 0; i--) {
+    const tier = tiers[i];
+    if (!tier) continue;
+    const skill = loadSkillFromDir(tier.dir, slug, tier.source);
     if (skill) return skill;
   }
-
-  // Medium priority: workspace
-  const workspaceSkill = loadSkillFromDir(getWorkspaceSkillsPath(workspaceRoot), slug, 'workspace');
-  if (workspaceSkill) return workspaceSkill;
-
-  // Lowest priority: global
-  return loadSkillFromDir(GLOBAL_AGENT_SKILLS_DIR, slug, 'global');
+  return null;
 }
 
 /**
@@ -295,13 +346,9 @@ export function getSkillIconPath(workspaceRoot: string, slug: string): string | 
  * @param workspaceRoot - Absolute path to workspace root
  * @param slug - Skill directory name
  */
-export function deleteSkill(workspaceRoot: string, slug: string): boolean {
-  const skillsDir = getWorkspaceSkillsPath(workspaceRoot);
-  const skillDir = join(skillsDir, slug);
-
-  if (!existsSync(skillDir)) {
-    return false;
-  }
+export function deleteSkill(workspaceRoot: string, slug: string, projectRoot?: string): boolean {
+  const skillDir = resolveSkillDir(slug, workspaceRoot, projectRoot);
+  if (!skillDir) return false;
 
   try {
     rmSync(skillDir, { recursive: true });
@@ -332,24 +379,24 @@ export function skillExists(workspaceRoot: string, slug: string): boolean {
  * List skill slugs in a workspace
  * @param workspaceRoot - Absolute path to workspace root
  */
-export function listSkillSlugs(workspaceRoot: string): string[] {
-  const skillsDir = getWorkspaceSkillsPath(workspaceRoot);
-
-  if (!existsSync(skillsDir)) {
-    return [];
+export function listSkillSlugs(workspaceRoot: string, projectRoot?: string): string[] {
+  const tiers = getActiveSkillsTiers(workspaceRoot, projectRoot);
+  const slugs = new Set<string>();
+  for (const { dir } of tiers) {
+    if (!existsSync(dir)) continue;
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const skillFile = join(dir, entry.name, 'SKILL.md');
+        if (existsSync(skillFile)) {
+          slugs.add(entry.name);
+        }
+      }
+    } catch {
+      // Ignore errors reading skills directory
+    }
   }
-
-  try {
-    return readdirSync(skillsDir, { withFileTypes: true })
-      .filter((entry) => {
-        if (!entry.isDirectory()) return false;
-        const skillFile = join(skillsDir, entry.name, 'SKILL.md');
-        return existsSync(skillFile);
-      })
-      .map((entry) => entry.name);
-  } catch {
-    return [];
-  }
+  return Array.from(slugs);
 }
 
 // ============================================================

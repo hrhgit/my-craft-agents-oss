@@ -5,7 +5,6 @@
  * Each tool accepts { path, method, params } and auto-injects authentication.
  */
 
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { ApiConfig } from './types.ts';
 import { debug } from '../utils/debug.ts';
@@ -13,6 +12,11 @@ import { guardLargeResult } from '../utils/large-response.ts';
 import { MAX_DOWNLOAD_SIZE, formatBytes } from '../utils/binary-detection.ts';
 import type { ApiCredential, BasicAuthCredential } from './credential-manager.ts';
 import { isMultiHeaderCredential } from './credential-manager.ts';
+import {
+  createInProcessMcpServer,
+  createMcpTool,
+  type InProcessMcpServer,
+} from '../mcp/server-factory.ts';
 
 // Re-export for convenience
 export type { ApiCredential, BasicAuthCredential } from './credential-manager.ts';
@@ -236,7 +240,12 @@ export function createApiTool(
 
   const description = buildToolDescription(config);
 
-  return tool(
+  return createMcpTool<{
+    path: string;
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+    params?: Record<string, unknown>;
+    _intent?: string;
+  }>(
     toolName,
     description,
     {
@@ -357,12 +366,12 @@ export function createApiServer(
   credential: ApiCredentialSource,
   sessionPath?: string,
   summarize?: SummarizeCallback
-): ReturnType<typeof createSdkMcpServer> {
+): InProcessMcpServer {
   debug(`[api-tools] Creating server for ${config.name}${sessionPath ? ` (session: ${sessionPath})` : ''}`);
 
   const apiTool = createApiTool(config, credential, sessionPath, summarize);
 
-  return createSdkMcpServer({
+  return createInProcessMcpServer({
     name: `api_${config.name}`,
     version: '1.0.0',
     tools: [apiTool],

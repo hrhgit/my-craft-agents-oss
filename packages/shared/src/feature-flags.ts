@@ -59,6 +59,20 @@ export function isEmbeddedServerEnabled(): boolean {
   return false;
 }
 
+/**
+ * 运行时判断是否将 prompt automation 委托给 pi prompt-automation 扩展执行。
+ *
+ * 对应配置项 `piExtensions.delegatePromptAutomation`，默认关闭（由 craft 的
+ * PromptHandler 自行创建会话）。启用后 prompt action 走 pi prompt-automation
+ * 扩展（通过 extension_command_invoke RPC，由 Task 2 桥接层实现）。
+ * 覆盖方式：CRAFT_FEATURE_DELEGATE_PROMPT_AUTOMATION=1|0
+ */
+export function isDelegatePromptAutomationEnabled(): boolean {
+  const override = parseBooleanEnv(getEnv('CRAFT_FEATURE_DELEGATE_PROMPT_AUTOMATION'));
+  if (override !== undefined) return override;
+  return false;
+}
+
 export const FEATURE_FLAGS = {
   /** Enable Opus 4.7 fast mode (speed:"fast" + beta header). 6x pricing. */
   fastMode: false,
@@ -86,5 +100,15 @@ export const FEATURE_FLAGS = {
    */
   get embeddedServer(): boolean {
     return isEmbeddedServerEnabled();
+  },
+  /**
+   * 将 prompt automation 委托给 pi prompt-automation 扩展执行。
+   *
+   * 对应配置项 `piExtensions.delegatePromptAutomation`，默认关闭。
+   * 启用后 prompt action 由 pi 扩展处理（通过 extension_command_invoke RPC）。
+   * 覆盖方式：CRAFT_FEATURE_DELEGATE_PROMPT_AUTOMATION=1|0
+   */
+  get delegatePromptAutomation(): boolean {
+    return isDelegatePromptAutomationEnabled();
   },
 } as const;

@@ -46,6 +46,7 @@ export const SESSION_PERSISTENT_FIELDS = [
   'branchFromMessageId',
   'branchFromSdkSessionId',
   'branchFromSessionPath',
+  'branchFromPiSessionFile',
   'branchFromSdkCwd',
   'branchFromSdkTurnId',
   // Remote transfer handoff
@@ -180,6 +181,10 @@ export interface SessionConfig {
    */
   branchFromSessionPath?: string;
   /**
+   * Parent Pi session JSONL file (optional, only when Pi uses shared native session storage).
+   */
+  branchFromPiSessionFile?: string;
+  /**
    * Parent session's sdkCwd (optional). SDK session files are stored per-CWD
    * (`~/.claude/projects/{cwd-hash}/`), so forking requires the child subprocess
    * to use the parent's CWD to locate the parent's session file.
@@ -282,6 +287,18 @@ export interface SessionHeader {
   isArchived?: boolean;
   /** Timestamp when session was archived (for retention policy) */
   archivedAt?: number;
+  /** Message ID that this session was branched from (hard context cutoff marker). */
+  branchFromMessageId?: string;
+  /** Parent session's SDK session ID. */
+  branchFromSdkSessionId?: string;
+  /** Parent session's storage path. */
+  branchFromSessionPath?: string;
+  /** Parent Pi session JSONL file when using shared Pi-native storage. */
+  branchFromPiSessionFile?: string;
+  /** Parent session's SDK cwd. */
+  branchFromSdkCwd?: string;
+  /** Provider-native branch anchor at the branch point. */
+  branchFromSdkTurnId?: string;
   /** One-shot hidden summary injected on the first turn after a remote transfer. */
   transferredSessionSummary?: string;
   /** Whether the transferred-session summary has already been injected. */
@@ -366,4 +383,14 @@ export interface SessionMetadata {
   archivedAt?: number;
   /** Message ID that this session was branched from (hard context cutoff marker). */
   branchFromMessageId?: string;
+  /** Parent session's SDK session ID. */
+  branchFromSdkSessionId?: string;
+  /** Parent session's storage path. */
+  branchFromSessionPath?: string;
+  /** Parent Pi session JSONL file when using shared Pi-native storage. */
+  branchFromPiSessionFile?: string;
+  /** Parent session's SDK cwd. */
+  branchFromSdkCwd?: string;
+  /** Provider-native branch anchor at the branch point. */
+  branchFromSdkTurnId?: string;
 }

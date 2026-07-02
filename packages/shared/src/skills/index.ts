@@ -18,4 +18,6 @@ export {
   listSkillSlugs,
   skillNeedsIconDownload,
   downloadSkillIcon,
+  getActiveSkillsTiers,
+  resolveSkillDir,
 } from './storage.ts';

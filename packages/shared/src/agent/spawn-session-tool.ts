@@ -9,9 +9,9 @@
  * - Default: Creates a session and sends the prompt (fire-and-forget)
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { SpawnSessionResult, SpawnSessionHelpResult } from './base-agent.ts';
+import { createMcpTool } from '../mcp/server-factory.ts';
 
 export type SpawnSessionFn = (input: Record<string, unknown>) => Promise<SpawnSessionResult | SpawnSessionHelpResult>;
 
@@ -20,6 +20,20 @@ type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
 };
+
+interface SpawnSessionToolArgs {
+  help?: boolean;
+  prompt?: string;
+  name?: string;
+  llmConnection?: string;
+  model?: string;
+  enabledSourceSlugs?: string[];
+  permissionMode?: 'safe' | 'ask' | 'allow-all';
+  thinkingLevel?: 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  labels?: string[];
+  workingDirectory?: string;
+  attachments?: Array<{ path: string; name?: string }>;
+}
 
 function errorResponse(message: string): ToolResult {
   return {
@@ -38,7 +52,7 @@ export interface SpawnSessionToolOptions {
 }
 
 export function createSpawnSessionTool(options: SpawnSessionToolOptions) {
-  return tool(
+  return createMcpTool<SpawnSessionToolArgs>(
     'spawn_session',
     `Create a new session that runs independently with its own prompt, connection, model, and sources.
 

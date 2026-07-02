@@ -1,0 +1,9 @@
+{
+  "cwd": "E:\\_workSpace\\_Agents\\craft-agent",
+  "command": [
+    "bun",
+    "install"
+  ],
+  "display_command": "bun install",
+  "created_at": "2026-06-30T12:23:44"
+}

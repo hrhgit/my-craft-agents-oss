@@ -304,7 +304,7 @@ describe('Bedrock-native model display', () => {
 })
 
 // ============================================================
-// Claude Fable 5 registration (Claude Agent SDK path)
+// Claude Fable 5 registration (Anthropic-compatible provider path)
 // ============================================================
 
 describe('Claude Fable 5', () => {

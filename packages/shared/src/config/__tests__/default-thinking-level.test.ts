@@ -106,11 +106,18 @@ describe('default thinking level storage', () => {
 
   it('supports every thinking level', () => {
     const { configDir } = setupWorkspaceConfigDir()
-    for (const level of THINKING_LEVEL_IDS) {
-      runEval(configDir, `setDefaultThinkingLevel('${level}')`)
-      const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")
-      expect(output).toBe(level)
-    }
+    const levels = [...THINKING_LEVEL_IDS]
+    const output = runEval(
+      configDir,
+      `
+      const levels = ${JSON.stringify(levels)};
+      for (const level of levels) {
+        setDefaultThinkingLevel(level);
+        console.log(String(getDefaultThinkingLevel()));
+      }
+      `,
+    )
+    expect(output.split(/\r?\n/)).toEqual(levels)
   })
 
   it('migrates legacy "think" value to "medium"', () => {

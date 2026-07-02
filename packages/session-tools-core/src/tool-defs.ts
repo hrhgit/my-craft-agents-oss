@@ -4,8 +4,8 @@
  * Canonical Zod schemas, descriptions, and handler registry for all
  * session-scoped tools. Consumers derive what they need:
  *
- * - Claude SDK  → `.shape` extracts the plain `{ key: z.string() }` literal
- * - MCP / Pi    → `getToolDefsAsJsonSchema()` auto-converts to JSON Schema
+ * - In-process tools → `.shape` extracts the plain `{ key: z.string() }` literal
+ * - MCP / Pi         → `getToolDefsAsJsonSchema()` auto-converts to JSON Schema
  *
  * Adding a new tool: define the schema, description, handler import, and
  * one entry in SESSION_TOOL_DEFS.
@@ -17,7 +17,8 @@ import type { SessionToolContext } from './context.ts';
 import type { ToolResult } from './types.ts';
 
 // Handlers
-import { handleSubmitPlan } from './handlers/submit-plan.ts';
+// Note: handleSubmitPlan 已移除——plan 工作流让位给 pi plan-mode 扩展（/plan-finalize 命令）。
+// 保留 handlers/submit-plan.ts 文件和 SubmitPlanSchema 导出以兼容历史会话数据。
 import { handleConfigValidate } from './handlers/config-validate.ts';
 import { handleSkillValidate } from './handlers/skill-validate.ts';
 import { handleMermaidValidate } from './handlers/mermaid-validate.ts';
@@ -92,30 +93,7 @@ export const CredentialPromptSchema = z.object({
   passwordRequired: z.boolean().optional().describe('For basic auth: whether password is required'),
 });
 
-export const CallLlmSchema = z.object({
-  prompt: z.string().describe('Instructions for the LLM'),
-  attachments: z.array(z.union([
-    z.string().describe('Simple file path'),
-    z.object({
-      path: z.string().describe('File path'),
-      startLine: z.number().optional().describe('First line (1-indexed)'),
-      endLine: z.number().optional().describe('Last line (1-indexed)'),
-    }),
-  ])).optional().describe('File paths on disk to attach (max 20). NOT for inline text — put text in prompt instead. Use {path, startLine, endLine} for large files.'),
-  model: z.string().optional().describe('Model ID or short name. Defaults to a fast model.'),
-  systemPrompt: z.string().optional().describe('Optional system prompt'),
-  maxTokens: z.number().optional().describe('Max output tokens (1-64000). Defaults to 4096'),
-  temperature: z.number().optional().describe('Sampling temperature 0-1'),
-  thinking: z.boolean().optional().describe('Enable extended thinking. Incompatible with outputFormat/outputSchema'),
-  thinkingBudget: z.number().optional().describe('Token budget for thinking (1024-100000). Defaults to 10000'),
-  outputFormat: z.enum(['summary', 'classification', 'extraction', 'analysis', 'comparison', 'validation']).optional()
-    .describe('Predefined output format'),
-  outputSchema: z.object({
-    type: z.literal('object'),
-    properties: z.record(z.string(), z.unknown()),
-    required: z.array(z.string()).optional(),
-  }).optional().describe('Custom JSON Schema for structured output'),
-});
+// call_llm 已移除——pi 现在原生提供 call_llm 扩展（~/.pi/agent/extensions/call-llm/）。
 
 export const UpdatePreferencesSchema = z.object({
   name: z.string().optional().describe("The user's preferred name or how they'd like to be addressed"),
@@ -422,16 +400,6 @@ Examples:
 - \`close\` — close and destroy the browser window
 - \`hide\` — hide the window while preserving state`,
 
-  call_llm: `Invoke a secondary LLM for focused subtasks. Use for:
-- Cost optimization: use a smaller model for simple tasks (summarization, classification)
-- Structured output: JSON schema compliance via prompt instructions
-- Parallel processing: call multiple times in one message - all run simultaneously
-- Context isolation: process content without polluting main context
-
-Put text/content directly in the 'prompt' parameter. Do NOT pass inline text via attachments.
-Only use 'attachments' for existing file paths on disk - the tool loads file content automatically.
-For large files (>2000 lines), use {path, startLine, endLine} to select a portion.`,
-
   spawn_session: `Create a new session that runs independently with its own prompt, connection, model, and sources.
 
 Use this to delegate tasks to parallel sessions — research, analysis, drafts, or any work that benefits from separate context.
@@ -527,7 +495,8 @@ export type SessionToolDef = RegistrySessionToolDef | BackendSessionToolDef;
 // ============================================================
 
 export const SESSION_TOOL_DEFS: SessionToolDef[] = [
-  { name: 'SubmitPlan', description: TOOL_DESCRIPTIONS.SubmitPlan, inputSchema: SubmitPlanSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSubmitPlan },
+  // SubmitPlan 已移除——plan 工作流由 pi plan-mode 扩展接管（/plan-finalize 命令）。
+  // 历史会话中已存在的 plan 数据不受影响。
   { name: 'config_validate', description: TOOL_DESCRIPTIONS.config_validate, inputSchema: ConfigValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleConfigValidate },
   { name: 'skill_validate', description: TOOL_DESCRIPTIONS.skill_validate, inputSchema: SkillValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleSkillValidate },
   { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: MermaidValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleMermaidValidate },
@@ -542,7 +511,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'script_sandbox', description: TOOL_DESCRIPTIONS.script_sandbox, inputSchema: ScriptSandboxSchema, executionMode: 'registry', safeMode: 'allow', handler: handleScriptSandbox },
   { name: 'render_template', description: TOOL_DESCRIPTIONS.render_template, inputSchema: RenderTemplateSchema, executionMode: 'registry', safeMode: 'allow', handler: handleRenderTemplate },
   { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: SendDeveloperFeedbackSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSendDeveloperFeedback },
-  { name: 'call_llm', description: TOOL_DESCRIPTIONS.call_llm, inputSchema: CallLlmSchema, executionMode: 'backend', safeMode: 'allow', readOnly: true, handler: null },
+  // call_llm 已移除（双方均不保留）。
   { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: SpawnSessionSchema, executionMode: 'backend', safeMode: 'block', handler: null },
   // Browser tool (backend-specific — requires BrowserPaneManager in Electron)
   // Single CLI-like tool that handles all browser actions via command string.

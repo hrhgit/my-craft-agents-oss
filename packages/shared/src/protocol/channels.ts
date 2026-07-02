@@ -167,10 +167,6 @@ export const RPC_CHANNELS = {
     GET_AUTH_STATE: 'onboarding:getAuthState',
     VALIDATE_MCP: 'onboarding:validateMcp',
     START_MCP_OAUTH: 'onboarding:startMcpOAuth',
-    START_CLAUDE_OAUTH: 'onboarding:startClaudeOAuth',
-    EXCHANGE_CLAUDE_CODE: 'onboarding:exchangeClaudeCode',
-    HAS_CLAUDE_OAUTH_STATE: 'onboarding:hasClaudeOAuthState',
-    CLEAR_CLAUDE_OAUTH_STATE: 'onboarding:clearClaudeOAuthState',
     DEFER_SETUP: 'onboarding:deferSetup',
   },
   llmConnections: {
@@ -185,20 +181,6 @@ export const RPC_CHANNELS = {
     SET_WORKSPACE_DEFAULT: 'LLM_Connection:setWorkspaceDefault',
     REFRESH_MODELS: 'LLM_Connection:refreshModels',
     CHANGED: 'LLM_Connection:changed',
-  },
-  chatgpt: {
-    START_OAUTH: 'chatgpt:startOAuth',
-    COMPLETE_OAUTH: 'chatgpt:completeOAuth',
-    CANCEL_OAUTH: 'chatgpt:cancelOAuth',
-    GET_AUTH_STATUS: 'chatgpt:getAuthStatus',
-    LOGOUT: 'chatgpt:logout',
-  },
-  copilot: {
-    START_OAUTH: 'copilot:startOAuth',
-    CANCEL_OAUTH: 'copilot:cancelOAuth',
-    GET_AUTH_STATUS: 'copilot:getAuthStatus',
-    LOGOUT: 'copilot:logout',
-    DEVICE_CODE: 'copilot:deviceCode',
   },
   settings: {
     SETUP_LLM_CONNECTION: 'settings:setupLlmConnection',
@@ -215,6 +197,15 @@ export const RPC_CHANNELS = {
     GET_API_KEY_PROVIDERS: 'pi:getApiKeyProviders',
     GET_PROVIDER_BASE_URL: 'pi:getProviderBaseUrl',
     GET_PROVIDER_MODELS: 'pi:getProviderModels',
+    // Global config (read/write ~/.pi/agent/) — pure Pi + custom provider mode
+    GET_GLOBAL_PROVIDERS: 'pi:getGlobalProviders',
+    GET_GLOBAL_SETTINGS: 'pi:getGlobalSettings',
+    GET_GLOBAL_PROVIDER: 'pi:getGlobalProvider',
+    SAVE_GLOBAL_PROVIDER: 'pi:saveGlobalProvider',
+    DELETE_GLOBAL_PROVIDER: 'pi:deleteGlobalProvider',
+    SET_GLOBAL_DEFAULT: 'pi:setGlobalDefault',
+    FETCH_MODELS_FOR_ENDPOINT: 'pi:fetchModelsForEndpoint',
+    GLOBAL_CHANGED: 'pi:globalChanged',
   },
   dialog: {
     OPEN_FOLDER: 'dialog:openFolder',
@@ -310,6 +301,26 @@ export const RPC_CHANNELS = {
   tools: {
     GET_BROWSER_TOOL_ENABLED: 'tools:getBrowserToolEnabled',
     SET_BROWSER_TOOL_ENABLED: 'tools:setBrowserToolEnabled',
+  },
+  piExtensions: {
+    GET_ENABLED: 'piExtensions:getEnabled',
+    SET_ENABLED: 'piExtensions:setEnabled',
+    GET_DELEGATE_PROMPT_AUTOMATION: 'piExtensions:getDelegatePromptAutomation',
+    SET_DELEGATE_PROMPT_AUTOMATION: 'piExtensions:setDelegatePromptAutomation',
+    GET_SETTINGS: 'piExtensions:getSettings',
+    SET_SETTINGS: 'piExtensions:setSettings',
+    UPDATE_SETTINGS: 'piExtensions:updateSettings',
+    // 逐扩展启停状态（读写 ~/.pi/agent/settings.json 的 extensions.<name>.enabled）
+    GET_EXTENSION_STATES: 'piExtensions:getExtensionStates',
+    SET_EXTENSION_ENABLED: 'piExtensions:setExtensionEnabled',
+  },
+  // 扩展事件桥接：pi-agent-server 子进程的扩展事件转发到渲染进程
+  extensions: {
+    EVENT: 'extensions:event',
+    REMOTEUI_REQUEST: 'extensions:remoteuiRequest',
+    REMOTEUI_RESPONSE: 'extensions:remoteuiResponse',
+    COMMAND_REGISTERED: 'extensions:commandRegistered',
+    COMMAND_INVOKE: 'extensions:commandInvoke',
   },
   caching: {
     GET_EXTENDED_PROMPT_CACHE: 'caching:getExtendedPromptCache',

@@ -1,8 +1,11 @@
 import { readFile, writeFile, stat } from 'fs/promises'
 import { join } from 'path'
-import { RPC_CHANNELS, type FileAttachment, type SendMessageOptions, type SessionEvent } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type FileAttachment, type SendMessageOptions, type SessionEvent, type Session } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { storedToMessage } from '@craft-agent/core/types'
+import { getWorkspaceByNameOrId, getPiShellFullPassthrough } from '@craft-agent/shared/config'
+import { PI_SESSIONS_DIR } from '@craft-agent/shared/config/paths'
+import { findPiSessionFile, loadPiSessionMessages, readPiSessionFile } from '@craft-agent/shared/sessions'
 import { perf } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
 
@@ -114,6 +117,8 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.tasks.GET_OUTPUT,
   RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION,
   RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL,
+  RPC_CHANNELS.extensions.REMOTEUI_RESPONSE,
+  RPC_CHANNELS.extensions.COMMAND_INVOKE,
   RPC_CHANNELS.sessions.COMMAND,
   RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION,
   RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE,
@@ -147,6 +152,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       : undefined
     const workspaceId = ctx.workspaceId ?? windowWorkspaceId
     const sessions = sessionManager.getSessions(workspaceId ?? undefined)
+    // Keep the startup list workspace-scoped. Global Pi CLI history can be
+    // large; individual pi-* sessions are still loaded on demand below.
     end()
 
     log.info('[sessions:get] result', {
@@ -177,8 +184,45 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Get a single session with messages (for lazy loading)
-  server.handle(RPC_CHANNELS.sessions.GET_MESSAGES, async (_ctx, sessionId: string) => {
+  server.handle(RPC_CHANNELS.sessions.GET_MESSAGES, async (ctx, sessionId: string) => {
     const end = perf.start('rpc.getSessionMessages')
+
+    // Pi 会话（只读）：从 ~/.pi/agent/sessions/ 加载并转换为 Craft Message[]
+    // 渲染层通过 sessionId 以 'pi-' 前缀判断只读，禁用输入框
+    if (sessionId.startsWith('pi-') && getPiShellFullPassthrough()) {
+      const piSessionId = sessionId.slice(3)
+      const filePath = findPiSessionFile(PI_SESSIONS_DIR, piSessionId)
+      if (filePath) {
+        const windowWorkspaceId = ctx.webContentsId != null
+          ? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId)
+          : undefined
+        const workspaceId = ctx.workspaceId ?? windowWorkspaceId ?? ''
+        const workspace = workspaceId ? getWorkspaceByNameOrId(workspaceId) : undefined
+        const workspaceRoot = workspace?.rootPath ?? ''
+        const metadata = readPiSessionFile(filePath, workspaceRoot)
+        const storedMessages = loadPiSessionMessages(filePath)
+        const messages = storedMessages.map(storedToMessage)
+        const piSession: Session = {
+          id: sessionId,
+          workspaceId,
+          workspaceName: workspace?.name ?? 'Pi',
+          name: metadata?.name,
+          preview: metadata?.preview,
+          lastMessageAt: metadata?.lastUsedAt ?? Date.now(),
+          createdAt: metadata?.createdAt,
+          messages,
+          isProcessing: false,
+          messageCount: messages.length,
+          workingDirectory: metadata?.workingDirectory,
+          sessionFolderPath: filePath,
+        }
+        end()
+        return piSession
+      }
+      end()
+      return null
+    }
+
     const session = await sessionManager.getSession(sessionId)
     end()
     return session
@@ -287,6 +331,21 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Returns true if the response was delivered, false if agent/session is gone
   server.handle(RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL, async (_ctx, sessionId: string, requestId: string, response: import('@craft-agent/shared/protocol').CredentialResponse) => {
     return sessionManager.respondToCredential(sessionId, requestId, response)
+  })
+
+  // 回复 pi 扩展发起的 remoteui:request（payload=null 表示用户取消）
+  // 由渲染进程 RemoteUIModal 调用，转发到对应会话的 PiAgent.sendRemoteUIResponse
+  server.handle(RPC_CHANNELS.extensions.REMOTEUI_RESPONSE, async (_ctx, sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected') => {
+    return sessionManager.sendRemoteUIResponse(sessionId, requestId, payload, reason)
+  })
+
+  // 调用 pi 扩展注册的命令（extension_command_invoke）
+  // 由 automation 委托路径触发，转发到对应会话的 PiAgent.sendExtensionCommandInvoke
+  server.handle(RPC_CHANNELS.extensions.COMMAND_INVOKE, async (_ctx, sessionId: string, commandId: string, args?: string | Record<string, unknown>) => {
+    const serializedArgs = typeof args === 'string' || args === undefined
+      ? args
+      : JSON.stringify(args)
+    return sessionManager.invokeExtensionCommand(sessionId, commandId, serializedArgs)
   })
 
   // ==========================================================================

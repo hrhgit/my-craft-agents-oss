@@ -15,6 +15,61 @@ import { toPortablePath, expandPath, normalizePath } from '../utils/paths.ts';
 import { debug } from '../utils/debug.ts';
 import { safeJsonParse } from '../utils/files.ts';
 import { pickSessionFields } from './utils.ts';
+import {
+  looksLikeTreeSessionJsonl,
+  readTreeSessionAsStoredSession,
+  readTreeSessionMetadata,
+  writeTreeSessionCraftMetadata,
+} from './tree-jsonl.ts';
+
+function headerFromTreeSession(sessionFile: string): SessionHeader | null {
+  const metadata = readTreeSessionMetadata(sessionFile);
+  if (!metadata) return null;
+  return normalizeHeaderPermissionModes({
+    id: metadata.id,
+    sdkSessionId: metadata.sdkSessionId,
+    workspaceRootPath: metadata.workspaceRootPath,
+    name: metadata.name,
+    createdAt: metadata.createdAt,
+    lastUsedAt: metadata.lastUsedAt,
+    lastMessageAt: metadata.lastMessageAt,
+    isFlagged: metadata.isFlagged,
+    permissionMode: metadata.permissionMode,
+    previousPermissionMode: metadata.previousPermissionMode,
+    sessionStatus: metadata.sessionStatus,
+    labels: metadata.labels,
+    lastReadMessageId: metadata.lastReadMessageId,
+    hasUnread: metadata.hasUnread,
+    workingDirectory: metadata.workingDirectory,
+    sdkCwd: metadata.sdkCwd,
+    sharedUrl: metadata.sharedUrl,
+    sharedId: metadata.sharedId,
+    model: metadata.model,
+    llmConnection: metadata.llmConnection,
+    connectionLocked: metadata.connectionLocked,
+    thinkingLevel: metadata.thinkingLevel,
+    hidden: metadata.hidden,
+    isArchived: metadata.isArchived,
+    archivedAt: metadata.archivedAt,
+    branchFromMessageId: metadata.branchFromMessageId,
+    branchFromSdkSessionId: metadata.branchFromSdkSessionId,
+    branchFromSessionPath: metadata.branchFromSessionPath,
+    branchFromPiSessionFile: metadata.branchFromPiSessionFile,
+    branchFromSdkCwd: metadata.branchFromSdkCwd,
+    branchFromSdkTurnId: metadata.branchFromSdkTurnId,
+    messageCount: metadata.messageCount,
+    lastMessageRole: metadata.lastMessageRole,
+    preview: metadata.preview,
+    tokenUsage: metadata.tokenUsage ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      contextTokens: 0,
+      costUsd: 0,
+    },
+    lastFinalMessageId: metadata.lastFinalMessageId,
+  });
+}
 
 // ============================================================
 // Session Path Portability
@@ -79,6 +134,10 @@ function normalizeHeaderPermissionModes<T extends SessionHeader>(header: T): T {
  */
 export function readSessionHeader(sessionFile: string): SessionHeader | null {
   try {
+    if (looksLikeTreeSessionJsonl(sessionFile)) {
+      return headerFromTreeSession(sessionFile);
+    }
+
     const fd = openSync(sessionFile, 'r');
     const buffer = Buffer.alloc(8192); // 8KB is plenty for metadata header
     const bytesRead = readSync(fd, buffer, 0, 8192, 0);
@@ -102,6 +161,10 @@ export function readSessionHeader(sessionFile: string): SessionHeader | null {
  */
 export function readSessionJsonl(sessionFile: string): StoredSession | null {
   try {
+    if (looksLikeTreeSessionJsonl(sessionFile)) {
+      return readTreeSessionAsStoredSession(sessionFile);
+    }
+
     const content = readFileSync(sessionFile, 'utf-8');
     const lines = content.split('\n').filter(Boolean);
 
@@ -148,6 +211,10 @@ export function readSessionJsonl(sessionFile: string): StoredSession | null {
  * Lines 2+: Messages (one per line)
  */
 export function writeSessionJsonl(sessionFile: string, session: StoredSession): void {
+  if (looksLikeTreeSessionJsonl(sessionFile) && writeTreeSessionCraftMetadata(sessionFile, session)) {
+    return;
+  }
+
   const header = createSessionHeader(session);
   const sessionDir = dirname(sessionFile);
 
@@ -243,6 +310,10 @@ function extractPreview(messages: StoredMessage[]): string | undefined {
  */
 export async function readSessionHeaderAsync(sessionFile: string): Promise<SessionHeader | null> {
   try {
+    if (looksLikeTreeSessionJsonl(sessionFile)) {
+      return headerFromTreeSession(sessionFile);
+    }
+
     const handle = await open(sessionFile, 'r');
     try {
       const buffer = Buffer.alloc(8192);
@@ -268,6 +339,10 @@ export async function readSessionHeaderAsync(sessionFile: string): Promise<Sessi
  */
 export function readSessionMessages(sessionFile: string): StoredMessage[] {
   try {
+    if (looksLikeTreeSessionJsonl(sessionFile)) {
+      return readTreeSessionAsStoredSession(sessionFile)?.messages ?? [];
+    }
+
     const content = readFileSync(sessionFile, 'utf-8');
     const lines = content.split('\n').filter(Boolean);
     // Skip first line (header), expand session path tokens, parse rest as messages resiliently

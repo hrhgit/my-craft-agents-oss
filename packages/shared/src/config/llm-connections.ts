@@ -39,10 +39,10 @@ export function registerPiModelResolver(resolver: PiModelResolver): void {
 // ============================================================
 
 /**
- * Provider type determines which backend/SDK implementation to use.
+ * Provider type determines which provider route to use.
  * This is separate from auth mechanism - a provider may support multiple auth types.
  *
- * - 'anthropic': Direct Anthropic API (api.anthropic.com) — uses Claude Agent SDK
+ * - 'anthropic': Anthropic-compatible Claude connection routed through the Pi backend
  * - 'pi': Pi unified LLM API (20+ providers via @earendil-works/pi-ai)
  * - 'pi_compat': Pi with custom endpoint (Ollama, self-hosted models, Anthropic-compat endpoints)
  *
@@ -99,8 +99,12 @@ export type ModelSelectionMode = 'automaticallySyncedFromProvider' | 'userDefine
 /**
  * Protocol for custom API endpoints.
  * Determines which streaming adapter the Pi SDK uses for requests.
+ *
+ * Matches the 4 built-in Pi SDK custom API protocols so that ~/.pi/agent/
+ * providers (which use the same 4 values) can be mirrored into LlmConnection
+ * entries without lossy coercion.
  */
-export type CustomEndpointApi = 'openai-completions' | 'anthropic-messages';
+export type CustomEndpointApi = 'openai-completions' | 'openai-responses' | 'anthropic-messages' | 'google-generative-ai';
 
 /**
  * Custom endpoint protocol config.
@@ -429,10 +433,9 @@ export function isCompatProvider(providerType: LlmProviderType): boolean {
 }
 
 /**
- * Check if a provider type uses the Anthropic Claude Agent SDK.
- * Only direct Anthropic API connections use the Claude SDK.
+ * Check if a provider type uses Anthropic-compatible auth and model metadata.
  * @param providerType - Provider type to check
- * @returns true if this provider uses the Anthropic SDK
+ * @returns true if this provider is the Anthropic-compatible route
  */
 export function isAnthropicProvider(providerType: LlmProviderType): boolean {
   return providerType === 'anthropic';
@@ -978,7 +981,7 @@ export interface ResolvedAuthEnvVars {
  * Provider-agnostic: switches on providerType to determine which env vars
  * to set and how to retrieve credentials. Shared by:
  * - `SessionManager.reinitializeAuth()` (applies to process.env)
- * - `ClaudeAgent.postInit()` (applies to process.env + envOverrides)
+ * - `PiAgent.postInit()` (applies to process.env + envOverrides)
  *
  * Providers that handle auth internally (openai, copilot, pi) return
  * empty envVars — their auth is managed in postInit() via native mechanisms.

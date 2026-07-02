@@ -1,0 +1,13 @@
+{
+  "job_id": "20260630-122344-bun-install",
+  "label": "bun-install",
+  "cwd": "E:\\_workSpace\\_Agents\\craft-agent",
+  "state": "running",
+  "created_at": "2026-06-30T12:23:44",
+  "request_file": "E:\\_workSpace\\_Agents\\craft-agent\\.codex-install-jobs\\20260630-122344-bun-install\\request.json",
+  "log_file": "E:\\_workSpace\\_Agents\\craft-agent\\.codex-install-jobs\\20260630-122344-bun-install\\install.log",
+  "worker_pid": 66116,
+  "console_mode": "visible",
+  "started_at": "2026-06-30T12:23:45",
+  "command_pid": 51364
+}

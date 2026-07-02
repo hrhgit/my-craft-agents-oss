@@ -13,6 +13,8 @@ import { ChatDisplay, type ChatDisplayHandle } from '@/components/app-shell/Chat
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { SessionMenu } from '@/components/app-shell/SessionMenu'
 import { CompactSessionMenu } from '@/components/app-shell/CompactSessionMenu'
+import { SubagentPanel } from '@/components/extensions/SubagentPanel'
+import { useExtensionStatus } from '@/hooks/useExtensionStatus'
 import { SessionInfoPopover } from '@/components/app-shell/SessionInfoPopover'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { toast } from 'sonner'
@@ -35,6 +37,8 @@ export interface ChatPageProps {
 
 const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const { t } = useTranslation()
+  // 监听 yourself / repo-memory 扩展的 extension_notify 完成通知并显示 toast
+  useExtensionStatus()
   // Diagnostic: mark when component runs
   React.useLayoutEffect(() => {
     rendererPerf.markSessionSwitch(sessionId, 'panel.mounted')
@@ -821,6 +825,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             enableCompactModelPicker={!!isCompactMode}
           />
         </div>
+        {/* subagent 活动会话面板：可折叠，仅在有活动会话时显示 */}
+        <SubagentPanel sessionId={sessionId} />
       </div>
       <RenameDialog
         open={renameDialogOpen}

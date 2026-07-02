@@ -1,0 +1,21 @@
+{
+	"extends": "E:/_workSpace/_Agents/pi/tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"module": "ES2022",
+		"moduleResolution": "Bundler",
+		"baseUrl": ".",
+		"paths": {
+			"@earendil-works/pi-coding-agent": ["E:/_workSpace/_Agents/pi/packages/coding-agent/src/index.ts"],
+			"@earendil-works/pi-coding-agent/*": ["E:/_workSpace/_Agents/pi/packages/coding-agent/src/*"],
+			"@earendil-works/pi-ai": ["E:/_workSpace/_Agents/pi/packages/ai/src/index.ts"],
+			"@earendil-works/pi-ai/*": ["E:/_workSpace/_Agents/pi/packages/ai/src/*.ts", "E:/_workSpace/_Agents/pi/packages/ai/src/providers/*.ts"],
+			"typebox": ["E:/_workSpace/_Agents/pi/node_modules/typebox"]
+		},
+		"typeRoots": ["E:/_workSpace/_Agents/pi/node_modules/@types"]
+	},
+	"include": [
+		"C:/Users/32858/.pi/agent/extensions/call-llm/index.ts",
+		"C:/Users/32858/.pi/agent/extensions/subagent/runner.ts"
+	]
+}

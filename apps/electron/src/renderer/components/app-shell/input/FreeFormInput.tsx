@@ -12,6 +12,9 @@ import {
   ChevronUp,
   AlertCircle,
   Image as ImageIcon,
+  Sparkles,
+  MessageSquare,
+  ClipboardList,
   X,
 } from 'lucide-react'
 import { Icon_Home, Icon_Folder, Spinner } from '@craft-agent/ui'
@@ -24,7 +27,10 @@ import {
   InlineSlashCommand,
   useInlineSlashCommand,
   type SlashCommandId,
+  type SlashCommand,
+  type SlashSection,
 } from '@/components/ui/slash-command-menu'
+import { useExtensionCommands } from '@/hooks/useExtensionCommands'
 import {
   InlineMentionMenu,
   useInlineMention,
@@ -104,6 +110,111 @@ function formatFollowUpChipText(text: string, fallback: string, maxLength = 50):
   return normalized.length > maxLength
     ? `${normalized.slice(0, maxLength - 1).trimEnd()}…`
     : normalized
+}
+
+function getContextUsagePercent(
+  contextStatus: FreeFormInputProps['contextStatus'],
+  currentModel: string,
+): { percent: number | null; inputTokens?: number; contextWindow?: number } {
+  const effectiveContextWindow = contextStatus?.contextWindow || getModelContextWindow(currentModel)
+  if (!contextStatus?.inputTokens || !effectiveContextWindow) {
+    return { percent: null, inputTokens: contextStatus?.inputTokens, contextWindow: effectiveContextWindow }
+  }
+  return {
+    percent: Math.min(99, Math.round((contextStatus.inputTokens / effectiveContextWindow) * 100)),
+    inputTokens: contextStatus.inputTokens,
+    contextWindow: effectiveContextWindow,
+  }
+}
+
+function ContextUsageRing({
+  contextStatus,
+  currentModel,
+}: {
+  contextStatus?: FreeFormInputProps['contextStatus']
+  currentModel: string
+}) {
+  const { t } = useTranslation()
+  const usage = getContextUsagePercent(contextStatus, currentModel)
+  const percent = usage.percent ?? 0
+  const radius = 5
+  const circumference = 2 * Math.PI * radius
+  const dashOffset = circumference * (1 - percent / 100)
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-full text-foreground/60"
+          aria-label={usage.percent === null ? t('chat.context') : `${usage.percent}% ${t('chat.context')}`}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" className="-rotate-90">
+            <circle cx="8" cy="8" r={radius} fill="none" stroke="currentColor" strokeOpacity="0.22" strokeWidth="2" />
+            <circle
+              cx="8"
+              cy="8"
+              r={radius}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={dashOffset}
+            />
+          </svg>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        {usage.inputTokens && usage.contextWindow
+          ? `${formatTokenCount(usage.inputTokens)} / ${formatTokenCount(usage.contextWindow)} tokens (${usage.percent}%)`
+          : 'Context usage unavailable'}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function CompactThinkingBadge({
+  thinkingLevel,
+  onThinkingLevelChange,
+  disabled,
+}: {
+  thinkingLevel: ThinkingLevel
+  onThinkingLevelChange?: (level: ThinkingLevel) => void
+  disabled?: boolean
+}) {
+  const { t } = useTranslation()
+  const label = t(getThinkingLevelNameKey(thinkingLevel))
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          className="h-7 px-1.5 shrink-0 inline-flex items-center gap-0.5 rounded-[6px] text-xs text-foreground/55 hover:bg-foreground/5 disabled:opacity-40"
+          aria-label={`${t('chat.modelPicker.thinkingSection')}: ${label}`}
+        >
+          <span>{label}</span>
+          <ChevronDown className="h-3 w-3 opacity-50" />
+        </button>
+      </DropdownMenuTrigger>
+      <StyledDropdownMenuContent align="start" side="top" className="w-52">
+        {THINKING_LEVELS.map(({ id, nameKey, descriptionKey }) => (
+          <StyledDropdownMenuItem
+            key={id}
+            onSelect={() => onThinkingLevelChange?.(id)}
+            className="flex items-center justify-between"
+          >
+            <div className="min-w-0">
+              <div className="text-sm">{t(nameKey)}</div>
+              <div className="text-xs text-muted-foreground truncate">{t(descriptionKey)}</div>
+            </div>
+            {thinkingLevel === id && <Check className="h-3 w-3 ml-2 shrink-0" />}
+          </StyledDropdownMenuItem>
+        ))}
+      </StyledDropdownMenuContent>
+    </DropdownMenu>
+  )
 }
 
 
@@ -373,6 +484,25 @@ export function FreeFormInput({
   }, [llmConnections, currentConnection, workspaceDefaultConnection, connectionUnavailable])
 
   const availableThinkingLevels = THINKING_LEVELS
+  const [piExtensionSettings, setPiExtensionSettings] = React.useState<import('../../../../shared/types').PiExtensionSettings | null>(null)
+
+  React.useEffect(() => {
+    let disposed = false
+    window.electronAPI?.getPiExtensionSettings?.()
+      .then((settings) => {
+        if (!disposed) setPiExtensionSettings(settings)
+      })
+      .catch(() => {
+        if (!disposed) setPiExtensionSettings(null)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [])
+
+  const showPlanButtons = piExtensionSettings?.enabled !== false
+  const showDiscussionButton = showPlanButtons && piExtensionSettings?.planMode?.showDiscussionButton !== false
+  const showPlanButton = showPlanButtons && piExtensionSettings?.planMode?.showPlanButton !== false
 
   // Disable thinking selector when the current model explicitly doesn't support it
   const thinkingDisabled = React.useMemo(() => {
@@ -668,8 +798,9 @@ export function FreeFormInput({
   }
 
   // Listen for craft:approve-plan events (used by ResponseCard's Accept Plan button)
-  // This disables safe mode AND submits the message in one action
-  // Only process events for this session (sessionId must match)
+  // pi-first：点击 "Accept Plan" 时通过 RPC 调用 pi plan-mode 扩展的 /plan-finalize 命令，
+  // 由扩展完成 plan 工作流收尾（架构收缩审查、执行清单落地等）。
+  // 仅处理本会话事件（sessionId 必须匹配）。
   React.useEffect(() => {
     const handleApprovePlan = (e: CustomEvent<PlanApprovalEventDetail>) => {
       // Only handle if this event is for our session
@@ -679,10 +810,7 @@ export function FreeFormInput({
 
       const shouldIncludeDraft = e.detail?.includeDraftInput !== false
       const draftInput = shouldIncludeDraft ? consumeInputDraftSnapshot() : ''
-      const text = buildPlanApprovalMessage({
-        planPath: e.detail?.planPath,
-        draftInput,
-      })
+      const planPath = e.detail?.planPath
 
       // Switch to allow-all (Auto) mode if in Explore mode (allow execution without prompts)
       // Only switch if currently in safe mode - if user is in 'ask' mode, respect their choice
@@ -690,6 +818,34 @@ export function FreeFormInput({
         onPermissionModeChange?.('allow-all')
       }
 
+      // 通过 extension_command_invoke RPC 触发 pi plan-mode 扩展的 /plan-finalize 命令。
+      // 该 RPC 由 pi-extension-bridge 桥接层（Task 2）实现：主进程收到 invokeExtensionCommand
+      // 后，向子进程发送 { type: 'extension_command_invoke', name: 'plan-finalize', args }
+      // 消息，由 Pi SDK 转发给 plan-mode 扩展的 registerCommand handler。
+      // 桥接层未就绪时回退到原有 SubmitPlan 文本提交路径，保证 UI 按钮可用。
+      const w = window as unknown as {
+        electronAPI?: {
+          invokeExtensionCommand?: (
+            sessionId: string,
+            commandName: string,
+            args?: Record<string, unknown>,
+          ) => Promise<boolean> | boolean
+        }
+      }
+      const invoked = w.electronAPI?.invokeExtensionCommand?.(
+        sessionId ?? '',
+        'plan-finalize',
+        { planPath, draftInput },
+      )
+      if (invoked) {
+        return
+      }
+
+      // 回退路径：桥接层未实现时，仍走原有 plan 文本提交（兼容回滚场景）。
+      const text = buildPlanApprovalMessage({
+        planPath,
+        draftInput,
+      })
       onSubmit(text, undefined)
     }
 
@@ -932,13 +1088,49 @@ export function FreeFormInput({
     return active
   }, [permissionMode])
 
+  // pi 扩展命令：监听 extension_command_registered 事件并维护命令列表，
+  // triggerCommand 通过 invokeExtensionCommand ElectronAPI 方法派发到子进程。
+  const { commands: extensionCommands, triggerCommand: triggerExtensionCommand } = useExtensionCommands(sessionId)
+
+  const triggerPlanModeCommand = React.useCallback((command: 'plan' | 'discuss') => {
+    const invoked = triggerExtensionCommand(command)
+    if (invoked) return
+    const slash = `/${command}`
+    onInputChange?.(slash)
+    setInput(slash)
+  }, [onInputChange, triggerExtensionCommand])
+
+  // 将扩展命令转为 slash menu 可识别的 SlashCommand[]，id 使用 'ext:<name>' 前缀
+  // 以便在 handleSlashCommand 中与内置命令区分。
+  // 注：SlashCommand.id 受 SlashCommandId 联合类型约束，这里用类型断言注入。
+  const extensionSections = React.useMemo<SlashSection[]>(() => {
+    if (extensionCommands.length === 0) return []
+    const items: SlashCommand[] = extensionCommands.map(cmd => ({
+      id: `ext:${cmd.name}` as unknown as SlashCommandId,
+      label: `/${cmd.name}`,
+      description: cmd.description ?? cmd.source,
+      icon: <Sparkles className="h-3.5 w-3.5" />,
+    }))
+    return [{
+      id: 'pi-extensions',
+      label: 'Pi Extensions',
+      items,
+    }]
+  }, [extensionCommands])
+
   // Handle slash command selection (mode/feature commands)
   const handleSlashCommand = React.useCallback((commandId: SlashCommandId) => {
+    // pi 扩展命令：id 形如 'ext:<name>'，触发后通过 invokeExtensionCommand 派发
+    if (typeof commandId === 'string' && commandId.startsWith('ext:')) {
+      const name = commandId.slice('ext:'.length)
+      triggerExtensionCommand(name)
+      return
+    }
     if (commandId === 'safe') onPermissionModeChange?.('safe')
     else if (commandId === 'ask') onPermissionModeChange?.('ask')
     else if (commandId === 'allow-all') onPermissionModeChange?.('allow-all')
     else if (commandId === 'compact' && !isProcessing) onSubmit('/compact', undefined)
-  }, [onPermissionModeChange, isProcessing, onSubmit])
+  }, [onPermissionModeChange, isProcessing, onSubmit, triggerExtensionCommand])
 
   // Handle folder selection from slash command menu
   const handleSlashFolderSelect = React.useCallback((path: string) => {
@@ -967,6 +1159,7 @@ export function FreeFormInput({
     activeCommands,
     recentFolders,
     homeDir,
+    extraSections: extensionSections,
   })
 
   // Handle mention selection (sources, skills, files)
@@ -1783,6 +1976,46 @@ export function FreeFormInput({
               Wrapper absorbs all squeeze so the model label truncates first and the send button stays
               anchored to the right (craft-agents-oss#798). overflow-hidden is safe — Radix Drawer /
               dropdowns inside render via portals, so they aren't clipped. */}
+          {showDiscussionButton && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 shrink-0 rounded-[6px]"
+                onClick={() => triggerPlanModeCommand('discuss')}
+                disabled={disabled}
+                aria-label="Discussion mode"
+              >
+                <MessageSquare className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Discussion mode</TooltipContent>
+          </Tooltip>
+          )}
+          {showPlanButton && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 shrink-0 rounded-[6px]"
+                onClick={() => triggerPlanModeCommand('plan')}
+                disabled={disabled}
+                aria-label="Plan mode"
+              >
+                <ClipboardList className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Plan mode</TooltipContent>
+          </Tooltip>
+          )}
+          <ContextUsageRing
+            contextStatus={contextStatus}
+            currentModel={currentModel}
+          />
           {compactMode && (
           <div className="flex items-center gap-1 min-w-0 shrink overflow-hidden">
           {onPermissionModeChange && (
@@ -2380,6 +2613,11 @@ export function FreeFormInput({
             </StyledDropdownMenuContent>
           </DropdownMenu>
           )}
+          <CompactThinkingBadge
+            thinkingLevel={thinkingLevel}
+            onThinkingLevelChange={onThinkingLevelChange}
+            disabled={thinkingDisabled}
+          />
 
           {/* 5.5 Context Usage Warning Badge - shows when approaching auto-compaction threshold */}
           {(() => {

@@ -22,10 +22,10 @@ import {
   statSync,
   unlinkSync,
 } from 'fs';
-import { join, basename } from 'path';
+import { dirname, join, basename, resolve } from 'path';
 import { getWorkspaceSessionsPath } from '../workspaces/storage.ts';
 import { generateUniqueSessionId } from './slug-generator.ts';
-import { toPortablePath, expandPath } from '../utils/paths.ts';
+import { toPortablePath, expandPath, pathStartsWith } from '../utils/paths.ts';
 import { sanitizeSessionId } from './validation.ts';
 import { perf } from '../utils/perf.ts';
 import type {
@@ -35,6 +35,7 @@ import type {
   SessionTokenUsage,
   SessionHeader,
   SessionStatus,
+  StoredMessage,
 } from './types.ts';
 import type { Plan } from '../agent/plan-types.ts';
 import { validateSessionStatus } from '../statuses/validation.ts';
@@ -42,9 +43,212 @@ import { debug } from '../utils/debug.ts';
 import { getStatusCategory } from '../statuses/storage.ts';
 import { readSessionHeader, readSessionJsonl } from './jsonl.ts';
 import { sessionPersistenceQueue } from './persistence-queue.ts';
+import { PI_SESSIONS_DIR, PI_PROJECT_SESSIONS_DIR } from '../config/paths.ts';
+import { readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionJsonl, readTreeSessionMetadata, writeTreeSessionCraftMetadata } from './tree-jsonl.ts';
 
 // Re-export types for convenience
 export type { SessionConfig } from './types.ts';
+
+let sharedPiSessionStorageEnabled = false;
+let sharedPiSessionsDirOverride: string | undefined;
+
+/**
+ * Enable storing Craft-managed sessions under the Pi sessions directory.
+ *
+ * This is intentionally set by the server/runtime layer instead of reading
+ * config here, because config storage imports sessions and a direct import
+ * back into config would create a fragile module cycle.
+ */
+export function setSharedPiSessionStorageEnabled(enabled: boolean): void {
+  sharedPiSessionStorageEnabled = enabled;
+}
+
+export function getSharedPiSessionStorageEnabled(): boolean {
+  return sharedPiSessionStorageEnabled;
+}
+
+/**
+ * Test hook for isolating Pi session storage without mutating the real home dir.
+ */
+export function setSharedPiSessionsDirForTests(dir: string | undefined): void {
+  sharedPiSessionsDirOverride = dir;
+}
+
+function getPiSessionsRoot(): string {
+  return sharedPiSessionsDirOverride ?? PI_SESSIONS_DIR;
+}
+
+function encodePiSessionCwd(cwd: string): string {
+  const resolvedCwd = resolve(expandPath(cwd));
+  return `--${resolvedCwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
+}
+
+function getSessionStorageRootPath(workspaceRootPath: string, workingDirectory?: string): string {
+  if (!sharedPiSessionStorageEnabled) {
+    return getWorkspaceSessionsPath(workspaceRootPath);
+  }
+  const cwd = workingDirectory || workspaceRootPath;
+  return join(getPiSessionsRoot(), encodePiSessionCwd(cwd));
+}
+
+function getDefaultSessionPath(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string {
+  const safeSessionId = sanitizeSessionId(sessionId);
+  return join(getSessionStorageRootPath(workspaceRootPath, workingDirectory), safeSessionId);
+}
+
+function getSharedPiSidecarPathForFile(sessionFile: string, sessionId: string): string {
+  const safeSessionId = sanitizeSessionId(sessionId);
+  return join(dirname(sessionFile), '.craft', safeSessionId);
+}
+
+export function getPiNativeSessionFilePath(
+  workspaceRootPath: string,
+  sessionId: string,
+  workingDirectory?: string,
+  createdAt?: number,
+): string {
+  const timestampMs = typeof createdAt === 'number' && Number.isFinite(createdAt) ? createdAt : Date.now();
+  const timestamp = new Date(timestampMs).toISOString();
+  const fileTimestamp = timestamp.replace(/[:.]/g, '-');
+  return join(getPiNativeSessionDir(workspaceRootPath, workingDirectory), `${fileTimestamp}_${sanitizeSessionId(sessionId)}.jsonl`);
+}
+
+function findSharedPiSessionFileInDir(cwdPath: string, sessionId: string): string | null {
+  if (!existsSync(cwdPath)) return null;
+  const safeSessionId = sanitizeSessionId(sessionId);
+  try {
+    const entries = readdirSync(cwdPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        const filePath = join(cwdPath, entry.name);
+        if (entry.name === `${safeSessionId}.jsonl` || entry.name.endsWith(`_${safeSessionId}.jsonl`)) {
+          return filePath;
+        }
+        // Only read the first line (header) instead of the entire file. The
+        // previous implementation called readTreeSessionJsonl, which parsed
+        // every entry of every .jsonl in the directory — blocking the event
+        // loop for tens of seconds when the Pi sessions dir held hundreds of
+        // large session files.
+        const header = readTreeSessionHeader(filePath);
+        if (header?.id === sessionId || header?.craft?.id === sessionId) {
+          return filePath;
+        }
+      } else if (entry.isDirectory()) {
+        // Backward compatibility for the earlier shared-storage experiment:
+        // ~/.pi/agent/sessions/<cwd>/<craft-id>/session.jsonl
+        const candidate = join(cwdPath, entry.name, 'session.jsonl');
+        if (entry.name === safeSessionId && existsSync(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  } catch {
+    // Ignore and fall back to another lookup path.
+  }
+  return null;
+}
+
+function findSharedPiSessionFile(sessionId: string, workspaceRootPath?: string, workingDirectory?: string): string | null {
+  if (!sharedPiSessionStorageEnabled) return null;
+  const root = getPiSessionsRoot();
+  if (!existsSync(root)) return null;
+
+  if (workspaceRootPath) {
+    const scopedDir = join(root, encodePiSessionCwd(workingDirectory || workspaceRootPath));
+    const scopedFile = findSharedPiSessionFileInDir(scopedDir, sessionId);
+    if (scopedFile) return scopedFile;
+  }
+
+  try {
+    const cwdDirs = readdirSync(root, { withFileTypes: true });
+    for (const cwdDir of cwdDirs) {
+      if (!cwdDir.isDirectory()) continue;
+      const filePath = findSharedPiSessionFileInDir(join(root, cwdDir.name), sessionId);
+      if (filePath) return filePath;
+    }
+  } catch {
+    // Ignore and fall back to the default path.
+  }
+  return null;
+}
+
+function findSharedPiSessionPath(sessionId: string, workspaceRootPath?: string, workingDirectory?: string): string | null {
+  const filePath = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory);
+  if (!filePath) return null;
+  if (basename(filePath) === 'session.jsonl') return dirname(filePath);
+  return getSharedPiSidecarPathForFile(filePath, sessionId);
+}
+
+function listCraftSessionDirs(workspaceRootPath: string): Array<{ sessionId: string; sessionDir: string; jsonlFile: string }> {
+  if (!sharedPiSessionStorageEnabled) {
+    const sessionsDir = getWorkspaceSessionsPath(workspaceRootPath);
+    if (!existsSync(sessionsDir)) return [];
+    const entries = readdirSync(sessionsDir, { withFileTypes: true });
+    return entries
+      .filter(entry => entry.isDirectory())
+      .map(entry => {
+        const sessionDir = join(sessionsDir, entry.name);
+        return { sessionId: entry.name, sessionDir, jsonlFile: join(sessionDir, 'session.jsonl') };
+      });
+  }
+
+  const root = getPiSessionsRoot();
+  if (!existsSync(root)) return [];
+  const result: Array<{ sessionId: string; sessionDir: string; jsonlFile: string }> = [];
+  try {
+    const cwdDirs = readdirSync(root, { withFileTypes: true });
+    for (const cwdDir of cwdDirs) {
+      if (!cwdDir.isDirectory()) continue;
+      const cwdPath = join(root, cwdDir.name);
+      let entries: import('fs').Dirent[];
+      try {
+        entries = readdirSync(cwdPath, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+          const jsonlFile = join(cwdPath, entry.name);
+          const parsed = readTreeSessionJsonl(jsonlFile);
+          const sessionId = parsed?.header.craft?.id ?? parsed?.header.id ?? basename(entry.name, '.jsonl');
+          result.push({
+            sessionId,
+            sessionDir: getSharedPiSidecarPathForFile(jsonlFile, sessionId),
+            jsonlFile,
+          });
+        } else if (entry.isDirectory()) {
+          // Backward compatibility for legacy Craft-managed session folders
+          // stored below the Pi cwd bucket.
+          const sessionDir = join(cwdPath, entry.name);
+          const jsonlFile = join(sessionDir, 'session.jsonl');
+          if (existsSync(jsonlFile)) {
+            result.push({ sessionId: entry.name, sessionDir, jsonlFile });
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore malformed/unreadable Pi sessions directories.
+  }
+  return result;
+}
+
+function pathKey(path: string): string {
+  const portableNormalized = path.replace(/^~[\\/]/, '~/');
+  const resolved = resolve(expandPath(portableNormalized));
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function headerBelongsToWorkspace(header: SessionHeader, workspaceRootPath: string): boolean {
+  if (!sharedPiSessionStorageEnabled) return true;
+  if (!header.workspaceRootPath) return true;
+  if (pathKey(header.workspaceRootPath) === pathKey(workspaceRootPath)) return true;
+
+  // Pure Pi sessions do not have Craft workspace metadata; their header cwd is
+  // projected as workspaceRootPath. Treat sessions started inside the current
+  // workspace as belonging here, so Craft can resume Pi history directly.
+  return pathStartsWith(expandPath(header.workspaceRootPath), expandPath(workspaceRootPath));
+}
 
 // ============================================================
 // Directory Utilities
@@ -53,8 +257,8 @@ export type { SessionConfig } from './types.ts';
 /**
  * Ensure sessions directory exists for a workspace
  */
-export function ensureSessionsDir(workspaceRootPath: string): string {
-  const dir = getWorkspaceSessionsPath(workspaceRootPath);
+export function ensureSessionsDir(workspaceRootPath: string, workingDirectory?: string): string {
+  const dir = getSessionStorageRootPath(workspaceRootPath, workingDirectory);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
@@ -67,24 +271,75 @@ export function ensureSessionsDir(workspaceRootPath: string): string {
  * SECURITY: Uses sanitizeSessionId() as defense-in-depth to prevent path traversal.
  * Callers should still validate sessionId before calling this function.
  */
-export function getSessionPath(workspaceRootPath: string, sessionId: string): string {
+export function getSessionPath(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string {
   // Defense-in-depth: strip any path components from sessionId
-  const safeSessionId = sanitizeSessionId(sessionId);
-  return join(getWorkspaceSessionsPath(workspaceRootPath), safeSessionId);
+  if (sharedPiSessionStorageEnabled) {
+    const filePath = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory)
+      ?? getPiNativeSessionFilePath(workspaceRootPath, sessionId, workingDirectory);
+    return getSharedPiSidecarPathForFile(filePath, sessionId);
+  }
+  return findSharedPiSessionPath(sessionId, workspaceRootPath, workingDirectory) ?? getDefaultSessionPath(workspaceRootPath, sessionId, workingDirectory);
 }
 
 /**
  * Get path to a session's JSONL file (inside session folder)
  */
-export function getSessionFilePath(workspaceRootPath: string, sessionId: string): string {
-  return join(getSessionPath(workspaceRootPath, sessionId), 'session.jsonl');
+export function getSessionFilePath(workspaceRootPath: string, sessionId: string, workingDirectory?: string, createdAt?: number): string {
+  const sharedPiFile = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory);
+  if (sharedPiFile) return sharedPiFile;
+  if (sharedPiSessionStorageEnabled) {
+    return getPiNativeSessionFilePath(workspaceRootPath, sessionId, workingDirectory, createdAt);
+  }
+  return join(getSessionPath(workspaceRootPath, sessionId, workingDirectory), 'session.jsonl');
+}
+
+/**
+ * Get the native Pi session directory for a cwd when shared Pi storage is on.
+ */
+export function getPiNativeSessionDir(workspaceRootPath: string, workingDirectory?: string): string {
+  const cwd = workingDirectory || workspaceRootPath;
+  const dir = join(getPiSessionsRoot(), encodePiSessionCwd(cwd));
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+export function ensureSharedPiTreeSessionFile(session: StoredSession): string | null {
+  if (!sharedPiSessionStorageEnabled) return null;
+
+  const sessionFile = getSessionFilePath(
+    session.workspaceRootPath,
+    session.id,
+    session.workingDirectory,
+    session.createdAt,
+  );
+  if (existsSync(sessionFile)) {
+    writeTreeSessionCraftMetadata(sessionFile, session);
+    return sessionFile;
+  }
+
+  const cwd = resolve(expandPath(session.workingDirectory || session.workspaceRootPath));
+  const timestamp = new Date(session.createdAt || Date.now()).toISOString();
+  const header = {
+    type: 'session',
+    version: 3,
+    id: session.sdkSessionId || session.id,
+    timestamp,
+    cwd,
+  };
+
+  mkdirSync(dirname(sessionFile), { recursive: true });
+  writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, 'utf-8');
+  writeTreeSessionCraftMetadata(sessionFile, session);
+  return sessionFile;
 }
 
 /**
  * Ensure session directory exists with all subdirectories
  */
-export function ensureSessionDir(workspaceRootPath: string, sessionId: string): string {
-  const sessionDir = getSessionPath(workspaceRootPath, sessionId);
+export function ensureSessionDir(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string {
+  const sessionDir = getSessionPath(workspaceRootPath, sessionId, workingDirectory);
   if (!existsSync(sessionDir)) {
     mkdirSync(sessionDir, { recursive: true });
   }
@@ -150,12 +405,7 @@ export function getSessionDownloadsPath(workspaceRootPath: string, sessionId: st
  * Get existing session IDs for collision detection
  */
 function getExistingSessionIds(workspaceRootPath: string): Set<string> {
-  const sessionsDir = getWorkspaceSessionsPath(workspaceRootPath);
-  if (!existsSync(sessionsDir)) {
-    return new Set();
-  }
-  const entries = readdirSync(sessionsDir, { withFileTypes: true });
-  return new Set(entries.filter(e => e.isDirectory()).map(e => e.name));
+  return new Set(listCraftSessionDirs(workspaceRootPath).map(entry => entry.sessionId));
 }
 
 /**
@@ -189,18 +439,20 @@ export async function createSession(
     isFlagged?: boolean;
   }
 ): Promise<SessionConfig> {
-  ensureSessionsDir(workspaceRootPath);
+  ensureSessionsDir(workspaceRootPath, options?.workingDirectory);
 
   const now = Date.now();
   const sessionId = generateSessionId(workspaceRootPath);
 
   // Create session directory with all subdirectories (plans, attachments)
-  ensureSessionDir(workspaceRootPath, sessionId);
+  ensureSessionDir(workspaceRootPath, sessionId, options?.workingDirectory);
 
   // Set sdkCwd to initial working directory or session path - this never changes
   // The SDK stores session transcripts at ~/.claude/projects/{cwd-slugified}/
   // If workingDirectory changes later, sdkCwd stays the same to preserve session resumption
-  const sdkCwd = options?.workingDirectory ?? getSessionPath(workspaceRootPath, sessionId);
+  const sdkCwd = sharedPiSessionStorageEnabled
+    ? (options?.workingDirectory ?? workspaceRootPath)
+    : (options?.workingDirectory ?? getSessionPath(workspaceRootPath, sessionId, options?.workingDirectory));
 
   const session: SessionConfig = {
     id: sessionId,
@@ -267,7 +519,9 @@ export async function getOrCreateSessionById(
 
   const now = Date.now();
   // Set sdkCwd to session path - this never changes (ensures SDK can find session transcripts)
-  const sdkCwd = getSessionPath(workspaceRootPath, sessionId);
+  const sdkCwd = sharedPiSessionStorageEnabled
+    ? workspaceRootPath
+    : getSessionPath(workspaceRootPath, sessionId);
 
   const session: SessionConfig = {
     id: sessionId,
@@ -342,35 +596,23 @@ export function loadSession(workspaceRootPath: string, sessionId: string): Store
  */
 export function listSessions(workspaceRootPath: string): SessionMetadata[] {
   const span = perf.span('session.listSessions');
-  const sessionsDir = getWorkspaceSessionsPath(workspaceRootPath);
-  if (!existsSync(sessionsDir)) {
-    span.end();
-    return [];
-  }
-
-  const entries = readdirSync(sessionsDir, { withFileTypes: true });
+  const sessionDirs = listCraftSessionDirs(workspaceRootPath);
   span.mark('readdir');
   const sessions: SessionMetadata[] = [];
 
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const sessionId = entry.name;
-      const sessionDir = join(sessionsDir, sessionId);
-      const jsonlFile = join(sessionDir, 'session.jsonl');
+  for (const { jsonlFile } of sessionDirs) {
+    // Clean up orphaned .tmp files from crashed atomic writes.
+    // These are harmless but waste disk space.
+    const tmpFile = jsonlFile + '.tmp';
+    if (existsSync(tmpFile)) {
+      try { unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
 
-      // Clean up orphaned .tmp files from crashed atomic writes.
-      // These are harmless but waste disk space.
-      const tmpFile = jsonlFile + '.tmp';
-      if (existsSync(tmpFile)) {
-        try { unlinkSync(tmpFile); } catch { /* ignore */ }
-      }
-
-      if (existsSync(jsonlFile)) {
-        const header = readSessionHeader(jsonlFile);
-        if (header) {
-          const metadata = headerToMetadata(header, workspaceRootPath);
-          if (metadata) sessions.push(metadata);
-        }
+    if (existsSync(jsonlFile)) {
+      const header = readSessionHeader(jsonlFile);
+      if (header && headerBelongsToWorkspace(header, workspaceRootPath)) {
+        const metadata = headerToMetadata(header, workspaceRootPath);
+        if (metadata) sessions.push(metadata);
       }
     }
   }
@@ -381,6 +623,135 @@ export function listSessions(workspaceRootPath: string): SessionMetadata[] {
   const sorted = sessions.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
   span.end();
   return sorted;
+}
+
+// ============================================================
+// Pi CLI Sessions (shared in full-passthrough shell mode)
+// ============================================================
+
+/**
+ * Read a Pi session JSONL file and extract metadata for listing.
+ * Pi/Craft shared tree format: line 1 = {type:"session",...}, lines 2+ = typed tree entries.
+ */
+export function readPiSessionFile(
+  filePath: string,
+  workspaceRootPath: string,
+): SessionMetadata | null {
+  return readTreeSessionMetadata(filePath, workspaceRootPath, 'pi-');
+}
+
+/**
+ * List Pi CLI sessions from a sessions directory (e.g. ~/.pi/agent/sessions/).
+ * Scans all subdirectories for .jsonl files.
+ * Returns SessionMetadata[] mapped from Pi session format.
+ */
+export function listPiCliSessions(
+  sessionsDir: string = PI_SESSIONS_DIR,
+  workspaceRootPath: string = '',
+): SessionMetadata[] {
+  if (!existsSync(sessionsDir)) return [];
+
+  const sessions: SessionMetadata[] = [];
+  try {
+    const entries = readdirSync(sessionsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const subdir = join(sessionsDir, entry.name);
+        try {
+          const files = readdirSync(subdir, { withFileTypes: true });
+          for (const file of files) {
+            if (file.isFile() && file.name.endsWith('.jsonl')) {
+              const filePath = join(subdir, file.name);
+              const metadata = readPiSessionFile(filePath, workspaceRootPath);
+              if (metadata) sessions.push(metadata);
+            }
+          }
+        } catch {
+          // Ignore errors reading subdirectory
+        }
+      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        // Also support flat layout (sessions directly in sessionsDir)
+        const filePath = join(sessionsDir, entry.name);
+        const metadata = readPiSessionFile(filePath, workspaceRootPath);
+        if (metadata) sessions.push(metadata);
+      }
+    }
+  } catch {
+    // Ignore errors reading sessions directory
+  }
+
+  return sessions.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+}
+
+/**
+ * List project-level Pi sessions from {projectRoot}/.pi/sessions/.
+ */
+export function listPiProjectSessions(
+  projectRoot: string,
+  workspaceRootPath: string = projectRoot,
+): SessionMetadata[] {
+  const dir = join(projectRoot, PI_PROJECT_SESSIONS_DIR);
+  return listPiCliSessions(dir, workspaceRootPath);
+}
+
+/**
+ * Find a Pi session JSONL file by Pi session ID.
+ * Searches subdirectories and flat layout in the sessions directory.
+ */
+export function findPiSessionFile(
+  sessionsDir: string,
+  piSessionId: string,
+): string | null {
+  if (!existsSync(sessionsDir)) return null;
+  const target = `${piSessionId}.jsonl`;
+  const timestampedSuffix = `_${piSessionId}.jsonl`;
+  try {
+    const entries = readdirSync(sessionsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const subdir = join(sessionsDir, entry.name);
+        try {
+          const files = readdirSync(subdir, { withFileTypes: true });
+          for (const file of files) {
+            if (file.isFile() && file.name.endsWith('.jsonl')) {
+              const filePath = join(subdir, file.name);
+              if (file.name === target || file.name.endsWith(timestampedSuffix)) {
+                return filePath;
+              }
+              const parsed = readTreeSessionJsonl(filePath);
+              if (parsed?.header.id === piSessionId) {
+                return filePath;
+              }
+            }
+          }
+        } catch {
+          // Ignore errors reading subdirectory
+        }
+      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        const filePath = join(sessionsDir, entry.name);
+        if (entry.name === target || entry.name.endsWith(timestampedSuffix)) {
+          return filePath;
+        }
+        const parsed = readTreeSessionJsonl(filePath);
+        if (parsed?.header.id === piSessionId) {
+          return filePath;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors reading sessions directory
+  }
+  return null;
+}
+
+/**
+ * Load Pi session messages (read-only) and convert to Craft StoredMessage[].
+ *
+ * Uses the same tree JSONL projection as shared Pi/Craft sessions so v3 Pi
+ * entries ({type:"message", message:{...}}) and summary/tool entries stay aligned.
+ */
+export function loadPiSessionMessages(filePath: string): StoredMessage[] {
+  return readTreeSessionAsStoredSession(filePath, { sessionIdPrefix: 'pi-' })?.messages ?? [];
 }
 
 /**

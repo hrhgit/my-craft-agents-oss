@@ -4,12 +4,12 @@ import {
   mergeSessionScopedToolCallbacks,
   unregisterSessionScopedToolCallbacks,
 } from '../session-scoped-tools.ts';
-import { createClaudeContext } from '../claude-context.ts';
+import { createSessionToolContext } from '../session-tool-context.ts';
 import { attachSessionSelfManagementBindings } from '../session-self-management-bindings.ts';
 import type { SessionToolContext, SessionInfo } from '@craft-agent/session-tools-core';
 import { SESSION_TOOL_REGISTRY } from '@craft-agent/session-tools-core';
 
-// Minimal noop callbacks for createClaudeContext
+// Minimal noop callbacks for createSessionToolContext
 const noopPlan = () => {};
 const noopAuth = () => {};
 
@@ -28,7 +28,7 @@ function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
 }
 
 function createBaseContext(sessionId: string): SessionToolContext {
-  return createClaudeContext({
+  return createSessionToolContext({
     sessionId,
     workspacePath: '/tmp/test-workspace',
     workspaceId: 'test-ws',
@@ -247,20 +247,19 @@ describe('Claude/Pi session self-management parity', () => {
       resolveStatusFn: (s) => ({ resolved: s, available: [] }),
     });
 
-    // Simulate Pi path: createClaudeContext + attachBindings
+    // Simulate Pi path: createSessionToolContext + attachBindings
     const piCtx = createBaseContext(sessionId);
     attachSessionSelfManagementBindings(piCtx, sessionId);
 
-    // Simulate Claude path: same thing after refactor
-    const claudeCtx = createBaseContext(sessionId);
-    attachSessionSelfManagementBindings(claudeCtx, sessionId);
+    const secondCtx = createBaseContext(sessionId);
+    attachSessionSelfManagementBindings(secondCtx, sessionId);
 
     for (const prop of SELF_MGMT_PROPERTIES) {
       expect(piCtx[prop]).toBeDefined();
-      expect(claudeCtx[prop]).toBeDefined();
+      expect(secondCtx[prop]).toBeDefined();
       // Both should be functions
       expect(typeof piCtx[prop]).toBe('function');
-      expect(typeof claudeCtx[prop]).toBe('function');
+      expect(typeof secondCtx[prop]).toBe('function');
     }
   });
 

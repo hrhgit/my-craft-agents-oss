@@ -68,8 +68,8 @@ import type { ExportResourcesOptions, ExportResult, ResourceImportMode, Resource
 export type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult };
 
 // LLM connection types
-import type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings } from '@craft-agent/shared/config';
-export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings };
+import type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings } from '@craft-agent/shared/config';
+export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings };
 
 // =============================================================================
 // GUI-only types (not used by server/handler code)
@@ -199,7 +199,6 @@ import type {
   OAuthResult,
   McpToolsResult,
   GitBashStatus,
-  ClaudeOAuthResult,
   UpdateInfo,
   WorkspaceSettings,
   PermissionModeState,
@@ -389,26 +388,8 @@ export interface ElectronAPI {
   getAuthState(): Promise<AuthState>
   getSetupNeeds(): Promise<SetupNeeds>
   startWorkspaceMcpOAuth(mcpUrl: string): Promise<OAuthResult & { clientId?: string }>
-  // Claude OAuth (two-step flow)
-  startClaudeOAuth(): Promise<{ success: boolean; authUrl?: string; error?: string }>
-  exchangeClaudeCode(code: string, connectionSlug: string): Promise<ClaudeOAuthResult>
-  hasClaudeOAuthState(): Promise<boolean>
-  clearClaudeOAuthState(): Promise<{ success: boolean }>
   /** Defer onboarding setup — user chose "Setup later" */
   deferSetup(): Promise<{ success: boolean }>
-
-  // ChatGPT OAuth (for Codex chatgptAuthTokens mode)
-  startChatGptOAuth(connectionSlug: string): Promise<{ success: boolean; error?: string }>
-  cancelChatGptOAuth(): Promise<{ success: boolean }>
-  getChatGptAuthStatus(connectionSlug: string): Promise<{ authenticated: boolean; expiresAt?: number; hasRefreshToken?: boolean }>
-  chatGptLogout(connectionSlug: string): Promise<{ success: boolean }>
-
-  // GitHub Copilot OAuth
-  startCopilotOAuth(connectionSlug: string): Promise<{ success: boolean; error?: string }>
-  cancelCopilotOAuth(): Promise<{ success: boolean }>
-  getCopilotAuthStatus(connectionSlug: string): Promise<{ authenticated: boolean }>
-  copilotLogout(connectionSlug: string): Promise<{ success: boolean }>
-  onCopilotDeviceCode(callback: (data: { userCode: string; verificationUri: string }) => void): () => void
 
   /** Unified LLM connection setup */
   setupLlmConnection(setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }>
@@ -418,6 +399,19 @@ export interface ElectronAPI {
   getPiApiKeyProviders(): Promise<Array<{ key: string; label: string; placeholder: string }>>
   getPiProviderBaseUrl(provider: string): Promise<string | undefined>
   getPiProviderModels(provider: string): Promise<{ models: Array<{ id: string; name: string; costInput: number; costOutput: number; contextWindow: number; reasoning: boolean }>; totalCount: number }>
+
+  // Pi global config (~/.pi/agent/) — pure Pi + custom provider mode
+  getPiGlobalProviders(): Promise<PiGlobalProviderForDisplay[]>
+  getPiGlobalSettings(): Promise<PiGlobalSettings>
+  getPiGlobalProvider(key: string): Promise<PiGlobalProvider | null>
+  savePiGlobalProvider(args: { key: string; provider: PiGlobalProvider }): Promise<{ success: boolean; error?: string }>
+  deletePiGlobalProvider(key: string): Promise<{ success: boolean; error?: string }>
+  setPiGlobalDefault(args: { provider: string; model: string; thinkingLevel?: string }): Promise<{ success: boolean; error?: string }>
+  fetchModelsForEndpoint(args: { baseUrl: string; apiKey: string }): Promise<{ success: boolean; models: FetchedEndpointModel[]; error?: string }>
+  onPiGlobalChanged(callback: () => void): () => void
+
+  // Refresh models for a single LLM connection (triggers ModelRefreshService)
+  refreshLlmConnectionModels(slug: string): Promise<{ success: boolean; error?: string }>
 
   // Session-specific model (overrides global)
   getSessionModel(sessionId: string, workspaceId: string): Promise<string | null>
@@ -543,6 +537,23 @@ export interface ElectronAPI {
   // Tools settings
   getBrowserToolEnabled(): Promise<boolean>
   setBrowserToolEnabled(enabled: boolean): Promise<void>
+
+  // Pi Extensions 集成开关
+  getPiExtensionsEnabled(): Promise<boolean>
+  setPiExtensionsEnabled(enabled: boolean): Promise<void>
+  getPiExtensionsDelegatePromptAutomation(): Promise<boolean>
+  setPiExtensionsDelegatePromptAutomation(delegate: boolean): Promise<void>
+  getPiExtensionSettings(): Promise<PiExtensionSettings>
+  setPiExtensionSettings(settings: StoredPiExtensionSettings): Promise<PiExtensionSettings>
+  updatePiExtensionSettings(patch: StoredPiExtensionSettings): Promise<PiExtensionSettings>
+  getPiExtensionStates(): Promise<Record<string, boolean>>
+  setPiExtensionEnabled(name: string, enabled: boolean): Promise<void>
+
+  // Pi 扩展事件桥接：监听 extension_* / remoteui_request 事件
+  onExtensionEvent(callback: (event: import('@craft-agent/shared/agent/backend/types').ExtensionBridgeEvent) => void): () => void
+  // 回复 remoteui:request（payload=null 表示取消）
+  sendRemoteUIResponse(sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): Promise<boolean>
+  invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>): Promise<boolean>
 
   // Appearance settings
   getRichToolDescriptions(): Promise<boolean>

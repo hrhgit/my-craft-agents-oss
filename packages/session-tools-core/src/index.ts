@@ -195,7 +195,6 @@ export {
   SourceTestSchema,
   SourceOAuthTriggerSchema,
   CredentialPromptSchema,
-  CallLlmSchema,
   UpdatePreferencesSchema,
   TransformDataSchema,
   ScriptSandboxSchema,

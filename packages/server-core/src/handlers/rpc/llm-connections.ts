@@ -1,5 +1,5 @@
 import { RPC_CHANNELS, type LlmConnectionSetup } from '@craft-agent/shared/protocol'
-import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus, toBedrockNativeId, deriveBedrockRegionPrefix } from '@craft-agent/shared/config'
+import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus, toBedrockNativeId, deriveBedrockRegionPrefix, type PiGlobalProvider, type PiGlobalSettings, type FetchedEndpointModel } from '@craft-agent/shared/config'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { setSetupDeferred } from '@craft-agent/shared/config/storage'
 import {
@@ -12,11 +12,7 @@ import { parseTestConnectionError, createBuiltInConnection, validateModelList, p
 import { getWorkspaceOrThrow, buildBackendHostRuntimeContext } from '@craft-agent/server-core/handlers'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
-import { randomUUID } from 'node:crypto'
-import { CLIENT_OPEN_EXTERNAL } from '@craft-agent/server-core/transport'
-
-// Local OAuth state
-let copilotOAuthAbort: AbortController | null = null
+import { syncPiGlobalToLlmConnections } from './pi-global-sync'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.llmConnections.LIST,
@@ -29,20 +25,18 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.llmConnections.SET_DEFAULT,
   RPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT,
   RPC_CHANNELS.llmConnections.REFRESH_MODELS,
-  RPC_CHANNELS.chatgpt.START_OAUTH,
-  RPC_CHANNELS.chatgpt.COMPLETE_OAUTH,
-  RPC_CHANNELS.chatgpt.CANCEL_OAUTH,
-  RPC_CHANNELS.chatgpt.GET_AUTH_STATUS,
-  RPC_CHANNELS.chatgpt.LOGOUT,
-  RPC_CHANNELS.copilot.START_OAUTH,
-  RPC_CHANNELS.copilot.CANCEL_OAUTH,
-  RPC_CHANNELS.copilot.GET_AUTH_STATUS,
-  RPC_CHANNELS.copilot.LOGOUT,
   RPC_CHANNELS.settings.SETUP_LLM_CONNECTION,
   RPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP,
   RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS,
   RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL,
   RPC_CHANNELS.pi.GET_PROVIDER_MODELS,
+  RPC_CHANNELS.pi.GET_GLOBAL_PROVIDERS,
+  RPC_CHANNELS.pi.GET_GLOBAL_SETTINGS,
+  RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER,
+  RPC_CHANNELS.pi.SAVE_GLOBAL_PROVIDER,
+  RPC_CHANNELS.pi.DELETE_GLOBAL_PROVIDER,
+  RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT,
+  RPC_CHANNELS.pi.FETCH_MODELS_FOR_ENDPOINT,
 ] as const
 
 export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerDeps): void {
@@ -74,23 +68,21 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       if (setup.baseUrl !== undefined) {
         updates.baseUrl = setup.baseUrl?.trim() || undefined
 
-        // Only mutate providerType for API key connections (not OAuth connections)
         if (isAnthropicProvider(connection.providerType) && connection.authType !== 'oauth') {
           if (hasConfiguredBaseUrl) {
             updates.providerType = 'pi_compat'
             updates.authType = 'api_key_with_endpoint'
             updates.customEndpoint = { api: 'anthropic-messages' }
+            updates.piAuthProvider = 'anthropic'
           } else {
-            updates.providerType = 'anthropic'
+            updates.providerType = 'pi'
             updates.authType = 'api_key'
-            updates.models = getDefaultModelsForConnection('anthropic')
-            updates.defaultModel = getDefaultModelForConnection('anthropic')
+            updates.piAuthProvider = 'anthropic'
+            updates.models = getDefaultModelsForConnection('pi', 'anthropic')
+            updates.defaultModel = getDefaultModelForConnection('pi', 'anthropic')
+            updates.modelSelectionMode ??= 'automaticallySyncedFromProvider'
           }
         }
-
-        // Pi API key flow: store baseUrl on the connection (Pi SDK doesn't use it yet,
-        // but it's persisted for future backend support)
-
       }
 
       if (setup.defaultModel !== undefined) {
@@ -130,6 +122,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         if (connection.providerType === 'pi_compat' && connection.authType !== 'oauth' && !isNewConnection) {
           updates.providerType = 'pi'
           updates.authType = 'api_key'
+          updates.piAuthProvider = updates.piAuthProvider ?? connection.piAuthProvider ?? 'anthropic'
         }
       }
 
@@ -140,7 +133,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         // Update connection name to show the actual provider (e.g. "Craft Agents Backend (Google AI Studio)")
         const providerName = piAuthProviderDisplayName(setup.piAuthProvider)
         if (providerName) {
-          updates.name = `Craft Agents Backend (${providerName})`
+          updates.name = `Pi (${providerName})`
         }
         // Only set default models when using standard Pi provider AND user didn't pick explicit models
         if (!hasConfiguredBaseUrl && !setup.models?.length) {
@@ -397,6 +390,164 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // ============================================================
+  // Pi Global Config (~/.pi/agent/) — pure Pi + custom provider mode
+  // These read/write the Pi CLI's global config files directly.
+  // Sync to ~/.craft-agent/config.json + subprocess runtime is handled separately.
+  // ============================================================
+
+  server.handle(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDERS, async () => {
+    const { readPiGlobalProvidersForDisplay } = await import('@craft-agent/shared/config')
+    return readPiGlobalProvidersForDisplay()
+  })
+
+  server.handle(RPC_CHANNELS.pi.GET_GLOBAL_SETTINGS, async () => {
+    const { readPiGlobalSettings } = await import('@craft-agent/shared/config')
+    return readPiGlobalSettings()
+  })
+
+  server.handle(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER, async (_ctx, key: string) => {
+    const { readPiGlobalProviders } = await import('@craft-agent/shared/config')
+    const providers = readPiGlobalProviders()
+    return providers[key] ?? null
+  })
+
+  server.handle(
+    RPC_CHANNELS.pi.SAVE_GLOBAL_PROVIDER,
+    async (_ctx, args: { key: string; provider: PiGlobalProvider }): Promise<{ success: boolean; error?: string }> => {
+      const { savePiGlobalProvider } = await import('@craft-agent/shared/config')
+      try {
+        savePiGlobalProvider(args.key, args.provider)
+        pushTyped(server, RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
+        // Mirror the change into ~/.craft-agent/config.json + credentials.enc
+        // so the existing AiSettingsPage / CompactModelSelector pick it up.
+        void runPiGlobalSync('saveGlobalProvider')
+        return { success: true }
+      } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
+      }
+    },
+  )
+
+  server.handle(
+    RPC_CHANNELS.pi.DELETE_GLOBAL_PROVIDER,
+    async (_ctx, key: string): Promise<{ success: boolean; error?: string }> => {
+      const { deletePiGlobalProvider } = await import('@craft-agent/shared/config')
+      try {
+        deletePiGlobalProvider(key)
+        pushTyped(server, RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
+        void runPiGlobalSync('deleteGlobalProvider')
+        return { success: true }
+      } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
+      }
+    },
+  )
+
+  server.handle(
+    RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT,
+    async (
+      _ctx,
+      args: { provider: string; model: string; thinkingLevel?: string },
+    ): Promise<{ success: boolean; error?: string }> => {
+      const { setPiGlobalDefault } = await import('@craft-agent/shared/config')
+      try {
+        setPiGlobalDefault(args.provider, args.model, args.thinkingLevel)
+        pushTyped(server, RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
+        void runPiGlobalSync('setGlobalDefault')
+        return { success: true }
+      } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
+      }
+    },
+  )
+
+  server.handle(
+    RPC_CHANNELS.pi.FETCH_MODELS_FOR_ENDPOINT,
+    async (
+      _ctx,
+      args: { baseUrl: string; apiKey: string },
+    ): Promise<{ success: boolean; models: FetchedEndpointModel[]; error?: string }> => {
+      const { fetchModelsForEndpoint } = await import('@craft-agent/shared/config')
+      try {
+        const models = await fetchModelsForEndpoint(args.baseUrl, args.apiKey)
+        return { success: true, models }
+      } catch (e) {
+        return { success: false, models: [], error: e instanceof Error ? e.message : String(e) }
+      }
+    },
+  )
+
+  // ============================================================
+  // Pi Global → LlmConnection sync
+  // ============================================================
+  //
+  // ~/.pi/agent/ is the single source of truth for "pure Pi + custom provider"
+  // mode. On startup we mirror it into ~/.craft-agent/config.json +
+  // credentials.enc so the existing AiSettingsPage / CompactModelSelector /
+  // PiAgent subprocess flow keep working unchanged. The same sync runs after
+  // every pi:saveGlobalProvider / deleteGlobalProvider / setGlobalDefault
+  // handler and broadcasts llmConnections.CHANGED so the UI refreshes.
+  const broadcastLlmConnectionsChanged = () => {
+    pushTyped(server, RPC_CHANNELS.llmConnections.CHANGED, { to: 'all' })
+  }
+  const runPiGlobalSync = async (reason: string): Promise<void> => {
+    try {
+      const result = await syncPiGlobalToLlmConnections()
+      if (result.error) {
+        deps.platform.logger?.warn(`[pi-global-sync] ${reason} failed: ${result.error}`)
+        return
+      }
+      deps.platform.logger?.info(
+        `[pi-global-sync] ${reason}: synced=${result.synced} removed=${result.removed} changed=${result.changed}`,
+      )
+      if (result.changed) {
+        broadcastLlmConnectionsChanged()
+        // Reinitialize auth so env vars / summarization model match the new default
+        try {
+          await sessionManager.reinitializeAuth()
+        } catch (err) {
+          deps.platform.logger?.warn(`[pi-global-sync] reinitializeAuth failed: ${err instanceof Error ? err.message : err}`)
+        }
+      }
+    } catch (err) {
+      deps.platform.logger?.error(`[pi-global-sync] ${reason} threw:`, err)
+    }
+  }
+  // Fire-and-forget on startup — handlers are already registered when this runs.
+  void runPiGlobalSync('startup')
+
+  /**
+   * Write-back helper: when the user switches the default provider/model or
+   * edits a pi-* connection's defaultModel via the existing AiSettingsPage UI,
+   * mirror the change into ~/.pi/agent/settings.json so the Pi CLI and our own
+   * PiProvidersSettingsPage stay consistent. Only fires for pi-* slugs.
+   */
+  const writeBackToPiGlobal = async (slug: string, defaultModel?: string): Promise<void> => {
+    if (!slug.startsWith('pi-')) return
+    const providerKey = slug.slice(3) // strip "pi-" prefix
+    try {
+      const { readPiGlobalSettings, setPiGlobalDefault, readPiGlobalProviders } = await import('@craft-agent/shared/config')
+      const providers = readPiGlobalProviders()
+      if (!providers[providerKey]) {
+        deps.platform.logger?.warn(`[pi-global-writeback] provider "${providerKey}" not found in ~/.pi/agent/models.json`)
+        return
+      }
+      const settings = readPiGlobalSettings()
+      // Determine the model to persist: explicit override > current setting > first model
+      const model = defaultModel || settings.defaultModel || providers[providerKey]?.models?.[0]?.id
+      if (!model) {
+        deps.platform.logger?.warn(`[pi-global-writeback] no model to persist for "${providerKey}"`)
+        return
+      }
+      setPiGlobalDefault(providerKey, model, settings.defaultThinkingLevel)
+      pushTyped(server, RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
+      deps.platform.logger?.info(`[pi-global-writeback] ~/.pi/agent/settings.json updated: provider=${providerKey}, model=${model}`)
+    } catch (err) {
+      deps.platform.logger?.warn(`[pi-global-writeback] failed for ${slug}: ${err instanceof Error ? err.message : err}`)
+    }
+  }
+
+  // ============================================================
   // LLM Connections (provider configurations)
   // ============================================================
 
@@ -477,6 +628,10 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       if (defaultSlug === connection.slug) {
         await sessionManager.reinitializeAuth()
       }
+      // Write-back: if this is a pi-* connection, mirror defaultModel into
+      // ~/.pi/agent/settings.json so the Pi CLI / PiProvidersSettingsPage stay
+      // in sync with the AiSettingsPage edit.
+      void writeBackToPiGlobal(connection.slug, connection.defaultModel)
       return { success: true }
     } catch (error) {
       deps.platform.logger?.error('Failed to save LLM connection:', error)
@@ -546,6 +701,9 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         deps.platform.logger?.info(`Global default LLM connection set to: ${slug}`)
         // Reinitialize auth so env vars and summarization model override match the new default
         await sessionManager.reinitializeAuth()
+        // Write-back: if switching to a pi-* connection, update ~/.pi/agent/settings.json
+        // so the Pi CLI / PiProvidersSettingsPage reflect the same default provider.
+        void writeBackToPiGlobal(slug)
       }
       return { success, error: success ? undefined : 'Connection not found' }
     } catch (error) {
@@ -604,260 +762,6 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       const msg = error instanceof Error ? error.message : 'Unknown error'
       deps.platform.logger?.error(`Failed to refresh models for ${slug}: ${msg}`)
       return { success: false, error: msg }
-    }
-  })
-
-  // ============================================================
-  // ChatGPT OAuth (for Codex chatgptAuthTokens mode)
-  // Server-owned: prepare + exchange happen here, browser + callback on client.
-  // ============================================================
-
-  interface PendingChatGptFlow {
-    flowId: string
-    state: string
-    codeVerifier: string
-    connectionSlug: string
-    ownerClientId: string
-    createdAt: number
-  }
-  const pendingChatGptFlows = new Map<string, PendingChatGptFlow>()
-  const CHATGPT_FLOW_TTL_MS = 5 * 60 * 1000
-
-  function cleanupExpiredChatGptFlows() {
-    const now = Date.now()
-    for (const [state, flow] of pendingChatGptFlows) {
-      if (now - flow.createdAt > CHATGPT_FLOW_TTL_MS) {
-        pendingChatGptFlows.delete(state)
-      }
-    }
-  }
-
-  // chatgpt:startOAuth — prepare PKCE + auth URL, store flow, return to client
-  server.handle(RPC_CHANNELS.chatgpt.START_OAUTH, async (ctx, connectionSlug: string): Promise<{
-    authUrl: string
-    state: string
-    flowId: string
-  }> => {
-    cleanupExpiredChatGptFlows()
-    const { prepareChatGptOAuth } = await import('@craft-agent/shared/auth')
-
-    const prepared = prepareChatGptOAuth()
-    const flowId = randomUUID()
-
-    pendingChatGptFlows.set(prepared.state, {
-      flowId,
-      state: prepared.state,
-      codeVerifier: prepared.codeVerifier,
-      connectionSlug,
-      ownerClientId: ctx.clientId,
-      createdAt: Date.now(),
-    })
-
-    deps.platform.logger?.info(`[ChatGPT OAuth] Flow started for ${connectionSlug} (flow=${flowId})`)
-    return { authUrl: prepared.authUrl, state: prepared.state, flowId }
-  })
-
-  // chatgpt:completeOAuth — exchange code for tokens and store credentials
-  server.handle(RPC_CHANNELS.chatgpt.COMPLETE_OAUTH, async (ctx, args: {
-    flowId: string
-    code: string
-    state: string
-  }): Promise<{ success: boolean; error?: string }> => {
-    const { flowId, code, state } = args
-    const flow = pendingChatGptFlows.get(state)
-
-    if (!flow) throw new Error('Unknown or expired ChatGPT OAuth flow')
-    if (flow.flowId !== flowId) throw new Error('Flow ID mismatch')
-    if (flow.ownerClientId !== ctx.clientId) throw new Error('OAuth flow owned by different client')
-    if (Date.now() - flow.createdAt > CHATGPT_FLOW_TTL_MS) {
-      pendingChatGptFlows.delete(state)
-      throw new Error('ChatGPT OAuth flow expired')
-    }
-
-    try {
-      const { exchangeChatGptTokens } = await import('@craft-agent/shared/auth')
-      const credentialManager = getCredentialManager()
-
-      const tokens = await exchangeChatGptTokens(code, flow.codeVerifier)
-
-      await credentialManager.setLlmOAuth(flow.connectionSlug, {
-        accessToken: tokens.accessToken,
-        idToken: tokens.idToken,
-        refreshToken: tokens.refreshToken,
-        expiresAt: tokens.expiresAt,
-      })
-
-      pendingChatGptFlows.delete(state)
-      deps.platform.logger?.info(`[ChatGPT OAuth] Flow complete for ${flow.connectionSlug}`)
-      return { success: true }
-    } catch (error) {
-      pendingChatGptFlows.delete(state)
-      deps.platform.logger?.error('[ChatGPT OAuth] Token exchange failed:', error)
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Token exchange failed',
-      }
-    }
-  })
-
-  // Cancel ongoing ChatGPT OAuth flow
-  server.handle(RPC_CHANNELS.chatgpt.CANCEL_OAUTH, async (ctx, args?: { state?: string }): Promise<{ success: boolean }> => {
-    if (args?.state) {
-      const flow = pendingChatGptFlows.get(args.state)
-      if (flow && flow.ownerClientId === ctx.clientId) {
-        pendingChatGptFlows.delete(args.state)
-        deps.platform.logger?.info(`[ChatGPT OAuth] Flow cancelled for ${flow.connectionSlug}`)
-      }
-    }
-    return { success: true }
-  })
-
-  // Get ChatGPT authentication status
-  server.handle(RPC_CHANNELS.chatgpt.GET_AUTH_STATUS, async (_ctx, connectionSlug: string): Promise<{
-    authenticated: boolean
-    expiresAt?: number
-    hasRefreshToken?: boolean
-  }> => {
-    try {
-      const credentialManager = getCredentialManager()
-      const creds = await credentialManager.getLlmOAuth(connectionSlug)
-
-      if (!creds) {
-        return { authenticated: false }
-      }
-
-      // Check if expired (with 5-minute buffer)
-      const isExpired = creds.expiresAt && Date.now() > creds.expiresAt - 5 * 60 * 1000
-
-      return {
-        authenticated: !isExpired || !!creds.refreshToken, // Can refresh if has refresh token
-        expiresAt: creds.expiresAt,
-        hasRefreshToken: !!creds.refreshToken,
-      }
-    } catch (error) {
-      deps.platform.logger?.error('Failed to get ChatGPT auth status:', error)
-      return { authenticated: false }
-    }
-  })
-
-  // Logout from ChatGPT (clear stored tokens)
-  server.handle(RPC_CHANNELS.chatgpt.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
-    try {
-      const credentialManager = getCredentialManager()
-      await credentialManager.deleteLlmCredentials(connectionSlug)
-      deps.platform.logger?.info('ChatGPT credentials cleared')
-      return { success: true }
-    } catch (error) {
-      deps.platform.logger?.error('Failed to clear ChatGPT credentials:', error)
-      return { success: false }
-    }
-  })
-
-  // ============================================================
-  // GitHub Copilot OAuth
-  // ============================================================
-
-  // Start GitHub Copilot OAuth flow (device flow via Pi SDK)
-  server.handle(RPC_CHANNELS.copilot.START_OAUTH, async (ctx, connectionSlug: string): Promise<{
-    success: boolean
-    error?: string
-  }> => {
-    try {
-      const { loginGitHubCopilot } = await import('@earendil-works/pi-ai/oauth')
-      const credentialManager = getCredentialManager()
-
-      // Cancel any previous in-flight flow
-      copilotOAuthAbort?.abort()
-      copilotOAuthAbort = new AbortController()
-
-      deps.platform.logger?.info(`Starting GitHub Copilot OAuth device flow for connection: ${connectionSlug}`)
-
-      // Use Pi SDK's login flow — this handles the device code flow AND
-      // the critical Copilot token exchange that determines the correct
-      // API endpoint for the user's subscription tier (individual/business/enterprise).
-      const credentials = await loginGitHubCopilot({
-        onDeviceCode: ({ userCode, verificationUri }) => {
-          deps.platform.logger?.info(`[GitHub OAuth] Device code: ${userCode}`)
-          pushTyped(server, RPC_CHANNELS.copilot.DEVICE_CODE, { to: 'client', clientId: ctx.clientId }, {
-            userCode,
-            verificationUri,
-          })
-          // Open GitHub device code page on the client's machine
-          server.invokeClient(ctx.clientId, CLIENT_OPEN_EXTERNAL, verificationUri).catch(err => {
-            deps.platform.logger?.warn(`Failed to open browser for GitHub OAuth: ${err}`)
-          })
-        },
-        onPrompt: async () => {
-          // Pi SDK asks for GitHub Enterprise domain — return empty for github.com
-          return ''
-        },
-        onProgress: (message) => {
-          deps.platform.logger?.info(`[GitHub OAuth] ${message}`)
-        },
-        signal: copilotOAuthAbort.signal,
-      })
-
-      copilotOAuthAbort = null
-
-      // Store the full OAuth credential:
-      // - accessToken = Copilot API token (contains proxy-ep for correct endpoint)
-      // - refreshToken = GitHub access token (used to refresh the Copilot token)
-      // - expiresAt = Copilot token expiry (short-lived, ~1 hour)
-      await credentialManager.setLlmOAuth(connectionSlug, {
-        accessToken: credentials.access,
-        refreshToken: credentials.refresh,
-        expiresAt: credentials.expires,
-      })
-
-      deps.platform.logger?.info('GitHub Copilot OAuth completed successfully')
-      return { success: true }
-    } catch (error) {
-      copilotOAuthAbort = null
-      deps.platform.logger?.error('GitHub Copilot OAuth failed:', error)
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'OAuth authentication failed',
-      }
-    }
-  })
-
-  // Cancel ongoing GitHub OAuth flow
-  server.handle(RPC_CHANNELS.copilot.CANCEL_OAUTH, async (): Promise<{ success: boolean }> => {
-    if (copilotOAuthAbort) {
-      copilotOAuthAbort.abort()
-      copilotOAuthAbort = null
-      deps.platform.logger?.info('GitHub Copilot OAuth cancelled')
-    }
-    return { success: true }
-  })
-
-  // Get GitHub Copilot authentication status
-  server.handle(RPC_CHANNELS.copilot.GET_AUTH_STATUS, async (_ctx, connectionSlug: string): Promise<{
-    authenticated: boolean
-  }> => {
-    try {
-      const credentialManager = getCredentialManager()
-      const creds = await credentialManager.getLlmOAuth(connectionSlug)
-
-      return {
-        authenticated: !!creds?.accessToken,
-      }
-    } catch (error) {
-      deps.platform.logger?.error('Failed to get GitHub auth status:', error)
-      return { authenticated: false }
-    }
-  })
-
-  // Logout from Copilot (clear stored tokens)
-  server.handle(RPC_CHANNELS.copilot.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
-    try {
-      const credentialManager = getCredentialManager()
-      await credentialManager.deleteLlmCredentials(connectionSlug)
-      deps.platform.logger?.info('Copilot credentials cleared')
-      return { success: true }
-    } catch (error) {
-      deps.platform.logger?.error('Failed to clear Copilot credentials:', error)
-      return { success: false }
     }
   })
 }

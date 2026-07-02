@@ -294,13 +294,13 @@ describe('runPreToolUseChecks', () => {
 
     it('skips source check for built-in MCP servers (session)', () => {
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__call_llm',
+        toolName: 'mcp__session__spawn_session',
         input: {},
         activeSourceSlugs: [],
       }));
 
-      // Should reach step 4 (call_llm intercept), not blocked at step 2
-      expect(result.type).toBe('call_llm_intercept');
+      // Should reach step 4 (spawn_session intercept), not blocked at step 2
+      expect(result.type).toBe('spawn_session_intercept');
     });
 
     it('skips source check for built-in MCP servers (craft-agents-docs)', () => {
@@ -381,19 +381,19 @@ describe('runPreToolUseChecks', () => {
   });
 
   // ============================================================
-  // Step 4: call_llm interception
+  // Step 4: spawn_session interception
   // ============================================================
 
-  describe('step 4: call_llm interception', () => {
-    it('intercepts mcp__session__call_llm', () => {
-      const input = { model: 'haiku', prompt: 'summarize' };
+  describe('step 4: spawn_session interception', () => {
+    it('intercepts mcp__session__spawn_session', () => {
+      const input = { prompt: 'do something' };
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__call_llm',
+        toolName: 'mcp__session__spawn_session',
         input,
       }));
 
-      expect(result.type).toBe('call_llm_intercept');
-      if (result.type === 'call_llm_intercept') {
+      expect(result.type).toBe('spawn_session_intercept');
+      if (result.type === 'spawn_session_intercept') {
         expect(result.input).toEqual(input);
       }
     });
@@ -831,8 +831,8 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('source_activation_needed');
     });
 
-    it('prerequisite check runs before call_llm interception', () => {
-      // This scenario is contrived (call_llm is from session server which is exempt
+    it('prerequisite check runs before spawn_session interception', () => {
+      // This scenario is contrived (spawn_session is from session server which is exempt
       // from prerequisites), but validates pipeline order for other session tools
       const prereqManager = createMockPrerequisiteManager({
         checkPrerequisites: (toolName: string) => {
@@ -854,15 +854,15 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('block');
     });
 
-    it('call_llm interception runs before transforms', () => {
-      // call_llm should be intercepted even if input has metadata
+    it('spawn_session interception runs before transforms', () => {
+      // spawn_session should be intercepted even if input has metadata
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__call_llm',
-        input: { model: 'haiku', _intent: 'summarize' },
+        toolName: 'mcp__session__spawn_session',
+        input: { prompt: 'do something', _intent: 'summarize' },
       }));
 
-      expect(result.type).toBe('call_llm_intercept');
-      if (result.type === 'call_llm_intercept') {
+      expect(result.type).toBe('spawn_session_intercept');
+      if (result.type === 'spawn_session_intercept') {
         // Input should be passed through unmodified (no stripping)
         expect(result.input._intent).toBe('summarize');
       }

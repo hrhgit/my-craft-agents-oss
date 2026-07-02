@@ -30,6 +30,9 @@ export interface BroadcastEventMap {
   [RPC_CHANNELS.llmConnections.CHANGED]: []
   [RPC_CHANNELS.permissions.DEFAULTS_CHANGED]: [value: null]
 
+  // Pi global config (~/.pi/agent/) change broadcast
+  [RPC_CHANNELS.pi.GLOBAL_CHANGED]: []
+
   // Theme broadcasts (global)
   [RPC_CHANNELS.theme.APP_CHANGED]: [theme: ThemeOverrides | null]
   [RPC_CHANNELS.theme.SYSTEM_CHANGED]: [isDark: boolean]
@@ -56,9 +59,6 @@ export interface BroadcastEventMap {
   // Navigation events (per-window)
   [RPC_CHANNELS.notification.NAVIGATE]: [data: { workspaceId: string; sessionId: string }]
   [RPC_CHANNELS.deeplink.NAVIGATE]: [navigation: DeepLinkNavigation]
-
-  // Copilot device code event
-  [RPC_CHANNELS.copilot.DEVICE_CODE]: [data: { userCode: string; verificationUri: string }]
 
   // Menu events (per-window, no payload)
   [RPC_CHANNELS.menu.NEW_CHAT]: []

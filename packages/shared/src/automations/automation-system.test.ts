@@ -518,28 +518,6 @@ describe('AutomationSystem', () => {
     });
   });
 
-  describe('buildSdkHooks', () => {
-    it('should return empty object (command execution removed)', async () => {
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
-        automations: {
-          PreToolUse: [
-            { matcher: 'Bash', actions: [{ type: 'prompt', prompt: 'check this' }] },
-          ],
-        },
-      }));
-
-      const system = new AutomationSystem({
-        workspaceRootPath: tempDir,
-        workspaceId: 'test-workspace',
-      });
-
-      const result = system.buildSdkHooks();
-      expect(result).toEqual({});
-
-      await system.dispose();
-    });
-  });
-
   describe('dispose', () => {
     it('should clean up all resources', async () => {
       const system = new AutomationSystem({
