@@ -142,6 +142,16 @@ export default [
           }
         ],
       }],
+
+      // Red line: Pi SDK (@earendil-works/pi-*) is bottom-layer. Electron main/renderer
+      // are scaffolding and must talk to Pi through @craft-agent/shared/agent/backend only.
+      // See docs/architecture/red-line.md.
+      'no-restricted-syntax': ['error',
+        {
+          selector: 'ImportDeclaration[source.value=/^@earendil-works\\/pi-/]',
+          message: 'Pi SDK (@earendil-works/pi-*) is bottom-layer. Electron must talk to Pi through @craft-agent/shared/agent/backend only. See docs/architecture/red-line.md.',
+        },
+      ],
     },
   },
 
@@ -168,10 +178,6 @@ export default [
           {
             name: '@craft-agent/shared/codex',
             message: 'Use provider-agnostic APIs from @craft-agent/shared/agent/backend instead.',
-          },
-          {
-            name: '@craft-agent/shared/agent/claude-agent',
-            message: 'Provider backends must stay behind @craft-agent/shared/agent/backend.',
           },
           {
             name: '@craft-agent/shared/agent/pi-agent',

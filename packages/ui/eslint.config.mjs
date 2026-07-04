@@ -75,6 +75,15 @@ export default [
         ],
         allowInlineNone: true,
       }],
+
+      // Red line: Pi SDK (@earendil-works/pi-*) is bottom-layer. The UI package is
+      // pure scaffolding and must never import Pi internals. See docs/architecture/red-line.md.
+      'no-restricted-syntax': ['error',
+        {
+          selector: 'ImportDeclaration[source.value=/^@earendil-works\\/pi-/]',
+          message: 'Pi SDK (@earendil-works/pi-*) is bottom-layer. The UI package must not import it. See docs/architecture/red-line.md.',
+        },
+      ],
     },
   },
 

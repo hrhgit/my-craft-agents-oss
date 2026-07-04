@@ -82,7 +82,9 @@ describe('Pi subprocess tool shape contract', () => {
     }
     const names = builtins.map(t => t.name);
     expect(new Set(names).size).toBe(names.length); // no duplicates
-    expect(names).toEqual(['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']);
+    // Pi's shell tool is platform-dependent: `pwsh` on Windows, `bash` elsewhere.
+    const shellName = process.platform === 'win32' ? 'pwsh' : 'bash';
+    expect(names).toEqual(['read', shellName, 'edit', 'write', 'grep', 'find', 'ls']);
   });
 });
 

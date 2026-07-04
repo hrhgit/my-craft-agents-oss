@@ -116,7 +116,11 @@ import { createWebFetchTool } from './tools/web-fetch.ts';
 import { resolveSearchProvider } from './tools/search/resolve-provider.ts';
 import { createSearchTool } from './tools/search/create-search-tool.ts';
 import { allowCraftMetadataProperties, stripCraftMetadata } from './craft-metadata-schema.ts';
-import { applySystemPromptOverride } from './system-prompt-override.ts';
+import { listSpawnedChildSessions } from './child-session-listing.ts';
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 // ============================================================
 // Types — JSONL Protocol
@@ -205,7 +209,23 @@ type InboundMessage =
   | { type: 'extension_command_invoke'; commandId: string; args?: string }
   // 扩展桥接：主进程回复 remoteui:request（payload=null 表示取消）
   | { type: 'remoteui_response'; requestId: string; payload: unknown | null; reason?: 'cancelled' | 'no_remote' | 'disconnected' }
+  | { type: 'spawn_child_session'; id: string; parentSessionId: string; options: SpawnChildSessionOptionsPayload }
+  | { type: 'list_child_sessions'; id: string; parentSessionId: string }
   | { type: 'shutdown' };
+
+/** Payload for spawn_child_session — matches pi's SpawnChildSessionOptions */
+interface SpawnChildSessionOptionsPayload {
+  prompt?: string;
+  connection?: string;
+  model?: string;
+  enabledSources?: string[];
+  permissionMode?: 'safe' | 'ask' | 'allow-all';
+  thinkingLevel?: 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  labels?: string[];
+  name?: string;
+  workingDirectory?: string;
+  attachments?: Array<{ path: string; name?: string }>;
+}
 
 /** Proxy tool definition from main process */
 interface ProxyToolDef {
@@ -274,6 +294,33 @@ interface OutboundRuntimeConfigUpdateResult {
   errorMessage?: string;
 }
 interface OutboundSessionIdUpdate { type: 'session_id_update'; sessionId: string }
+interface OutboundSpawnChildSessionResult {
+  type: 'spawn_child_session_result';
+  id: string;
+  success: boolean;
+  sessionId?: string;
+  sessionPath?: string;
+  errorMessage?: string;
+}
+interface OutboundChildSessionInfo {
+  type: 'child_session_info';
+  sessionId: string;
+  sessionPath: string;
+  name?: string;
+  cwd: string;
+  created: string;
+  modified: string;
+  messageCount: number;
+  firstMessage: string;
+  spawnConfig?: { connection?: string; model?: string; enabledSources?: string[]; permissionMode?: string; thinkingLevel?: string };
+}
+interface OutboundListChildSessionsResult {
+  type: 'list_child_sessions_result';
+  id: string;
+  success: boolean;
+  sessions: OutboundChildSessionInfo[];
+  errorMessage?: string;
+}
 interface OutboundError { type: 'error'; message: string; code?: string }
 
 // ============================================================
@@ -330,6 +377,8 @@ type OutboundMessage =
   | OutboundSetAutoCompactionResult
   | OutboundRuntimeConfigUpdateResult
   | OutboundSessionIdUpdate
+  | OutboundSpawnChildSessionResult
+  | OutboundListChildSessionsResult
   | OutboundError
   // 扩展桥接消息
   | OutboundExtensionNotify
@@ -359,6 +408,12 @@ let currentUserMessage = '';
 // Pending promises for async handshakes
 const pendingPreToolUse = new Map<string, { resolve: (response: { action: string; input?: Record<string, unknown>; reason?: string }) => void }>();
 const pendingToolExecutions = new Map<string, { resolve: (result: { content: string; isError: boolean }) => void }>();
+
+// Timeout for pending tool handshakes with the main process. If the parent
+// process is alive but unresponsive, reject so the tool call surfaces an
+// error instead of hanging forever (and leaking Map entries / memory).
+const PRE_TOOL_USE_TIMEOUT_MS = 60_000;
+const TOOL_EXECUTE_TIMEOUT_MS = 60_000;
 
 // Pending session MCP tool calls for completion detection
 const pendingSessionToolCalls = new Map<string, { toolName: string; arguments: Record<string, unknown> }>();
@@ -594,7 +649,7 @@ function createAuthenticatedRegistry(): {
     moduleAuthStorage = PiAuthStorage.inMemory();
     // Task 6 后 ~/.pi/agent/auth.json 是 pi 凭证的唯一数据源（SoT）。
     // 子进程在创建 in-memory AuthStorage 后，主动从 auth.json 加载所有凭证，
-    // 这样主进程不再需要为 pi 连接从 credentials.enc 读取并注入凭证。
+    // 主进程不再需要为 pi 连接注入凭证（凭证由 auth.json 直接提供）。
     // 主进程传来的 piAuth（若有）会在下方覆盖 auth.json 中的同名凭证，用于 OAuth 刷新。
     const authFile = readPiGlobalAuth();
     if (authFile?.providers) {
@@ -912,8 +967,15 @@ async function requestPreToolUseApproval(
     input,
   });
 
-  const response = await new Promise<{ action: string; input?: Record<string, unknown>; reason?: string }>((resolve) => {
-    pendingPreToolUse.set(requestId, { resolve });
+  const response = await new Promise<{ action: string; input?: Record<string, unknown>; reason?: string }>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (pendingPreToolUse.delete(requestId)) {
+        reject(new Error(`Pre-tool-use request timed out after ${PRE_TOOL_USE_TIMEOUT_MS / 1000}s`));
+      }
+    }, PRE_TOOL_USE_TIMEOUT_MS);
+    pendingPreToolUse.set(requestId, {
+      resolve: (value) => { clearTimeout(timer); resolve(value); },
+    });
   });
 
   if (response.action === 'block') {
@@ -1007,7 +1069,7 @@ function wrapSingleTool(tool: ToolDefinition<any, any>): ToolDefinition<any, any
         }
       } catch (error) {
         debugLog(
-          `Large response handling failed: ${error instanceof Error ? error.message : String(error)}`,
+          `Large response handling failed: ${errorMessage(error)}`,
         );
       }
     }
@@ -1062,8 +1124,15 @@ function buildProxyTools(): ToolDefinition<any, any>[] {
         args: approvedInput,
       });
 
-      const result = await new Promise<{ content: string; isError: boolean }>((resolve) => {
-        pendingToolExecutions.set(requestId, { resolve });
+      const result = await new Promise<{ content: string; isError: boolean }>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (pendingToolExecutions.delete(requestId)) {
+            reject(new Error(`Tool execution request timed out after ${TOOL_EXECUTE_TIMEOUT_MS / 1000}s`));
+          }
+        }, TOOL_EXECUTE_TIMEOUT_MS);
+        pendingToolExecutions.set(requestId, {
+          resolve: (value) => { clearTimeout(timer); resolve(value); },
+        });
       });
 
       return {
@@ -1153,11 +1222,10 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
 
     debugLog(`[queryLlm] Created ephemeral session: ${ephemeralSession.sessionId}`);
 
-    // Force the system prompt — see system-prompt-override.ts for why direct
-    // assignment to `state.systemPrompt` doesn't survive `session.prompt()`.
+    // System prompt via Pi's public PromptOptions.systemPrompt (fork API);
+    // passed at prompt() time below instead of monkey-patching session internals.
     const promptForSession =
       request.systemPrompt ?? 'Reply with ONLY the requested text. No explanation.';
-    applySystemPromptOverride(ephemeralSession, promptForSession);
 
     // Collect response text and errors from events
     let result = '';
@@ -1199,7 +1267,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
     });
 
     try {
-      await ephemeralSession.prompt(request.prompt);
+      await ephemeralSession.prompt(request.prompt, { systemPrompt: promptForSession });
       await withTimeout(
         completionPromise,
         LLM_QUERY_TIMEOUT_MS,
@@ -1236,7 +1304,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
       const text = await runQueryWithModel(currentModel);
       return { text, model: currentModel };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = errorMessage(error);
       const shouldRetry = isModelNotFoundError(errorMsg);
 
       if (!shouldRetry) {
@@ -1277,7 +1345,7 @@ async function runMiniCompletion(prompt: string): Promise<string | null> {
     debugLog(`[runMiniCompletion] Result: ${text ? `"${text.slice(0, 200)}"` : 'null'}`);
     return text;
   } catch (error) {
-    debugLog(`[runMiniCompletion] Failed: ${error instanceof Error ? error.message : String(error)}`);
+    debugLog(`[runMiniCompletion] Failed: ${errorMessage(error)}`);
     return null;
   }
 }
@@ -1496,13 +1564,6 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
 
     const session = await ensureSession();
 
-    // Force the Craft-built system prompt onto the Pi session. Direct assignment
-    // to `state.systemPrompt` is wiped on every `session.prompt()` call by the Pi
-    // SDK (see system-prompt-override.ts).
-    if (msg.systemPrompt) {
-      applySystemPromptOverride(session, msg.systemPrompt);
-    }
-
     // Wire up event handler
     if (unsubscribeEvents) {
       unsubscribeEvents();
@@ -1514,12 +1575,16 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
 
     // Fire prompt — use followUp when session is already streaming so the
     // message is queued instead of throwing "Agent is already processing".
+    // systemPrompt: Pi's public PromptOptions.systemPrompt (fork API) replaces
+    // the old three-field monkey-patch; it survives the SDK's per-turn reset
+    // and refreshSystemPrompt() rebuilds natively.
     await session.prompt(msg.message, {
       images: msg.images && msg.images.length > 0 ? msg.images : undefined,
       streamingBehavior: 'followUp',
+      ...(msg.systemPrompt ? { systemPrompt: msg.systemPrompt } : {}),
     });
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg = errorMessage(error);
 
     // No wrapper-side overflow recovery here. The Pi SDK's _checkCompaction
     // already runs `_runAutoCompaction("overflow", true)` on overflow and
@@ -1580,7 +1645,7 @@ async function handleAbort(): Promise<void> {
     try {
       await piSession.abort();
     } catch (error) {
-      debugLog(`Abort failed: ${error instanceof Error ? error.message : String(error)}`);
+      debugLog(`Abort failed: ${errorMessage(error)}`);
     }
   }
 
@@ -1591,18 +1656,63 @@ async function handleAbort(): Promise<void> {
   pendingPreToolUse.clear();
 }
 
+/**
+ * Wrap a message handler with standardized error handling.
+ * Catches errors, logs them via debugLog, and sends an error result.
+ *
+ * By default sends `{ type: resultType, id: msg.id, success: false, errorMessage, ...extraErrorFields }`.
+ * Pass `onError` to override the error send (e.g. for `type: 'error'` with a code).
+ */
+function wrapHandler<TMsg extends { id: string }>(
+  tag: string,
+  resultType: string,
+  msg: TMsg,
+  fn: () => Promise<void> | void,
+  options?: {
+    extraErrorFields?: Record<string, unknown>;
+    onError?: (errorMsg: string) => void;
+  },
+): Promise<void> {
+  return Promise.resolve()
+    .then(() => fn())
+    .catch((error) => {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      debugLog(`[${tag}] Failed: ${errorMsg}`);
+      if (options?.onError) {
+        options.onError(errorMsg);
+        return;
+      }
+      send({
+        type: resultType,
+        id: msg.id,
+        success: false,
+        errorMessage: errorMsg,
+        ...(options?.extraErrorFields ?? {}),
+      } as OutboundMessage);
+    });
+}
+
+/**
+ * Wrap a handler with error logging only (no error result sent).
+ * Catches errors and logs them via debugLog.
+ */
+function withErrorLog(tag: string, fn: () => Promise<void> | void): Promise<void> {
+  return Promise.resolve()
+    .then(() => fn())
+    .catch((error) => {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      debugLog(`[${tag}] Failed: ${errorMsg}`);
+    });
+}
+
 async function handleMiniCompletion(msg: Extract<InboundMessage, { type: 'mini_completion' }>): Promise<void> {
   // Call queryLlm directly (not runMiniCompletion) so auth errors propagate
   // as 'error' messages instead of being swallowed and returned as null.
   // runMiniCompletion is kept for the summarize callback where null is acceptable.
-  try {
+  await wrapHandler('handleMiniCompletion', 'mini_completion_result', msg, async () => {
     const result = await queryLlm({ prompt: msg.prompt });
     send({ type: 'mini_completion_result', id: msg.id, text: result.text || null });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    debugLog(`[handleMiniCompletion] Error: ${errorMsg}`);
-    send({ type: 'error', message: errorMsg, code: 'mini_completion_error' });
-  }
+  }, { onError: (e) => send({ type: 'error', message: e, code: 'mini_completion_error' }) });
 }
 
 // INVARIANT: the full LLMQueryRequest shape must pass through this RPC unchanged.
@@ -1610,18 +1720,18 @@ async function handleMiniCompletion(msg: Extract<InboundMessage, { type: 'mini_c
 // to queryLlm() verbatim. But verify queryLlm() actually honors the new field;
 // request-propagation + request-honoring are independent (see #596).
 async function handleLlmQuery(msg: Extract<InboundMessage, { type: 'llm_query' }>): Promise<void> {
-  try {
+  await wrapHandler('handleLlmQuery', 'llm_query_result', msg, async () => {
     const result = await queryLlm(msg.request);
     send({ type: 'llm_query_result', id: msg.id, result });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    debugLog(`[handleLlmQuery] Error: ${errorMsg}`);
+  }, {
     // Dual-emit: the generic `error` channel drives main-process OAuth
     // auth-refresh detection (centralized in PiAgent), while the targeted
     // `llm_query_result` rejects the pending promise for this specific call.
-    send({ type: 'error', message: errorMsg, code: 'llm_query_error' });
-    send({ type: 'llm_query_result', id: msg.id, result: null, errorMessage: errorMsg, errorCode: 'llm_query_error' });
-  }
+    onError: (e) => {
+      send({ type: 'error', message: e, code: 'llm_query_error' });
+      send({ type: 'llm_query_result', id: msg.id, result: null, errorMessage: e, errorCode: 'llm_query_error' });
+    },
+  });
 }
 
 async function handleEnsureSessionReady(msg: Extract<InboundMessage, { type: 'ensure_session_ready' }>): Promise<void> {
@@ -1634,7 +1744,7 @@ async function handleEnsureSessionReady(msg: Extract<InboundMessage, { type: 'en
 }
 
 async function handleCompact(msg: Extract<InboundMessage, { type: 'compact' }>): Promise<void> {
-  try {
+  await wrapHandler('compact', 'compact_result', msg, async () => {
     const session = await ensureSession();
     // Serialize manual /compact behind any in-flight auto-compaction. Public
     // session.compact() calls agent.abort() and uses its own controller; if
@@ -1654,20 +1764,11 @@ async function handleCompact(msg: Extract<InboundMessage, { type: 'compact' }>):
         tokensBefore: result.tokensBefore,
       },
     });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    debugLog(`[compact] Failed: ${errorMsg}`);
-    send({
-      type: 'compact_result',
-      id: msg.id,
-      success: false,
-      errorMessage: errorMsg,
-    });
-  }
+  });
 }
 
 async function handleSetAutoCompaction(msg: Extract<InboundMessage, { type: 'set_auto_compaction' }>): Promise<void> {
-  try {
+  await wrapHandler('set_auto_compaction', 'set_auto_compaction_result', msg, async () => {
     const session = await ensureSession();
     session.setAutoCompactionEnabled(msg.enabled);
     send({
@@ -1676,21 +1777,11 @@ async function handleSetAutoCompaction(msg: Extract<InboundMessage, { type: 'set
       success: true,
       enabled: session.autoCompactionEnabled,
     });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    debugLog(`[set_auto_compaction] Failed: ${errorMsg}`);
-    send({
-      type: 'set_auto_compaction_result',
-      id: msg.id,
-      success: false,
-      enabled: msg.enabled,
-      errorMessage: errorMsg,
-    });
-  }
+  }, { extraErrorFields: { enabled: msg.enabled } });
 }
 
 async function handleUpdateRuntimeConfig(msg: RuntimeConfigUpdateMessage): Promise<void> {
-  try {
+  await wrapHandler('runtime_config', 'update_runtime_config_result', msg, async () => {
     if (!initConfig) {
       throw new Error('Runtime config update received before init');
     }
@@ -1737,11 +1828,7 @@ async function handleUpdateRuntimeConfig(msg: RuntimeConfigUpdateMessage): Promi
     }
 
     send({ type: 'update_runtime_config_result', id: msg.id, success: true, updated: true });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    debugLog(`[runtime_config] Failed: ${errorMsg}`);
-    send({ type: 'update_runtime_config_result', id: msg.id, success: false, updated: false, errorMessage: errorMsg });
-  }
+  }, { extraErrorFields: { updated: false } });
 }
 
 async function handleSetModel(msg: Extract<InboundMessage, { type: 'set_model' }>): Promise<void> {
@@ -1767,14 +1854,12 @@ async function handleSetModel(msg: Extract<InboundMessage, { type: 'set_model' }
     setInterceptorApiHints(undefined);
     return;
   }
-  try {
-    await piSession.setModel(piModel);
+  const session = piSession;
+  await withErrorLog('set_model', async () => {
+    await session.setModel(piModel);
     setInterceptorApiHints(piModel as { api?: string; provider?: string; baseUrl?: string });
     debugLog(`[set_model] Model changed to: ${msg.model} (resolved: ${piModel.provider}/${piModel.id})`);
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    debugLog(`[set_model] Failed to set model: ${errorMsg}`);
-  }
+  });
 }
 
 async function handleSetThinkingLevel(msg: Extract<InboundMessage, { type: 'set_thinking_level' }>): Promise<void> {
@@ -1791,13 +1876,11 @@ async function handleSetThinkingLevel(msg: Extract<InboundMessage, { type: 'set_
     return;
   }
 
-  try {
-    piSession.setThinkingLevel(piLevel);
+  const session = piSession;
+  await withErrorLog('set_thinking_level', () => {
+    session.setThinkingLevel(piLevel);
     debugLog(`[set_thinking_level] Thinking level changed to: ${msg.level} (mapped: ${piLevel})`);
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    debugLog(`[set_thinking_level] Failed to set thinking level: ${errorMsg}`);
-  }
+  });
 }
 
 async function handleExtensionCommandInvoke(
@@ -1825,8 +1908,71 @@ async function handleExtensionCommandInvoke(
     await command.handler(msg.args ?? '', ctx);
     debugLog(`[extension-bridge] command executed: ${msg.commandId}`);
   } catch (error) {
-    debugLog(`[extension-bridge] command failed (${msg.commandId}): ${error instanceof Error ? error.message : String(error)}`);
+    debugLog(`[extension-bridge] command failed (${msg.commandId}): ${errorMessage(error)}`);
   }
+}
+
+/**
+ * Handle spawn_child_session: delegate to pi's SessionManager.spawnChildSession()
+ * to create a child session branch in pi's session tree.
+ */
+async function handleSpawnChildSession(
+  msg: Extract<InboundMessage, { type: 'spawn_child_session' }>,
+): Promise<void> {
+  await wrapHandler('spawn_child_session', 'spawn_child_session_result', msg, async () => {
+    const session = await ensureSession();
+    const sessionManager = session.sessionManager as unknown as {
+      spawnChildSession(
+        parentSessionId: string,
+        options: SpawnChildSessionOptionsPayload,
+      ): Promise<{ sessionId: string; sessionPath: string }>;
+    };
+
+    const result = await sessionManager.spawnChildSession(
+      msg.parentSessionId,
+      msg.options,
+    );
+
+    send({
+      type: 'spawn_child_session_result',
+      id: msg.id,
+      success: true,
+      sessionId: result.sessionId,
+      sessionPath: result.sessionPath,
+    });
+  });
+}
+
+/**
+ * Handle list_child_sessions: query pi's session tree for child sessions
+ * spawned from the given parent session ID (filtered by spawnedFrom field).
+ */
+async function handleListChildSessions(
+  msg: Extract<InboundMessage, { type: 'list_child_sessions' }>,
+): Promise<void> {
+  await wrapHandler('list_child_sessions', 'list_child_sessions_result', msg, async () => {
+    await ensureSession();
+    const childSessions: OutboundChildSessionInfo[] = listSpawnedChildSessions(msg.parentSessionId)
+      .map((session) => ({
+        type: 'child_session_info',
+        sessionId: session.sessionId,
+        sessionPath: session.sessionPath,
+        name: session.name,
+        cwd: session.cwd,
+        created: session.created,
+        modified: session.modified,
+        messageCount: session.messageCount,
+        firstMessage: session.firstMessage,
+        spawnConfig: session.spawnConfig,
+      }));
+
+    send({
+      type: 'list_child_sessions_result',
+      id: msg.id,
+      success: true,
+      sessions: childSessions,
+    });
+  }, { extraErrorFields: { sessions: [] } });
 }
 
 function handleShutdown(): void {
@@ -1975,6 +2121,14 @@ async function processMessage(msg: InboundMessage): Promise<void> {
       await handleExtensionCommandInvoke(msg);
       break;
 
+    case 'spawn_child_session':
+      await handleSpawnChildSession(msg);
+      break;
+
+    case 'list_child_sessions':
+      await handleListChildSessions(msg);
+      break;
+
     case 'shutdown':
       handleShutdown();
       break;
@@ -1994,7 +2148,7 @@ function main(): void {
     try {
       const msg = JSON.parse(line) as InboundMessage;
       processMessage(msg).catch((error) => {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = errorMessage(error);
         debugLog(`Error processing message: ${errorMsg}`);
         send({ type: 'error', message: errorMsg });
       });
@@ -2024,7 +2178,7 @@ function main(): void {
   });
 
   process.on('unhandledRejection', (reason) => {
-    const msg = reason instanceof Error ? reason.message : String(reason);
+    const msg = errorMessage(reason);
     debugLog(`Unhandled rejection: ${msg}`);
     try {
       send({ type: 'error', message: `Unhandled rejection: ${msg}`, code: 'unhandled_rejection' });

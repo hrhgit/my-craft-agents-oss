@@ -46,6 +46,45 @@ export default [
       'craft-shared/no-direct-open-import': 'error',
       // Prevent inline source.config.isAuthenticated checks — use isSourceUsable() instead
       'craft-shared/no-inline-source-auth-check': 'error',
+
+      // Red line: Pi SDK (@earendil-works/pi-*) is bottom-layer. Shared/host code must
+      // talk to Pi via RpcClient through the sanctioned backend area only. See
+      // docs/architecture/red-line.md.
+      'no-restricted-syntax': ['error',
+        {
+          selector: 'ImportDeclaration[source.value=/^@earendil-works\\/pi-/]',
+          message: 'Pi SDK (@earendil-works/pi-*) is bottom-layer. Talk to Pi via RpcClient through packages/shared/src/agent/backend only. See docs/architecture/red-line.md.',
+        },
+      ],
+    },
+  },
+
+  // Sanctioned backend area: the only place in shared/ that may import Pi SDK types
+  // (typed event adapter, thinking-level constants). This seam shrinks as Pi exposes
+  // typed public APIs (RpcClient events, etc.).
+  {
+    files: ['src/agent/backend/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': 'off',
+    },
+  },
+
+  // Sanctioned seam extensions — files that consume Pi's typed PUBLIC API and are
+  // the single place for their domain. These are the goal state, not violations:
+  //   - secure-storage.ts: thin wrapper over Pi AuthStorage's craft.<slug> credential
+  //     namespace (setCraftCredential/getCraftCredential — purpose-built public API).
+  //     Reimplementing auth.json I/O + locking in craft would violate the red line's
+  //     deeper principle (Pi owns credential storage).
+  //   - models-pi.ts: static model/provider catalog (getModels/getProviders) used for
+  //     PRE-AUTH provider listing in connection setup. RpcClient.getAvailableModels()
+  //     requires a live authenticated session and cannot serve this path.
+  {
+    files: [
+      'src/credentials/backends/secure-storage.ts',
+      'src/config/models-pi.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': 'off',
     },
   },
 ]
