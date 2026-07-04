@@ -89,6 +89,16 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Network manager. Default: created by createAgentSessionServices() */
 	networkManager?: NetworkManager;
+	/**
+	 * Optional fetch interceptor for model traffic.
+	 *
+	 * Wraps the HTTP fetch used for provider streaming requests (the sidecar
+	 * fetch when the network sidecar is active, otherwise global fetch). Lets
+	 * embedders inject request/response shaping (metadata injection, SSE
+	 * processing, proxying) through a typed public API instead of patching
+	 * `globalThis.fetch`.
+	 */
+	fetchInterceptor?: (baseFetch: typeof fetch) => typeof fetch;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
 	/** Persist initial model/thinking entries for a new session. Default: true. */
@@ -388,6 +398,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				timeoutMs,
 				maxAttempts: streamOptions?.maxRetries ?? providerRetrySettings.maxRetries,
 			});
+			// Host fetch interceptor: wrap whichever fetch the provider will use
+			// (sidecar fetch when routed through the sidecar, global fetch otherwise).
+			const interceptedFetch = options.fetchInterceptor ? options.fetchInterceptor(httpFetch ?? fetch) : httpFetch;
 			const upstream = streamSimple(model, context, {
 				...streamOptions,
 				apiKey: auth.apiKey,
@@ -396,7 +409,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				webSearch: effectiveWebSearch,
 				maxRetries: streamOptions?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: streamOptions?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
-				httpFetch,
+				httpFetch: interceptedFetch,
 				headers:
 					attributionHeaders || auth.headers || streamOptions?.headers
 						? {

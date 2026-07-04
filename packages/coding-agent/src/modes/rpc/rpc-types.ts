@@ -76,8 +76,28 @@ export type RpcCommand =
 	// Tool permissions (host-side gate; see RpcToolPermissionRequest)
 	| { id?: string; type: "enable_tool_permissions"; enabled: boolean }
 
+	// Host proxy tools (executed in the host process; see RpcToolExecuteRequest)
+	| { id?: string; type: "register_tools"; tools: RpcHostToolDefinition[] }
+
 	// Commands (available for invocation via prompt)
 	| { id?: string; type: "get_commands" };
+
+/**
+ * Host-provided tool definition for the `register_tools` command.
+ *
+ * The agent registers the tool and proxies every execution back to the host
+ * as a `tool_execute_request`. `inputSchema` is a JSON Schema object (TypeBox
+ * schemas are JSON Schema, so plain JSON Schema is accepted at runtime).
+ */
+export interface RpcHostToolDefinition {
+	name: string;
+	description: string;
+	inputSchema: Record<string, unknown>;
+	/** Human-readable label for UI. Defaults to a prettified name. */
+	label?: string;
+	/** One-line snippet for the system prompt's Available tools section. Defaults to a truncated description. */
+	promptSnippet?: string;
+}
 
 // ============================================================================
 // RPC Slash Command (for get_commands response)
@@ -207,6 +227,9 @@ export type RpcResponse =
 	// Tool permissions
 	| { id?: string; type: "response"; command: "enable_tool_permissions"; success: true }
 
+	// Host proxy tools
+	| { id?: string; type: "response"; command: "register_tools"; success: true; data: { registered: string[] } }
+
 	// Commands
 	| {
 			id?: string;
@@ -294,6 +317,32 @@ export type RpcToolPermissionResponse =
 	| { type: "tool_permission_response"; id: string; action: "allow" }
 	| { type: "tool_permission_response"; id: string; action: "block"; reason?: string }
 	| { type: "tool_permission_response"; id: string; action: "modify"; input: Record<string, unknown> };
+
+// ============================================================================
+// Host Proxy Tool Execution (stdout request / stdin response)
+// ============================================================================
+
+/**
+ * Emitted when a host-registered tool (see `register_tools`) is called by the
+ * LLM. The host executes the tool in its own process and replies with a
+ * `tool_execute_response` carrying the same `id`.
+ */
+export interface RpcToolExecuteRequest {
+	type: "tool_execute_request";
+	id: string;
+	toolName: string;
+	toolCallId: string;
+	input: Record<string, unknown>;
+}
+
+/** Host reply to a `tool_execute_request`. */
+export interface RpcToolExecuteResponse {
+	type: "tool_execute_response";
+	id: string;
+	/** Tool result content (plain text). */
+	content: string;
+	isError?: boolean;
+}
 
 // ============================================================================
 // Helper type for extracting command types

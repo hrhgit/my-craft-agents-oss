@@ -15,9 +15,12 @@ import type {
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcHostToolDefinition,
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcToolExecuteRequest,
+	RpcToolExecuteResponse,
 	RpcToolPermissionRequest,
 	RpcToolPermissionResponse,
 } from "./rpc-types.ts";
@@ -67,7 +70,12 @@ export interface RpcExtensionErrorEvent {
 	error: string;
 }
 
-export type RpcClientEvent = AgentEvent | RpcExtensionUIRequest | RpcExtensionErrorEvent | RpcToolPermissionRequest;
+export type RpcClientEvent =
+	| AgentEvent
+	| RpcExtensionUIRequest
+	| RpcExtensionErrorEvent
+	| RpcToolPermissionRequest
+	| RpcToolExecuteRequest;
 export type RpcEventListener = (event: AgentEvent) => void;
 export type RpcClientEventListener = (event: RpcClientEvent) => void;
 
@@ -77,6 +85,9 @@ export type RpcToolPermissionHandler = (
 ) => Promise<
 	{ action: "allow" } | { action: "block"; reason?: string } | { action: "modify"; input: Record<string, unknown> }
 >;
+
+/** Host-side executor invoked for every tool_execute_request (host proxy tools). */
+export type RpcToolExecutor = (request: RpcToolExecuteRequest) => Promise<{ content: string; isError?: boolean }>;
 
 // ============================================================================
 // RPC Client
@@ -94,6 +105,7 @@ export class RpcClient {
 	private exitError: Error | null = null;
 	private options: RpcClientOptions;
 	private toolPermissionHandler: RpcToolPermissionHandler | null = null;
+	private toolExecutor: RpcToolExecutor | null = null;
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
@@ -291,6 +303,20 @@ export class RpcClient {
 	async setToolPermissionHandler(handler: RpcToolPermissionHandler | null): Promise<void> {
 		this.toolPermissionHandler = handler;
 		await this.send({ type: "enable_tool_permissions", enabled: handler !== null });
+	}
+
+	/**
+	 * Register host proxy tools with the agent.
+	 *
+	 * Each declared tool becomes available to the LLM; execution is proxied
+	 * back to `executor` via `tool_execute_request`/`tool_execute_response`.
+	 * Calling again replaces tools by name and swaps the executor.
+	 */
+	async registerTools(tools: RpcHostToolDefinition[], executor: RpcToolExecutor): Promise<string[]> {
+		this.toolExecutor = executor;
+		const response = await this.send({ type: "register_tools", tools });
+		const data = this.getData<{ registered: string[] }>(response);
+		return data.registered;
 	}
 
 	/**
@@ -575,6 +601,10 @@ export class RpcClient {
 				this.handleToolPermissionRequest(event);
 				return;
 			}
+			if (event.type === "tool_execute_request") {
+				this.handleToolExecuteRequest(event);
+				return;
+			}
 			if (event.type === "extension_ui_request" || event.type === "extension_error") {
 				return;
 			}
@@ -617,6 +647,44 @@ export class RpcClient {
 					id: request.id,
 					action: "block",
 					reason: `Permission handler failed: ${err instanceof Error ? err.message : String(err)}`,
+				});
+			});
+	}
+
+	private handleToolExecuteRequest(request: RpcToolExecuteRequest): void {
+		const executor = this.toolExecutor;
+		const respond = (response: RpcToolExecuteResponse) => {
+			const stdin = this.process?.stdin;
+			if (!stdin || stdin.destroyed || !stdin.writable) return;
+			stdin.write(serializeJsonLine(response));
+		};
+
+		if (!executor) {
+			// Tool registered but executor cleared — fail the call instead of hanging.
+			respond({
+				type: "tool_execute_response",
+				id: request.id,
+				content: `No host executor installed for tool "${request.toolName}"`,
+				isError: true,
+			});
+			return;
+		}
+
+		void executor(request)
+			.then((result) => {
+				respond({
+					type: "tool_execute_response",
+					id: request.id,
+					content: result.content,
+					isError: result.isError,
+				});
+			})
+			.catch((err: unknown) => {
+				respond({
+					type: "tool_execute_response",
+					id: request.id,
+					content: `Host tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
+					isError: true,
 				});
 			});
 	}

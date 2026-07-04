@@ -33,9 +33,12 @@ import type {
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcHostToolDefinition,
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcToolExecuteRequest,
+	RpcToolExecuteResponse,
 	RpcToolPermissionRequest,
 	RpcToolPermissionResponse,
 } from "./rpc-types.ts";
@@ -45,8 +48,11 @@ export type {
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcHostToolDefinition,
 	RpcResponse,
 	RpcSessionState,
+	RpcToolExecuteRequest,
+	RpcToolExecuteResponse,
 	RpcToolPermissionRequest,
 	RpcToolPermissionResponse,
 } from "./rpc-types.ts";
@@ -114,6 +120,54 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			} satisfies RpcToolPermissionRequest);
 		});
 	};
+
+	// Pending host proxy-tool executions waiting for the host's result
+	const pendingToolExecuteRequests = new Map<
+		string,
+		{ resolve: (value: RpcToolExecuteResponse) => void; reject: (error: Error) => void }
+	>();
+
+	const requestHostToolExecution = (request: {
+		toolName: string;
+		toolCallId: string;
+		input: Record<string, unknown>;
+	}): Promise<RpcToolExecuteResponse> => {
+		const id = crypto.randomUUID();
+		return new Promise<RpcToolExecuteResponse>((resolve, reject) => {
+			pendingToolExecuteRequests.set(id, { resolve, reject });
+			output({
+				type: "tool_execute_request",
+				id,
+				toolName: request.toolName,
+				toolCallId: request.toolCallId,
+				input: request.input,
+			} satisfies RpcToolExecuteRequest);
+		});
+	};
+
+	/** Convert host tool declarations into session ToolDefinitions that proxy execution to the host. */
+	const buildHostProxyTools = (tools: RpcHostToolDefinition[]) =>
+		tools.map((def) => ({
+			name: def.name,
+			label: def.label ?? def.name.replace(/^mcp__.*?__/, "").replace(/_/g, " "),
+			description: def.description,
+			promptSnippet:
+				def.promptSnippet ??
+				(def.description.length > 200 ? `${def.description.slice(0, 197)}...` : def.description),
+			parameters: def.inputSchema as never,
+			execute: async (toolCallId: string, params: unknown) => {
+				const result = await requestHostToolExecution({
+					toolName: def.name,
+					toolCallId,
+					input: (params ?? {}) as Record<string, unknown>,
+				});
+				return {
+					content: [{ type: "text" as const, text: result.content }],
+					details: result.isError ? { isError: true } : {},
+					isError: result.isError === true,
+				};
+			},
+		}));
 
 	// Shutdown request flag
 	let shutdownRequested = false;
@@ -724,6 +778,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "enable_tool_permissions");
 			}
 
+			case "register_tools": {
+				session.registerHostTools(buildHostProxyTools(command.tools) as never);
+				return success(id, "register_tools", { registered: command.tools.map((t) => t.name) });
+			}
+
 			default: {
 				const unknownCommand = command as { type: string };
 				return error(undefined, unknownCommand.type, `Unknown command: ${unknownCommand.type}`);
@@ -750,6 +809,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			pending.resolve({ type: "tool_permission_response", id: "", action: "block", reason: "Server shutting down" });
 		}
 		pendingToolPermissionRequests.clear();
+		// Fail in-flight host tool executions so dispose doesn't hang on them.
+		for (const [, pending] of pendingToolExecuteRequests) {
+			pending.resolve({ type: "tool_execute_response", id: "", content: "Server shutting down", isError: true });
+		}
+		pendingToolExecuteRequests.clear();
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		await runtimeHost.dispose();
@@ -809,6 +873,22 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			const pending = pendingToolPermissionRequests.get(response.id);
 			if (pending) {
 				pendingToolPermissionRequests.delete(response.id);
+				pending.resolve(response);
+			}
+			return;
+		}
+
+		// Handle host proxy-tool execution responses
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"type" in parsed &&
+			parsed.type === "tool_execute_response"
+		) {
+			const response = parsed as RpcToolExecuteResponse;
+			const pending = pendingToolExecuteRequests.get(response.id);
+			if (pending) {
+				pendingToolExecuteRequests.delete(response.id);
 				pending.resolve(response);
 			}
 			return;

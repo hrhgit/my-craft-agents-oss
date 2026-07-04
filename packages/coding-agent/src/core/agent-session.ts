@@ -949,6 +949,22 @@ export class AgentSession {
 	}
 
 	/**
+	 * Register (or replace, by name) host-provided tools at runtime.
+	 *
+	 * Intended for embedders (GUI shells, RPC hosts) that proxy tool execution
+	 * to their own process (MCP servers, API sources). Tools land in the same
+	 * registry as `config.customTools` and become active immediately; the
+	 * system prompt is rebuilt to include them. Extension `tool_call` /
+	 * `tool_result` handlers and the host permission gate apply to these tools
+	 * like any other.
+	 */
+	registerHostTools(tools: ToolDefinition[]): void {
+		const incoming = new Map(tools.map((tool) => [tool.name, tool]));
+		this._customTools = [...this._customTools.filter((tool) => !incoming.has(tool.name)), ...tools];
+		this._refreshToolRegistry({ includeAllExtensionTools: true });
+	}
+
+	/**
 	 * Set active tools by name.
 	 * Only tools in the registry can be enabled. Unknown tool names are ignored.
 	 * Also rebuilds the system prompt to reflect the new tool set.
