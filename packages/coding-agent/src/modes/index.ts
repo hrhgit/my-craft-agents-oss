@@ -11,6 +11,13 @@ export {
 	type RpcClientEventListener,
 	type RpcClientOptions,
 	type RpcEventListener,
+	type RpcToolPermissionHandler,
 } from "./rpc/rpc-client.ts";
 export { runRpcMode } from "./rpc/rpc-mode.ts";
-export type { RpcCommand, RpcResponse, RpcSessionState } from "./rpc/rpc-types.ts";
+export type {
+	RpcCommand,
+	RpcResponse,
+	RpcSessionState,
+	RpcToolPermissionRequest,
+	RpcToolPermissionResponse,
+} from "./rpc/rpc-types.ts";

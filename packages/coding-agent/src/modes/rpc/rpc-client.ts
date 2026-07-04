@@ -18,6 +18,8 @@ import type {
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcToolPermissionRequest,
+	RpcToolPermissionResponse,
 } from "./rpc-types.ts";
 
 // ============================================================================
@@ -65,9 +67,16 @@ export interface RpcExtensionErrorEvent {
 	error: string;
 }
 
-export type RpcClientEvent = AgentEvent | RpcExtensionUIRequest | RpcExtensionErrorEvent;
+export type RpcClientEvent = AgentEvent | RpcExtensionUIRequest | RpcExtensionErrorEvent | RpcToolPermissionRequest;
 export type RpcEventListener = (event: AgentEvent) => void;
 export type RpcClientEventListener = (event: RpcClientEvent) => void;
+
+/** Host-side permission handler invoked for every tool_permission_request. */
+export type RpcToolPermissionHandler = (
+	request: RpcToolPermissionRequest,
+) => Promise<
+	{ action: "allow" } | { action: "block"; reason?: string } | { action: "modify"; input: Record<string, unknown> }
+>;
 
 // ============================================================================
 // RPC Client
@@ -84,6 +93,7 @@ export class RpcClient {
 	private stderr = "";
 	private exitError: Error | null = null;
 	private options: RpcClientOptions;
+	private toolPermissionHandler: RpcToolPermissionHandler | null = null;
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
@@ -233,8 +243,8 @@ export class RpcClient {
 	 * Returns immediately after sending; use onEvent() to receive streaming events.
 	 * Use waitForIdle() to wait for completion.
 	 */
-	async prompt(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "prompt", message, images });
+	async prompt(message: string, images?: ImageContent[], options?: { systemPrompt?: string }): Promise<void> {
+		await this.send({ type: "prompt", message, images, systemPrompt: options?.systemPrompt });
 	}
 
 	/**
@@ -268,6 +278,19 @@ export class RpcClient {
 			throw new Error("Client not started");
 		}
 		stdin.write(serializeJsonLine(response));
+	}
+
+	/**
+	 * Install a host-side tool permission gate.
+	 *
+	 * Sends `enable_tool_permissions` to the agent; every subsequent tool call
+	 * emits a `tool_permission_request` which is routed to `handler`. The
+	 * handler's result is sent back as a `tool_permission_response`. Pass
+	 * `null` to disable the gate.
+	 */
+	async setToolPermissionHandler(handler: RpcToolPermissionHandler | null): Promise<void> {
+		this.toolPermissionHandler = handler;
+		await this.send({ type: "enable_tool_permissions", enabled: handler !== null });
 	}
 
 	/**
@@ -548,6 +571,10 @@ export class RpcClient {
 			for (const listener of this.clientEventListeners) {
 				listener(event);
 			}
+			if (event.type === "tool_permission_request") {
+				this.handleToolPermissionRequest(event);
+				return;
+			}
 			if (event.type === "extension_ui_request" || event.type === "extension_error") {
 				return;
 			}
@@ -557,6 +584,41 @@ export class RpcClient {
 		} catch {
 			// Ignore non-JSON lines
 		}
+	}
+
+	private handleToolPermissionRequest(request: RpcToolPermissionRequest): void {
+		const handler = this.toolPermissionHandler;
+		const respond = (response: RpcToolPermissionResponse) => {
+			const stdin = this.process?.stdin;
+			if (!stdin || stdin.destroyed || !stdin.writable) return;
+			stdin.write(serializeJsonLine(response));
+		};
+
+		if (!handler) {
+			// No handler installed (gate disabled or handler cleared mid-flight):
+			// allow so the agent never hangs.
+			respond({ type: "tool_permission_response", id: request.id, action: "allow" });
+			return;
+		}
+
+		void handler(request)
+			.then((result) => {
+				if (result.action === "block") {
+					respond({ type: "tool_permission_response", id: request.id, action: "block", reason: result.reason });
+				} else if (result.action === "modify") {
+					respond({ type: "tool_permission_response", id: request.id, action: "modify", input: result.input });
+				} else {
+					respond({ type: "tool_permission_response", id: request.id, action: "allow" });
+				}
+			})
+			.catch((err: unknown) => {
+				respond({
+					type: "tool_permission_response",
+					id: request.id,
+					action: "block",
+					reason: `Permission handler failed: ${err instanceof Error ? err.message : String(err)}`,
+				});
+			});
 	}
 
 	private createProcessExitError(code: number | null, signal: NodeJS.Signals | null): Error {

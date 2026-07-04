@@ -65,6 +65,7 @@ import {
 	type SessionBeforeTreeResult,
 	type SessionStartEvent,
 	type ShutdownHandler,
+	type ToolCallEventResult,
 	type ToolDefinition,
 	type ToolExecutionEndEvent,
 	type ToolExecutionStartEvent,
@@ -213,7 +214,33 @@ export interface ExtensionBindings {
 	abortHandler?: () => void;
 	shutdownHandler?: ShutdownHandler;
 	onError?: ExtensionErrorListener;
+	/**
+	 * Host-side permission gate for tool execution.
+	 *
+	 * Runs inside `agent.beforeToolCall`, AFTER extension `tool_call` handlers
+	 * (so it sees extension-mutated input) and before the tool executes. The
+	 * host may allow, block, or modify the input. Intended for embedders (GUI
+	 * shells, RPC hosts) that enforce their own permission policy.
+	 */
+	toolPermissionHandler?: ToolPermissionHandler;
 }
+
+/** Request passed to a host {@link ToolPermissionHandler}. */
+export interface ToolPermissionRequest {
+	toolName: string;
+	toolCallId: string;
+	/** Tool input after extension `tool_call` handlers have run (mutations applied). */
+	input: Record<string, unknown>;
+}
+
+/** Result returned by a host {@link ToolPermissionHandler}. */
+export type ToolPermissionResult =
+	| { action: "allow" }
+	| { action: "block"; reason?: string }
+	| { action: "modify"; input: Record<string, unknown> };
+
+/** Host-side permission gate invoked before every tool execution. */
+export type ToolPermissionHandler = (request: ToolPermissionRequest) => Promise<ToolPermissionResult>;
 
 /** Options for AgentSession.prompt() */
 export interface PromptOptions {
@@ -227,6 +254,15 @@ export interface PromptOptions {
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
+	/**
+	 * Replace the system prompt for this turn (and subsequent turns until changed).
+	 *
+	 * Intended for embedders (GUI shells, RPC hosts) that build their own system
+	 * prompt. Takes effect as the base prompt for the turn; an extension
+	 * `before_agent_start` handler that returns `systemPrompt` still wins for
+	 * that turn (extensions layer on top of the host prompt).
+	 */
+	systemPrompt?: string;
 }
 
 /** Result from cycleModel() */
@@ -334,6 +370,9 @@ export class AgentSession {
 	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
+	private _toolPermissionHandler?: ToolPermissionHandler;
+	/** Host-set system prompt (PromptOptions.systemPrompt); wins over the loader-built prompt. */
+	private _hostSystemPromptOverride?: string;
 	private _extensionErrorUnsubscriber?: () => void;
 
 	// Model registry for API key resolution
@@ -439,23 +478,54 @@ export class AgentSession {
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
+			let extensionResult: ToolCallEventResult | undefined;
+			const effectiveArgs = args as Record<string, unknown>;
+
+			if (runner.hasHandlers("tool_call")) {
+				try {
+					extensionResult = await runner.emitToolCall({
+						type: "tool_call",
+						toolName: toolCall.name,
+						toolCallId: toolCall.id,
+						input: effectiveArgs,
+					});
+				} catch (err) {
+					if (err instanceof Error) {
+						throw err;
+					}
+					throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+				}
+
+				if (extensionResult?.block) {
+					return extensionResult;
+				}
 			}
 
-			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
+			// Host permission gate runs after extension handlers so it sees
+			// extension-mutated input. Bound via ExtensionBindings.toolPermissionHandler.
+			const permissionHandler = this._toolPermissionHandler;
+			if (permissionHandler) {
+				const permission = await permissionHandler({
 					toolName: toolCall.name,
 					toolCallId: toolCall.id,
-					input: args as Record<string, unknown>,
+					input: effectiveArgs,
 				});
-			} catch (err) {
-				if (err instanceof Error) {
-					throw err;
+				if (permission.action === "block") {
+					return { block: true, reason: permission.reason };
 				}
-				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+				if (permission.action === "modify") {
+					// Mutate in place: the agent executes the same args object it passed in,
+					// matching the extension tool_call mutation contract.
+					for (const key of Object.keys(effectiveArgs)) {
+						if (!(key in permission.input)) {
+							delete effectiveArgs[key];
+						}
+					}
+					Object.assign(effectiveArgs, permission.input);
+				}
 			}
+
+			return extensionResult;
 		};
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
@@ -902,7 +972,9 @@ export class AgentSession {
 	}
 
 	refreshSystemPrompt(): void {
-		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		// A host override (PromptOptions.systemPrompt) replaces the loader-built
+		// prompt entirely and must survive tool-set changes and extension reloads.
+		this._baseSystemPrompt = this._hostSystemPromptOverride ?? this._rebuildSystemPrompt(this.getActiveToolNames());
 		this.agent.state.systemPrompt = this._baseSystemPrompt;
 	}
 
@@ -1140,6 +1212,17 @@ export class AgentSession {
 
 		try {
 			await this.prepareForFirstRequest();
+
+			// Host system-prompt override (embedders/RPC hosts): replace the base
+			// prompt before this turn. Stored so refreshSystemPrompt() (tool changes,
+			// extension reloads) keeps the override instead of rebuilding from the
+			// resource loader. `undefined` means "no change"; an empty string is a
+			// valid (empty) prompt.
+			if (options?.systemPrompt !== undefined) {
+				this._hostSystemPromptOverride = options.systemPrompt;
+				this._baseSystemPrompt = options.systemPrompt;
+				this.agent.state.systemPrompt = options.systemPrompt;
+			}
 
 			// Handle extension commands first (execute immediately, even during streaming)
 			// Extension commands manage their own LLM interaction via pi.sendMessage()
@@ -2384,6 +2467,9 @@ export class AgentSession {
 		if (bindings.onError !== undefined) {
 			this._extensionErrorListener = bindings.onError;
 		}
+		if (bindings.toolPermissionHandler !== undefined) {
+			this._toolPermissionHandler = bindings.toolPermissionHandler;
+		}
 
 		this._applyExtensionBindings(this._extensionRunner);
 		await this._extensionRunner.emit(this._sessionStartEvent);
@@ -2405,6 +2491,9 @@ export class AgentSession {
 		}
 		if (bindings.onError !== undefined) {
 			this._extensionErrorListener = bindings.onError;
+		}
+		if (bindings.toolPermissionHandler !== undefined) {
+			this._toolPermissionHandler = bindings.toolPermissionHandler;
 		}
 
 		this._applyExtensionBindings(this._extensionRunner);

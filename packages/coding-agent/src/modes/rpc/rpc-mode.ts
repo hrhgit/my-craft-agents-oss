@@ -36,6 +36,8 @@ import type {
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcToolPermissionRequest,
+	RpcToolPermissionResponse,
 } from "./rpc-types.ts";
 
 // Re-export types for consumers
@@ -45,6 +47,8 @@ export type {
 	RpcExtensionUIResponse,
 	RpcResponse,
 	RpcSessionState,
+	RpcToolPermissionRequest,
+	RpcToolPermissionResponse,
 } from "./rpc-types.ts";
 
 /**
@@ -81,6 +85,35 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		string,
 		{ resolve: (value: any) => void; reject: (error: Error) => void }
 	>();
+
+	// Pending tool permission requests waiting for host response
+	const pendingToolPermissionRequests = new Map<
+		string,
+		{ resolve: (value: RpcToolPermissionResponse) => void; reject: (error: Error) => void }
+	>();
+
+	// Host-side tool permission gate. Off by default; enabled via the
+	// enable_tool_permissions command. When enabled, every tool call emits a
+	// tool_permission_request and blocks until the host replies.
+	let toolPermissionsEnabled = false;
+
+	const requestToolPermission = (request: {
+		toolName: string;
+		toolCallId: string;
+		input: Record<string, unknown>;
+	}): Promise<RpcToolPermissionResponse> => {
+		const id = crypto.randomUUID();
+		return new Promise<RpcToolPermissionResponse>((resolve, reject) => {
+			pendingToolPermissionRequests.set(id, { resolve, reject });
+			output({
+				type: "tool_permission_request",
+				id,
+				toolName: request.toolName,
+				toolCallId: request.toolCallId,
+				input: request.input,
+			} satisfies RpcToolPermissionRequest);
+		});
+	};
 
 	// Shutdown request flag
 	let shutdownRequested = false;
@@ -318,6 +351,19 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		session = runtimeHost.session;
 		await session.bindExtensions({
 			uiContext: createExtensionUIContext(),
+			toolPermissionHandler: async (request) => {
+				if (!toolPermissionsEnabled) {
+					return { action: "allow" };
+				}
+				const response = await requestToolPermission(request);
+				if (response.action === "block") {
+					return { action: "block", reason: response.reason };
+				}
+				if (response.action === "modify") {
+					return { action: "modify", input: response.input };
+				}
+				return { action: "allow" };
+			},
 			commandContextActions: {
 				waitForIdle: () => session.agent.waitForIdle(),
 				newSession: async (options) => runtimeHost.newSession(options),
@@ -395,6 +441,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					.prompt(command.message, {
 						images: command.images,
 						streamingBehavior: command.streamingBehavior,
+						systemPrompt: command.systemPrompt,
 						source: "rpc",
 						preflightResult: (didSucceed) => {
 							if (didSucceed) {
@@ -665,6 +712,18 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "get_commands", { commands });
 			}
 
+			case "enable_tool_permissions": {
+				toolPermissionsEnabled = command.enabled;
+				if (!command.enabled) {
+					// Unblock any in-flight requests so tools don't hang forever.
+					for (const [, pending] of pendingToolPermissionRequests) {
+						pending.resolve({ type: "tool_permission_response", id: "", action: "allow" });
+					}
+					pendingToolPermissionRequests.clear();
+				}
+				return success(id, "enable_tool_permissions");
+			}
+
 			default: {
 				const unknownCommand = command as { type: string };
 				return error(undefined, unknownCommand.type, `Unknown command: ${unknownCommand.type}`);
@@ -686,6 +745,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		for (const cleanup of signalCleanupHandlers) {
 			cleanup();
 		}
+		// Unblock in-flight tool permission waits so dispose doesn't hang on them.
+		for (const [, pending] of pendingToolPermissionRequests) {
+			pending.resolve({ type: "tool_permission_response", id: "", action: "block", reason: "Server shutting down" });
+		}
+		pendingToolPermissionRequests.clear();
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		await runtimeHost.dispose();
@@ -729,6 +793,22 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			const pending = pendingExtensionRequests.get(response.id);
 			if (pending) {
 				pendingExtensionRequests.delete(response.id);
+				pending.resolve(response);
+			}
+			return;
+		}
+
+		// Handle tool permission responses
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"type" in parsed &&
+			parsed.type === "tool_permission_response"
+		) {
+			const response = parsed as RpcToolPermissionResponse;
+			const pending = pendingToolPermissionRequests.get(response.id);
+			if (pending) {
+				pendingToolPermissionRequests.delete(response.id);
 				pending.resolve(response);
 			}
 			return;

@@ -9,11 +9,15 @@ export {
 	type AgentSessionConfig,
 	type AgentSessionEvent,
 	type AgentSessionEventListener,
+	type ExtensionBindings,
 	type ModelCycleResult,
 	type ParsedSkillBlock,
 	type PromptOptions,
 	parseSkillBlock,
 	type SessionStats,
+	type ToolPermissionHandler,
+	type ToolPermissionRequest,
+	type ToolPermissionResult,
 } from "./core/agent-session.ts";
 // Auth and model registry
 export {
@@ -22,9 +26,15 @@ export {
 	type AuthStatus,
 	AuthStorage,
 	type AuthStorageBackend,
+	type BasicCredential,
+	type BearerCredential,
 	FileAuthStorageBackend,
+	type HeaderCredential,
 	InMemoryAuthStorageBackend,
+	type MultiHeaderCredential,
 	type OAuthCredential,
+	type QueryCredential,
+	type SourceCredential,
 } from "./core/auth-storage.ts";
 // Compaction
 export {
@@ -227,6 +237,7 @@ export {
 	type SessionInfoEntry,
 	SessionManager,
 	type SessionMessageEntry,
+	type SpawnChildSessionOptions,
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
 export {

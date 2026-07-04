@@ -18,7 +18,15 @@ import type { SourceInfo } from "../../core/source-info.ts";
 
 export type RpcCommand =
 	// Prompting
-	| { id?: string; type: "prompt"; message: string; images?: ImageContent[]; streamingBehavior?: "steer" | "followUp" }
+	| {
+			id?: string;
+			type: "prompt";
+			message: string;
+			images?: ImageContent[];
+			streamingBehavior?: "steer" | "followUp";
+			/** Host system-prompt override for this turn onward (see PromptOptions.systemPrompt). */
+			systemPrompt?: string;
+	  }
 	| { id?: string; type: "steer"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "abort" }
@@ -64,6 +72,9 @@ export type RpcCommand =
 
 	// Messages
 	| { id?: string; type: "get_messages" }
+
+	// Tool permissions (host-side gate; see RpcToolPermissionRequest)
+	| { id?: string; type: "enable_tool_permissions"; enabled: boolean }
 
 	// Commands (available for invocation via prompt)
 	| { id?: string; type: "get_commands" };
@@ -193,6 +204,9 @@ export type RpcResponse =
 	// Messages
 	| { id?: string; type: "response"; command: "get_messages"; success: true; data: { messages: AgentMessage[] } }
 
+	// Tool permissions
+	| { id?: string; type: "response"; command: "enable_tool_permissions"; success: true }
+
 	// Commands
 	| {
 			id?: string;
@@ -256,6 +270,30 @@ export type RpcExtensionUIResponse =
 	| { type: "extension_ui_response"; id: string; value: string }
 	| { type: "extension_ui_response"; id: string; confirmed: boolean }
 	| { type: "extension_ui_response"; id: string; cancelled: true };
+
+// ============================================================================
+// Tool Permission Events (stdout) / Responses (stdin)
+// ============================================================================
+
+/**
+ * Emitted before a tool executes when the host has enabled the permission
+ * gate (`enable_tool_permissions`). The host must reply with a
+ * `tool_permission_response` carrying the same `id`.
+ */
+export interface RpcToolPermissionRequest {
+	type: "tool_permission_request";
+	id: string;
+	toolName: string;
+	toolCallId: string;
+	/** Tool input after extension tool_call handlers have run. */
+	input: Record<string, unknown>;
+}
+
+/** Host reply to a `tool_permission_request`. */
+export type RpcToolPermissionResponse =
+	| { type: "tool_permission_response"; id: string; action: "allow" }
+	| { type: "tool_permission_response"; id: string; action: "block"; reason?: string }
+	| { type: "tool_permission_response"; id: string; action: "modify"; input: Record<string, unknown> };
 
 // ============================================================================
 // Helper type for extracting command types
