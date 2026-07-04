@@ -11,7 +11,6 @@
  *   - Anthropic: STRIPS metadata from stream (SDK validates immediately)
  *   - OpenAI: CAPTURES metadata passthrough (hook strips before execution)
  * - Captures API errors (4xx/5xx) for error handler
- * - Fast mode support for Anthropic (Opus 4.7)
  *
  * Auto-detects API format based on request URL:
  * - Anthropic: baseUrl + /messages
@@ -251,8 +250,6 @@ function getConfiguredBaseUrl(): string {
   return process.env.ANTHROPIC_BASE_URL?.trim() || 'https://api.anthropic.com';
 }
 
-const FAST_MODE_BETA = 'fast-mode-2026-02-01';
-
 /**
  * Strip cache_control from empty text blocks in API request bodies.
  *
@@ -352,7 +349,7 @@ function stripPromptCacheTtl(body: Record<string, unknown>): number {
 
 /**
  * Upgrade all cache_control blocks from 5m (default) to 1h TTL.
- * Only active when extendedPromptCache is enabled in config.
+ * Only active when craft.agent.extendedPromptCache is enabled in Pi settings.
  * When disabled, actively strips any SDK-injected TTL so blocks
  * fall back to the API default (5 min).
  *
@@ -422,36 +419,6 @@ export function upgradePromptCacheTtl(body: Record<string, unknown>): number {
     debugLog(`[Anthropic] Upgraded ${upgraded} cache_control block(s) to 1h TTL`);
   }
   return upgraded;
-}
-
-/**
- * Check if fast mode should be enabled for this request.
- * Only activates for Opus 4.7 on Anthropic's API when the feature flag is on.
- */
-function shouldEnableFastMode(model: unknown): boolean {
-  if (!FEATURE_FLAGS.fastMode) return false;
-  return typeof model === 'string' && model === 'claude-opus-4-7';
-}
-
-/**
- * Append a beta value to the anthropic-beta header, preserving existing values.
- */
-function appendBetaHeader(headers: HeadersInitType | undefined, beta: string): Record<string, string> {
-  let headerObj: Record<string, string> = {};
-  if (headers instanceof Headers) {
-    headers.forEach((value, key) => { headerObj[key] = value; });
-  } else if (Array.isArray(headers)) {
-    for (const [key, value] of headers) {
-      headerObj[key as string] = value as string;
-    }
-  } else if (headers) {
-    headerObj = { ...headers };
-  }
-
-  const existing = headerObj['anthropic-beta'];
-  headerObj['anthropic-beta'] = existing ? `${existing},${beta}` : beta;
-
-  return headerObj;
 }
 
 /**
@@ -801,18 +768,6 @@ const anthropicAdapter: ApiAdapter = {
       };
     }
 
-    const fastMode = shouldEnableFastMode(body.model);
-    if (fastMode) {
-      body.speed = 'fast';
-      debugLog(`[Fast Mode] Enabled for model=${body.model}`);
-      return {
-        init: {
-          ...init,
-          headers: appendBetaHeader(init?.headers as HeadersInitType | undefined, FAST_MODE_BETA),
-        },
-        body,
-      };
-    }
     return { init, body };
   },
 };
@@ -2128,7 +2083,52 @@ function synthesizeMalformedBodyResponse(
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 
+/**
+ * Cross-instance marker for craft-intercepted fetch functions.
+ *
+ * `Symbol.for` (global registry) so the marker survives the module being
+ * loaded twice in one process (e.g. the --require'd CJS bundle AND the TS
+ * source bundled into pi-agent-server). Both the auto-install below and
+ * {@link createCraftFetchInterceptor} check it to stay idempotent — a fetch
+ * that already runs the craft pipeline is never wrapped again.
+ */
+const CRAFT_FETCH_MARKER = Symbol.for('craft.interceptedFetch');
+
+function isCraftInterceptedFetch(fn: unknown): boolean {
+  return typeof fn === 'function' && (fn as unknown as Record<symbol, unknown>)[CRAFT_FETCH_MARKER] === true;
+}
+
+/**
+ * Create an intercepting fetch that wraps `baseFetch` with the full craft
+ * request/response pipeline (metadata injection, validation, SSE processing,
+ * proxying). This is the typed entry point for Pi's
+ * `createAgentSession({ fetchInterceptor })` public API.
+ *
+ * Idempotent: returns `baseFetch` unchanged when it is already
+ * craft-intercepted (e.g. the globalThis.fetch patch from the legacy
+ * --require preload). This makes it safe to pass unconditionally — it wraps
+ * the sidecar fetch (which bypasses the global patch) and leaves an
+ * already-patched global fetch alone.
+ */
+export function createCraftFetchInterceptor(baseFetch: typeof fetch): typeof fetch {
+  if (isCraftInterceptedFetch(baseFetch)) {
+    return baseFetch;
+  }
+  const intercepted = (input: string | URL | Request, init?: RequestInit) =>
+    interceptedFetchWith(baseFetch, input, init);
+  (intercepted as unknown as Record<symbol, unknown>)[CRAFT_FETCH_MARKER] = true;
+  return intercepted as typeof fetch;
+}
+
 async function interceptedFetch(
+  input: string | URL | Request,
+  init?: RequestInit
+): Promise<Response> {
+  return interceptedFetchWith(originalFetch, input, init);
+}
+
+async function interceptedFetchWith(
+  baseFetch: typeof fetch,
   input: string | URL | Request,
   init?: RequestInit
 ): Promise<Response> {
@@ -2203,7 +2203,7 @@ async function interceptedFetch(
         rememberLastOutgoingRequest(url, parsed, adapter);
 
         debugLog(`[${adapter.name}] Intercepted request to ${url}`);
-        const response = await originalFetch(url, finalInit);
+        const response = await baseFetch(url, finalInit);
 
         // Process SSE response through adapter's stream processor
         const contentType = response.headers.get('content-type') ?? '';
@@ -2239,7 +2239,7 @@ async function interceptedFetch(
 
   const proxy = getProxyForUrl(url);
   const proxyInit = proxy ? { ...init, proxy } : init;
-  const response = await originalFetch(input, proxyInit);
+  const response = await baseFetch(input, proxyInit as RequestInit);
   return logResponse(response, url, startTime);
 }
 
@@ -2249,6 +2249,10 @@ const fetchProxy = new Proxy(interceptedFetch, {
     return Reflect.apply(target, thisArg, args);
   },
   get(target, prop, receiver) {
+    // Idempotency marker must win over originalFetch property lookup.
+    if (prop === CRAFT_FETCH_MARKER) {
+      return true;
+    }
     if (prop in originalFetch) {
       return (originalFetch as unknown as Record<string | symbol, unknown>)[
         prop

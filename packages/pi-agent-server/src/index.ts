@@ -117,6 +117,17 @@ import { resolveSearchProvider } from './tools/search/resolve-provider.ts';
 import { createSearchTool } from './tools/search/create-search-tool.ts';
 import { allowCraftMetadataProperties, stripCraftMetadata } from './craft-metadata-schema.ts';
 import { listSpawnedChildSessions } from './child-session-listing.ts';
+import { createCraftFetchInterceptor } from '../../shared/src/unified-network-interceptor.ts';
+
+/**
+ * Pi fetchInterceptor factory. Wraps whatever fetch Pi hands us (sidecar fetch
+ * or global fetch) with the craft pipeline. createCraftFetchInterceptor is
+ * idempotent, so when the legacy --require preload already patched
+ * globalThis.fetch this returns it unchanged instead of double-processing.
+ */
+function resolveCraftFetchInterceptor(): (baseFetch: typeof fetch) => typeof fetch {
+  return (baseFetch) => createCraftFetchInterceptor(baseFetch);
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -762,6 +773,13 @@ async function ensureSession(): Promise<AgentSession> {
     modelRegistry,
     customTools: wrappedAll,
     tools: toolAllowlist,
+    // Route model traffic through the craft interceptor via Pi's typed
+    // fetchInterceptor API. In packaged/subprocess runs the interceptor is
+    // ALSO preloaded via --require (patching globalThis.fetch); passing it
+    // here is idempotent (same pipeline) and covers in-process embedding
+    // where no preload happens. The typed path is the long-term seam; the
+    // preload is legacy and slated for removal.
+    fetchInterceptor: resolveCraftFetchInterceptor(),
   };
 
   // 解析 agentDir：
@@ -1208,6 +1226,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
       tools: [],
       sessionManager: PiSessionManager.inMemory(),
       model: piModel,
+      fetchInterceptor: resolveCraftFetchInterceptor(),
     };
 
     const { session: ephemeralSession } = await createAgentSession(ephemeralOptions);
