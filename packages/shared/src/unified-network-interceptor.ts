@@ -1,8 +1,9 @@
 /**
  * Unified fetch interceptor for all AI API requests (Anthropic + OpenAI format).
  *
- * Loaded via --preload (Bun) or --require (Node) into SDK subprocesses.
- * Patches globalThis.fetch before any SDK captures it.
+ * Preferred path: loaded as a Pi fetchInterceptor module and passed to
+ * createAgentSession({ fetchInterceptor }). Legacy preload/require auto-install
+ * remains for compatibility only.
  *
  * Features:
  * - Adds _intent and _displayName metadata to all tool schemas (request)
@@ -1728,7 +1729,7 @@ function hashShortString(input: string): string {
 const adapters: ApiAdapter[] = [anthropicAdapter, openAiResponsesAdapter, openAiAdapter];
 
 /**
- * Resolve Pi model API hint (if provided by pi-agent-server).
+ * Resolve Pi model API hint (if provided by Pi RpcClient).
  * Example values: anthropic-messages, openai-completions, openai-responses.
  */
 function getPiApiHint(): string | undefined {
@@ -2081,16 +2082,14 @@ function synthesizeMalformedBodyResponse(
 // INTERCEPTED FETCH
 // ============================================================================
 
-const originalFetch = globalThis.fetch.bind(globalThis);
-
 /**
  * Cross-instance marker for craft-intercepted fetch functions.
  *
  * `Symbol.for` (global registry) so the marker survives the module being
- * loaded twice in one process (e.g. the --require'd CJS bundle AND the TS
- * source bundled into pi-agent-server). Both the auto-install below and
- * {@link createCraftFetchInterceptor} check it to stay idempotent — a fetch
- * that already runs the craft pipeline is never wrapped again.
+ * loaded twice in one process (e.g. the CJS bundle AND the TS source bundled
+ * into Pi RpcClient). {@link createCraftFetchInterceptor} checks it to stay
+ * idempotent — a fetch that already runs the craft pipeline is never wrapped
+ * again.
  */
 const CRAFT_FETCH_MARKER = Symbol.for('craft.interceptedFetch');
 
@@ -2101,14 +2100,12 @@ function isCraftInterceptedFetch(fn: unknown): boolean {
 /**
  * Create an intercepting fetch that wraps `baseFetch` with the full craft
  * request/response pipeline (metadata injection, validation, SSE processing,
- * proxying). This is the typed entry point for Pi's
- * `createAgentSession({ fetchInterceptor })` public API.
+ * proxying). This is the typed entry point loaded by Pi's host hooks module
+ * (see pi `loadHostHooks`) and forwarded to `createAgentSession({ fetchInterceptor })`.
  *
  * Idempotent: returns `baseFetch` unchanged when it is already
- * craft-intercepted (e.g. the globalThis.fetch patch from the legacy
- * --require preload). This makes it safe to pass unconditionally — it wraps
- * the sidecar fetch (which bypasses the global patch) and leaves an
- * already-patched global fetch alone.
+ * craft-intercepted. This makes it safe to pass unconditionally — it never
+ * double-wraps a fetch that already runs the craft pipeline.
  */
 export function createCraftFetchInterceptor(baseFetch: typeof fetch): typeof fetch {
   if (isCraftInterceptedFetch(baseFetch)) {
@@ -2120,11 +2117,45 @@ export function createCraftFetchInterceptor(baseFetch: typeof fetch): typeof fet
   return intercepted as typeof fetch;
 }
 
-async function interceptedFetch(
-  input: string | URL | Request,
-  init?: RequestInit
-): Promise<Response> {
-  return interceptedFetchWith(originalFetch, input, init);
+export function resolveCraftToolMetadata(
+  toolCallOrId: string | { id?: unknown; toolCallId?: unknown },
+): { intent?: string; displayName?: string } | undefined {
+  const rawId = typeof toolCallOrId === 'string'
+    ? toolCallOrId
+    : (typeof toolCallOrId.id === 'string'
+      ? toolCallOrId.id
+      : typeof toolCallOrId.toolCallId === 'string'
+        ? toolCallOrId.toolCallId
+        : undefined);
+  if (!rawId) return undefined;
+
+  const candidates = new Set<string>([rawId]);
+  if (rawId.includes('|')) {
+    const [base] = rawId.split('|');
+    if (base) candidates.add(base);
+  }
+
+  for (const candidate of candidates) {
+    const stored = toolMetadataStore.get(candidate);
+    if (!stored) continue;
+
+    const intent = typeof stored.intent === 'string' ? stored.intent : undefined;
+    const displayName = typeof stored.displayName === 'string' ? stored.displayName : undefined;
+    if (intent || displayName) {
+      return {
+        ...(intent ? { intent } : {}),
+        ...(displayName ? { displayName } : {}),
+      };
+    }
+  }
+
+  return undefined;
+}
+
+export const toolMetadataResolver = resolveCraftToolMetadata;
+
+export function createCraftToolMetadataResolver(): typeof resolveCraftToolMetadata {
+  return resolveCraftToolMetadata;
 }
 
 async function interceptedFetchWith(
@@ -2241,29 +2272,4 @@ async function interceptedFetchWith(
   const proxyInit = proxy ? { ...init, proxy } : init;
   const response = await baseFetch(input, proxyInit as RequestInit);
   return logResponse(response, url, startTime);
-}
-
-// Create proxy to handle both function calls and static properties (e.g., fetch.preconnect in Bun)
-const fetchProxy = new Proxy(interceptedFetch, {
-  apply(target, thisArg, args) {
-    return Reflect.apply(target, thisArg, args);
-  },
-  get(target, prop, receiver) {
-    // Idempotency marker must win over originalFetch property lookup.
-    if (prop === CRAFT_FETCH_MARKER) {
-      return true;
-    }
-    if (prop in originalFetch) {
-      return (originalFetch as unknown as Record<string | symbol, unknown>)[
-        prop
-      ];
-    }
-    return Reflect.get(target, prop, receiver);
-  },
-});
-
-// Auto-install in runtime subprocesses. Tests can disable this side effect.
-if (process.env.CRAFT_INTERCEPTOR_DISABLE_AUTO_INSTALL !== '1') {
-  (globalThis as unknown as { fetch: unknown }).fetch = fetchProxy;
-  debugLog('Unified fetch interceptor installed');
 }

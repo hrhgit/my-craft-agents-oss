@@ -1,20 +1,48 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 
 let injectMetadataIntoToolSchema: typeof import('../unified-network-interceptor.ts').injectMetadataIntoToolSchema;
 let sanitizeEmptyTextCacheControl: typeof import('../unified-network-interceptor.ts').sanitizeEmptyTextCacheControl;
 let upgradePromptCacheTtl: typeof import('../unified-network-interceptor.ts').upgradePromptCacheTtl;
 let _resetConfigCacheForTesting: typeof import('../interceptor-common.ts')._resetConfigCacheForTesting;
 
-describe('unified-network-interceptor schema metadata injection', () => {
-  beforeAll(async () => {
-    process.env.CRAFT_INTERCEPTOR_DISABLE_AUTO_INSTALL = '1';
-    ({ injectMetadataIntoToolSchema, sanitizeEmptyTextCacheControl, upgradePromptCacheTtl } = await import('../unified-network-interceptor.ts'));
-    ({ _resetConfigCacheForTesting } = await import('../interceptor-common.ts'));
-  });
+let tempRoot: string;
+let piAgentDir: string;
+let previousCraftConfigDir: string | undefined;
+let previousPiAgentDir: string | undefined;
 
+beforeAll(async () => {
+  tempRoot = mkdtempSync(join(tmpdir(), 'craft-interceptor-settings-'));
+  piAgentDir = join(tempRoot, 'pi-agent');
+  previousCraftConfigDir = process.env.CRAFT_CONFIG_DIR;
+  previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.CRAFT_CONFIG_DIR = join(tempRoot, 'craft');
+  process.env.PI_CODING_AGENT_DIR = piAgentDir;
+  mkdirSync(piAgentDir, { recursive: true });
+
+  ({ injectMetadataIntoToolSchema, sanitizeEmptyTextCacheControl, upgradePromptCacheTtl } = await import('../unified-network-interceptor.ts'));
+  ({ _resetConfigCacheForTesting } = await import('../interceptor-common.ts'));
+});
+
+afterAll(() => {
+  if (previousCraftConfigDir === undefined) {
+    delete process.env.CRAFT_CONFIG_DIR;
+  } else {
+    process.env.CRAFT_CONFIG_DIR = previousCraftConfigDir;
+  }
+
+  if (previousPiAgentDir === undefined) {
+    delete process.env.PI_CODING_AGENT_DIR;
+  } else {
+    process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+  }
+
+  rmSync(tempRoot, { recursive: true, force: true });
+});
+
+describe('unified-network-interceptor schema metadata injection', () => {
   it('injects metadata fields into empty/zero-arg schemas', () => {
     const schema = { type: 'object' };
     const result = injectMetadataIntoToolSchema(schema);
@@ -123,42 +151,25 @@ describe('sanitizeEmptyTextCacheControl', () => {
 });
 
 describe('upgradePromptCacheTtl', () => {
-  const configFile = join(homedir(), '.craft-agent', 'config.json');
-  let originalConfig: string | null = null;
-
-  beforeEach(() => {
-    // Save original config if it exists
-    try {
-      originalConfig = require('node:fs').readFileSync(configFile, 'utf-8');
-    } catch {
-      originalConfig = null;
-    }
-  });
-
   afterEach(() => {
-    // Restore original config
-    if (originalConfig !== null) {
-      writeFileSync(configFile, originalConfig);
-    } else {
-      try { unlinkSync(configFile); } catch { /* ignore */ }
-    }
     _resetConfigCacheForTesting();
   });
+
+  function writeAgentSettings(extendedPromptCache: boolean) {
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, 'settings.json'),
+      JSON.stringify({ craft: { agent: { extendedPromptCache } } }, null, 2),
+      'utf-8',
+    );
+  }
 
   function enableExtendedCache() {
-    const dir = join(homedir(), '.craft-agent');
-    mkdirSync(dir, { recursive: true });
-    const existing = originalConfig ? JSON.parse(originalConfig) : {};
-    writeFileSync(configFile, JSON.stringify({ ...existing, extendedPromptCache: true }));
-    _resetConfigCacheForTesting();
+    writeAgentSettings(true);
   }
 
   function disableExtendedCache() {
-    const dir = join(homedir(), '.craft-agent');
-    mkdirSync(dir, { recursive: true });
-    const existing = originalConfig ? JSON.parse(originalConfig) : {};
-    writeFileSync(configFile, JSON.stringify({ ...existing, extendedPromptCache: false }));
-    _resetConfigCacheForTesting();
+    writeAgentSettings(false);
   }
 
   it('leaves blocks without ttl untouched when disabled', () => {
