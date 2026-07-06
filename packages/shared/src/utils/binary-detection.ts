@@ -279,14 +279,26 @@ export function formatBytes(bytes: number): string {
   return `${size.toFixed(i > 0 ? 1 : 0)} ${sizes[i]}`;
 }
 
-/** Sanitize filename by removing unsafe characters. */
-export function sanitizeFilename(filename: string): string {
-  return filename
-    .replace(/[/\\:*?"<>|]/g, '_')
-    .replace(/\s+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_|_$/g, '')
-    .slice(0, 200);
+/**
+ * Sanitizes a filename to prevent path traversal and filesystem issues.
+ * Removes dangerous characters and limits length.
+ */
+export function sanitizeFilename(name: string): string {
+  return name
+    // Remove path separators and traversal patterns
+    .replace(/[/\\]/g, '_')
+    // Remove Windows-forbidden characters: < > : " | ? *
+    .replace(/[<>:"|?*]/g, '_')
+    // Remove control characters (ASCII 0-31)
+    .replace(/[\x00-\x1f]/g, '')
+    // Collapse multiple dots (prevent hidden files and extension tricks)
+    .replace(/\.{2,}/g, '.')
+    // Remove leading/trailing dots and spaces (Windows issues)
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    // Limit length (200 chars is safe for all filesystems)
+    .slice(0, 200)
+    // Fallback if name is empty after sanitization
+    || 'unnamed'
 }
 
 /**

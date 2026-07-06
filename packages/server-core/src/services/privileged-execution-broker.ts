@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
+import { CONFIG_DIR } from '@craft-agent/shared/config'
 import type { Logger } from '../runtime/platform'
 
 export interface PrivilegedExecutionRequest {
@@ -22,7 +22,7 @@ interface PendingPrivilegedRequest extends PrivilegedExecutionRequest {
 }
 
 const DEFAULT_APPROVAL_TTL_SECONDS = 120
-const AUDIT_LOG_PATH = join(homedir(), '.craft-agent', 'logs', 'privileged-actions.jsonl')
+const AUDIT_LOG_PATH = join(CONFIG_DIR, 'logs', 'privileged-actions.jsonl')
 
 /**
  * PrivilegedExecutionBroker
@@ -156,10 +156,23 @@ export class PrivilegedExecutionBroker {
 
   private validatePolicy(command: string): { allowed: boolean; reason?: string } {
     const normalized = command.trim().toLowerCase()
+
+    // Reject commands containing shell metacharacters that could chain additional commands.
+    // Defense-in-depth: applies regardless of whether execution uses a shell or execFile.
+    const SHELL_METACHAR_PATTERN = /[;&|`$<>\\\n]/
+    if (SHELL_METACHAR_PATTERN.test(normalized)) {
+      return {
+        allowed: false,
+        reason: 'Privileged execution policy rejects commands containing shell metacharacters',
+      }
+    }
+
+    // Anchored at both ends (^...$) so prefix-matching attacks like
+    // `brew install --cask foo; rm -rf ~` cannot slip through.
     const allowlisted =
-      /^brew\s+install\s+--cask\s+/.test(normalized) ||
-      /^brew\s+upgrade\s+--cask\s+/.test(normalized) ||
-      /^installer\s+-pkg\s+.+\s+-target\s+\//.test(normalized)
+      /^brew\s+install\s+--cask\s+\S+$/.test(normalized) ||
+      /^brew\s+upgrade\s+--cask\s+\S+$/.test(normalized) ||
+      /^installer\s+-pkg\s+\S+\s+-target\s+\/\S*$/.test(normalized)
 
     if (!allowlisted) {
       return {

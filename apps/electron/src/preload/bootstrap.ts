@@ -18,7 +18,7 @@
 
 import '@sentry/electron/preload'
 import { contextBridge, ipcRenderer, shell, webUtils } from 'electron'
-import { WsRpcClient, type TransportConnectionState } from '../transport/client'
+import { WsRpcClient, type TransportConnectionState } from '@craft-agent/server-core/transport'
 import { RoutedClient } from '../transport/routed-client'
 import { buildClientApi } from '../transport/build-api'
 import { CHANNEL_MAP } from '../transport/channel-map'
@@ -36,6 +36,7 @@ import type { ConfirmDialogSpec, FileDialogSpec, BrowserCapabilityRequest } from
 import type { RpcClient } from '@craft-agent/server-core/transport'
 import type { RemoteServerConfig } from '@craft-agent/core/types'
 import type { ElectronAPI } from '../shared/types'
+import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
 
 // ---------------------------------------------------------------------------
 // Client interface — common surface for both RoutedClient and WsRpcClient
@@ -95,7 +96,7 @@ if (isClientOnly) {
   // RoutedClient routes LOCAL_ONLY to local server, REMOTE_ELIGIBLE to
   // whichever server owns the workspace (local or remote).
 
-  const wsPort: number = ipcRenderer.sendSync('__get-ws-port')
+  const wsPort: number = ipcRenderer.sendSync(PRELOAD_LOCAL_CHANNELS.GET_WS_PORT)
   const wsToken: string = ipcRenderer.sendSync('__get-ws-token')
   const workspaceId: string = ipcRenderer.sendSync('__get-workspace-id')
 
@@ -169,7 +170,7 @@ client.handleCapability(CLIENT_SHOW_IN_FOLDER, (path: string) => {
 })
 
 client.handleCapability(CLIENT_CONFIRM_DIALOG, async (spec: ConfirmDialogSpec) => {
-  return await ipcRenderer.invoke('__dialog:showMessageBox', spec)
+  return await ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.DIALOG_SHOW_MESSAGE_BOX, spec)
 })
 
 client.handleCapability(CLIENT_OPEN_FILE_DIALOG, async (spec: FileDialogSpec) => {
@@ -217,7 +218,7 @@ client.onConnectionStateChanged((state) => {
   if (state.mode !== 'remote') return
 
   const emitToMain = (level: 'info' | 'warn' | 'error', message: string) => {
-    ipcRenderer.send('__transport:status', {
+    ipcRenderer.send(PRELOAD_LOCAL_CHANNELS.TRANSPORT_STATUS, {
       level,
       message,
       status: state.status,
@@ -328,12 +329,12 @@ client.onConnectionStateChanged((state) => {
 }
 
 // App lifecycle — direct IPC (not WS RPC) since it restarts the server itself
-;(api as ElectronAPI).relaunchApp = () => ipcRenderer.invoke('app:relaunch')
-;(api as ElectronAPI).removeWorkspace = (workspaceId: string) => ipcRenderer.invoke('workspace:remove', workspaceId)
+;(api as ElectronAPI).relaunchApp = () => ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.APP_RELAUNCH)
+;(api as ElectronAPI).removeWorkspace = (workspaceId: string) => ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.WORKSPACE_REMOVE, workspaceId)
 ;(api as ElectronAPI).invokeOnServer = (url: string, token: string, channel: string, ...args: any[]) =>
-  ipcRenderer.invoke('server:invokeOnServer', url, token, channel, ...args)
+  ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.SERVER_INVOKE_ON_SERVER, url, token, channel, ...args)
 ;(api as ElectronAPI).transferSessionToWorkspace = (sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number) =>
-  ipcRenderer.invoke('session:transferToRemoteWorkspace', sessionId, targetWorkspaceId, sessionIndex, sessionCount)
+  ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.SESSION_TRANSFER_TO_REMOTE_WORKSPACE, sessionId, targetWorkspaceId, sessionIndex, sessionCount)
 ;(api as ElectronAPI).onTransferProgress = (cb: (progress: { sessionIndex: number; sessionCount: number; chunkSent: number; chunkTotal: number }) => void) => {
   const handler = (_e: any, progress: { sessionIndex: number; sessionCount: number; chunkSent: number; chunkTotal: number }) => cb(progress)
   ipcRenderer.on('transfer:progress', handler)
@@ -348,7 +349,7 @@ client.onConnectionStateChanged((state) => {
 })
 
 // i18n: sync language changes to main process (for native menus/dialogs)
-;(api as ElectronAPI).changeLanguage = (lang: string) => ipcRenderer.invoke('i18n:changeLanguage', lang)
+;(api as ElectronAPI).changeLanguage = (lang: string) => ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.I18N_CHANGE_LANGUAGE, lang)
 
 // webUtils.getPathForFile: returns the absolute OS path of a File object obtained
 // from <input type="file"> or OS drag-drop. Returns null for Files fabricated from

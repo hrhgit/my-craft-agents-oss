@@ -72,25 +72,20 @@ describe('validateModelList', () => {
 // ============================================================
 
 describe('createBuiltInConnection', () => {
-  it('creates anthropic-api with correct defaults', () => {
-    const conn = createBuiltInConnection('anthropic-api')
-    expect(conn.slug).toBe('anthropic-api')
-    expect(conn.providerType).toBe('anthropic')
+  it('creates pi-anthropic with correct defaults', () => {
+    const conn = createBuiltInConnection('pi-anthropic')
+    expect(conn.slug).toBe('pi-anthropic')
+    expect(conn.providerType).toBe('pi')
+    expect(conn.piAuthProvider).toBe('anthropic')
     expect(conn.authType).toBe('api_key')
-    expect(conn.name).toBe('Anthropic (API Key)')
+    expect(conn.name).toBe('Pi (Anthropic)')
   })
 
-  it('creates anthropic-api with baseUrl as compat provider', () => {
-    const conn = createBuiltInConnection('anthropic-api', 'https://custom.endpoint.com')
+  it('creates pi-anthropic with baseUrl as compat provider', () => {
+    const conn = createBuiltInConnection('pi-anthropic', 'https://custom.endpoint.com')
     expect(conn.providerType).toBe('pi_compat')
     expect(conn.authType).toBe('api_key_with_endpoint')
     expect(conn.name).toBe('Custom Anthropic-Compatible')
-  })
-
-  it('creates claude-max with oauth', () => {
-    const conn = createBuiltInConnection('claude-max')
-    expect(conn.providerType).toBe('anthropic')
-    expect(conn.authType).toBe('oauth')
   })
 
   it('creates pi-api-key with pi provider', () => {
@@ -100,11 +95,12 @@ describe('createBuiltInConnection', () => {
     expect(conn.modelSelectionMode).toBe('automaticallySyncedFromProvider')
   })
 
-  it('handles numeric suffix slugs (anthropic-api-2) by deriving from base template', () => {
-    const conn = createBuiltInConnection('anthropic-api-2')
-    expect(conn.slug).toBe('anthropic-api-2')
-    expect(conn.providerType).toBe('anthropic')
-    expect(conn.name).toBe('Anthropic (API Key) 2')
+  it('handles numeric suffix slugs (pi-anthropic-2) by deriving from base template', () => {
+    const conn = createBuiltInConnection('pi-anthropic-2')
+    expect(conn.slug).toBe('pi-anthropic-2')
+    expect(conn.providerType).toBe('pi')
+    expect(conn.piAuthProvider).toBe('anthropic')
+    expect(conn.name).toBe('Pi (Anthropic) 2')
   })
 
   it('handles numeric suffix slugs (pi-api-key-3)', () => {
@@ -118,18 +114,8 @@ describe('createBuiltInConnection', () => {
   })
 
   it('always sets createdAt', () => {
-    const conn = createBuiltInConnection('anthropic-api')
+    const conn = createBuiltInConnection('pi-anthropic')
     expect(conn.createdAt).toBeGreaterThan(0)
-  })
-
-  it('sets piAuthProvider for chatgpt-plus', () => {
-    const conn = createBuiltInConnection('chatgpt-plus')
-    expect(conn.piAuthProvider).toBe('openai-codex')
-  })
-
-  it('sets piAuthProvider for github-copilot', () => {
-    const conn = createBuiltInConnection('github-copilot')
-    expect(conn.piAuthProvider).toBe('github-copilot')
   })
 })
 

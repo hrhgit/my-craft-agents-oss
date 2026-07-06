@@ -17,8 +17,6 @@ import type { SessionToolContext } from './context.ts';
 import type { ToolResult } from './types.ts';
 
 // Handlers
-// Note: handleSubmitPlan 已移除——plan 工作流让位给 pi plan-mode 扩展（/plan-finalize 命令）。
-// 保留 handlers/submit-plan.ts 文件和 SubmitPlanSchema 导出以兼容历史会话数据。
 import { handleConfigValidate } from './handlers/config-validate.ts';
 import { handleSkillValidate } from './handlers/skill-validate.ts';
 import { handleMermaidValidate } from './handlers/mermaid-validate.ts';
@@ -45,10 +43,6 @@ import { handleListMessagingChannels, handleUnbindMessagingChannel } from './han
 // ============================================================
 // Canonical Zod Schemas
 // ============================================================
-
-export const SubmitPlanSchema = z.object({
-  planPath: z.string().describe('Absolute path to the plan markdown file you wrote'),
-});
 
 export const ConfigValidateSchema = z.object({
   target: z.enum(['config', 'sources', 'statuses', 'preferences', 'permissions', 'automations', 'tool-icons', 'all'])
@@ -92,8 +86,6 @@ export const CredentialPromptSchema = z.object({
   headerNames: z.array(z.string()).optional().describe('Header names for multi-header auth (e.g., ["DD-API-KEY", "DD-APPLICATION-KEY"])'),
   passwordRequired: z.boolean().optional().describe('For basic auth: whether password is required'),
 });
-
-// call_llm 已移除——pi 现在原生提供 call_llm 扩展（~/.pi/agent/extensions/call-llm/）。
 
 export const UpdatePreferencesSchema = z.object({
   name: z.string().optional().describe("The user's preferred name or how they'd like to be addressed"),
@@ -149,7 +141,7 @@ export const SpawnSessionSchema = z.object({
   thinkingLevel: z.enum(['off', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
     .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the workspace default.'),
   labels: z.array(z.string()).optional().describe('Labels for the new session'),
-  workingDirectory: z.string().optional().describe('Working directory for the new session'),
+  workingDirectory: z.string().optional().describe('Deprecated and ignored. New sessions run from the workspace root; create or switch workspace to use another folder.'),
   attachments: z.array(z.object({
     path: z.string().describe('Absolute file path on disk'),
     name: z.string().optional().describe('Display name (defaults to file basename)'),
@@ -203,17 +195,6 @@ export const UnbindMessagingChannelSchema = z.object({
 // ============================================================
 
 export const TOOL_DESCRIPTIONS = {
-  SubmitPlan: `Submit a plan for user review.
-
-Call this after you have written your plan to a markdown file using the Write tool.
-The plan will be displayed to the user in a special formatted view.
-
-**IMPORTANT:** After calling this tool:
-- Execution will be **automatically paused** to present the plan to the user
-- No further tool calls or text output will be processed after this tool returns
-- The conversation will resume when the user responds (accept, modify, or reject the plan)
-- Do NOT include any text or tool calls after SubmitPlan - they will not be executed`,
-
   config_validate: `Validate Craft Agent configuration files.
 
 Use this after editing configuration files to check for errors before they take effect.
@@ -407,7 +388,7 @@ Use this to delegate tasks to parallel sessions — research, analysis, drafts, 
 Call with help=true first to discover available connections, models, and sources.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: \`model\`, \`llmConnection\`, \`permissionMode\`, \`thinkingLevel\`, \`enabledSourceSlugs\`, \`labels\`, \`workingDirectory\`. Omitted fields inherit from the spawning session or the workspace default.
+Optional overrides: \`model\`, \`llmConnection\`, \`permissionMode\`, \`thinkingLevel\`, \`enabledSourceSlugs\`, \`labels\`. Omitted fields inherit from the spawning session or the workspace default. \`workingDirectory\` is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
@@ -495,8 +476,6 @@ export type SessionToolDef = RegistrySessionToolDef | BackendSessionToolDef;
 // ============================================================
 
 export const SESSION_TOOL_DEFS: SessionToolDef[] = [
-  // SubmitPlan 已移除——plan 工作流由 pi plan-mode 扩展接管（/plan-finalize 命令）。
-  // 历史会话中已存在的 plan 数据不受影响。
   { name: 'config_validate', description: TOOL_DESCRIPTIONS.config_validate, inputSchema: ConfigValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleConfigValidate },
   { name: 'skill_validate', description: TOOL_DESCRIPTIONS.skill_validate, inputSchema: SkillValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleSkillValidate },
   { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: MermaidValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleMermaidValidate },
@@ -511,7 +490,6 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'script_sandbox', description: TOOL_DESCRIPTIONS.script_sandbox, inputSchema: ScriptSandboxSchema, executionMode: 'registry', safeMode: 'allow', handler: handleScriptSandbox },
   { name: 'render_template', description: TOOL_DESCRIPTIONS.render_template, inputSchema: RenderTemplateSchema, executionMode: 'registry', safeMode: 'allow', handler: handleRenderTemplate },
   { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: SendDeveloperFeedbackSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSendDeveloperFeedback },
-  // call_llm 已移除（双方均不保留）。
   { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: SpawnSessionSchema, executionMode: 'backend', safeMode: 'block', handler: null },
   // Browser tool (backend-specific — requires BrowserPaneManager in Electron)
   // Single CLI-like tool that handles all browser actions via command string.
@@ -569,13 +547,6 @@ export function getSessionToolNames(options?: SessionToolFilterOptions): Set<str
  */
 export function getSessionBackendToolNames(options?: SessionToolFilterOptions): Set<string> {
   return new Set(getSessionToolDefs(options).filter(d => d.executionMode === 'backend').map(d => d.name));
-}
-
-/**
- * Return registry-executed tool names with optional feature filtering.
- */
-export function getSessionRegistryToolNames(options?: SessionToolFilterOptions): Set<string> {
-  return new Set(getSessionToolDefs(options).filter(d => d.executionMode === 'registry').map(d => d.name));
 }
 
 export interface SessionToolNameOptions extends SessionToolFilterOptions {

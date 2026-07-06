@@ -4,10 +4,8 @@ import { coerceInputText } from '@/lib/input-text'
 import { cn } from '@/lib/utils'
 import { findMentionMatches, parseMentions, type MentionMatch } from '@/lib/mentions'
 import {
-  loadSourceIcon,
-  loadSkillIcon,
-  getSourceIconSync,
-  getSkillIconSync,
+  loadEntityIcon,
+  getEntityIconSync,
   EMOJI_ICON_PREFIX,
 } from '@/lib/icon-cache'
 import type { LoadedSkill, LoadedSource } from '../../../shared/types'
@@ -132,9 +130,9 @@ function renderBadgeHTML(
   let cachedIconUrl: string | null = null
 
   if (type === 'skill' && skill && workspaceId) {
-    cachedIconUrl = getSkillIconSync(workspaceId, skill.slug)
+    cachedIconUrl = getEntityIconSync({ entityType: 'skill', workspaceId, identifier: skill.slug })
   } else if (type === 'source' && source && workspaceId) {
-    cachedIconUrl = getSourceIconSync(workspaceId, source.config.slug)
+    cachedIconUrl = getEntityIconSync({ entityType: 'source', workspaceId, identifier: source.config.slug })
   }
 
   if (cachedIconUrl) {
@@ -539,12 +537,22 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
 
       // Preload source icons
       for (const source of sources) {
-        loadSourceIcon({ config: source.config, workspaceId })
+        loadEntityIcon({
+          entityType: 'source',
+          workspaceId,
+          identifier: source.config.slug,
+          sourceConfig: source.config,
+        })
       }
 
       // Preload skill icons (handles emoji, URL, file, and auto-discovery)
       for (const skill of skills) {
-        loadSkillIcon(skill, workspaceId)
+        loadEntityIcon({
+          entityType: 'skill',
+          workspaceId,
+          identifier: skill.slug,
+          skillConfig: skill,
+        })
       }
     }, [sources, skills, workspaceId])
 

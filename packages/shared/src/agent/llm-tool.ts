@@ -1,9 +1,7 @@
 /**
  * LLM Query Types & Helpers (shared)
  *
- * call_llm 工具已移除（双方均不保留，pi 不再提供 call_llm 扩展）。
- *
- * 本文件保留 queryLlm / runMiniCompletion 流程所依赖的共享类型与超时辅助函数。
+ * Shared types and timeout helpers used by the queryLlm / runMiniCompletion flows.
  */
 
 // ============================================================================

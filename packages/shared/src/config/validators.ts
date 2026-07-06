@@ -455,10 +455,50 @@ const SourceBrandSchema = z.object({
   color: EntityColorSchema.optional(),
 });
 
+// ============================================================
+// Slug Validation
+// ============================================================
+
+/**
+ * Regex for valid slugs: lowercase alphanumeric with hyphens.
+ * Must start and end with an alphanumeric character (no leading/trailing hyphens).
+ * Single-character slugs are allowed.
+ */
+export const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
+
+/**
+ * Validate a slug format.
+ * Slug must be lowercase alphanumeric with hyphens, starting and ending
+ * with an alphanumeric character.
+ */
+export function validateSlug(slug: string): ValidationResult {
+  if (!SLUG_REGEX.test(slug)) {
+    const suggestedSlug = slug
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/-+/g, '-');
+
+    return {
+      valid: false,
+      errors: [{
+        file: '',
+        path: 'slug',
+        message: 'Slug must be lowercase alphanumeric with hyphens',
+        severity: 'error',
+        suggestion: `Suggested: '${suggestedSlug || 'valid-slug-name'}'`,
+      }],
+      warnings: [],
+    };
+  }
+
+  return { valid: true, errors: [], warnings: [] };
+}
+
 export const FolderSourceConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  slug: z.string().regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens'),
+  slug: z.string().regex(SLUG_REGEX, 'Slug must be lowercase alphanumeric with hyphens'),
   enabled: z.boolean(),
   provider: z.string().min(1),
   type: SourceTypeSchema,
@@ -788,7 +828,7 @@ export function validateSkillContent(markdownContent: string, slug: string): Val
   const errors: ValidationIssue[] = [];
 
   // 1. Validate slug format
-  if (!/^[a-z0-9-]+$/.test(slug)) {
+  if (!SLUG_REGEX.test(slug)) {
     const suggestedSlug = slug
       .toLowerCase()
       .replace(/[^a-z0-9-]+/g, '-')

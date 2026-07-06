@@ -8,7 +8,7 @@ import type { AgentEvent } from '@craft-agent/core/types';
 import type { BackendConfig, ChatOptions } from '../backend/types.ts';
 import { AbortReason } from '../backend/types.ts';
 import type { Workspace } from '../../config/storage.ts';
-import type { SessionConfig as Session } from '../../sessions/storage.ts';
+import type { SessionHeader as Session } from '../../sessions/types.ts';
 import type { LoadedSource } from '../../sources/types.ts';
 import { BaseAgent } from '../base-agent.ts';
 
@@ -39,7 +39,7 @@ export function createMockWorkspace(overrides: Partial<Workspace> = {}): Workspa
  */
 export function createMockSession(overrides: Partial<Session> = {}): Session {
   return {
-    id: 'test-session-id',
+    craftId: 'test-session-id',
     name: 'Test Session',
     workspaceRootPath: '/test/workspace',
     createdAt: Date.now(),
@@ -83,7 +83,7 @@ export function createMockSource(overrides: Partial<LoadedSource['config']> = {}
  */
 export function createMockBackendConfig(overrides: Partial<BackendConfig> = {}): BackendConfig {
   return {
-    provider: 'anthropic',
+    provider: 'pi',
     workspace: createMockWorkspace(),
     session: createMockSession(),
     model: 'test-model',

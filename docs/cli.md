@@ -5,7 +5,7 @@ Terminal client for Craft Agent server. Connects over WebSocket (`ws://` or `wss
 ## Prerequisites
 
 - [Bun](https://bun.sh/) runtime installed
-- For `run` and `--validate-server`: an API key via `--api-key`, `$LLM_API_KEY`, or a provider-specific env var (e.g., `$ANTHROPIC_API_KEY`)
+- For `run` and `--validate-server`: an API key via `--api-key`, `$LLM_API_KEY`, or a provider-specific env var (e.g., `$OPENAI_API_KEY`, `$GOOGLE_API_KEY`)
 - For all other commands: a running Craft Agent headless server with URL and token
 
 ## Installation
@@ -32,7 +32,7 @@ The fastest way to try it out — no server setup needed:
 
 ```bash
 # Self-contained run (spawns a server automatically)
-ANTHROPIC_API_KEY=sk-... bun run apps/cli/src/index.ts run "Hello, world!"
+OPENAI_API_KEY=sk-... bun run apps/cli/src/index.ts run "Hello, world!"
 ```
 
 ## Connection Options
@@ -122,7 +122,7 @@ craft-cli run <prompt>
 craft-cli run --workspace-dir ./project --source github "List open PRs"
 ```
 
-The `run` command is fully self-contained — it spawns a headless server, creates a session, sends the prompt, streams the response, and exits. No separate server setup needed. An API key is resolved from `--api-key`, `$LLM_API_KEY`, or a provider-specific env var (e.g., `$ANTHROPIC_API_KEY`, `$OPENAI_API_KEY`).
+The `run` command is fully self-contained — it spawns a headless server, creates a session, sends the prompt, streams the response, and exits. No separate server setup needed. An API key is resolved from `--api-key`, `$LLM_API_KEY`, or a provider-specific env var (e.g., `$OPENAI_API_KEY`, `$GOOGLE_API_KEY`).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -132,6 +132,7 @@ The `run` command is fully self-contained — it spawns a headless server, creat
 | `--mode <mode>` | `allow-all` | Permission mode for the session |
 | `--no-cleanup` | `false` | Skip session deletion on exit |
 | `--server-entry <path>` | — | Custom server entry point |
+| `--interactive` | `false` | Render pi extension `remoteui:request` dialogs in the terminal (auto-cancels when omitted) |
 
 **LLM Configuration:**
 
@@ -154,6 +155,21 @@ Prompt can also be piped via stdin:
 echo "Summarize this file" | craft-cli run
 cat error.log | craft-cli run "What's causing these errors?"
 ```
+
+### GUI-dependent tools unavailable in `run`
+
+The `run` command drives a headless server process with no access to the Electron
+renderer / Chromium window infrastructure. The following tools are therefore
+**unavailable** when running sessions through the CLI:
+
+| Tool | Reason |
+|------|--------|
+| `browser_tool` | Depends on the Electron app's built-in Chromium windows (`browser-pane:*` channels). The CLI cannot create, navigate, or snapshot browser panes. See `docs/browser-tools.md`. |
+| Other renderer-only tools | Any tool relying on the Electron renderer process (rich previews, in-app notification surfaces) is not functional over the CLI. |
+
+Pi extensions that only need `remoteui:request` interaction work fine with
+`--interactive`, and degrade gracefully (auto-cancel) in the default
+non-interactive mode.
 
 ### Validate Server
 

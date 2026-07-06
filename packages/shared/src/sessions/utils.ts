@@ -2,24 +2,37 @@
  * Session utility functions
  */
 
-import { SESSION_PERSISTENT_FIELDS, type SessionPersistentField } from './types.js';
+import {
+  CRAFT_SESSION_METADATA_FIELDS,
+  type CraftSessionMetadataField,
+  type SessionPersistentField,
+} from './types.js';
 
 /**
- * Pick persistent fields from a session-like object.
- * Used by createSessionHeader, readSessionJsonl, getSessions, getSession
- * to ensure all persistent fields are included consistently.
+ * Pick Craft-owned persistent metadata from a session-like object.
+ * Pi header fields and computed/list cache fields are intentionally excluded.
  *
  * @param source - Object containing session fields
- * @returns Object with only the persistent fields that exist in source
+ * @returns Object with only Craft metadata fields that exist in source
  */
-export function pickSessionFields<T extends object>(
+export function pickCraftSessionMetadata<T extends object>(
   source: T
-): Partial<Record<SessionPersistentField, unknown>> {
-  const result: Partial<Record<SessionPersistentField, unknown>> = {};
-  for (const field of SESSION_PERSISTENT_FIELDS) {
+): Partial<Record<CraftSessionMetadataField, unknown>> {
+  const result: Partial<Record<CraftSessionMetadataField, unknown>> = {};
+  for (const field of CRAFT_SESSION_METADATA_FIELDS) {
     if (field in source && (source as Record<string, unknown>)[field] !== undefined) {
       result[field] = (source as Record<string, unknown>)[field];
     }
   }
   return result;
+}
+
+/**
+ * Compatibility alias for older call sites. New code should use
+ * pickCraftSessionMetadata() to make the Pi/Craft boundary explicit.
+ */
+export function pickSessionFields<T extends object>(
+  source: T
+): Partial<Record<SessionPersistentField, unknown>> {
+  return pickCraftSessionMetadata(source) as Partial<Record<SessionPersistentField, unknown>>;
 }

@@ -7,8 +7,8 @@
  * feature parity with Claude's session-scoped tools.
  *
  * Callback Communication:
- * Tools that need to communicate with the main Electron process (e.g., SubmitPlan
- * triggering a plan display, OAuth triggers pausing execution) send structured
+ * Tools that need to communicate with the main Electron process (e.g., OAuth
+ * triggers pausing execution) send structured
  * JSON messages to stderr with a "__CALLBACK__" prefix. The main process monitors
  * stderr and handles these callbacks.
  *
@@ -31,8 +31,12 @@ import {
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
+import type { ToolResult } from '@craft-agent/shared/agent';
 import { isDeveloperFeedbackEnabled } from '@craft-agent/shared/feature-flags';
+import { CONFIG_DIR } from '@craft-agent/shared/config/paths';
+import { findPiSessionFileInDefaultRoot, getSharedPiSidecarPathForFile, readSessionHeader, sanitizeSessionId } from '@craft-agent/shared/sessions';
+import { createPiSkillResolver } from '@craft-agent/shared/pi/skill-resolver';
 // Import from session-tools-core
 import {
   type SessionToolContext,
@@ -53,7 +57,10 @@ import {
 // Types
 // ============================================================
 
-interface SessionConfig {
+/**
+ * MCP server runtime configuration (local config for the session-mcp-server subprocess).
+ */
+interface McpServerConfig {
   sessionId: string;
   workspaceRootPath: string;
   plansFolderPath: string;
@@ -93,6 +100,9 @@ interface CredentialCacheEntry {
  * The main process writes decrypted credentials to these files.
  */
 function getCredentialCachePath(workspaceRootPath: string, sourceSlug: string): string {
+  if (basename(sourceSlug) !== sourceSlug) {
+    throw new Error('Invalid source slug: path separators not allowed');
+  }
   return join(workspaceRootPath, 'sources', sourceSlug, '.credential-cache.json');
 }
 
@@ -101,9 +111,8 @@ function getCredentialCachePath(workspaceRootPath: string, sourceSlug: string): 
  * Returns null if the cache doesn't exist or is expired.
  */
 function readCredentialCache(workspaceRootPath: string, sourceSlug: string): string | null {
-  const cachePath = getCredentialCachePath(workspaceRootPath, sourceSlug);
-
   try {
+    const cachePath = getCredentialCachePath(workspaceRootPath, sourceSlug);
     if (!existsSync(cachePath)) {
       return null;
     }
@@ -152,7 +161,7 @@ function createCredentialManager(workspaceRootPath: string): CredentialManagerIn
  * Create a SessionToolContext for the Codex MCP server.
  * This provides the context needed by all handlers.
  */
-function createCodexContext(config: SessionConfig): SessionToolContext {
+function createCodexContext(config: McpServerConfig): SessionToolContext {
   const { sessionId, workspaceRootPath, plansFolderPath } = config;
 
   // File system implementation
@@ -192,16 +201,30 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
   // Create credential manager that reads from cache files
   const credentialManager = createCredentialManager(workspaceRootPath);
 
-  // Session paths for transform_data / render_template
-  const sessionsDir = join(workspaceRootPath, 'sessions', sessionId);
+  // Session paths for transform_data / render_template.
+  // Pi/Craft 一体化后 sidecar 数据存放在 Pi session 文件同目录下的
+  // .craft/{sessionId}/ 子目录（spec: dirname(piSessionFile)/.craft/{sessionId}/）。
+  // 找不到 Pi session 文件时回退到旧路径，兼容未迁移的 session。
+  // 通过 @craft-agent/shared 统一复用路径解析与 sanitizeSessionId 防御。
+  const piSessionFile = findPiSessionFileInDefaultRoot(sessionId);
+  const sessionsDir = piSessionFile
+    ? getSharedPiSidecarPathForFile(piSessionFile, sessionId)
+    : join(workspaceRootPath, 'sessions', sanitizeSessionId(sessionId));
   const sessionDataDir = join(sessionsDir, 'data');
+  const workingDirectory = piSessionFile
+    ? readSessionHeader(piSessionFile)?.workingDirectory
+    : undefined;
 
   // Build context
   return {
     sessionId,
     workspacePath: workspaceRootPath,
     get sourcesPath() { return join(workspaceRootPath, 'sources'); },
-    get skillsPath() { return join(workspaceRootPath, 'skills'); },
+    workingDirectory,
+    get skillPaths() {
+      return createPiSkillResolver(workingDirectory).getSkillPaths().map((entry) => entry.dir);
+    },
+    get skillsPath() { return this.skillPaths?.[0] ?? ''; },
     plansFolderPath,
     sessionPath: sessionsDir,
     dataPath: sessionDataDir,
@@ -216,11 +239,7 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
 
     // Preferences: write directly to preferences.json
     updatePreferences: (updates: Record<string, unknown>) => {
-      // Resolve preferences path from config dir (parent of workspaces dir)
-      // workspaceRootPath = ~/.craft-agent/workspaces/{id}
-      // preferencesPath = ~/.craft-agent/preferences.json
-      const configDir = join(workspaceRootPath, '..', '..');
-      const prefsPath = join(configDir, 'preferences.json');
+      const prefsPath = join(CONFIG_DIR, 'preferences.json');
       try {
         let current: Record<string, unknown> = {};
         if (existsSync(prefsPath)) {
@@ -242,8 +261,7 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
 
     // Developer feedback: write one JSON file per entry to {configDir}/feedback/
     submitFeedback: (feedback) => {
-      const configDir = process.env.CRAFT_CONFIG_DIR || join(workspaceRootPath, '..', '..');
-      const feedbackDir = join(configDir, 'feedback');
+      const feedbackDir = join(CONFIG_DIR, 'feedback');
       mkdirSync(feedbackDir, { recursive: true });
       const filePath = join(feedbackDir, `${feedback.id}.json`);
       writeFileSync(filePath, JSON.stringify(feedback, null, 2), 'utf-8');
@@ -310,7 +328,7 @@ async function connectDocsUpstream(): Promise<void> {
 async function callDocsUpstream(
   name: string,
   args: Record<string, unknown>
-): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
+): Promise<ToolResult> {
   if (!docsClient) {
     return errorResponse(`Craft Agents Docs server is not connected. Tool '${name}' unavailable.`);
   }
@@ -342,8 +360,8 @@ function isDocsUpstreamTool(name: string): boolean {
 
 async function handleSpawnSession(
   args: Record<string, unknown>,
-  config: SessionConfig,
-): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
+  config: McpServerConfig,
+): Promise<ToolResult> {
   // Primary path: PreToolUse intercept injects _precomputedResult (works on Codex).
   const precomputed = args?._precomputedResult as string | undefined;
 
@@ -438,7 +456,7 @@ async function main() {
     process.exit(1);
   }
 
-  const config: SessionConfig = {
+  const config: McpServerConfig = {
     sessionId,
     workspaceRootPath,
     plansFolderPath,

@@ -13,12 +13,11 @@ const IS_DEV_RUNTIME = !!process.env.CRAFT_DEV_RUNTIME;
 export interface ResolvedBackendRuntimePaths {
   /**
    * Source/bundle path for the network interceptor preloaded into the **Pi**
-   * subprocess.
+   * helper process.
    */
   interceptorBundlePath?: string;
   sessionServerPath?: string;
   bridgeServerPath?: string;
-  piServerPath?: string;
   nodeRuntimePath?: string;
   bundledRuntimePath?: string;
 }
@@ -148,7 +147,6 @@ export function resolveBackendRuntimePaths(hostRuntime: BackendHostRuntimeContex
     interceptorBundlePath: resolveInterceptorBundlePath(hostRuntime),
     sessionServerPath: resolveServerPath(hostRuntime, 'session-mcp-server'),
     bridgeServerPath: resolveServerPath(hostRuntime, 'bridge-mcp-server'),
-    piServerPath: resolveServerPath(hostRuntime, 'pi-agent-server'),
     nodeRuntimePath: hostRuntime.nodeRuntimePath || bundledRuntimePath || process.execPath,
     bundledRuntimePath,
   };

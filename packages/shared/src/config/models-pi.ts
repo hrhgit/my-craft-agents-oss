@@ -146,7 +146,7 @@ export function getAllPiModels(): ModelDefinition[] {
  * typecheck/commits when providers are added or renamed upstream.
  */
 const PI_PROVIDER_DISPLAY: Partial<Record<string, { label: string; placeholder: string }>> = {
-  'anthropic':              { label: 'Anthropic',          placeholder: 'sk-ant-...' },
+  'anthropic':              { label: 'Anthropic',           placeholder: 'sk-ant-...' },
   'google':                 { label: 'Google AI Studio',   placeholder: 'AIza...' },
   'openai':                 { label: 'OpenAI',             placeholder: 'sk-...' },
   'openrouter':             { label: 'OpenRouter',         placeholder: 'sk-or-...' },

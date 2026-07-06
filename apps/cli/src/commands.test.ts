@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { parseArgs, resolveApiKey, shouldSetupLlmConnection } from './index.ts'
+import { parseArgs, resolveApiKey, resolveCustomEndpointCliSetup, shouldSetupLlmConnection, getValidateSteps } from './index.ts'
 
 // ---------------------------------------------------------------------------
 // Arg parsing tests
@@ -250,6 +250,59 @@ describe('resolveApiKey', () => {
   })
 })
 
+describe('resolveCustomEndpointCliSetup', () => {
+  const envKeys = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'LLM_API_KEY']
+  const previousEnv = new Map<string, string | undefined>()
+
+  function clearKeys() {
+    for (const key of envKeys) {
+      previousEnv.set(key, process.env[key])
+      delete process.env[key]
+    }
+  }
+
+  function restoreKeys() {
+    for (const key of envKeys) {
+      const previous = previousEnv.get(key)
+      if (previous === undefined) delete process.env[key]
+      else process.env[key] = previous
+    }
+    previousEnv.clear()
+  }
+
+  it('uses authType none for keyless loopback custom endpoints', () => {
+    clearKeys()
+    try {
+      const setup = resolveCustomEndpointCliSetup('openai', 'http://localhost:11434/v1', '')
+      expect(setup.authType).toBe('none')
+      expect(setup.credential).toBeUndefined()
+      expect(setup.displayName).toBe('Local Model')
+    } finally {
+      restoreKeys()
+    }
+  })
+
+  it('still requires an API key for remote custom endpoints', () => {
+    clearKeys()
+    try {
+      expect(() => resolveCustomEndpointCliSetup('openai', 'https://api.example.com/v1', '')).toThrow('No API key found')
+    } finally {
+      restoreKeys()
+    }
+  })
+
+  it('uses keyed custom endpoint auth when a loopback credential is provided', () => {
+    clearKeys()
+    try {
+      const setup = resolveCustomEndpointCliSetup('openai', 'http://localhost:11434/v1', 'sk-local')
+      expect(setup.authType).toBe('api_key_with_endpoint')
+      expect(setup.credential).toBe('sk-local')
+    } finally {
+      restoreKeys()
+    }
+  })
+})
+
 describe('shouldSetupLlmConnection', () => {
   it('forces setup for non-default providers even when connections already exist', () => {
     expect(shouldSetupLlmConnection(2, { provider: 'deepseek', baseUrl: '' })).toBe(true)
@@ -267,8 +320,6 @@ describe('shouldSetupLlmConnection', () => {
 // ---------------------------------------------------------------------------
 // Validate steps structure tests
 // ---------------------------------------------------------------------------
-
-import { getValidateSteps } from './index.ts'
 
 describe('getValidateSteps', () => {
   it('returns a non-empty array of steps', () => {

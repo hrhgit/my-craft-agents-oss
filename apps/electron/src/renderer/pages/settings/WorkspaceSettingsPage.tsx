@@ -6,7 +6,7 @@
  * Settings:
  * - Identity (Name, Icon)
  * - Permissions (Default mode, Mode cycling)
- * - Advanced (Working directory, Local MCP servers)
+ * - Advanced (Local MCP servers)
  *
  * Note: AI settings (model, thinking, connection) have been moved to AiSettingsPage.
  */
@@ -24,8 +24,6 @@ import { routes } from '@/lib/navigate'
 import { Spinner } from '@craft-agent/ui'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import type { PermissionMode, WorkspaceSettings, LoadedSource } from '../../../shared/types'
-import { useDirectoryPicker } from '@/hooks/useDirectoryPicker'
-import { ServerDirectoryBrowser } from '@/components/ServerDirectoryBrowser'
 import { PERMISSION_MODE_CONFIG } from '@craft-agent/shared/agent/mode-types'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import { SourceAvatar } from '@/components/ui/source-avatar'
@@ -55,6 +53,10 @@ export default function WorkspaceSettingsPage() {
   const appShellContext = useAppShellContext()
   const activeWorkspaceId = appShellContext.activeWorkspaceId
   const onRefreshWorkspaces = appShellContext.onRefreshWorkspaces
+  const activeWorkspace = React.useMemo(
+    () => appShellContext.workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null,
+    [appShellContext.workspaces, activeWorkspaceId]
+  )
 
   // Workspace settings state
   const [wsName, setWsName] = useState('')
@@ -63,7 +65,6 @@ export default function WorkspaceSettingsPage() {
   const [wsIconUrl, setWsIconUrl] = useState<string | null>(null)
   const [isUploadingIcon, setIsUploadingIcon] = useState(false)
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask')
-  const [workingDirectory, setWorkingDirectory] = useState('')
   const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
 
@@ -90,7 +91,6 @@ export default function WorkspaceSettingsPage() {
           setWsName(settings.name || '')
           setWsNameEditing(settings.name || '')
           setPermissionMode(settings.permissionMode || 'ask')
-          setWorkingDirectory(settings.workingDirectory || '')
           setLocalMcpEnabled(settings.localMcpEnabled ?? true)
           // Load cyclable permission modes from workspace settings
           if (settings.cyclablePermissionModes && settings.cyclablePermissionModes.length >= 2) {
@@ -250,30 +250,6 @@ export default function WorkspaceSettingsPage() {
     [updateWorkspaceSetting]
   )
 
-  const handleWorkingDirectorySelected = useCallback(async (selectedPath: string) => {
-    const saved = await updateWorkspaceSetting('workingDirectory', selectedPath)
-    if (saved) {
-      setWorkingDirectory(selectedPath)
-    }
-  }, [updateWorkspaceSetting])
-
-  const {
-    pickDirectory: handleChangeWorkingDirectory,
-    showServerBrowser: showWdBrowser,
-    serverBrowserMode: wdBrowserMode,
-    cancelServerBrowser: cancelWdBrowser,
-    confirmServerBrowser: confirmWdBrowser,
-  } = useDirectoryPicker(handleWorkingDirectorySelected)
-
-  const handleClearWorkingDirectory = useCallback(async () => {
-    if (!window.electronAPI) return
-
-    const saved = await updateWorkspaceSetting('workingDirectory', undefined)
-    if (saved) {
-      setWorkingDirectory('')
-    }
-  }, [updateWorkspaceSetting])
-
   const handleLocalMcpEnabledChange = useCallback(
     async (enabled: boolean) => {
       setLocalMcpEnabled(enabled)
@@ -408,6 +384,10 @@ export default function WorkspaceSettingsPage() {
                     )}
                   </div>
                 </SettingsRow>
+                <SettingsRow
+                  label={t("settings.workspace.rootPath")}
+                  description={activeWorkspace?.rootPath || t("settings.workspace.noWorkspaceSelected")}
+                />
               </SettingsCard>
 
               <RenameDialog
@@ -515,30 +495,6 @@ export default function WorkspaceSettingsPage() {
             {/* Advanced */}
             <SettingsSection title={t("settings.workspace.advanced")}>
               <SettingsCard>
-                <SettingsRow
-                  label={t("settings.workspace.defaultWorkingDir")}
-                  description={workingDirectory || t("settings.workspace.defaultWorkingDirDesc")}
-                  action={
-                    <div className="flex items-center gap-2">
-                      {workingDirectory && (
-                        <button
-                          type="button"
-                          onClick={handleClearWorkingDirectory}
-                          className="inline-flex items-center h-8 px-3 text-sm rounded-lg bg-background shadow-minimal hover:bg-foreground/[0.02] transition-colors text-foreground/60 hover:text-foreground"
-                        >
-                          {t("common.clear")}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={handleChangeWorkingDirectory}
-                        className="inline-flex items-center h-8 px-3 text-sm rounded-lg bg-background shadow-minimal hover:bg-foreground/[0.02] transition-colors"
-                      >
-                        {t("common.change")}
-                      </button>
-                    </div>
-                  }
-                />
                 <SettingsToggle
                   label={t("settings.workspace.localMcpServers")}
                   description={t("settings.workspace.localMcpServersDesc")}
@@ -552,13 +508,6 @@ export default function WorkspaceSettingsPage() {
         </div>
         </ScrollArea>
       </div>
-      <ServerDirectoryBrowser
-        open={showWdBrowser}
-        mode={wdBrowserMode}
-        onSelect={confirmWdBrowser}
-        onCancel={cancelWdBrowser}
-        initialPath={workingDirectory || undefined}
-      />
     </div>
   )
 }

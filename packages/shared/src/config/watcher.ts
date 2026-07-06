@@ -20,12 +20,12 @@ import { watch, existsSync, readdirSync, statSync, readFileSync, mkdirSync } fro
 import { join, dirname, basename, relative } from 'path';
 import { platform } from 'os';
 import type { FSWatcher } from 'fs';
-import { CONFIG_DIR } from './paths.ts';
+import { CONFIG_DIR, PI_AGENT_DIR } from './paths.ts';
 import { debug } from '../utils/debug.ts';
 import { expandPath } from '../utils/paths.ts';
 import { readJsonFileSync } from '../utils/files.ts';
 import { perf } from '../utils/perf.ts';
-import { loadStoredConfig, type StoredConfig } from './storage.ts';
+import { getLlmConnections, loadStoredConfig, type StoredConfig } from './storage.ts';
 import {
   validateConfig,
   validatePreferences,
@@ -41,7 +41,7 @@ import {
   downloadSourceIcon,
 } from '../sources/storage.ts';
 import { permissionsConfigCache, getAppPermissionsDir } from '../agent/permissions-config.ts';
-import { getWorkspacePath, getWorkspaceSourcesPath, getWorkspaceSkillsPath } from '../workspaces/storage.ts';
+import { getWorkspacePath, getWorkspaceSourcesPath, getWorkspaceSkillsPath, getWorkspacePiSessionsDir } from '../workspaces/storage.ts';
 import type { LoadedSkill } from '../skills/types.ts';
 import { loadSkill, loadAllSkills, invalidateSkillsCache, skillNeedsIconDownload, downloadSkillIcon } from '../skills/storage.ts';
 import {
@@ -50,6 +50,7 @@ import {
   downloadStatusIcon,
 } from '../statuses/storage.ts';
 import { readSessionHeader } from '../sessions/jsonl.ts';
+import { getSessionFilePath } from '../sessions/storage.ts';
 import type { SessionHeader } from '../sessions/types.ts';
 import { AUTOMATIONS_CONFIG_FILE } from '../automations/constants.ts';
 import { loadAppTheme, loadPresetThemes, loadPresetTheme, getAppThemesDir } from './storage.ts';
@@ -275,9 +276,17 @@ export class ConfigWatcher {
     this.watchGlobalConfigs();
     span.mark('watchGlobalConfigs');
 
+    this.watchPiGlobalConfigs();
+    span.mark('watchPiGlobalConfigs');
+
     // Watch workspace directory recursively
     this.watchWorkspaceDir();
     span.mark('watchWorkspaceDir');
+
+    // Watch Pi sessions bucket for this workspace's cwd (sessions live
+    // under ~/.pi/agent/sessions/{encoded-cwd}/, outside the workspace dir)
+    this.watchPiSessionsDir();
+    span.mark('watchPiSessionsDir');
 
     // Watch app-level themes directory
     this.watchAppThemesDir();
@@ -309,11 +318,8 @@ export class ConfigWatcher {
    * Initialize LLM connections hash for change detection
    */
   private initLlmConnectionsHash(): void {
-    const config = loadStoredConfig();
-    if (config) {
-      const connections = config.llmConnections || [];
-      this.lastLlmConnectionsHash = JSON.stringify(connections);
-    }
+    const connections = getLlmConnections();
+    this.lastLlmConnectionsHash = JSON.stringify(connections);
   }
 
   /**
@@ -382,10 +388,36 @@ export class ConfigWatcher {
         }
       });
 
+      watcher.on('error', (err) => debug('[ConfigWatcher] Global configs watcher error:', err));
       this.watchers.push(watcher);
       debug('[ConfigWatcher] Watching global configs:', CONFIG_DIR);
     } catch (error) {
       debug('[ConfigWatcher] Error watching global configs:', error);
+    }
+  }
+
+  /**
+   * Watch Pi's global models.json, which is the source of truth for LLM
+   * connection metadata after the Pi/Craft config migration.
+   */
+  private watchPiGlobalConfigs(): void {
+    if (!existsSync(PI_AGENT_DIR)) {
+      mkdirSync(PI_AGENT_DIR, { recursive: true });
+    }
+
+    try {
+      const watcher = watch(PI_AGENT_DIR, (eventType, filename) => {
+        if (!filename) return;
+        if (filename === 'models.json') {
+          this.debounce('pi-models.json', () => this.handleLlmConnectionsChange());
+        }
+      });
+
+      watcher.on('error', (err) => debug('[ConfigWatcher] Pi global configs watcher error:', err));
+      this.watchers.push(watcher);
+      debug('[ConfigWatcher] Watching Pi global configs:', PI_AGENT_DIR);
+    } catch (error) {
+      debug('[ConfigWatcher] Error watching Pi global configs:', error);
     }
   }
 
@@ -403,10 +435,68 @@ export class ConfigWatcher {
         this.handleWorkspaceFileChange(normalizedPath, eventType);
       });
 
+      watcher.on('error', (err) => debug('[ConfigWatcher] Workspace watcher error:', err));
       this.watchers.push(watcher);
       debug('[ConfigWatcher] Watching workspace recursively:', this.workspaceDir);
     } catch (error) {
       debug('[ConfigWatcher] Error watching workspace directory:', error);
+    }
+  }
+
+  /**
+   * Watch the Pi sessions bucket for this workspace's cwd.
+   *
+   * Session files live under `~/.pi/agent/sessions/{encoded-cwd}/` (legacy
+   * `~/.craft-agent/workspaces/{id}/sessions/` still supported for back-compat).
+   * The workspace watcher above can't see these files, so a separate watcher
+   * is needed to detect external metadata changes (labels, name, flags) made
+   * by other instances or the Pi CLI.
+   */
+  private watchPiSessionsDir(): void {
+    let piSessionsDir: string;
+    try {
+      piSessionsDir = getWorkspacePiSessionsDir(this.workspaceDir);
+    } catch {
+      debug('[ConfigWatcher] Could not resolve Pi sessions dir for workspace:', this.workspaceDir);
+      return;
+    }
+
+    if (!existsSync(piSessionsDir)) {
+      debug('[ConfigWatcher] Pi sessions dir does not exist yet, skipping watch:', piSessionsDir);
+      return;
+    }
+
+    debug('[ConfigWatcher] Setting up Pi sessions watcher for:', piSessionsDir);
+    try {
+      const watcher = watch(piSessionsDir, (eventType, filename) => {
+        if (!filename) return;
+        const normalizedPath = filename.replace(/\\/g, '/');
+
+        // Pi tree format: {timestamp}_{sessionId}.jsonl
+        // Legacy format: {sessionId}/session.jsonl
+        const parts = normalizedPath.split('/');
+        let sessionId: string | null = null;
+
+        if (parts.length === 1 && parts[0]!.endsWith('.jsonl')) {
+          // Flat file: extract sessionId from filename pattern {timestamp}_{sessionId}.jsonl
+          const baseName = parts[0]!.replace(/\.jsonl$/, '');
+          const underscoreIdx = baseName.indexOf('_');
+          sessionId = underscoreIdx >= 0 ? baseName.slice(underscoreIdx + 1) : baseName;
+        } else if (parts.length >= 2 && parts[1] === 'session.jsonl') {
+          // Legacy subdirectory format
+          sessionId = parts[0]!;
+        }
+
+        if (sessionId && !normalizedPath.endsWith('.tmp')) {
+          this.debounce(`session-meta:${sessionId}`, () => this.handleSessionMetadataChange(sessionId!), SESSION_META_DEBOUNCE_MS);
+        }
+      });
+
+      watcher.on('error', (err) => debug('[ConfigWatcher] Pi sessions watcher error:', err));
+      this.watchers.push(watcher);
+      debug('[ConfigWatcher] Watching Pi sessions dir:', piSessionsDir);
+    } catch (error) {
+      debug('[ConfigWatcher] Error watching Pi sessions directory:', error);
     }
   }
 
@@ -852,17 +942,25 @@ export class ConfigWatcher {
     if (config) {
       this.callbacks.onConfigChange?.(config);
 
-      // Check for LLM connections changes
-      // Use JSON hash comparison for deep equality check
-      const connections = config.llmConnections || [];
+      // Keep compatibility with callers that still save config.json after
+      // mutating Pi models.json; the actual SoT is read in this helper.
+      this.handleLlmConnectionsChange();
+    } else {
+      this.callbacks.onError?.('config.json', new Error('Failed to load config'));
+    }
+  }
+
+  private handleLlmConnectionsChange(): void {
+    try {
+      const connections = getLlmConnections();
       const currentHash = JSON.stringify(connections);
       if (currentHash !== this.lastLlmConnectionsHash) {
         debug('[ConfigWatcher] LLM connections changed');
         this.lastLlmConnectionsHash = currentHash;
         this.callbacks.onLlmConnectionsChange?.(connections);
       }
-    } else {
-      this.callbacks.onError?.('config.json', new Error('Failed to load config'));
+    } catch (error) {
+      this.callbacks.onError?.('models.json', error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -956,7 +1054,9 @@ export class ConfigWatcher {
    * made by other instances, scripts, or manual edits.
    */
   private handleSessionMetadataChange(sessionId: string): void {
-    const sessionFile = join(this.workspaceDir, 'sessions', sessionId, 'session.jsonl');
+    // session files now live under ~/.pi/agent/sessions/{encoded-cwd}/.
+    // The workspaceDir no longer contains a sessions/ subdirectory.
+    const sessionFile = getSessionFilePath(this.workspaceDir, sessionId);
 
     if (!existsSync(sessionFile)) {
       return;
@@ -1003,6 +1103,7 @@ export class ConfigWatcher {
         }
       });
 
+      watcher.on('error', (err) => debug('[ConfigWatcher] App themes watcher error:', err));
       this.watchers.push(watcher);
       debug('[ConfigWatcher] Watching app themes directory:', themesDir);
     } catch (error) {
@@ -1032,6 +1133,7 @@ export class ConfigWatcher {
         }
       });
 
+      watcher.on('error', (err) => debug('[ConfigWatcher] App permissions watcher error:', err));
       this.watchers.push(watcher);
       debug('[ConfigWatcher] Watching app permissions directory:', permissionsDir);
     } catch (error) {

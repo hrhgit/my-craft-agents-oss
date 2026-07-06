@@ -5,10 +5,6 @@
  * These handlers are used by both Claude and Codex implementations.
  */
 
-// SubmitPlan
-export { handleSubmitPlan } from './submit-plan.ts';
-export type { SubmitPlanArgs } from './submit-plan.ts';
-
 // Config Validate
 export { handleConfigValidate } from './config-validate.ts';
 export type { ConfigValidateArgs } from './config-validate.ts';
@@ -64,11 +60,7 @@ export { handleSendDeveloperFeedback } from './send-developer-feedback.ts';
 export type { SendDeveloperFeedbackArgs } from './send-developer-feedback.ts';
 
 // Session Self-Management
-export { handleSetSessionLabels } from './set-session-labels.ts';
 export type { SetSessionLabelsArgs } from './set-session-labels.ts';
-export { handleSetSessionStatus } from './set-session-status.ts';
 export type { SetSessionStatusArgs } from './set-session-status.ts';
-export { handleGetSessionInfo } from './get-session-info.ts';
 export type { GetSessionInfoArgs } from './get-session-info.ts';
-export { handleListSessions } from './list-sessions.ts';
 export type { ListSessionsArgs } from './list-sessions.ts';

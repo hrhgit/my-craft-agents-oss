@@ -7,7 +7,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import {
   UsageTracker,
-  createUsageTracker,
 } from '../usage-tracker.ts';
 
 describe('UsageTracker', () => {
@@ -235,14 +234,14 @@ describe('UsageTracker', () => {
 
   describe('Factory Function', () => {
     it('should create tracker via factory', () => {
-      const factoryTracker = createUsageTracker({
+      const factoryTracker = new UsageTracker({
         contextWindow: 50000,
       });
       expect(factoryTracker.getContextWindow()).toBe(50000);
     });
 
     it('should create tracker with default config', () => {
-      const defaultTracker = createUsageTracker();
+      const defaultTracker = new UsageTracker();
       expect(defaultTracker).toBeInstanceOf(UsageTracker);
     });
   });

@@ -3,6 +3,12 @@
 
 $ErrorActionPreference = "Stop"
 
+# 强制 TLS 1.2:GitHub 要求 TLS 1.2+,旧版 Windows/PowerShell 默认 TLS 1.0/1.1 会导致下载失败
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# 全局 try/catch:捕获所有未处理异常,防止窗口闪退导致看不到错误
+try {
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ElectronDir = Split-Path -Parent $ScriptDir
 $RootDir = Split-Path -Parent (Split-Path -Parent $ElectronDir)
@@ -11,6 +17,14 @@ $RootDir = Split-Path -Parent (Split-Path -Parent $ElectronDir)
 $BunVersion = "bun-v1.3.14"  # Pinned version for reproducible builds
 
 Write-Host "=== Building Craft Agents Windows Installer using electron-builder ===" -ForegroundColor Cyan
+
+# 预检:构建步骤依赖系统 PATH 上的 bun/npx/node(vendor/bun/bun.exe 只用于打包进应用,不参与构建)
+foreach ($tool in @('bun', 'npx', 'node')) {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        throw "$tool not found on PATH. Install bun (https://bun.sh) and Node.js, then re-run this script."
+    }
+}
+Write-Host "Pre-flight check: bun/npx/node all available" -ForegroundColor Green
 
 # Debug: System information
 Write-Host ""
@@ -55,9 +69,10 @@ try {
 }
 Write-Host ""
 
-# 0. Kill any lingering processes that might lock files
-Write-Host "Killing any lingering node/npm processes..."
-$processesToKill = @('node', 'npm', 'electron', 'electron-builder')
+# 0. Kill any lingering Electron processes that might lock files
+# 注意:只杀 electron/electron-builder,不杀 node/npm,避免影响 VS Code 等无关进程
+Write-Host "Killing any lingering Electron processes..."
+$processesToKill = @('electron', 'electron-builder')
 foreach ($procName in $processesToKill) {
     Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
         Write-Host "  Killing $($_.ProcessName) (PID: $($_.Id))..." -ForegroundColor Yellow
@@ -71,8 +86,8 @@ Start-Sleep -Seconds 2
 Write-Host "Cleaning previous builds..."
 # 注意:vendor\bun\ 不在此清理列表中,以便复用已下载的 bun.exe,避免每次打包都重新下载。
 $foldersToClean = @(
-    "$ElectronDir\node_modules\@anthropic-ai",
     "$ElectronDir\resources\pi-agent-server",
+    "$ElectronDir\resources\session-mcp-server",
     "$ElectronDir\release"
 )
 foreach ($folder in $foldersToClean) {
@@ -106,13 +121,16 @@ $BunExePath = "$ElectronDir\vendor\bun\bun.exe"
 $BunVersionMarker = "$ElectronDir\vendor\bun\.version"
 
 $BunCached = $false
-if (Test-Path $BunExePath -and Test-Path $BunVersionMarker) {
+# 注意:每个 Test-Path 必须用括号包裹,否则 PowerShell 会把 -and 当成 Test-Path 的参数
+if ((Test-Path $BunExePath) -and (Test-Path $BunVersionMarker)) {
     $CachedVersion = (Get-Content $BunVersionMarker -ErrorAction SilentlyContinue).Trim()
-    if ($CachedVersion -eq $BunVersion) {
-        Write-Host "Bun $BunVersion already cached at $BunExePath, skipping download" -ForegroundColor Green
+    # 同时校验文件大小 > 1MB,防止 .version 正确但 bun.exe 损坏/截断的情况
+    $BunSize = (Get-Item $BunExePath -ErrorAction SilentlyContinue).Length
+    if ($CachedVersion -eq $BunVersion -and $BunSize -gt 1MB) {
+        Write-Host "Bun $BunVersion already cached at $BunExePath ($([math]::Round($BunSize / 1MB, 1)) MB), skipping download" -ForegroundColor Green
         $BunCached = $true
     } else {
-        Write-Host "Cached Bun version ($CachedVersion) != target ($BunVersion), re-downloading..." -ForegroundColor Yellow
+        Write-Host "Cached Bun invalid (version=$CachedVersion, size=$BunSize bytes), re-downloading..." -ForegroundColor Yellow
     }
 }
 
@@ -133,9 +151,13 @@ if (-not $BunCached) {
         Invoke-WebRequest -Uri $ZipUrl -OutFile "$TempDir\$BunDownload.zip"
         Invoke-WebRequest -Uri $ChecksumUrl -OutFile "$TempDir\SHASUMS256.txt"
 
-        # Verify checksum
+        # Verify checksum (取第一行匹配,避免多匹配导致 .ToString() 返回数组类型名)
         Write-Host "Verifying checksum..."
-        $ExpectedHash = (Get-Content "$TempDir\SHASUMS256.txt" | Select-String "$BunDownload.zip").ToString().Split(" ")[0]
+        $hashLine = (Get-Content "$TempDir\SHASUMS256.txt" | Select-String -Pattern "^\s*[0-9a-f]{64}\s+$BunDownload\.zip$" | Select-Object -First 1).Line
+        if (-not $hashLine) {
+            throw "Could not find $BunDownload.zip in SHASUMS256.txt"
+        }
+        $ExpectedHash = $hashLine.Trim().Split("`t ")[0].ToLower()
         $ActualHash = (Get-FileHash "$TempDir\$BunDownload.zip" -Algorithm SHA256).Hash.ToLower()
 
         if ($ActualHash -ne $ExpectedHash) {
@@ -176,7 +198,7 @@ $RgSource = "$RootDir\node_modules\@vscode\ripgrep"
 if (-not (Test-Path $RgSource) -or -not (Test-Path "$RgSource\bin\rg.exe")) {
     Write-Host "ERROR: @vscode/ripgrep not installed or postinstall did not run" -ForegroundColor Red
     Write-Host "Run 'bun install' and 'bun pm trust @vscode/ripgrep'."
-    exit 1
+    throw "@vscode/ripgrep not installed"
 }
 Write-Host "Copying @vscode/ripgrep..."
 New-Item -ItemType Directory -Force -Path "$ElectronDir\node_modules\@vscode" | Out-Null
@@ -187,7 +209,7 @@ Copy-Item -Recurse -Force $RgSource "$ElectronDir\node_modules\@vscode\"
 $InterceptorSource = "$RootDir\packages\shared\src\unified-network-interceptor.ts"
 if (-not (Test-Path $InterceptorSource)) {
     Write-Host "ERROR: Interceptor not found at $InterceptorSource" -ForegroundColor Red
-    exit 1
+    throw "Interceptor not found"
 }
 Write-Host "Copying interceptor (for Pi subprocess)..."
 New-Item -ItemType Directory -Force -Path "$ElectronDir\packages\shared\src" | Out-Null
@@ -213,54 +235,6 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Main process build failed" }
 } finally {
     Pop-Location
-}
-
-# Copy Pi Agent Server (subprocess for Pi SDK sessions) into packaged resources.
-# electron-builder.yml includes `resources/pi-agent-server/**/*`, so the dist
-# bundle + koffi native binary must exist here before `npx electron-builder` runs.
-# Mirrors scripts/build/common.ts:copyPiAgentServer() (which is only used by the
-# standalone server build path, not the Electron path).
-$PiAgentSrcDir = "$RootDir\packages\pi-agent-server\dist"
-$PiAgentDestDir = "$ElectronDir\resources\pi-agent-server"
-if (Test-Path "$PiAgentSrcDir\index.js") {
-    Write-Host "  Copying Pi Agent Server to resources..."
-    New-Item -ItemType Directory -Force -Path $PiAgentDestDir | Out-Null
-
-    # 1. Copy index.js (bundled ESM bundle, inlines all deps except koffi)
-    Copy-Item "$PiAgentSrcDir\index.js" "$PiAgentDestDir\index.js" -Force
-
-    # 2. Copy koffi (external native N-API module, resolved via node_modules at runtime)
-    $KoffiSrc = "$RootDir\node_modules\koffi"
-    if (Test-Path $KoffiSrc) {
-        $KoffiDest = "$PiAgentDestDir\node_modules\koffi"
-        New-Item -ItemType Directory -Force -Path $KoffiDest | Out-Null
-
-        # Copy koffi JS files
-        foreach ($entry in @('package.json', 'index.js', 'indirect.js', 'index.d.ts', 'lib')) {
-            $src = Join-Path $KoffiSrc $entry
-            if (Test-Path $src) {
-                Copy-Item $src (Join-Path $KoffiDest $entry) -Recurse -Force
-            }
-        }
-
-        # Copy only the target platform's native binary (~4MB instead of ~80MB)
-        # koffi's build dir uses `${platform}_${arch}` format (e.g. win32_x64)
-        $NativeSrc = "$KoffiSrc\build\koffi\win32_x64"
-        if (Test-Path $NativeSrc) {
-            $NativeDest = "$KoffiDest\build\koffi\win32_x64"
-            New-Item -ItemType Directory -Force -Path $NativeDest | Out-Null
-            Copy-Item "$NativeSrc\*" $NativeDest -Recurse -Force
-            Write-Host "  Pi Agent Server copied (index.js + koffi/win32_x64)" -ForegroundColor Green
-        } else {
-            # Fallback: copy all platform binaries
-            Copy-Item "$KoffiSrc\build" "$KoffiDest\build" -Recurse -Force
-            Write-Host "  Pi Agent Server copied (index.js + koffi all-platforms fallback)" -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host "  WARNING: koffi not found in node_modules, Pi SDK sessions may not work" -ForegroundColor Yellow
-    }
-} else {
-    Write-Host "  WARNING: pi-agent-server/dist/index.js not found, Pi SDK sessions will not work" -ForegroundColor Yellow
 }
 
 # Build preload
@@ -407,7 +381,10 @@ while (-not $builderSuccess -and $builderRetry -lt $maxBuilderRetries) {
         Start-Sleep -Seconds 1
     }
 
-    npx electron-builder --win --x64 2>&1 | Tee-Object -Variable builderOutput
+    # 注意:不能用 2>&1,因为 $ErrorActionPreference="Stop" 会把 native command 的
+    # stderr 输出当作 terminating error,导致 electron-builder 输出任何警告时脚本闪退。
+    # stderr 直接输出到控制台即可,不需要通过管道捕获。
+    npx electron-builder --win --x64
 
     if ($LASTEXITCODE -eq 0) {
         $builderSuccess = $true
@@ -418,8 +395,8 @@ while (-not $builderSuccess -and $builderRetry -lt $maxBuilderRetries) {
         if ($builderRetry -lt $maxBuilderRetries) {
             Write-Host "  Waiting 10 seconds before retry..." -ForegroundColor Yellow
 
-            # Kill any processes that might be holding file locks
-            Get-Process -Name 'node', 'npm' -ErrorAction SilentlyContinue | ForEach-Object {
+            # Kill electron processes that might be holding file locks (不杀 node/npm 以免影响 VS Code 等)
+            Get-Process -Name 'electron', 'electron-builder' -ErrorAction SilentlyContinue | ForEach-Object {
                 Write-Host "    Killing $($_.ProcessName) (PID: $($_.Id))..." -ForegroundColor Yellow
                 Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
             }
@@ -436,16 +413,44 @@ if (-not $builderSuccess) {
 }
 
 # 8. Verify the installer was built
-$InstallerPath = Get-ChildItem -Path "$ElectronDir\release" -Filter "*.exe" | Select-Object -First 1
+# electron-builder.yml 配置 win.artifactName = "Craft-Agents-${arch}.${ext}",
+# 所以 NSIS 输出为 Craft-Agents-x64.exe。优先按名称查找,回退到第一个 .exe
+$InstallerPath = Get-ChildItem -Path "$ElectronDir\release" -Filter "Craft-Agents-x64.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $InstallerPath) {
+    # 回退:取 release 目录下最大的 .exe(NSIS installer 通常远大于 blockmap)
+    $InstallerPath = Get-ChildItem -Path "$ElectronDir\release" -Filter "*.exe" -ErrorAction SilentlyContinue |
+        Sort-Object Length -Descending | Select-Object -First 1
+}
 
 if (-not $InstallerPath) {
     Write-Host "ERROR: Installer not found in $ElectronDir\release" -ForegroundColor Red
     Write-Host "Contents of release directory:"
     Get-ChildItem "$ElectronDir\release"
-    exit 1
+    throw "Installer not found in $ElectronDir\release"
 }
 
 Write-Host ""
 Write-Host "=== Build Complete ===" -ForegroundColor Green
 Write-Host "Installer: $($InstallerPath.FullName)"
 Write-Host "Size: $([math]::Round($InstallerPath.Length / 1MB, 2)) MB"
+
+} catch {
+    Write-Host ""
+    Write-Host "=== BUILD FAILED ===" -ForegroundColor Red
+    Write-Host "Error: $_" -ForegroundColor Red
+    Write-Host ""
+    # 显示完整错误堆栈,便于定位问题
+    if ($_.ScriptStackTrace) {
+        Write-Host "Stack Trace:" -ForegroundColor Yellow
+        Write-Host $_.ScriptStackTrace
+    }
+    Write-Host ""
+    Write-Host "按 Enter 键退出..." -ForegroundColor Yellow
+    Read-Host
+    exit 1
+}
+
+# 构建成功时也暂停,防止双击运行时窗口直接关闭
+Write-Host ""
+Write-Host "按 Enter 键退出..." -ForegroundColor Yellow
+Read-Host

@@ -1,99 +1,36 @@
 /**
  * SubagentPanel
  *
- * 显示 pi subagent 扩展的活动会话列表。
+ * 显示 pi 会话树中从当前会话派生的子会话分支列表。
  *
- * 数据来源：~/.pi/agent/extensions/subagent/supervisor/active-sessions.json
- * 该文件由 subagent 扩展的 supervisor daemon 维护，记录所有向 supervisor
- * 注册过的 pi agent 进程（每个 craft 会话一个条目）。
+ * 数据来源：pi 会话树（~/.pi/agent/sessions/<encoded-cwd>/*.jsonl）
+ * 通过 listChildSessions RPC 查询，由 pi-agent-server 的 list_child_sessions
+ * 通道枚举会话目录并按 header.spawnedFrom === parentSessionId 过滤。
  *
- * 读取方式：通过 ElectronAPI.getHomeDir() 获取用户主目录，拼接出
- * active-sessions.json 的绝对路径，再用 ElectronAPI.readFile() 读取。
- * readFile 的路径校验（validateFilePath）默认允许主目录下的文件，
- * 因此无需新增 RPC 通道。
+ * 这取代了旧的 active-sessions.json 数据源（subagent supervisor 维护）。
+ * spawn_session 工具现在通过 pi 的 spawnChildSession 在会话树中创建子分支，
+ * 此面板复用展示这些分支。
  *
  * 刷新策略：
  * - 每 5 秒轮询刷新一次
- * - 通过 extension_notify 事件（subagent 扩展的 status 变更通知）触发即时刷新
+ * - 通过 extension_notify 事件触发即时刷新
  *
- * 面板可折叠，默认收起以节省空间；仅当存在活动会话时才显示。
+ * 面板可折叠，默认收起以节省空间；仅当存在子会话时才显示。
+ * 每个分支条目提供"在独立窗口打开"按钮（desktop 专属，CLI 不支持）。
  */
 
 import * as React from 'react'
-import { toast } from 'sonner'
-import { ChevronDown, ChevronRight, Eye, X, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronRight, Eye, RefreshCw, GitBranch, ExternalLink, MessageSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { navigate, routes } from '@/lib/navigate'
 import { Spinner } from '@craft-agent/ui'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger, AnimatedCollapsibleContent } from '@/components/ui/collapsible'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
-import type { PiExtensionSettings } from '@craft-agent/shared/config'
+import type { PiChildSessionInfo } from '@craft-agent/shared/agent'
+import { toPiReadOnlySessionId } from '../../../shared/pi-session-route'
 
-/**
- * active-sessions.json 中单个条目的结构。
- * 对应 subagent 扩展 supervisor.ts 的 SupervisorActiveSession 接口。
- */
-export interface SubagentActiveSession {
-  /** 会话唯一标识（格式 pi-<pid>-<timestamp>-<random>） */
-  id: string
-  /** 进程 PID */
-  pid: number
-  /** 工作目录 */
-  cwd: string
-  /** 会话 JSONL 文件路径 */
-  sessionFile?: string
-  /** pi 会话 ID */
-  sessionId?: string
-  /** 会话名称 */
-  sessionName?: string
-  /** 会话状态：running 表示 agent 正在执行，idle 表示已空闲 */
-  status: 'idle' | 'running'
-  /** 启动时间（ISO 字符串） */
-  startedAt: string
-  /** 最后更新时间（ISO 字符串） */
-  updatedAt: string
-  /** 状态变更原因 */
-  reason?: string
-  /** 使用的模型（provider/model 格式） */
-  model?: string
-}
-
-/**
- * active-sessions.json 文件格式：会话条目数组。
- */
-type ActiveSessionsFile = SubagentActiveSession[]
-
-/**
- * active-sessions.json 的绝对路径（相对于用户主目录）。
- */
-const ACTIVE_SESSIONS_REL_PATH =
-  '.pi/agent/extensions/subagent/supervisor/active-sessions.json'
-const CRAFT_ACTIVE_SESSIONS_REL_PATH =
-  '.craft-agent/pi-extensions/extensions/subagent/supervisor/active-sessions.json'
-
-/** 轮询间隔：每 5 秒刷新一次活动会话列表 */
+/** 轮询间隔：每 5 秒刷新一次子会话列表 */
 const REFRESH_INTERVAL_MS = 5000
-
-/**
- * 读取 active-sessions.json 并解析为会话数组。
- * 文件不存在或解析失败时返回空数组。
- */
-async function loadActiveSessions(settings: PiExtensionSettings | null): Promise<SubagentActiveSession[]> {
-  const homeDir = await window.electronAPI.getHomeDir()
-  // 扩展启停已迁移到 pi settings.json，craft 侧仅凭全局开关决定会话文件路径
-  const relPath = settings && settings.enabled !== false
-    ? CRAFT_ACTIVE_SESSIONS_REL_PATH
-    : ACTIVE_SESSIONS_REL_PATH
-  // 使用正斜杠拼接——readFile 内部会用 normalize 处理跨平台分隔符
-  const filePath = `${homeDir}/${relPath}`
-  try {
-    const content = await window.electronAPI.readFile(filePath)
-    const parsed = JSON.parse(content) as ActiveSessionsFile
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    // 文件不存在（subagent supervisor 未启动）或读取失败——返回空列表
-    return []
-  }
-}
 
 /**
  * 将 ISO 时间字符串格式化为简短的可读形式（HH:MM:SS）。
@@ -121,56 +58,42 @@ function shortenPath(p: string | undefined): string {
 }
 
 interface SessionRowProps {
-  session: SubagentActiveSession
-  sessionId: string | undefined
+  session: PiChildSessionInfo
 }
 
 /**
- * 单个活动会话条目。
- * - 名称（sessionName 或 sessionId 或 id）
- * - 状态徽章（running / idle）
+ * 单个子会话分支条目。
+ * - 名称（name 或 sessionId）
  * - 工作目录
- * - "查看"按钮：展开详情（PID、模型、时间戳、会话文件路径）
- * - "取消"按钮：通过 extension_command_invoke 触发 subagent-cancel 命令
+ * - "查看"按钮：展开详情（sessionPath、cwd、创建/修改时间、消息数、spawnConfig）
+ * - "在独立窗口打开"按钮：desktop 专属，通过 openChildSessionWindow IPC
+ *   在新 BrowserWindow 中打开该子会话的 ChatPage
+ *
+ * 注意：pi 会话树不提供 running/idle 实时状态（不同于旧 supervisor 的 active-sessions.json），
+ * 因此不再显示状态徽章和取消按钮。
  */
-function SessionRow({ session, sessionId }: SessionRowProps) {
+function SessionRow({ session }: SessionRowProps) {
   const [expanded, setExpanded] = React.useState(false)
 
-  const displayName = session.sessionName || session.sessionId || session.id
-  const isRunning = session.status === 'running'
+  const displayName = session.name || session.sessionId
+  const model = session.spawnConfig?.model
+  const connection = session.spawnConfig?.connection
 
-  const handleCancel = React.useCallback(() => {
-    // 取消通过 extension_command_invoke 触发 subagent 扩展的 /subagent-cancel 命令。
-    //
-    // 注意：subagent 扩展当前的 subagent-cancel 命令期望的是 supervisor JOB ID
-    // （由 submitSupervisorJob 产生的 job-<timestamp>-<hex>），而 active-sessions.json
-    // 中的 id 是活动 SESSION ID（pi-<pid>-<timestamp>-<hex>），两者不是同一实体。
-    // 因此该取消调用在 subagent 扩展未增加 session 级取消支持前可能返回 "job not found"。
-    // 若需精确取消活动会话对应的子代理任务，需要 subagent 扩展新增按 session id 取消的命令。
-    const w = window as unknown as {
-      electronAPI?: {
-        invokeExtensionCommand?: (
-          sessionId: string,
-          commandName: string,
-          args?: Record<string, unknown>,
-        ) => Promise<boolean> | boolean
-      }
-    }
-    const invoked = w.electronAPI?.invokeExtensionCommand?.(
-      sessionId ?? '',
-      'subagent-cancel',
-      { jobId: session.id },
-    )
-    if (invoked) {
-      toast.info(`已请求取消会话 ${displayName}`)
-    } else {
-      toast.warning('subagent 扩展命令桥接未就绪，无法取消')
-    }
-  }, [session.id, sessionId, displayName])
+  // "在独立窗口打开"仅在 desktop 环境可用（CLI / 非 electron 环境无 electronAPI）
+  const canOpenInWindow = typeof window !== 'undefined'
+    && typeof (window as unknown as { electronAPI?: { openChildSessionWindow?: unknown } }).electronAPI?.openChildSessionWindow === 'function'
+
+  const handleOpenInWindow = React.useCallback(() => {
+    void window.electronAPI?.openChildSessionWindow?.(session.sessionId, { title: displayName })
+  }, [session.sessionId, displayName])
+
+  const handleOpenInCurrentPanel = React.useCallback(() => {
+    navigate(routes.view.allSessions(toPiReadOnlySessionId(session.sessionId)))
+  }, [session.sessionId])
 
   return (
     <div className="border-b border-border/40 last:border-b-0">
-      {/* 主行：状态 + 名称 + 工作目录 + 操作按钮 */}
+      {/* 主行：分支图标 + 名称 + 工作目录 + 操作按钮 */}
       <div className="flex items-center gap-2 px-2 py-1.5 text-xs">
         {/* 展开/收起触发器 */}
         <button
@@ -186,17 +109,12 @@ function SessionRow({ session, sessionId }: SessionRowProps) {
           )}
         </button>
 
-        {/* 状态徽章 */}
+        {/* 分支徽章 */}
         <span
-          className={cn(
-            'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0',
-            isRunning
-              ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
-              : 'bg-muted text-muted-foreground',
-          )}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 bg-muted text-muted-foreground"
         >
-          {isRunning && <Spinner className="text-[8px]" />}
-          {isRunning ? 'running' : 'idle'}
+          <GitBranch className="h-2.5 w-2.5" />
+          branch
         </span>
 
         {/* 名称 */}
@@ -212,6 +130,30 @@ function SessionRow({ session, sessionId }: SessionRowProps) {
           {shortenPath(session.cwd)}
         </span>
 
+        {/* 在当前面板打开 */}
+        <button
+          type="button"
+          onClick={handleOpenInCurrentPanel}
+          className="text-muted-foreground hover:text-foreground transition-colors shrink-0 p-0.5"
+          title="在当前窗口打开"
+          aria-label="在当前窗口打开"
+        >
+          <MessageSquare className="h-3 w-3" />
+        </button>
+
+        {/* 在独立窗口打开（desktop 专属） */}
+        {canOpenInWindow && (
+          <button
+            type="button"
+            onClick={handleOpenInWindow}
+            className="text-muted-foreground hover:text-foreground transition-colors shrink-0 p-0.5"
+            title="在独立窗口打开"
+            aria-label="在独立窗口打开"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        )}
+
         {/* 操作按钮 */}
         <button
           type="button"
@@ -222,60 +164,48 @@ function SessionRow({ session, sessionId }: SessionRowProps) {
         >
           <Eye className="h-3 w-3" />
         </button>
-        <button
-          type="button"
-          onClick={handleCancel}
-          className="text-muted-foreground hover:text-destructive transition-colors shrink-0 p-0.5"
-          title="取消任务"
-          aria-label="取消任务"
-          disabled={!isRunning}
-        >
-          <X className="h-3 w-3" />
-        </button>
       </div>
 
       {/* 展开详情 */}
       <AnimatedCollapsibleContent isOpen={expanded}>
         <div className="px-6 py-1.5 text-[11px] text-muted-foreground space-y-0.5">
           <div>
-            <span className="text-foreground/60">ID:</span> {session.id}
+            <span className="text-foreground/60">Session ID:</span> {session.sessionId}
           </div>
-          <div>
-            <span className="text-foreground/60">PID:</span> {session.pid}
-          </div>
-          {session.model && (
+          {model && (
             <div>
-              <span className="text-foreground/60">Model:</span> {session.model}
+              <span className="text-foreground/60">Model:</span> {model}
+            </div>
+          )}
+          {connection && (
+            <div>
+              <span className="text-foreground/60">Connection:</span> {connection}
             </div>
           )}
           <div>
             <span className="text-foreground/60">CWD:</span>{' '}
             <span className="break-all">{session.cwd}</span>
           </div>
-          {session.sessionId && (
-            <div>
-              <span className="text-foreground/60">Session:</span> {session.sessionId}
-            </div>
-          )}
-          {session.sessionFile && (
-            <div>
-              <span className="text-foreground/60">File:</span>{' '}
-              <span className="break-all">{session.sessionFile}</span>
+          <div>
+            <span className="text-foreground/60">Messages:</span> {session.messageCount}
+          </div>
+          {session.firstMessage && (
+            <div className="truncate" title={session.firstMessage}>
+              <span className="text-foreground/60">First:</span> {session.firstMessage}
             </div>
           )}
           <div>
-            <span className="text-foreground/60">Started:</span>{' '}
-            {formatTime(session.startedAt)}
+            <span className="text-foreground/60">File:</span>{' '}
+            <span className="break-all">{session.sessionPath}</span>
           </div>
           <div>
-            <span className="text-foreground/60">Updated:</span>{' '}
-            {formatTime(session.updatedAt)}
+            <span className="text-foreground/60">Created:</span>{' '}
+            {formatTime(session.created)}
           </div>
-          {session.reason && (
-            <div>
-              <span className="text-foreground/60">Reason:</span> {session.reason}
-            </div>
-          )}
+          <div>
+            <span className="text-foreground/60">Modified:</span>{' '}
+            {formatTime(session.modified)}
+          </div>
         </div>
       </AnimatedCollapsibleContent>
     </div>
@@ -283,56 +213,41 @@ function SessionRow({ session, sessionId }: SessionRowProps) {
 }
 
 export interface SubagentPanelProps {
-  /** 当前 craft 会话 ID（用于 extension_command_invoke 的 sessionId 参数） */
+  /** 当前 craft 会话 ID（用于查询 pi 会话树的子分支） */
   sessionId?: string
   /** 额外类名 */
   className?: string
 }
 
 /**
- * SubagentPanel —— subagent 活动会话面板。
+ * SubagentPanel —— pi 会话树子分支面板。
  *
- * 读取 ~/.pi/agent/extensions/subagent/supervisor/active-sessions.json，
- * 显示所有向 subagent supervisor 注册的 pi agent 进程。
- * 面板可折叠；仅在有活动会话时渲染。
+ * 通过 listChildSessions RPC 查询当前会话在 pi 会话树中派生的子分支
+ * （header.spawnedFrom === 当前会话的 pi session ID）。
+ * 面板可折叠；仅在有子分支时渲染。
  */
 export function SubagentPanel({ sessionId, className }: SubagentPanelProps) {
-  const [sessions, setSessions] = React.useState<SubagentActiveSession[]>([])
+  const [sessions, setSessions] = React.useState<PiChildSessionInfo[]>([])
   const [isLoading, setIsLoading] = React.useState(false)
   const [isOpen, setIsOpen] = React.useState(false)
-  const [piExtensionSettings, setPiExtensionSettings] = React.useState<PiExtensionSettings | null>(null)
-
-  React.useEffect(() => {
-    let disposed = false
-    window.electronAPI?.getPiExtensionSettings?.()
-      .then((settings) => {
-        if (!disposed) setPiExtensionSettings(settings)
-      })
-      .catch(() => {
-        if (!disposed) setPiExtensionSettings(null)
-      })
-    return () => {
-      disposed = true
-    }
-  }, [])
 
   const refresh = React.useCallback(async () => {
+    if (!sessionId) {
+      setSessions([])
+      return
+    }
     setIsLoading(true)
     try {
-      const loaded = await loadActiveSessions(piExtensionSettings)
-      // running 会话排在前面，其余按 updatedAt 倒序
-      loaded.sort((a, b) => {
-        if (a.status === 'running' && b.status !== 'running') return -1
-        if (a.status !== 'running' && b.status === 'running') return 1
-        return b.updatedAt.localeCompare(a.updatedAt)
-      })
-      setSessions(loaded)
+      const loaded = await window.electronAPI?.listChildSessions?.(sessionId) ?? []
+      // 按 modified 时间倒序（最近的分支在前）
+      const sorted = [...loaded].sort((a, b) => b.modified.localeCompare(a.modified))
+      setSessions(sorted)
     } catch {
       setSessions([])
     } finally {
       setIsLoading(false)
     }
-  }, [piExtensionSettings])
+  }, [sessionId])
 
   // 初次加载 + 每 5 秒轮询刷新
   React.useEffect(() => {
@@ -343,7 +258,7 @@ export function SubagentPanel({ sessionId, className }: SubagentPanelProps) {
 
   // 通过 extension_notify 事件触发即时刷新
   // subagent 扩展在会话状态变更时会通过 notify 发送通知，
-  // 收到来自 subagent 来源的通知后立即刷新会话列表。
+  // 收到通知后立即刷新子分支列表。
   React.useEffect(() => {
     const w = window as unknown as {
       electronAPI?: {
@@ -355,22 +270,15 @@ export function SubagentPanel({ sessionId, className }: SubagentPanelProps) {
 
     const unsubscribe = subscribe((event: ExtensionBridgeEvent) => {
       if (event.type !== 'extension_notify') return
-      const source = event.source ?? ''
-      if (source.startsWith('subagent')) {
-        refresh()
-      }
+      refresh()
     })
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
   }, [refresh])
 
-  // 无活动会话时不渲染面板
-  if (piExtensionSettings?.enabled === false ||
-      piExtensionSettings?.subagent.reviewEnabled === false ||
-      sessions.length === 0) return null
-
-  const runningCount = sessions.filter((s) => s.status === 'running').length
+  // 无子分支时不渲染面板
+  if (sessions.length === 0) return null
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className={cn('border-t border-border/60 bg-background/50', className)}>
@@ -387,7 +295,7 @@ export function SubagentPanel({ sessionId, className }: SubagentPanelProps) {
           )}
           <span className="text-foreground/80">Subagents</span>
           <span className="text-muted-foreground">
-            {runningCount > 0 ? `${runningCount} running` : `${sessions.length} idle`}
+            {sessions.length} {sessions.length === 1 ? 'branch' : 'branches'}
           </span>
           {isLoading && <Spinner className="text-[10px] text-muted-foreground" />}
           {/* 手动刷新按钮（阻止冒泡避免触发折叠） */}
@@ -413,15 +321,14 @@ export function SubagentPanel({ sessionId, className }: SubagentPanelProps) {
         </button>
       </CollapsibleTrigger>
 
-      {/* 会话列表 */}
+      {/* 子分支列表 */}
       <CollapsibleContent>
         <AnimatedCollapsibleContent isOpen={isOpen}>
           <div className="max-h-64 overflow-y-auto">
             {sessions.map((session) => (
               <SessionRow
-                key={session.id}
+                key={session.sessionId}
                 session={session}
-                sessionId={sessionId}
               />
             ))}
           </div>

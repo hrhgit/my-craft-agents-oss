@@ -84,7 +84,7 @@ describe('source_activated auto-retry', () => {
       createdAt: Date.now(),
     }
     const managed = createManagedSession(
-      { id, name: 'auto-retry test' },
+      { craftId: id, name: 'auto-retry test' },
       workspace as never,
       { messagesLoaded: true },
     )

@@ -9,30 +9,13 @@
  * that the new path does not, the legacy file is copied forward on construction.
  */
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  existsSync,
-  copyFileSync,
-} from 'node:fs'
-import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ChannelBinding, MessagingLogger, PlatformType } from './types'
+import type { ChannelBinding, MessagingLogger, PlatformType, RawBindingConfig } from './types'
 import { normalizeBindingConfig } from './types'
+import { JsonFileStore, NOOP_LOGGER } from './json-file-store'
 
-const NOOP_LOGGER: MessagingLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => NOOP_LOGGER,
-}
-
-export class BindingStore {
+export class BindingStore extends JsonFileStore<ChannelBinding[]> {
   private bindings: ChannelBinding[] = []
-  private readonly filePath: string
-  private readonly dirPath: string
-  private readonly log: MessagingLogger
   private changeListener?: () => void
 
   /**
@@ -41,9 +24,7 @@ export class BindingStore {
    *                    the new location does not, the file is copied forward once.
    */
   constructor(storageDir: string, legacyDir?: string, logger: MessagingLogger = NOOP_LOGGER) {
-    this.dirPath = storageDir
-    this.filePath = join(storageDir, 'bindings.json')
-    this.log = logger
+    super(storageDir, 'bindings.json', logger)
     this.migrateLegacy(legacyDir)
     this.load()
   }
@@ -93,7 +74,7 @@ export class BindingStore {
     platform: PlatformType,
     channelId: string,
     channelName?: string,
-    config?: Partial<ChannelBinding['config']>,
+    config?: RawBindingConfig,
     threadId?: number,
   ): ChannelBinding {
     // One channel → one session: evict any existing binding for the
@@ -142,9 +123,11 @@ export class BindingStore {
    * and breaks anything keyed on it (audit logs, deep links, stale UI
    * closures).
    */
-  updateBindingConfig(bindingId: string, patch: Partial<ChannelBinding['config']>): ChannelBinding | null {
+  updateBindingConfig(bindingId: string, patch: RawBindingConfig): ChannelBinding | null {
     const binding = this.bindings.find((b) => b.id === bindingId)
     if (!binding) return null
+    // binding.config is canonical BindingConfig (no legacy fields); merging with
+    // the raw patch is safe because normalizeBindingConfig strips legacy keys.
     binding.config = normalizeBindingConfig(binding.platform, {
       ...binding.config,
       ...patch,
@@ -217,67 +200,19 @@ export class BindingStore {
   // Persistence
   // -------------------------------------------------------------------------
 
-  private migrateLegacy(legacyDir?: string): void {
-    if (!legacyDir) return
-    const legacyFile = join(legacyDir, 'bindings.json')
-    if (existsSync(this.filePath)) return
-    if (!existsSync(legacyFile)) return
-    try {
-      if (!existsSync(this.dirPath)) {
-        mkdirSync(this.dirPath, { recursive: true })
-      }
-      copyFileSync(legacyFile, this.filePath)
-      this.log.info('bindings migrated from legacy location', {
-        event: 'bindings_migrated',
-        legacyFile,
-        filePath: this.filePath,
-      })
-    } catch (err) {
-      this.log.error('binding migration failed', {
-        event: 'bindings_migration_failed',
-        legacyFile,
-        filePath: this.filePath,
-        error: err,
-      })
-    }
-  }
-
   private load(): void {
-    try {
-      if (existsSync(this.filePath)) {
-        const raw = readFileSync(this.filePath, 'utf-8')
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed)) {
-          this.bindings = parsed.map(normalizeBinding)
-        }
-      }
-    } catch (err) {
-      this.log.error('failed to load bindings store; resetting to empty', {
-        event: 'bindings_load_failed',
-        filePath: this.filePath,
-        error: err,
-      })
+    const parsed = this.loadFile()
+    if (Array.isArray(parsed)) {
+      this.bindings = parsed.map(normalizeBinding)
+    } else {
       this.bindings = []
     }
   }
 
   private save(): void {
-    try {
-      if (!existsSync(this.dirPath)) {
-        mkdirSync(this.dirPath, { recursive: true })
-      }
-      writeFileSync(this.filePath, JSON.stringify(this.bindings, null, 2), 'utf-8')
-      // Fire the listener only after the write succeeds — otherwise the UI
-      // shows a "binding added" event for state that will disappear on
-      // restart.
-      this.changeListener?.()
-    } catch (err) {
-      this.log.error('failed to save bindings store', {
-        event: 'bindings_save_failed',
-        filePath: this.filePath,
-        error: err,
-      })
-    }
+    const ok = this.saveFile(this.bindings)
+    // 仅在写入成功后触发 listener——否则 UI 会显示重启后消失的幻影 binding。
+    if (ok) this.changeListener?.()
   }
 }
 
@@ -288,6 +223,12 @@ export class BindingStore {
 function normalizeBinding(raw: ChannelBinding): ChannelBinding {
   return {
     ...raw,
-    config: normalizeBindingConfig(raw.platform, raw.config ?? {}),
+    // Disk-persisted raw.config may still carry legacy `streamResponses`; cast
+    // through RawBindingConfig so normalizeBindingConfig strips it before the
+    // value reaches runtime code.
+    config: normalizeBindingConfig(
+      raw.platform,
+      (raw.config ?? {}) as unknown as RawBindingConfig,
+    ),
   }
 }

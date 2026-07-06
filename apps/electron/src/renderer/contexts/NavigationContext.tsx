@@ -39,7 +39,8 @@ import {
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useSession } from '@/hooks/useSession'
+import { useSessionSelectionStore } from '@/hooks/useSession'
+import { singleSelect } from '@/hooks/useMultiSelect'
 import {
   parseRoute,
   parseRouteToNavigationState,
@@ -83,6 +84,7 @@ import {
   updateFocusedPanelRouteAtom,
   parseSessionIdFromRoute,
 } from '@/atoms/panel-stack'
+import { isPiReadOnlySessionId } from '../../shared/pi-session-route'
 
 // Re-export routes for convenience
 export { routes }
@@ -161,7 +163,7 @@ export function NavigationProvider({
   remoteWorkspaceId,
 }: NavigationProviderProps) {
   const { t } = useTranslation()
-  const [, setSession] = useSession()
+  const { setState: setSession } = useSessionSelectionStore()
 
   // Read session metadata directly from atom (reactive to session changes)
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
@@ -510,7 +512,7 @@ export function NavigationProvider({
   // Keep the global session selection in sync with the focused panel
   useEffect(() => {
     if (isSessionsNavigation(navigationState) && navigationState.details) {
-      setSession({ selected: navigationState.details.sessionId })
+      setSession(singleSelect(navigationState.details.sessionId, -1))
       if (workspaceId) {
         // Only persist if the session belongs to this workspace (prevents cross-workspace
         // pollution during workspace switch, when workspaceId changed but navigationState
@@ -619,13 +621,16 @@ export function NavigationProvider({
 
       // Validate session exists in current workspace (local or remote ID)
       if (isSessionsNavigation(nextState) && nextState.details) {
-        const freshMetaMap = store.get(sessionMetaMapAtom)
-        const meta = freshMetaMap.get(nextState.details.sessionId)
-        const matchesWorkspace = !workspaceId
-          || meta?.workspaceId === workspaceId
-          || (remoteWorkspaceId && meta?.workspaceId === remoteWorkspaceId)
-        if (!meta || !matchesWorkspace) {
-          nextState = { ...nextState, details: null }
+        const isPiReadOnlySession = isPiReadOnlySessionId(nextState.details.sessionId)
+        if (!isPiReadOnlySession) {
+          const freshMetaMap = store.get(sessionMetaMapAtom)
+          const meta = freshMetaMap.get(nextState.details.sessionId)
+          const matchesWorkspace = !workspaceId
+            || meta?.workspaceId === workspaceId
+            || (remoteWorkspaceId && meta?.workspaceId === remoteWorkspaceId)
+          if (!meta || !matchesWorkspace) {
+            nextState = { ...nextState, details: null }
+          }
         }
       }
 
@@ -722,7 +727,6 @@ export function NavigationProvider({
             // Open the new session in a new panel using lane-aware routing (pushPanel auto-focuses it)
             pushPanel({
               route: routes.view.allSessions(session.id) as ViewRoute,
-              targetLaneId: options.targetLaneId,
               intent: 'explicit',
             })
           } else {
@@ -869,7 +873,6 @@ export function NavigationProvider({
       if (options?.newPanel) {
         pushPanel({
           route: route as ViewRoute,
-          targetLaneId: options.targetLaneId,
           intent: 'explicit',
         })
         return

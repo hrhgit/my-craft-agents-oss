@@ -34,6 +34,13 @@ export function validateSessionId(sessionId: string): void {
     throw new Error('Security Error: Invalid session ID - path traversal detected');
   }
 
+  // Explicitly reject `.` and `..`: basename() returns them unchanged, so they
+  // would otherwise pass the traversal check above. These are never valid
+  // session IDs and could resolve to unintended directories.
+  if (sanitized === '..' || sanitized === '.') {
+    throw new Error('Security Error: Invalid session ID - path traversal detected');
+  }
+
   // Check format matches expected pattern
   if (!SESSION_ID_PATTERN.test(sessionId)) {
     throw new Error('Security Error: Invalid session ID format');
@@ -51,7 +58,12 @@ export function sanitizeSessionId(sessionId: string): string {
   if (!sessionId || typeof sessionId !== 'string') {
     return '';
   }
-  return basename(sessionId);
+  const base = basename(sessionId);
+  // 拒绝路径遍历尝试：basename('..') === '..'，basename('.') === '.'
+  if (base === '..' || base === '.' || base === '') {
+    return '';
+  }
+  return base;
 }
 
 /**

@@ -12,11 +12,23 @@ export interface RequestContext {
 
 export type HandlerFn = (ctx: RequestContext, ...args: any[]) => Promise<any> | any
 
+export type WorkspaceAuthMethod = 'token' | 'cookie' | 'none'
+export type WorkspaceAuthorizationPhase = 'handshake' | 'reconnect' | 'switch'
+
+export interface WorkspaceAuthorizationRequest {
+  workspaceId: string | null
+  webContentsId: number | null
+  clientId?: string
+  token?: string
+  authMethod: WorkspaceAuthMethod
+  phase: WorkspaceAuthorizationPhase
+}
+
 export interface RpcServer {
   handle(channel: string, handler: HandlerFn): void
   push(channel: string, target: PushTarget, ...args: any[]): void
   invokeClient(clientId: string, channel: string, ...args: any[]): Promise<any>
-  updateClientWorkspace?(clientId: string, workspaceId: string): void
+  updateClientWorkspace?(clientId: string, workspaceId: string): Promise<void> | void
 
   /** Whether a connected client advertised the given capability on handshake. */
   hasClientCapability(clientId: string, capability: string): boolean

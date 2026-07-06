@@ -1,9 +1,10 @@
 /**
  * Unified fetch interceptor for all AI API requests (Anthropic + OpenAI format).
  *
- * Preferred path: loaded as a Pi fetchInterceptor module and passed to
- * createAgentSession({ fetchInterceptor }). Legacy preload/require auto-install
- * remains for compatibility only.
+ * Loaded as a Pi fetchInterceptor module and passed to
+ * createAgentSession({ fetchInterceptor }) via PI_HOST_HOOKS_MODULE_ENV.
+ * Legacy preload/require auto-install (globalThis.fetch assignment) has been
+ * removed — host must register the interceptor through Pi's public API.
  *
  * Features:
  * - Adds _intent and _displayName metadata to all tool schemas (request)

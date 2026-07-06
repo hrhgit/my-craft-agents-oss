@@ -310,7 +310,7 @@ For TLS connections (`wss://`), use `--tls-ca <path>` for self-signed certificat
 | `--api-key <key>` | — | API key (or `$LLM_API_KEY`, or provider-specific env var) |
 | `--base-url <url>` | — | Custom API endpoint for proxies or self-hosted models |
 
-The `run` command is fully self-contained — it spawns a headless server, creates a session, sends the prompt, streams the response, and exits. No separate server setup needed. An API key is resolved from `--api-key`, `$LLM_API_KEY`, or a provider-specific env var (e.g., `$ANTHROPIC_API_KEY`, `$OPENAI_API_KEY`).
+The `run` command is fully self-contained — it spawns a headless server, creates a session, sends the prompt, streams the response, and exits. No separate server setup needed. An API key is resolved from `--api-key`, `$LLM_API_KEY`, or a provider-specific env var (e.g., `$OPENAI_API_KEY`, `$GOOGLE_API_KEY`).
 
 ### Examples
 
@@ -362,7 +362,7 @@ craft-agent/
             ├── agent/         # CraftAgent, permissions
             ├── auth/          # OAuth, tokens
             ├── config/        # Storage, preferences, themes
-            ├── credentials/   # AES-256-GCM encrypted storage
+            ├── credentials/   # pi auth.json thin wrapper (plaintext, 0600)
             ├── sessions/      # Session persistence
             ├── sources/       # MCP, API, local sources
             └── statuses/      # Dynamic status system
@@ -454,7 +454,7 @@ Or simply tell the agent you want to connect Gmail/Calendar/Drive - it will guid
 
 #### Security Notes
 
-- Your OAuth credentials are stored encrypted alongside other source credentials
+- Credentials are stored in `~/.pi/agent/auth.json` under Craft's `craft.*` namespace. This file follows Pi CLI behavior: plaintext JSON with restrictive file permissions.
 - Never commit credentials to version control
 - For production use, consider getting your OAuth consent screen verified by Google
 
@@ -495,7 +495,6 @@ Configuration is stored at `~/.craft-agent/`:
 ```
 ~/.craft-agent/
 ├── config.json              # Main config (workspaces, LLM connections)
-├── credentials.enc          # Encrypted credentials (AES-256-GCM)
 ├── preferences.json         # User preferences
 ├── theme.json               # App-level theme
 └── workspaces/
@@ -503,11 +502,14 @@ Configuration is stored at `~/.craft-agent/`:
         ├── config.json      # Workspace settings
         ├── theme.json       # Workspace theme override
         ├── automations.json  # Event-driven automations
-        ├── sessions/        # Session data (JSONL)
         ├── sources/         # Connected sources
         ├── skills/          # Custom skills
         └── statuses/        # Status configuration
 ```
+
+Credentials are stored at `~/.pi/agent/auth.json`. Session data (JSONL) is stored at `~/.pi/agent/sessions/`.
+
+Legacy `~/.craft-agent/credentials.enc` files are not silently imported into `auth.json`; upgrade migration backs up and clears the old path. Re-enter API keys or re-authenticate OAuth connections after upgrading from a pre-unification build.
 
 ### Automations
 
@@ -580,7 +582,7 @@ craftagents://action/new-chat                  # Create new session
 | Desktop | [Electron](https://www.electronjs.org/) + React |
 | UI | [shadcn/ui](https://ui.shadcn.com/) + Tailwind CSS v4 |
 | Build | esbuild (main) + Vite (renderer) |
-| Credentials | AES-256-GCM encrypted file storage |
+| Credentials | pi auth.json (~/.pi/agent/auth.json, plaintext JSON, 0600 permissions) |
 
 ## Troubleshooting
 

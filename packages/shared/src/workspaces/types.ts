@@ -1,14 +1,13 @@
 /**
  * Workspace Types
  *
- * Workspaces are the top-level organizational unit. Everything (sources, sessions)
- * is scoped to a workspace.
+ * Workspaces are the top-level organizational unit. Sources are scoped
+ * to a workspace; sessions are stored at ~/.pi/agent/sessions/.
  *
  * Directory structure:
  * ~/.craft-agent/workspaces/{slug}/
  *   ├── config.json      - Workspace settings
- *   ├── sources/         - Data sources (MCP, API, local)
- *   └── sessions/        - Conversation sessions
+ *   └── sources/         - Data sources (MCP, API, local)
  */
 
 import type { PermissionMode } from '../agent/mode-manager.ts';

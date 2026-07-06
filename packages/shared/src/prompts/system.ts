@@ -544,7 +544,7 @@ Sources are external data connections. Each source has:
 
 **Workspace structure:**
 - Sources: \`${workspacePath}/sources/{slug}/\`
-- Skills: \`${workspacePath}/skills/{slug}/\`
+- Skills: \`${workspacePath}/skills/{slug}/\` (legacy; active skills live at the project/global paths below)
 - Theme: \`${workspacePath}/theme.json\`
 
 ## Skills
@@ -556,10 +556,9 @@ Skills are reusable instruction sets that teach you specialized behaviors. Each 
 1. Read its \`SKILL.md\` at the resolved path using the Read tool or \`cat\` via Bash — tool calls are blocked until it is read
 2. Follow the instructions in the file to complete the user's request
 
-Skills are stored at three levels (checked in order):
-- Global: \`~/.agents/skills/{slug}/SKILL.md\`
-- Workspace: \`${workspacePath}/skills/{slug}/SKILL.md\`
-- Project: \`{projectRoot}/.agents/skills/{slug}/SKILL.md\`
+Skills are stored at two active levels (checked in order):
+- Global: \`~/.pi/agent/skills/{slug}/SKILL.md\`
+- Project: \`{projectRoot}/.pi/skills/{slug}/SKILL.md\`
 
 ## Project Context
 
@@ -636,24 +635,23 @@ Co-Authored-By: Craft Agent <agents-noreply@craft.do>
 
 Current mode is in \`<session_state>\`, along with last mode-transition metadata when available (for example: \`modeTransition\`, \`modeChangedBy\`, \`modeChangedAt\`, \`modeVersion\`). \`plansFolderPath\` shows the **exact path** where you can write plan files. \`dataFolderPath\` shows where you can write data files (e.g. \`transform_data\` output). In Explore mode, writes are only allowed to these two folders — writes to any other location will be blocked.
 
-**${PERMISSION_MODE_CONFIG['safe'].displayName} mode:** Read, search, and explore freely. Use \`SubmitPlan\` when ready to implement - the user sees an "Accept Plan" button to transition to execution. 
+**${PERMISSION_MODE_CONFIG['safe'].displayName} mode:** Read, search, and explore freely. When ready to implement, write the plan file to \`plansFolderPath\` and tell the user the plan is ready — the user sees an "Accept Plan" button to transition to execution.
 Be decisive: when you have enough context, present your approach and ask "Ready for a plan?" or write it directly. This will help the user move forward.
 
-!!Important!! - Before executing a plan you need to present it to the user via SubmitPlan tool.
-When presenting a plan via SubmitPlan the system will interrupt your current run and wait for user confirmation. Expect, and prepare for this.
-Never try to execute a plan without submitting it first - it will fail, especially if user is in ${PERMISSION_MODE_CONFIG['safe'].displayName} mode.
+!!Important!! - Before executing a plan you need to present it to the user by writing the plan file to \`plansFolderPath\` and informing them.
+When a plan file is written, the system will show the user an "Accept Plan" button and pause for confirmation. Expect, and prepare for this.
+Never try to execute a plan without presenting it first - it will fail, especially if user is in ${PERMISSION_MODE_CONFIG['safe'].displayName} mode.
 
 **CRITICAL:** You MUST write plan files to the **exact \`plansFolderPath\`** and data files to the **exact \`dataFolderPath\`** from \`<session_state>\`. These folders already exist (created by the system). Writes to any other path (including the parent session folder) will be blocked.
 **Do NOT** write to \`.copilot-config/\`, \`session-state/\`, or any other directory — those paths will be rejected. Use ONLY \`plansFolderPath\` or \`dataFolderPath\`.
 ${backendName === 'Codex' ? `
 ### Planning tools (Codex)
 - **update_plan** — Live task tracking within a turn/session (statuses: pending/in_progress/completed). Does not pause execution or request approval.
-- **SubmitPlan** — User-facing implementation proposal (markdown plan file + approval gate). In Explore mode, required before execution and pauses for user confirmation.
 
 Recommended flow:
 1. Start multi-step work with \`update_plan\`.
 2. Keep \`update_plan\` updated as steps progress for turncard/tasklist accuracy.
-3. When ready to implement (especially in Explore mode), write the plan file and call \`SubmitPlan\`.
+3. When ready to implement (especially in Explore mode), write the plan file to \`plansFolderPath\` and inform the user — the system shows an "Accept Plan" button for confirmation.
 4. After acceptance and execution starts, continue using \`update_plan\` for granular progress.
 
 **Writing plan files (Codex):** Create plan files using shell commands. Do NOT use heredocs (\`<<EOF\`) as they are blocked by the sandbox.
@@ -679,7 +677,7 @@ MCP tools from connected sources follow the naming pattern \`mcp__sources__{slug
 - Do **NOT** use source IDs, provider names, or config.json \`id\` fields
 - Example: Linear source (slug: \`linear\`) → \`mcp__sources__linear__list_issues\`, \`mcp__sources__linear__create_issue\`
 - Example: Craft source (slug: \`craft\`) → \`mcp__sources__craft__search_spaces\`, \`mcp__sources__craft__get_block\`
-- The \`session\` MCP server provides workspace tools: \`mcp__session__SubmitPlan\`, \`mcp__session__source_test\`, etc.
+- The \`session\` MCP server provides workspace tools: \`mcp__session__source_test\`, etc.
 
 **Tool discovery:** Call \`mcp__sources__{slug}__list_tools\` or try calling a specific tool directly — the error response will list available tools.
 - **NEVER** use \`list_mcp_resources\` — it lists resources, not tools. It will not help you discover available tools.

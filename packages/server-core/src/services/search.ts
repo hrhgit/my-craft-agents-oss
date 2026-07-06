@@ -8,6 +8,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { existsSync } from 'fs';
 import { resolveBackendHostTooling } from '@craft-agent/shared/agent/backend';
+import { escapeRegExp as escapeRegex } from '@craft-agent/shared/utils/files';
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '../runtime/platform';
 
 /**
@@ -21,7 +22,15 @@ export class SearchUnavailableError extends Error {
   }
 }
 
-// Track current search process to cancel on new search
+// Track current search process to cancel on new search.
+//
+// DESIGN: Single-search-at-a-time policy. This is a module-level singleton,
+// which means concurrent searches from multiple clients will interfere — a
+// later search kills the previous search's ripgrep process. For the current
+// single-client UX (user types in a search box), this is the intended
+// "new query cancels old query" behavior. The cancelled search's Promise
+// resolves via its 'close' handler with whatever partial results (or [])
+// were collected, so callers never hang.
 let currentSearchProcess: ChildProcess | null = null;
 
 // Module-level platform ref — set once during init via setSearchPlatform()
@@ -92,13 +101,6 @@ function getRipgrepPath(): string | undefined {
     },
   });
   return ripgrepPath;
-}
-
-/**
- * Escape special regex characters in a string
- */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -186,7 +188,7 @@ function extractSnippetFast(rawLine: string, matchText: string, maxLength = 150)
  */
 export async function searchSessions(
   query: string,
-  sessionsDir: string,
+  sessionRoots: string | string[],
   options: SearchOptions = {}
 ): Promise<SessionSearchResult[]> {
   const {
@@ -211,9 +213,11 @@ export async function searchSessions(
     throw new SearchUnavailableError(`ripgrep binary not found: ${rgPath ?? 'undefined'}`);
   }
 
-  handlerLog.debug('[search] Sessions directory:', sessionsDir);
-  if (!existsSync(sessionsDir)) {
-    handlerLog.warn('[search] Sessions directory not found:', sessionsDir);
+  const searchTargets = Array.isArray(sessionRoots) ? sessionRoots : [sessionRoots];
+  const existingTargets = searchTargets.filter(target => existsSync(target));
+  handlerLog.debug('[search] Sessions targets:', existingTargets);
+  if (existingTargets.length === 0) {
+    handlerLog.warn('[search] No searchable session targets found');
     return [];
   }
 
@@ -225,7 +229,7 @@ export async function searchSessions(
     const args = [
       '--json',           // JSON output format (NDJSON)
       '--max-count', '10', // Limit matches per file to prevent huge results
-      '-g', '**/session.jsonl', // Only search session.jsonl files
+      '-g', '**/*.jsonl', // Match legacy {id}/session.jsonl and Pi flat {ts}_{id}.jsonl
     ];
 
     if (ignoreCase) {
@@ -241,9 +245,12 @@ export async function searchSessions(
     // adding type, so "type" can appear anywhere in the JSON line, not just after "id".
     const escapedQuery = escapeRegex(query);
     args.push('-e', `"type":"(user|assistant)".*${escapedQuery}|${escapedQuery}.*"type":"(user|assistant)"`);
-    args.push(sessionsDir);
+    args.push(...existingTargets);
 
-    // Cancel previous search if still running (user typed new query)
+    // Cancel previous search if still running. Per the single-search-at-a-time
+    // policy (see currentSearchProcess declaration), the previous search's
+    // Promise resolves with partial results via its 'close' handler — that
+    // is the accepted cancellation signal, not a silent failure.
     if (currentSearchProcess) {
       // Platform-aware termination (SIGTERM doesn't exist on Windows)
       if (process.platform === 'win32') {
@@ -291,12 +298,23 @@ export async function searchSessions(
           const filePath = data.path?.text;
           if (!filePath) continue;
 
-          // Extract session ID from path: .../sessions/{sessionId}/session.jsonl
+          // Extract session ID from path. Two formats:
+          //   Legacy:  .../sessions/{sessionId}/session.jsonl
+          //   Pi flat: .../sessions/{timestamp}_{sessionId}.jsonl
           const pathParts = filePath.split(/[/\\]/);
           const jsonlIndex = pathParts.findIndex((p: string) => p === 'session.jsonl');
-          if (jsonlIndex < 1) continue;
-
-          const sessionId = pathParts[jsonlIndex - 1];
+          let sessionId: string;
+          if (jsonlIndex >= 1) {
+            // Legacy subdirectory format
+            sessionId = pathParts[jsonlIndex - 1];
+          } else {
+            // Pi flat format: {timestamp}_{sessionId}.jsonl. The fileTimestamp
+            // (ISO date with :/. → -) contains no "_", so the first underscore
+            // separates the timestamp from the session id.
+            const withoutExt = pathParts[pathParts.length - 1].replace(/\.jsonl$/, '');
+            const firstUnderscore = withoutExt.indexOf('_');
+            sessionId = firstUnderscore >= 0 ? withoutExt.slice(firstUnderscore + 1) : withoutExt;
+          }
           if (!sessionId) continue;
 
           // Skip header line (line 1)

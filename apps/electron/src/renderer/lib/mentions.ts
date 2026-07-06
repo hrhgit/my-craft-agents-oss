@@ -11,20 +11,12 @@
 import type { ContentBadge } from '@craft-agent/core'
 import type { MentionItemType } from '@/components/ui/mention-menu'
 import type { LoadedSkill, LoadedSource } from '../../shared/types'
-import { AGENTS_PLUGIN_NAME } from '@craft-agent/shared/skills/types'
-import { getSourceIconSync, getSkillIconSync } from './icon-cache'
+import { getEntityIconSync } from './icon-cache'
 
 // Import and re-export parsing functions from shared (pure string operations, no renderer deps)
-import { parseMentions, stripAllMentions, resolveSkillMentions, resolveSourceMentions, type ParsedMentions } from '@craft-agent/shared/mentions'
-export { parseMentions, stripAllMentions, resolveSkillMentions, resolveSourceMentions, type ParsedMentions }
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-// Workspace ID character class for regex: word chars, spaces (NOT newlines), hyphens, dots
-// Using literal space instead of \s to avoid matching newlines which would break parsing
-const WS_ID_CHARS = '[\\w .-]'
+import { parseMentions, resolveSkillMentions, resolveSourceMentions, WS_ID_CHARS, type ParsedMentions } from '@craft-agent/shared/mentions'
+import { escapeRegExp } from '@craft-agent/shared/utils/files'
+export { parseMentions, resolveSkillMentions, resolveSourceMentions, type ParsedMentions }
 
 // ============================================================================
 // Types
@@ -163,28 +155,6 @@ export function hasMentions(
 }
 
 // ============================================================================
-// Legacy compatibility - parseSkillMentions
-// ============================================================================
-
-/**
- * Extract valid [skill:...] mentions from message text (legacy API)
- *
- * @deprecated Use parseMentions() instead
- */
-export function parseSkillMentions(text: string, availableSlugs: string[]): string[] {
-  return parseMentions(text, availableSlugs, []).skills
-}
-
-/**
- * Remove [bracket] mentions from message text (legacy API)
- *
- * @deprecated Use stripAllMentions() instead
- */
-export function stripSkillMentions(text: string): string {
-  return stripAllMentions(text)
-}
-
-// ============================================================================
 // Badge Extraction
 // ============================================================================
 
@@ -224,13 +194,13 @@ export function extractBadges(
       label = skill?.metadata.name || match.id
 
       // Get cached icon as data URL (preserves mime type for SVG, PNG, etc.)
-      iconDataUrl = getSkillIconSync(workspaceId, match.id) ?? undefined
+      iconDataUrl = getEntityIconSync({ entityType: 'skill', workspaceId, identifier: match.id }) ?? undefined
     } else if (match.type === 'source') {
       const source = sourcesBySlug.get(match.id)
       label = source?.config.name || match.id
 
       // Get cached icon as data URL (preserves mime type for SVG, PNG, etc.)
-      iconDataUrl = getSourceIconSync(workspaceId, match.id) ?? undefined
+      iconDataUrl = getEntityIconSync({ entityType: 'source', workspaceId, identifier: match.id }) ?? undefined
     } else if (match.type === 'file') {
       // Show filename as label, full relative path stored for tooltip
       label = match.id.split('/').pop() || match.id
@@ -241,14 +211,11 @@ export function extractBadges(
       filePath = match.id
     }
 
-    // For skills, create fully-qualified rawText (pluginName:slug) so the agent
-    // receives the correct format for the SDK's Skill tool. Plugin name depends
-    // on which tier the skill came from: workspace → workspaceId, project/global → AGENTS_PLUGIN_NAME
+    // For skills, preserve the shared mention grammar so parsing, title
+    // cleanup, and badge reconstruction stay in sync.
     let rawText = match.fullMatch
     if (match.type === 'skill') {
-      const skill = skillsBySlug.get(match.id)
-      const pluginName = skill?.source === 'workspace' ? workspaceId : AGENTS_PLUGIN_NAME
-      rawText = `[skill:${pluginName}:${match.id}]`
+      rawText = workspaceId ? `[skill:${workspaceId}:${match.id}]` : `[skill:${match.id}]`
     }
 
     return {
@@ -261,12 +228,4 @@ export function extractBadges(
       end: match.startIndex + match.fullMatch.length,
     }
   })
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

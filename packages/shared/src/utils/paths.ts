@@ -6,8 +6,8 @@
  */
 
 import { homedir } from 'os';
-import { resolve, join, normalize, isAbsolute } from 'path';
-import { existsSync } from 'fs';
+import { resolve, join, normalize, isAbsolute, relative, dirname } from 'path';
+import { existsSync, realpathSync } from 'fs';
 
 /**
  * Expand path variables (~, ${HOME}, $HOME) to absolute paths.
@@ -88,26 +88,6 @@ export function toPortablePath(absolutePath: string): string {
 
   // Path is outside home directory, keep as absolute
   return normalized;
-}
-
-/**
- * Check if a path contains unexpanded variables.
- */
-export function hasPathVariables(path: string): boolean {
-  if (!path) return false;
-  return (
-    path.startsWith('~') ||
-    path.includes('${HOME}') ||
-    path.includes('$HOME/')
-  );
-}
-
-/**
- * Check if a path is already portable (has ~ prefix or is relative).
- */
-export function isPortablePath(path: string): boolean {
-  if (!path) return false;
-  return path.startsWith('~') || path.startsWith('./') || !isAbsolute(path);
 }
 
 // ============================================================
@@ -214,4 +194,80 @@ export function getBundledAssetsDir(subfolder: string): string | undefined {
     join(process.cwd(), 'dist', 'resources', subfolder),
   ];
   return candidates.find(p => existsSync(p));
+}
+
+// ============================================================
+// Path Containment / Security
+// ============================================================
+
+/**
+ * Expand ~ to home directory.
+ */
+export function expandHome(path: string): string {
+  if (path.startsWith('~/') || path === '~') {
+    return path.replace(/^~/, homedir());
+  }
+  return path;
+}
+
+/**
+ * Normalize a path for cross-platform comparison.
+ * - Resolve to absolute
+ * - Convert backslashes to forward slashes
+ * - Lowercase on Windows
+ */
+export function normalizeForComparison(path: string): string {
+  const normalized = resolve(path).replace(/\\/g, '/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/**
+ * Check if `target` is inside `base` (or exactly equal to it).
+ * Uses path.relative semantics to avoid sibling-prefix bypasses.
+ */
+export function isWithin(base: string, target: string): boolean {
+  const normalizedBase = normalizeForComparison(base);
+  const normalizedTarget = normalizeForComparison(target);
+  const rel = relative(normalizedBase, normalizedTarget);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/**
+ * Check whether targetPath is inside baseDir (or exactly equal to it).
+ *
+ * Uses path.relative semantics to avoid sibling-prefix bypasses and then
+ * re-validates using real paths to prevent symlink escapes. For non-existent
+ * target paths, validates using the nearest existing ancestor's real path.
+ */
+export function isPathWithinDirectory(targetPath: string, baseDir: string): boolean {
+  const expandedTarget = expandHome(targetPath);
+  const expandedBase = expandHome(baseDir);
+
+  const resolvedTarget = resolve(expandedTarget);
+  const resolvedBase = resolve(expandedBase);
+  if (!isWithin(resolvedBase, resolvedTarget)) {
+    return false;
+  }
+
+  const realBase = existsSync(resolvedBase) ? realpathSync.native(resolvedBase) : resolvedBase;
+
+  if (existsSync(resolvedTarget)) {
+    const realTarget = realpathSync.native(resolvedTarget);
+    return isWithin(realBase, realTarget);
+  }
+
+  // Target may be a new file path. Validate using nearest existing ancestor
+  // to prevent symlink escapes while still allowing legitimate new files.
+  let current = dirname(resolvedTarget);
+  while (true) {
+    if (existsSync(current)) {
+      const realCurrent = realpathSync.native(current);
+      return isWithin(realBase, realCurrent);
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return false;
+    }
+    current = parent;
+  }
 }

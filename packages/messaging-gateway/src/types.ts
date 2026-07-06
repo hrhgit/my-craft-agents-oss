@@ -257,15 +257,28 @@ export type ResponseMode = 'streaming' | 'progress' | 'final_only'
  */
 export type BindingAccessMode = 'inherit' | 'allow-list' | 'open'
 
+/**
+ * Persisted/输入边界接受的原始形状，包含 legacy 字段。
+ * 从磁盘加载或用户输入时使用此类型。normalizeBindingConfig 会将其转换为 canonical BindingConfig。
+ */
+export type RawBindingConfig = {
+  responseMode?: ResponseMode
+  /** @deprecated legacy only — 由 normalizeBindingConfig 转换为 responseMode */
+  streamResponses?: boolean
+  showToolActivity?: boolean
+  approvalChannel?: 'chat' | 'app'
+  editIntervalMs?: number
+  accessMode?: BindingAccessMode
+  allowedSenderIds?: string[]
+}
+
+/**
+ * Runtime canonical 形状，无 legacy 字段。
+ * 所有 runtime 代码（renderer、processor、UI）只使用此类型。
+ */
 export interface BindingConfig {
   /** How outbound agent output is rendered. Default: 'progress' */
   responseMode: ResponseMode
-  /**
-   * @deprecated Use `responseMode` instead. Retained so persisted configs
-   * written by older versions keep validating; the renderer ignores this
-   * field when `responseMode` is present.
-   */
-  streamResponses: boolean
   /** Show compact tool activity summaries. Default: false */
   showToolActivity: boolean
   /** WHERE approval happens (not WHETHER — session mode is authoritative). */
@@ -290,7 +303,6 @@ export interface BindingConfig {
 
 export const DEFAULT_BINDING_CONFIG: BindingConfig = {
   responseMode: 'progress',
-  streamResponses: true,
   showToolActivity: false,
   approvalChannel: 'chat',
   editIntervalMs: 3500,
@@ -307,7 +319,7 @@ export function getDefaultBindingConfig(platform: PlatformType): BindingConfig {
 
 export function normalizeBindingConfig(
   platform: PlatformType,
-  config?: Partial<BindingConfig>,
+  config?: RawBindingConfig,
 ): BindingConfig {
   const base = getDefaultBindingConfig(platform)
   const resolvedResponseMode: ResponseMode =
@@ -324,9 +336,12 @@ export function normalizeBindingConfig(
     ? [...config!.allowedSenderIds]
     : []
 
+  // Strip legacy streamResponses so it never enters the runtime BindingConfig
+  const { streamResponses: _legacyStreamResponses, ...rest } = config ?? {}
+
   return {
     ...base,
-    ...config,
+    ...rest,
     responseMode: resolvedResponseMode,
     approvalChannel: platform === 'whatsapp' ? 'app' : (config?.approvalChannel ?? base.approvalChannel),
     accessMode,

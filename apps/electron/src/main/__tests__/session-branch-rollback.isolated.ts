@@ -10,11 +10,12 @@ const workspace = {
 let idCounter = 0
 const storedById = new Map<string, any>()
 const deletedIds: string[] = []
-let mockedProvider: 'anthropic' | 'pi' = 'anthropic'
 
 // Partial-mock baseline: import real modules via file paths (avoids recursive mock imports)
 const actualSharedAgentModule = await import('../../../../../packages/shared/src/agent/index.ts')
 const actualSharedAgentBackendModule = await import('../../../../../packages/shared/src/agent/backend/index.ts')
+// 真实的 SESSION_PERSISTENT_FIELDS 和 pickSessionFields，避免 mock 字段列表与实际不同步
+const actualSessionUtils = await import('../../../../../packages/shared/src/sessions/utils.ts')
 
 mock.module('electron', () => ({
   app: {
@@ -67,7 +68,6 @@ mock.module('@craft-agent/shared/config', () => ({
   }),
   getLlmConnection: () => null,
   getDefaultLlmConnection: () => null,
-  resolveAuthEnvVars: () => ({}),
   getToolIconsDir: () => '/tmp/tool-icons',
   getMiniModel: () => 'claude-haiku-4-5-20251001',
   getDefaultThinkingLevel: () => 'medium',
@@ -76,7 +76,6 @@ mock.module('@craft-agent/shared/config', () => ({
     start() {}
     stop() {}
   },
-  migrateLegacyCredentials: async () => {},
   migrateLegacyLlmConnectionsConfig: async () => {},
   migrateOrphanedDefaultConnections: async () => {},
   MODEL_REGISTRY: [],
@@ -106,7 +105,6 @@ mock.module('@craft-agent/shared/config', () => ({
   setDefaultLlmConnection: async () => {},
   touchLlmConnection: async () => {},
   isCompatProvider: () => false,
-  isAnthropicProvider: () => true,
 }))
 
 mock.module('@craft-agent/shared/workspaces', () => ({
@@ -142,15 +140,15 @@ mock.module('@craft-agent/shared/agent/backend', () => ({
     throw new Error('not used in this test')
   },
   resolveBackendContext: () => ({
-    provider: mockedProvider,
-    resolvedModel: mockedProvider === 'anthropic' ? 'claude-sonnet-4-20250514' : 'pi/gpt-5',
-    connection: { providerType: mockedProvider === 'anthropic' ? 'anthropic' : 'pi' },
+    provider: 'pi',
+    resolvedModel: 'pi/gpt-5',
+    connection: { providerType: 'pi' as const },
   }),
   createBackendFromResolvedContext: () => {
     throw new Error('not used in this test')
   },
   cleanupSourceRuntimeArtifacts: async () => {},
-  providerTypeToAgentProvider: () => 'anthropic',
+  AGENT_PROVIDER: 'pi' as const,
   fetchBackendModels: async () => ({ models: [] }),
   initializeBackendHostRuntime: () => {},
   resolveBackendHostTooling: () => ({
@@ -202,13 +200,17 @@ mock.module('@craft-agent/shared/sessions', () => ({
   listSessions: () => [],
   loadSession: (_root: string, id: string) => storedById.get(id) ?? null,
   saveSession: async (session: any) => {
-    storedById.set(session.id, session)
+    // 兼容新格式（craftId）与旧格式（id）
+    const key = session.craftId ?? session.id
+    storedById.set(key, session)
   },
   createSession: async (_root: string, opts: any) => {
     const id = `child-${++idCounter}`
     const now = Date.now()
     const session = {
+      // 新格式用 craftId，旧测试逻辑用 id。两者设为同值以兼容。
       id,
+      craftId: id,
       name: opts?.name ?? null,
       messages: [],
       permissionMode: opts?.permissionMode ?? 'ask',
@@ -238,23 +240,8 @@ mock.module('@craft-agent/shared/sessions', () => ({
   getSessionPath: (_root: string, id: string) => `${workspaceRootPath}/sessions/${id}`,
   getOrCreateLatestSession: async () => null,
   sessionPersistenceQueue: { flush: async () => {} },
-  pickSessionFields: (s: any) => {
-    // Must match SESSION_PERSISTENT_FIELDS to prevent contamination of persistence tests
-    const fields = [
-      'id','workspaceRootPath','sdkSessionId','sdkCwd',
-      'createdAt','lastUsedAt','lastMessageAt',
-      'name','isFlagged','sessionStatus','labels','hidden',
-      'lastReadMessageId','hasUnread',
-      'enabledSourceSlugs','permissionMode','previousPermissionMode','workingDirectory',
-      'model','llmConnection','connectionLocked','thinkingLevel',
-      'sharedUrl','sharedId','pendingPlanExecution',
-      'isArchived','archivedAt',
-      'branchFromMessageId','branchFromSdkSessionId','branchFromSessionPath',
-    ]
-    const result: Record<string, unknown> = {}
-    for (const f of fields) if (f in s) result[f] = (s as Record<string, unknown>)[f]
-    return result
-  },
+  // 使用真实实现，避免手工维护字段列表与 SESSION_PERSISTENT_FIELDS 不同步
+  pickSessionFields: actualSessionUtils.pickSessionFields,
   validateSessionId: () => true,
 }))
 
@@ -262,7 +249,6 @@ const { SessionManager } = await import('@craft-agent/server-core/sessions')
 
 describe('session branch rollback on preflight failure', () => {
   beforeEach(() => {
-    mockedProvider = 'anthropic'
     idCounter = 0
     storedById.clear()
     deletedIds.length = 0
@@ -336,7 +322,6 @@ describe('session branch rollback on preflight failure', () => {
   })
 
   it('runs backend preflight for pi branches and rolls back on failure', async () => {
-    mockedProvider = 'pi'
 
     const manager = new SessionManager()
     let getOrCreateAgentCalled = false

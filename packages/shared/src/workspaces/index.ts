@@ -19,8 +19,10 @@ export {
   ensureDefaultWorkspacesDir,
   getWorkspacePath,
   getWorkspaceSourcesPath,
-  getWorkspaceSessionsPath,
   getWorkspaceSkillsPath,
+  // Session view aggregation ()
+  countSessionsByCwd,
+  getWorkspacePiSessionsDir,
   // Config operations
   loadWorkspaceConfig,
   saveWorkspaceConfig,

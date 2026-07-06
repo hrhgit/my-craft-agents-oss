@@ -11,7 +11,7 @@
 import i18n from 'i18next'
 import { toast } from 'sonner'
 import { openExternalUrl } from '@craft-agent/ui'
-import { WsRpcClient } from '../../../electron/src/transport/client'
+import { WsRpcClient } from '@craft-agent/server-core/transport'
 import { buildClientApi } from '../../../electron/src/transport/build-api'
 import { CHANNEL_MAP } from '../../../electron/src/transport/channel-map'
 import type { ElectronAPI, TransportConnectionState } from '../../../electron/src/shared/types'
@@ -152,6 +152,10 @@ export function createWebApi(options: WebApiOptions): {
       // Open in new tab
       window.open(`${window.location.origin}/?session=${sessionId}`, '_blank')
     },
+    openChildSessionWindow: async (sessionId: string) => {
+      // Web fallback: open in a new browser tab
+      window.open(`${window.location.origin}/?session=${sessionId}`, '_blank')
+    },
 
     // Auto-update — not applicable to web (but expose server version for About page)
     checkForUpdates: () => Promise.resolve({ available: false, currentVersion: client.getServerVersion() ?? '' } as any),
@@ -213,7 +217,6 @@ export function createWebApi(options: WebApiOptions): {
     openSkillInFinder: () => Promise.resolve(),
 
     // Confirmation dialogs — use browser confirm()
-    showLogoutConfirmation: () => Promise.resolve(window.confirm(i18n.t('dialog.logoutConfirmation'))),
     showDeleteSessionConfirmation: (name: string) => Promise.resolve(window.confirm(i18n.t('dialog.deleteSessionConfirmation', { name }))),
 
     // Power settings — not applicable
@@ -295,13 +298,6 @@ export function createWebApi(options: WebApiOptions): {
       }
     },
 
-    // ChatGPT OAuth — requires localhost callback server, not possible in browser
-    startChatGptOAuth: async () => {
-      return {
-        success: false,
-        error: i18n.t('errors.chatGptOAuthNotAvailable'),
-      }
-    },
   }
 
   const api = { ...baseApi, ...webOverrides, ...oauthOverrides } as ElectronAPI

@@ -3,7 +3,7 @@
  *
  * Spins up a real WsRpcServer + WsRpcClient and verifies that:
  * 1. Handler-thrown `CodedError` values surface on the receiver with `err.code`
- *    set to the original ErrorCode string.
+ *    set to the original TransportErrorCode string.
  * 2. `instanceof CodedError` does NOT hold on the receiver (the transport
  *    reconstructs a plain Error; class identity is lost across the wire).
  * 3. `hasClientCapability` / `findClientsWithCapability` reflect the handshake.

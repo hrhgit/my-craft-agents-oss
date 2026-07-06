@@ -95,7 +95,7 @@ function createMockServer(opts?: MockServerOptions): MockServer {
               result = { ok: true }
               break
             case 'settings:setupLlmConnection':
-              result = { ok: true }
+              result = { success: true }
               break
             case 'LLM_Connection:setDefault':
               result = { ok: true }
@@ -382,7 +382,8 @@ describe('run command', () => {
     await client.invoke('LLM_Connection:save', {
       slug: 'anthropic-api',
       name: 'Anthropic',
-      providerType: 'anthropic',
+      providerType: 'pi',
+      piAuthProvider: 'anthropic',
       authType: 'api_key',
       createdAt: 123,
     })

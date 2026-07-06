@@ -28,7 +28,7 @@ export abstract class BaseEventAdapter {
   protected turnIndex: number = 0;
   protected currentTurnId: string | null = null;
 
-  /** Session directory for toolMetadataStore lookups (concurrent-session safe) */
+  /** Session directory retained for compatibility with older metadata fallbacks. */
   protected sessionDir: string | undefined;
 
   // Shared state maps used by subclass event adapters
@@ -41,7 +41,7 @@ export abstract class BaseEventAdapter {
   }
 
   /**
-   * Set the session directory for concurrent-safe toolMetadataStore lookups.
+   * Set the session directory for compatibility with older tool metadata callers.
    * Called by the agent after creating the adapter.
    */
   setSessionDir(dir: string): void {

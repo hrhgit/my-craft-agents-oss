@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { handleMermaidValidate } from './mermaid-validate.ts';
+import { getResultText } from '../types.ts';
 
 function parseResult(result: Awaited<ReturnType<typeof handleMermaidValidate>>) {
-  return JSON.parse(result.content[0]!.text) as { valid: boolean; message?: string; error?: string };
+  return JSON.parse(getResultText(result)) as { valid: boolean; message?: string; error?: string };
 }
 
 describe('handleMermaidValidate', () => {

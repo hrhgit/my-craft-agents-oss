@@ -12,10 +12,8 @@
 
 /// <reference path="../types/incr-regex-package.d.ts" />
 
-import { homedir } from 'os';
-import { existsSync, realpathSync } from 'fs';
 import { debug } from '../utils/debug.ts';
-import { dirname, isAbsolute, relative, resolve } from 'path';
+import { expandHome, normalizeForComparison, isPathWithinDirectory } from '../utils/paths.ts';
 import { getSessionSafeAllowedToolNames } from '@craft-agent/session-tools-core';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { isBrowserToolNameOrAlias } from './browser-tool-names.ts';
@@ -113,16 +111,6 @@ export interface ModeCallbacks {
 // ============================================================
 
 /**
- * Expand ~ to home directory
- */
-function expandHome(path: string): string {
-  if (path.startsWith('~/') || path === '~') {
-    return path.replace(/^~/, homedir());
-  }
-  return path;
-}
-
-/**
  * Convert a simple glob pattern to a regex
  * Supports: ** (recursive), * (single segment), ? (single char)
  */
@@ -160,63 +148,6 @@ function matchesAllowedWritePath(filePath: string, allowedPaths: string[]): bool
     }
   }
   return false;
-}
-
-/**
- * Normalize a path for cross-platform comparison.
- * - Resolve to absolute path
- * - Convert backslashes to forward slashes
- * - Lowercase on Windows for case-insensitive comparison
- */
-function normalizeForComparison(path: string): string {
-  const normalized = resolve(path).replace(/\\/g, '/');
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
-}
-
-function isWithin(base: string, target: string): boolean {
-  const normalizedBase = normalizeForComparison(base);
-  const normalizedTarget = normalizeForComparison(target);
-  const rel = relative(normalizedBase, normalizedTarget);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-}
-
-/**
- * Check whether targetPath is inside baseDir (or exactly equal to it).
- *
- * Uses path.relative semantics to avoid sibling-prefix bypasses and then
- * re-validates using real paths to prevent symlink escapes.
- */
-function isPathWithinDirectory(targetPath: string, baseDir: string): boolean {
-  const expandedTarget = expandHome(targetPath);
-  const expandedBase = expandHome(baseDir);
-
-  const resolvedTarget = resolve(expandedTarget);
-  const resolvedBase = resolve(expandedBase);
-  if (!isWithin(resolvedBase, resolvedTarget)) {
-    return false;
-  }
-
-  const realBase = existsSync(resolvedBase) ? realpathSync.native(resolvedBase) : resolvedBase;
-
-  if (existsSync(resolvedTarget)) {
-    const realTarget = realpathSync.native(resolvedTarget);
-    return isWithin(realBase, realTarget);
-  }
-
-  // Target may be a new file path. Validate using nearest existing ancestor
-  // to prevent symlink escapes while still allowing legitimate new files.
-  let current = dirname(resolvedTarget);
-  while (true) {
-    if (existsSync(current)) {
-      const realCurrent = realpathSync.native(current);
-      return isWithin(realBase, realCurrent);
-    }
-    const parent = dirname(current);
-    if (parent === current) {
-      return false;
-    }
-    current = parent;
-  }
 }
 
 // ============================================================
@@ -1701,12 +1632,20 @@ export function getPathHint(targetPath: string, plansFolderPath: string, dataFol
   }
 
   // Case: Writing to workspace root instead of session
-  if (normalizedTarget.includes('/.craft-agent/workspaces/') && !normalizedTarget.includes('/sessions/')) {
+  // Legacy layout: ~/.craft-agent/workspaces/{id}/ (missing /sessions/)
+  // Pi layout: ~/.pi/agent/sessions/{encoded-cwd}/ (missing /.craft/{sessionId}/)
+  const inCraftAgentWorkspaceRoot =
+    normalizedTarget.includes('/.craft-agent/workspaces/') && !normalizedTarget.includes('/sessions/');
+  const inPiSessionsBucketRoot =
+    normalizedTarget.includes('/.pi/agent/sessions/') && !normalizedTarget.includes('/.craft/');
+  if (inCraftAgentWorkspaceRoot || inPiSessionsBucketRoot) {
     return 'Hint: Write to the session plans or data folder, not the workspace root.';
   }
 
-  // Case: Writing outside .craft-agent entirely
-  if (!normalizedTarget.includes('/.craft-agent/')) {
+  // Case: Writing outside known session storage entirely
+  // Valid writes live under either ~/.craft-agent/ (legacy) or
+  // ~/.pi/agent/sessions/.../.craft/{sessionId}/ (Pi sidecar layout).
+  if (!normalizedTarget.includes('/.craft-agent/') && !normalizedTarget.includes('/.pi/agent/sessions/')) {
     return 'Hint: Files must be written to the session plans or data folder. Use plansFolderPath or dataFolderPath from <session_state>.';
   }
 
@@ -1777,7 +1716,6 @@ const ALWAYS_ALLOWED_TOOLS = new Set([
   'Task', 'TaskOutput',             // Agent orchestration
   'WebFetch', 'WebSearch',          // Web research
   'TodoWrite',                      // Task tracking
-  'SubmitPlan',                     // Plan submission
   'LSP',                            // Language server (read-only)
   // Browser automation tool (canonical wrapper)
   'browser_tool',
@@ -1838,7 +1776,7 @@ export function shouldAllowToolInMode(
     return { allowed: true };
   }
 
-  // Check if tool name ends with an always-allowed tool (for MCP variants like mcp__plan__SubmitPlan)
+  // Check if tool name ends with an always-allowed tool (for MCP variants)
   for (const allowedTool of ALWAYS_ALLOWED_TOOLS) {
     if (toolName.endsWith(`__${allowedTool}`)) {
       return { allowed: true };

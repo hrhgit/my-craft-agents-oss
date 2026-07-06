@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from 'fs';
 import { join, basename } from 'path';
-import { CONFIG_DIR } from '../config/paths.ts';
+import { CONFIG_DIR, PI_SKILLS_DIR } from '../config/paths.ts';
 import type {
   SessionToolContext,
   SessionToolCallbacks,
@@ -63,6 +63,7 @@ import { isGoogleOAuthConfigured as isGoogleOAuthConfiguredImpl } from '../auth/
 import { debug } from '../utils/debug.ts';
 import { getSessionPlansPath, getSessionPath, getSessionDataPath } from '../sessions/storage.ts';
 import { updatePreferences as updatePreferencesImpl } from '../config/preferences.ts';
+import { createPiSkillResolver } from '../pi/pi-skill-resolver.ts';
 
 // Re-export types that may be needed by consumers
 export type { SessionToolContext, SessionToolCallbacks } from '@craft-agent/session-tools-core';
@@ -74,6 +75,8 @@ export interface SessionToolContextOptions {
   sessionId: string;
   workspacePath: string;
   workspaceId: string;
+  workingDirectory?: string;
+  getWorkingDirectory?: () => string | undefined;
   onPlanSubmitted: (planPath: string) => void;
   onAuthRequest: (request: unknown) => void;
 }
@@ -85,8 +88,6 @@ export interface SessionToolContextOptions {
  * - Full file system access
  * - Full Zod validators
  * - Credential manager with keychain access
- * - MCP connection validation
- * - Icon management
  */
 export function createSessionToolContext(options: SessionToolContextOptions): SessionToolContext {
   const { sessionId, workspacePath, workspaceId, onPlanSubmitted, onAuthRequest } = options;
@@ -216,7 +217,9 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
     sessionId,
     workspacePath,
     get sourcesPath() { return join(workspacePath, 'sources'); },
-    get skillsPath() { return join(workspacePath, 'skills'); },
+    get workingDirectory() { return options.getWorkingDirectory?.() ?? options.workingDirectory; },
+    get skillPaths() { return createPiSkillResolver(this.workingDirectory).getSkillPaths().map(e => e.dir); },
+    get skillsPath() { return this.skillPaths?.[0] ?? PI_SKILLS_DIR; },
     plansFolderPath: getSessionPlansPath(workspacePath, sessionId),
     sessionPath: getSessionPath(workspacePath, sessionId),
     dataPath: getSessionDataPath(workspacePath, sessionId),

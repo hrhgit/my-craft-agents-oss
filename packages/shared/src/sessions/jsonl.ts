@@ -5,61 +5,30 @@
  * Format: Line 1 = SessionHeader, Lines 2+ = StoredMessage (one per line)
  */
 
-import { openSync, readSync, closeSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
-import { open, readFile } from 'fs/promises';
+import { openSync, readSync, closeSync, readFileSync, existsSync } from 'fs';
 import { dirname } from 'path';
 import type { SessionHeader, StoredSession, StoredMessage, SessionTokenUsage } from './types.ts';
 import type { PermissionMode } from '../agent/mode-types.ts';
 import { parsePermissionMode } from '../agent/mode-types.ts';
-import { toPortablePath, expandPath, normalizePath } from '../utils/paths.ts';
+import { expandPath, normalizePath } from '../utils/paths.ts';
 import { debug } from '../utils/debug.ts';
 import { safeJsonParse } from '../utils/files.ts';
-import { pickSessionFields } from './utils.ts';
+import { pickCraftSessionMetadata } from './utils.ts';
 import {
   looksLikeTreeSessionJsonl,
   readTreeSessionAsStoredSession,
   readTreeSessionMetadata,
   writeTreeSessionCraftMetadata,
+  createNewTreeSessionFile,
 } from './tree-jsonl.ts';
 
 function headerFromTreeSession(sessionFile: string): SessionHeader | null {
+  // readTreeSessionMetadata 已返回扁平 SessionHeader（含 Pi 字段 + Craft 字段）
   const metadata = readTreeSessionMetadata(sessionFile);
   if (!metadata) return null;
+  // 仅规范化 permissionMode，并提供 tokenUsage 默认值
   return normalizeHeaderPermissionModes({
-    id: metadata.id,
-    sdkSessionId: metadata.sdkSessionId,
-    workspaceRootPath: metadata.workspaceRootPath,
-    name: metadata.name,
-    createdAt: metadata.createdAt,
-    lastUsedAt: metadata.lastUsedAt,
-    lastMessageAt: metadata.lastMessageAt,
-    isFlagged: metadata.isFlagged,
-    permissionMode: metadata.permissionMode,
-    previousPermissionMode: metadata.previousPermissionMode,
-    sessionStatus: metadata.sessionStatus,
-    labels: metadata.labels,
-    lastReadMessageId: metadata.lastReadMessageId,
-    hasUnread: metadata.hasUnread,
-    workingDirectory: metadata.workingDirectory,
-    sdkCwd: metadata.sdkCwd,
-    sharedUrl: metadata.sharedUrl,
-    sharedId: metadata.sharedId,
-    model: metadata.model,
-    llmConnection: metadata.llmConnection,
-    connectionLocked: metadata.connectionLocked,
-    thinkingLevel: metadata.thinkingLevel,
-    hidden: metadata.hidden,
-    isArchived: metadata.isArchived,
-    archivedAt: metadata.archivedAt,
-    branchFromMessageId: metadata.branchFromMessageId,
-    branchFromSdkSessionId: metadata.branchFromSdkSessionId,
-    branchFromSessionPath: metadata.branchFromSessionPath,
-    branchFromPiSessionFile: metadata.branchFromPiSessionFile,
-    branchFromSdkCwd: metadata.branchFromSdkCwd,
-    branchFromSdkTurnId: metadata.branchFromSdkTurnId,
-    messageCount: metadata.messageCount,
-    lastMessageRole: metadata.lastMessageRole,
-    preview: metadata.preview,
+    ...metadata,
     tokenUsage: metadata.tokenUsage ?? {
       inputTokens: 0,
       outputTokens: 0,
@@ -67,8 +36,20 @@ function headerFromTreeSession(sessionFile: string): SessionHeader | null {
       contextTokens: 0,
       costUsd: 0,
     },
-    lastFinalMessageId: metadata.lastFinalMessageId,
   });
+}
+
+/**
+ * 将 legacy 文件第一行（含 id 字段）转换为扁平 SessionHeader。
+ * legacy 文件无 Pi 字段，piSessionId/piTimestamp/piCwd 等设为 undefined。
+ */
+function headerFromLegacyLine(line: string, sessionDir: string): SessionHeader | null {
+  const parsed = safeJsonParse(expandSessionPath(line, sessionDir)) as Record<string, unknown> & { id?: string };
+  if (!parsed || typeof parsed !== 'object') return null;
+  // legacy id → craftId
+  const { id: legacyId, ...rest } = parsed;
+  const header = { ...rest, craftId: legacyId } as unknown as SessionHeader;
+  return normalizeHeaderPermissionModes(header);
 }
 
 // ============================================================
@@ -76,24 +57,6 @@ function headerFromTreeSession(sessionFile: string): SessionHeader | null {
 // ============================================================
 
 const SESSION_PATH_TOKEN = '{{SESSION_PATH}}';
-
-/**
- * Replace absolute session directory paths with a portable token.
- * Applied after JSON.stringify so paths embedded anywhere in message content
- * (datatable src, planPath, attachment storedPath, etc.) are made portable.
- */
-export function makeSessionPathPortable(jsonLine: string, sessionDir: string): string {
-  if (!sessionDir) return jsonLine;
-  const normalized = normalizePath(sessionDir);
-  let result = jsonLine.replaceAll(normalized, SESSION_PATH_TOKEN);
-  // On Windows, also replace JSON-escaped backslash paths
-  // (JSON.stringify escapes \ to \\, so C:\foo becomes C:\\foo in JSON strings)
-  if (sessionDir !== normalized) {
-    const jsonEscaped = sessionDir.replaceAll('\\', '\\\\');
-    result = result.replaceAll(jsonEscaped, SESSION_PATH_TOKEN);
-  }
-  return result;
-}
 
 /**
  * Expand the portable session path token back to an absolute path.
@@ -139,16 +102,18 @@ export function readSessionHeader(sessionFile: string): SessionHeader | null {
     }
 
     const fd = openSync(sessionFile, 'r');
-    const buffer = Buffer.alloc(8192); // 8KB is plenty for metadata header
-    const bytesRead = readSync(fd, buffer, 0, 8192, 0);
-    closeSync(fd);
+    try {
+      const buffer = Buffer.alloc(8192); // 8KB is plenty for metadata header
+      const bytesRead = readSync(fd, buffer, 0, 8192, 0);
+      const content = buffer.toString('utf-8', 0, bytesRead);
+      const firstNewline = content.indexOf('\n');
+      const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
 
-    const content = buffer.toString('utf-8', 0, bytesRead);
-    const firstNewline = content.indexOf('\n');
-    const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
-
-    const parsed = safeJsonParse(expandSessionPath(firstLine, dirname(sessionFile))) as SessionHeader;
-    return normalizeHeaderPermissionModes(parsed);
+      // legacy 文件第一行含 id 字段（Craft ID），转换为扁平 SessionHeader
+      return headerFromLegacyLine(firstLine, dirname(sessionFile));
+    } finally {
+      closeSync(fd);
+    }
   } catch (error) {
     debug('[jsonl] Failed to read session header:', sessionFile, error);
     return null;
@@ -172,9 +137,9 @@ export function readSessionJsonl(sessionFile: string): StoredSession | null {
     if (!firstLine) return null;
 
     const sessionDir = dirname(sessionFile);
-    const header = normalizeHeaderPermissionModes(
-      safeJsonParse(expandSessionPath(firstLine, sessionDir)) as SessionHeader
-    );
+    // legacy 文件第一行含 id 字段（Craft ID），转换为扁平 SessionHeader
+    const header = headerFromLegacyLine(firstLine, sessionDir);
+    if (!header) return null;
     // Parse messages resiliently: skip lines that fail to parse (e.g. truncated by crash)
     // rather than losing the entire session's messages.
     // Expand session path tokens before parsing so embedded paths resolve correctly.
@@ -187,7 +152,7 @@ export function readSessionJsonl(sessionFile: string): StoredSession | null {
     const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workingDir;
 
     return {
-      ...pickSessionFields(header),
+      ...pickCraftSessionMetadata(header),
       // Path expansion for portable paths
       workspaceRootPath: expandPath(header.workspaceRootPath),
       workingDirectory: workingDir,
@@ -207,152 +172,28 @@ export function readSessionJsonl(sessionFile: string): StoredSession | null {
  * Prevents file corruption if the process crashes mid-write: either the old
  * file remains intact or the new file is fully written. Never a partial file.
  *
- * Line 1: Header with pre-computed metadata
- * Lines 2+: Messages (one per line)
+ * 强制升级策略（不兼容旧格式写入）：
+ * - 已存在的 tree JSONL v3 文件 → 只更新 header 的 craft metadata
+ * - 新文件或 legacy 格式文件 → 创建/覆盖为 tree JSONL v3 格式
+ *
+ * legacy 读取分支（readSessionHeader 等）仍保留，以便读取尚未升级的旧文件；
+ * 旧文件在被写入时自动升级为 tree 格式。
  */
 export function writeSessionJsonl(sessionFile: string, session: StoredSession): void {
-  if (looksLikeTreeSessionJsonl(sessionFile) && writeTreeSessionCraftMetadata(sessionFile, session)) {
+  // 已存在且为 tree 格式 → 只更新 craft metadata
+  if (looksLikeTreeSessionJsonl(sessionFile)) {
+    if (writeTreeSessionCraftMetadata(sessionFile, session)) {
+      return;
+    }
+    throw new Error(`Failed to update tree session Craft metadata: ${sessionFile}`);
+  }
+
+  // 新文件或 legacy 文件 → 强制创建/覆盖为 tree JSONL v3 格式
+  if (createNewTreeSessionFile(sessionFile, session)) {
     return;
   }
 
-  const header = createSessionHeader(session);
-  const sessionDir = dirname(sessionFile);
-
-  const lines = [
-    makeSessionPathPortable(JSON.stringify(header), sessionDir),
-    ...session.messages.map(m => makeSessionPathPortable(JSON.stringify(m), sessionDir)),
-  ];
-
-  const tmpFile = sessionFile + '.tmp';
-  writeFileSync(tmpFile, lines.join('\n') + '\n');
-  // On Windows, rename fails if target exists. Delete first for cross-platform compatibility.
-  try { unlinkSync(sessionFile); } catch { /* ignore if doesn't exist */ }
-  renameSync(tmpFile, sessionFile);
-}
-
-/**
- * Create a SessionHeader from a StoredSession.
- * Pre-computes messageCount, preview, and lastMessageRole for fast list loading.
- * Uses pickSessionFields() to ensure all persistent fields are included.
- */
-export function createSessionHeader(session: StoredSession): SessionHeader {
-  return {
-    ...pickSessionFields(session),
-    // Path conversion for portability
-    workspaceRootPath: toPortablePath(session.workspaceRootPath),
-    // Override lastUsedAt with current timestamp (save time, not original)
-    lastUsedAt: Date.now(),
-    // Pre-computed fields
-    messageCount: session.messages.length,
-    lastMessageRole: extractLastMessageRole(session.messages),
-    preview: extractPreview(session.messages),
-    tokenUsage: session.tokenUsage,
-    lastFinalMessageId: extractLastFinalMessageId(session.messages),
-  } as SessionHeader;
-}
-
-/**
- * Extract the role of the last message for badge display.
- * Only returns roles that are meaningful for UI display (user, assistant, plan, tool, error).
- */
-function extractLastMessageRole(messages: StoredMessage[]): SessionHeader['lastMessageRole'] {
-  const lastMessage = messages[messages.length - 1];
-  if (!lastMessage) return undefined;
-  // Map message types to the subset we care about for display
-  const role = lastMessage.type;
-  if (role === 'user' || role === 'assistant' || role === 'plan' || role === 'tool' || role === 'error') {
-    return role;
-  }
-  return undefined;
-}
-
-/**
- * Extract the ID of the last final (non-intermediate) assistant message.
- * Used for unread detection in session list without loading all messages.
- */
-function extractLastFinalMessageId(messages: StoredMessage[]): string | undefined {
-  // Walk backwards to find the last assistant message that isn't intermediate
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg?.type === 'assistant' && !msg.isIntermediate) {
-      return msg.id;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Extract preview from first user message.
- * Sanitizes by stripping special blocks and normalizing whitespace.
- * Returns first 150 chars.
- */
-function extractPreview(messages: StoredMessage[]): string | undefined {
-  const firstUserMessage = messages.find(m => m.type === 'user');
-  if (!firstUserMessage?.content) return undefined;
-
-  // Sanitize: strip special blocks, tags, and bracket mentions, normalize whitespace
-  const sanitized = firstUserMessage.content
-    .replace(/<edit_request>[\s\S]*?<\/edit_request>/g, '') // Strip entire edit_request blocks
-    .replace(/<[^>]+>/g, '')     // Strip remaining XML/HTML tags
-    .replace(/\[skill:(?:[\w-]+:)?[\w-]+\]/g, '')   // Strip [skill:...] mentions
-    .replace(/\[source:[\w-]+\]/g, '')              // Strip [source:...] mentions
-    .replace(/\[file:[^\]]+\]/g, '')                // Strip [file:...] mentions
-    .replace(/\[folder:[^\]]+\]/g, '')              // Strip [folder:...] mentions
-    .replace(/\s+/g, ' ')        // Collapse whitespace (including newlines)
-    .trim();
-
-  return sanitized.substring(0, 150) || undefined;
-}
-
-/**
- * Async version of readSessionHeader for parallel I/O.
- * Uses fs/promises for non-blocking reads.
- */
-export async function readSessionHeaderAsync(sessionFile: string): Promise<SessionHeader | null> {
-  try {
-    if (looksLikeTreeSessionJsonl(sessionFile)) {
-      return headerFromTreeSession(sessionFile);
-    }
-
-    const handle = await open(sessionFile, 'r');
-    try {
-      const buffer = Buffer.alloc(8192);
-      const { bytesRead } = await handle.read(buffer, 0, 8192, 0);
-      const content = buffer.toString('utf-8', 0, bytesRead);
-      const firstNewline = content.indexOf('\n');
-      const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
-      const parsed = safeJsonParse(expandSessionPath(firstLine, dirname(sessionFile))) as SessionHeader;
-      return normalizeHeaderPermissionModes(parsed);
-    } finally {
-      await handle.close();
-    }
-  } catch (error) {
-    debug('[jsonl] Failed to read session header async:', sessionFile, error);
-    return null;
-  }
-}
-
-/**
- * Read only messages from a JSONL file (skips header).
- * Used for lazy loading when session is selected.
- * Resilient to corrupted/truncated lines (skips them instead of failing entirely).
- */
-export function readSessionMessages(sessionFile: string): StoredMessage[] {
-  try {
-    if (looksLikeTreeSessionJsonl(sessionFile)) {
-      return readTreeSessionAsStoredSession(sessionFile)?.messages ?? [];
-    }
-
-    const content = readFileSync(sessionFile, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
-    // Skip first line (header), expand session path tokens, parse rest as messages resiliently
-    const sessionDir = dirname(sessionFile);
-    const expandedLines = lines.slice(1).map(line => expandSessionPath(line, sessionDir));
-    return parseMessagesResilient(expandedLines);
-  } catch (error) {
-    debug('[jsonl] Failed to read session messages:', sessionFile, error);
-    return [];
-  }
+  throw new Error(`Failed to create tree session file: ${sessionFile}`);
 }
 
 /**

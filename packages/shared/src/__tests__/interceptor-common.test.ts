@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -49,16 +49,7 @@ describe('interceptor-common', () => {
     expect(errB?.status).toBe(429);
   });
 
-  it('merges new metadata with existing on-disk entries', () => {
-    const existing = {
-      existingTool: {
-        intent: 'Existing',
-        displayName: 'Existing Tool',
-        timestamp: Date.now() - 1000,
-      },
-    };
-
-    writeFileSync(join(sessionDirA, 'tool-metadata.json'), JSON.stringify(existing), 'utf-8');
+  it('keeps tool metadata in memory without writing a cross-process file', () => {
     toolMetadataStore.setSessionDir(sessionDirA);
 
     toolMetadataStore.set('newTool', {
@@ -67,8 +58,7 @@ describe('interceptor-common', () => {
       timestamp: Date.now(),
     });
 
-    const persisted = JSON.parse(readFileSync(join(sessionDirA, 'tool-metadata.json'), 'utf-8')) as Record<string, unknown>;
-    expect(persisted.existingTool).toBeDefined();
-    expect(persisted.newTool).toBeDefined();
+    expect(toolMetadataStore.get('newTool', sessionDirA)?.intent).toBe('New intent');
+    expect(existsSync(join(sessionDirA, 'tool-metadata.json'))).toBe(false);
   });
 });

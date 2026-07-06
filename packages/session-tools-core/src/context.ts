@@ -165,6 +165,9 @@ export interface SessionToolContext {
   /** Path to skills folder within workspace */
   get skillsPath(): string;
 
+  /** Ordered Pi skill roots (global and optional project-level) */
+  skillPaths?: string[];
+
   /** Path to session's plans folder */
   plansFolderPath: string;
 

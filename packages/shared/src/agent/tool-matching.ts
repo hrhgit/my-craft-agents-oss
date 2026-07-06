@@ -320,9 +320,7 @@ export function extractToolResults(
  * 3. Bash description field — fallback for intent on Bash tools
  */
 function extractToolMetadata(toolBlock: ToolUseBlock, sessionDir?: string): { intent?: string; displayName?: string } {
-  // 1. Check the metadata store first (populated by SSE interceptor)
-  // Pass sessionDir to ensure we read from the correct session's file even when
-  // the singleton _sessionDir has been clobbered by a concurrent session.
+  // 1. Check the in-process metadata store first (populated by SSE interceptor).
   const idCandidates = new Set<string>([toolBlock.id]);
   if (toolBlock.id.includes('|')) {
     const [base] = toolBlock.id.split('|');
@@ -344,7 +342,7 @@ function extractToolMetadata(toolBlock: ToolUseBlock, sessionDir?: string): { in
     return { intent, displayName };
   }
 
-  // Log when metadata store misses — helps diagnose cross-process sync issues
+  // Log when metadata store misses — helps diagnose interceptor metadata flow.
   const argsHasIntent = typeof toolBlock.input._intent === 'string';
   const argsHasDisplayName = typeof toolBlock.input._displayName === 'string';
   log.debug(

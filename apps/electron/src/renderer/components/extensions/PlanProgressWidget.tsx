@@ -177,7 +177,7 @@ export function PlanProgressWidget({ className }: PlanProgressWidgetProps) {
     }
   }, [])
 
-  // 扩展启停已迁移到 pi settings.json，craft 侧仅检查全局开关与 markdown 渲染开关
+  // craft 侧仅检查全局开关与 markdown 渲染开关
   if (settings?.enabled === false ||
       settings?.planMode.renderPlanMarkdown === false) {
     return null

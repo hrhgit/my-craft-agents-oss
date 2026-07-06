@@ -3,7 +3,7 @@ import { useMemo, useEffect, useRef, useCallback, useState } from 'react'
 import i18n from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type { ToolDisplayMeta, AnnotationV1 } from '@craft-agent/core'
-import { normalizePath, pathStartsWith, stripPathPrefix } from '@craft-agent/core/utils'
+import { normalizePath, pathStartsWith, stripPathPrefix } from '@craft-agent/shared/utils'
 import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { motion, AnimatePresence } from 'motion/react'
 import {
@@ -546,18 +546,19 @@ function getToolDisplayName(name: string): string {
 function stripSessionFolderPath(filePath: string, sessionFolderPath?: string): string {
   if (!sessionFolderPath) return filePath
 
-  // Get workspace path (parent of sessions folder)
-  // sessionFolderPath: /path/workspaces/{uuid}/sessions/{sessionId}
-  const workspacePath = normalizePath(sessionFolderPath).replace(/\/sessions\/[^/]+$/, '')
+  const normalizedSessionPath = normalizePath(sessionFolderPath)
+  const sessionBucketPath = normalizedSessionPath.includes('/.craft/')
+    ? normalizedSessionPath.replace(/\/\.craft\/[^/]+$/, '')
+    : normalizedSessionPath.replace(/\/[^/]+$/, '')
 
   // Try session folder first (more specific)
   if (pathStartsWith(filePath, sessionFolderPath)) {
     return stripPathPrefix(filePath, sessionFolderPath)
   }
 
-  // Then try workspace folder
-  if (pathStartsWith(filePath, workspacePath)) {
-    return stripPathPrefix(filePath, workspacePath)
+  // Then try the Pi cwd bucket for files beside the sidecar.
+  if (pathStartsWith(filePath, sessionBucketPath)) {
+    return stripPathPrefix(filePath, sessionBucketPath)
   }
 
   return filePath

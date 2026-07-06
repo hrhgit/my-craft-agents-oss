@@ -14,7 +14,7 @@ export interface ProviderMetadata {
 
 /**
  * Metadata for known providers.
- * Keys are piAuthProvider values + 'anthropic' for direct API connections.
+ * Keys are piAuthProvider values.
  */
 const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   anthropic: {
@@ -71,18 +71,13 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
 }
 
 /**
- * Look up provider metadata by provider type and optional piAuthProvider.
- *
- * For direct Anthropic connections: getProviderMetadata('anthropic')
+ * Look up provider metadata by piAuthProvider.
  * For Pi connections: getProviderMetadata('pi', 'openai') or getProviderMetadata('pi', 'amazon-bedrock')
  */
 export function getProviderMetadata(
-  providerType: string,
+  _providerType: string,
   piAuthProvider?: string,
 ): ProviderMetadata | undefined {
-  if (providerType === 'anthropic') {
-    return PROVIDER_METADATA.anthropic
-  }
   if (piAuthProvider) {
     return PROVIDER_METADATA[piAuthProvider]
   }

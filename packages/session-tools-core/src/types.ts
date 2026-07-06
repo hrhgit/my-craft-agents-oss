@@ -167,26 +167,10 @@ export interface CallbackMessage {
 // Tool Result Types
 // ============================================================
 
-/**
- * Text content block for tool responses
- */
-export interface TextContent {
-  type: 'text';
-  text: string;
-}
-
-/**
- * Standard tool result type compatible with both SDK and MCP patterns
- */
-export interface ToolResult {
-  content: TextContent[];
-  /**
-   * Optional structured payload for MCP clients.
-   * Keep this as an object (not null) for compatibility with strict tool_result parsers.
-   */
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-}
+// Re-export ToolResult and TextContent from canonical source (@craft-agent/shared/agent)
+export type { TextContent, ToolResult } from '@craft-agent/shared/agent';
+// Re-export getResultText helper for test consumers
+export { getResultText } from '@craft-agent/shared/agent';
 
 // ============================================================
 // Validation Result Types

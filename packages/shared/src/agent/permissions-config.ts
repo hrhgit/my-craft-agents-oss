@@ -340,9 +340,22 @@ export function parsePermissionsJson(content: string): PermissionsCustomConfig {
 }
 
 /**
- * Validate a regex pattern string, return null if invalid
+ * ReDoS protection: reject regex patterns that could cause catastrophic
+ * backtracking. Mirrors the logic in automations/validation.ts.
+ */
+const MAX_PERMISSION_REGEX_LENGTH = 500;
+const NESTED_QUANTIFIERS_RE = /\([^)]*[+*][^)]*\)[+*{]/;
+const RISKY_PATTERNS_RE = /(\.\*){2,}|(\.\+){2,}|\([^)]*\|[^)]*\)[+*{]/;
+
+/**
+ * Validate a regex pattern string, return null if invalid or potentially
+ * dangerous (ReDoS). Patterns are rejected if they exceed the length limit,
+ * contain nested quantifiers like (a+)+, or have repeated greedy wildcards.
  */
 function validateRegex(pattern: string): RegExp | null {
+  if (pattern.length > MAX_PERMISSION_REGEX_LENGTH) return null;
+  if (NESTED_QUANTIFIERS_RE.test(pattern)) return null;
+  if (RISKY_PATTERNS_RE.test(pattern)) return null;
   try {
     return new RegExp(pattern);
   } catch {

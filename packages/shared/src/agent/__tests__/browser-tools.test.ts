@@ -1051,7 +1051,7 @@ describe('createBrowserTools', () => {
       })
       const result = await executeTool(errorTools, 'browser_tool', { command: 'navigate test.com' })
       expect(result.isError).toBe(true)
-      expect(result.content[0].text).toContain('Error')
+      expect(result.content[0].text).toContain('Browser window controls')
     })
 
     it('catches and wraps thrown errors', async () => {

@@ -4,6 +4,14 @@
  * Session-scoped tool that enables the main agent to create independent sessions
  * with configurable connection, model, sources, and an initial prompt.
  *
+ * Task 11: spawn_session is now a thin wrapper. When the backend implements
+ * spawnChildSession (PiAgent), the onSpawnSession callback delegates to pi's
+ * session tree — pi creates the child session file (header + spawnedFrom +
+ * spawnConfig + optional initial prompt/name) and craft no longer instantiates
+ * its own SessionManager or writes session files. The SubagentPanel lists these
+ * children via listChildSessions(spawnedFrom filter). Backends without
+ * spawnChildSession fall back to independent craft session creation (deprecated).
+ *
  * Two modes:
  * - help=true: Returns available connections, models, and sources
  * - Default: Creates a session and sends the prompt (fire-and-forget)
@@ -12,14 +20,9 @@
 import { z } from 'zod';
 import type { SpawnSessionResult, SpawnSessionHelpResult } from './base-agent.ts';
 import { createMcpTool } from '../mcp/server-factory.ts';
+import { errorResponse } from './tool-result.ts';
 
 export type SpawnSessionFn = (input: Record<string, unknown>) => Promise<SpawnSessionResult | SpawnSessionHelpResult>;
-
-// Tool result type - matches what the SDK expects
-type ToolResult = {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-};
 
 interface SpawnSessionToolArgs {
   help?: boolean;
@@ -33,13 +36,6 @@ interface SpawnSessionToolArgs {
   labels?: string[];
   workingDirectory?: string;
   attachments?: Array<{ path: string; name?: string }>;
-}
-
-function errorResponse(message: string): ToolResult {
-  return {
-    content: [{ type: 'text', text: `Error: ${message}` }],
-    isError: true,
-  };
 }
 
 export interface SpawnSessionToolOptions {
@@ -61,7 +57,7 @@ Use this to delegate tasks to parallel sessions — research, analysis, drafts, 
 Call with help=true first to discover available connections, models, and sources.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: model, llmConnection, permissionMode, thinkingLevel, enabledSourceSlugs, labels, workingDirectory. Omitted fields inherit from the spawning session or the workspace default.
+Optional overrides: model, llmConnection, permissionMode, thinkingLevel, enabledSourceSlugs, labels. Omitted fields inherit from the spawning session or the workspace default. workingDirectory is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
 
 thinkingLevel is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring.
 
@@ -87,7 +83,7 @@ Only use 'attachments' for existing file paths on disk — the tool reads them a
       labels: z.array(z.string()).optional()
         .describe('Labels for the new session'),
       workingDirectory: z.string().optional()
-        .describe('Working directory for the new session'),
+        .describe('Deprecated and ignored. New sessions run from the workspace root; create or switch workspace to use another folder.'),
       attachments: z.array(z.object({
         path: z.string().describe('Absolute file path on disk'),
         name: z.string().optional().describe('Display name (defaults to file basename)'),

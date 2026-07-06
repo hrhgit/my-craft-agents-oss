@@ -6,8 +6,9 @@ provider/model registry, tool execution, network layer, system prompt, and
 extension system. Craft owns the host UI and workflow scaffolding on top.
 
 This document defines the boundary that keeps "Pi as the base, Craft as the
-shell" honest. It is enforced by ESLint (see the `no-restricted-syntax` rule
-in each package's `eslint.config.mjs`) and by code review.
+shell" honest. It is enforced by ESLint (see the `no-restricted-syntax` and
+`craft-shared/no-raw-pi-file-io` rules in each package's `eslint.config.mjs`)
+and by code review.
 
 ## Bottom layer — owned by Pi, unified into Pi
 
@@ -22,7 +23,7 @@ import them outside the sanctioned seam (see below).
   the cwd→bucket encoding.
 - Credential storage: `~/.pi/agent/auth.json` (plaintext, 0600).
 - Config storage: `~/.pi/agent/models.json`, `settings.json`
-  (`shellGui.*`, `extensions.*`, `craft.agent.*` namespaces).
+  (`shellGui.*`, `extensionConfig.*`, `craft.agent.*` namespaces).
 - Provider/model registry and discovery.
 - Tool definitions and execution (built-in tools, custom tools, proxy tools).
 - Network layer: fetch, SSE, the network sidecar, request/response shaping.
@@ -62,14 +63,18 @@ Scaffolding code talks to Pi through exactly two channels:
 ## The sanctioned seam
 
 `packages/shared/src/agent/backend/**` is the only place in `packages/shared`
-that may import `@earendil-works/pi-*`. It holds the typed event adapter and
-thinking-level constants that translate Pi's typed events into Craft's UI
-events. This seam is expected to **shrink** over time as Pi's `RpcClient`
-exposes typed events directly and the translation layer thins.
+that may import Pi event/runtime internals for adapter work. It holds the typed
+event adapter and thinking-level constants that translate Pi's typed events into
+Craft's UI events. This seam is expected to **shrink** over time as Pi's
+`RpcClient` exposes typed events directly and the translation layer thins.
 
-`packages/pi-agent-server` is a legacy bridge that re-implements a JSONL
-protocol parallel to Pi's native RPC mode. It is slated for deletion (see
-migration tasks) and is therefore outside the red line's scope.
+A small number of files outside `agent/backend/**` may import PUBLIC Pi APIs
+(`RpcClient`, `AuthStorage`, `SettingsManager`, static provider catalogs) or
+raw Pi path constants; they are listed in the ratchet allowlist below.
+
+`packages/pi-agent-server` was the legacy bridge that re-implemented a JSONL
+protocol parallel to Pi's native RPC mode. It has been deleted; Craft's Pi
+backend now talks to Pi through Pi's public `RpcClient`.
 
 ## Red lines
 
@@ -82,15 +87,19 @@ migration tasks) and is therefore outside the red line's scope.
 No code outside Pi may assign to `agent.state.systemPrompt`,
 `_baseSystemPrompt`, `_rebuildSystemPrompt`, patch `globalThis.fetch` to
 intercept Pi's requests, or reach into any field prefixed with `_` on a Pi
-class. Capabilities that currently rely on this (system-prompt override, the
-network interceptor) are being replaced by typed public APIs in Pi
-(`PromptOptions.systemPrompt`, `registerFetchInterceptor`).
+class. Capabilities in this category must go through typed public APIs in Pi.
+Craft passes host hooks through Pi `RpcClient({ hostHooksModule })` →
+`createAgentSession({ fetchInterceptor, toolMetadataResolver })`; tool display
+metadata is carried by Pi tool events, not by a cross-process metadata file.
 
 ## Ratchet allowlist
 
-Two files outside `agent/backend/**` may import `@earendil-works/pi-*`. They are
-sanctioned seam extensions, not violations — each consumes a typed PUBLIC Pi API
-and is the single place in craft for its domain:
+The following files outside `agent/backend/**` are sanctioned seam extensions,
+not violations. Each must consume a typed PUBLIC Pi API where one exists; raw
+file access is allowed only where Pi does not yet expose the required setter or
+where Craft is preserving its own opaque metadata.
+
+### Public Pi API imports
 
 - `packages/shared/src/credentials/backends/secure-storage.ts` — thin wrapper
   over Pi `AuthStorage`'s `craft.<slug>` credential namespace
@@ -101,7 +110,39 @@ and is the single place in craft for its domain:
   (`getModels`/`getProviders`) used for pre-auth provider listing in connection
   setup. `RpcClient.getAvailableModels()` requires a live authenticated session
   and cannot serve this path.
+- `packages/shared/src/config/pi-global-config.ts` — uses Pi `SettingsManager`
+  for typed settings fields (`defaultProvider`, `defaultModel`,
+  `defaultThinkingLevel`, `shellGui.*`, `extensionConfig.*`). It still performs
+  raw writes for `models.json` provider CRUD and Pi-opaque `craft.agent.*`
+  values because Pi does not expose typed setters for those domains.
+- `packages/shared/src/sessions/tree-jsonl.ts` — uses Pi `SessionManager` for
+  JSONL entry parsing/projection while preserving Craft's opaque header metadata
+  with a lightweight first-line reader and raw metadata writes.
+- `packages/shared/src/agent/pi-agent.ts` — Craft's backend adapter over Pi's
+  public `RpcClient`, preserving host-side workflow scaffolding without
+  re-implementing Pi's agent runtime.
 
-The allowlist is recorded in `packages/shared/eslint.config.mjs`. Any NEW file
-that wants a Pi import must either go through `agent/backend/**`, or make the
-case here for why it is a seam extension.
+### Raw Pi path constants
+
+`craft-shared/no-raw-pi-file-io` blocks new imports of Pi storage path constants
+outside this list:
+
+- `packages/shared/src/config/paths.ts` — defines the path constants.
+- `packages/shared/src/config/pi-global-config.ts` — see above.
+- `packages/shared/src/credentials/backends/secure-storage.ts` — passes
+  `PI_AUTH_FILE` to Pi `AuthStorage`.
+- `packages/shared/src/sessions/storage.ts` and
+  `packages/shared/src/sessions/tree-jsonl.ts` — session projection and
+  Craft metadata sidecar/header writes while Pi lacks a craft-metadata setter.
+  Read paths should delegate to Pi `SessionManager` where that is not a list-view
+  performance regression.
+- `packages/shared/src/config/unified-migration.ts` — one-shot migration into
+  Pi-owned storage with rollback.
+- `packages/shared/src/workspaces/storage.ts` and
+  `packages/shared/src/pi/pi-session-store.ts` — read-only session bucket
+  projections for workspace/session routing.
+
+The allowlists are recorded in `packages/shared/eslint.config.mjs` and
+`packages/shared/eslint-rules/no-raw-pi-file-io.cjs`. Any NEW file that wants a
+Pi import or Pi path constant must either go through `agent/backend/**`, or make
+the case here for why it is a seam extension.

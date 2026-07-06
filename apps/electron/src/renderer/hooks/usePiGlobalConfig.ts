@@ -9,11 +9,16 @@
  * the desktop reads ~/.pi/agent/ directly instead of ~/.craft-agent/config.json.
  */
 
-import { useState, useEffect, useCallback } from 'react'
 import type {
   PiGlobalProviderForDisplay,
   PiGlobalSettings,
 } from '../../shared/types'
+import { useWorkspaceEntity } from './useWorkspaceEntity'
+
+interface PiGlobalConfigData {
+  providers: PiGlobalProviderForDisplay[]
+  settings: PiGlobalSettings
+}
 
 export interface UsePiGlobalConfigResult {
   providers: PiGlobalProviderForDisplay[]
@@ -24,41 +29,30 @@ export interface UsePiGlobalConfigResult {
 }
 
 export function usePiGlobalConfig(): UsePiGlobalConfigResult {
-  const [providers, setProviders] = useState<PiGlobalProviderForDisplay[]>([])
-  const [settings, setSettings] = useState<PiGlobalSettings>({})
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const refresh = useCallback(async () => {
-    if (!window.electronAPI) return
-    try {
-      setIsLoading(true)
+  // No workspaceId: global config. `undefined` tells useWorkspaceEntity to fetch
+  // without workspace scoping (and still subscribe to global change events).
+  const { data, isLoading, error, refresh } = useWorkspaceEntity<PiGlobalConfigData>({
+    workspaceId: undefined,
+    fetcher: async () => {
+      if (!window.electronAPI) return null
       const [list, s] = await Promise.all([
         window.electronAPI.getPiGlobalProviders(),
         window.electronAPI.getPiGlobalSettings(),
       ])
-      setProviders(list)
-      setSettings(s)
-      setError(null)
-    } catch (err) {
-      console.error('[usePiGlobalConfig] Failed to load:', err)
-      setError(err instanceof Error ? err.message : 'Failed to load Pi global config')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
+      return { providers: list, settings: s }
+    },
+    subscribe: (_wid, onChange) => {
+      if (!window.electronAPI) return () => {}
+      return window.electronAPI.onPiGlobalChanged(onChange)
+    },
+    tag: 'usePiGlobalConfig',
+  })
 
-  useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  useEffect(() => {
-    if (!window.electronAPI) return
-    const cleanup = window.electronAPI.onPiGlobalChanged(() => {
-      refresh()
-    })
-    return cleanup
-  }, [refresh])
-
-  return { providers, settings, isLoading, error, refresh }
+  return {
+    providers: data?.providers ?? [],
+    settings: data?.settings ?? {},
+    isLoading,
+    error,
+    refresh,
+  }
 }

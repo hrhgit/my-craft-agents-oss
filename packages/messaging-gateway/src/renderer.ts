@@ -44,21 +44,13 @@ function bindingOpts(binding: ChannelBinding): SendOptions {
   return binding.threadId !== undefined ? { threadId: binding.threadId } : {}
 }
 import type { PlanTokenRegistry } from './plan-tokens'
+import type { PermissionRequest } from '@craft-agent/core/types'
 
 /** Session event shape (subset of the full SessionEvent from server-core). */
 export interface SessionEvent {
   type: string
   sessionId: string
   [key: string]: unknown
-}
-
-/** PermissionRequest shape from @craft-agent/core. */
-interface PermissionRequest {
-  requestId: string
-  toolName: string
-  command?: string
-  description: string
-  type?: string
 }
 
 interface RenderState {
@@ -192,7 +184,7 @@ export class Renderer {
       return
     }
 
-    const mode = resolveResponseMode(binding.config.responseMode, binding.config.streamResponses)
+    const mode = binding.config.responseMode
     switch (mode) {
       case 'streaming':
         return this.handleStreaming(event, binding, adapter)
@@ -720,14 +712,6 @@ Approve in the desktop app to continue.`,
 // Helpers
 // ---------------------------------------------------------------------------
 
-function resolveResponseMode(
-  responseMode: ResponseMode | undefined,
-  streamResponses: boolean | undefined,
-): ResponseMode {
-  if (responseMode) return responseMode
-  // Legacy configs (pre-responseMode field): honour explicit streamResponses.
-  return streamResponses === false ? 'final_only' : 'streaming'
-}
 
 function appendFinal(existing: string, next: string): string {
   if (!existing) return next

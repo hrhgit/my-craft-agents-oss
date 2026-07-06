@@ -13,28 +13,8 @@
 import { z } from 'zod';
 import { executeBrowserToolCommand } from './browser-tool-runtime.ts';
 import { createMcpTool } from '../mcp/server-factory.ts';
-
-// Tool result type - matches MCP CallToolResult content blocks
-type ToolResult = {
-  content: Array<
-    | { type: 'text'; text: string }
-    | { type: 'image'; data: string; mimeType: string }
-  >;
-  isError?: boolean;
-};
-
-function errorResponse(message: string): ToolResult {
-  return {
-    content: [{ type: 'text', text: `Error: ${message}` }],
-    isError: true,
-  };
-}
-
-function successResponse(text: string): ToolResult {
-  return {
-    content: [{ type: 'text', text }],
-  };
-}
+import type { ToolResult } from './tool-result.ts';
+import { errorResponse, successResponse } from './tool-result.ts';
 
 const BROWSER_RELEASE_HINT = '\n\nWhen you are done using the browser, call browser_tool with command "close" to close the window entirely, or "release" to dismiss the overlay and let the user continue browsing.';
 

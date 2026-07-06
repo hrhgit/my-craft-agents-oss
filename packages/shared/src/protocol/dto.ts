@@ -13,6 +13,7 @@ import type {
   ToolDisplayMeta,
   AnnotationV1,
   PermissionRequest as BasePermissionRequest,
+  Session as CoreSession,
 } from '@craft-agent/core/types'
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
@@ -22,6 +23,7 @@ import type {
   CredentialInputMode as SharedCredentialInputMode,
   CredentialAuthRequest as SharedCredentialAuthRequest,
 } from '../agent/index'
+import type { SessionStatus, BuiltInStatusId } from '../sessions/types'
 
 // Re-export generateMessageId for handler convenience
 export { generateMessageId } from '@craft-agent/core/types'
@@ -30,36 +32,29 @@ export { generateMessageId } from '@craft-agent/core/types'
 // Session types
 // ---------------------------------------------------------------------------
 
-/**
- * Dynamic status ID referencing workspace status config.
- * Validated at runtime via validateSessionStatus().
- * Falls back to 'todo' if status doesn't exist.
- */
-export type SessionStatus = string
-
-export type BuiltInStatusId = 'todo' | 'in-progress' | 'needs-review' | 'done' | 'cancelled'
+// Re-export SessionStatus and BuiltInStatusId from sessions/types (canonical source)
+export type { SessionStatus, BuiltInStatusId }
 
 /**
  * Electron-specific Session type (includes runtime state).
  * Extends core Session with messages array and processing state.
+ *
+ * Note: `createdAt` is overridden as optional (core requires it) because runtime
+ * Session objects transmitted via IPC may omit it. `lastUsedAt` is omitted from
+ * the inherited contract for the same reason; it lives on SessionHeader instead.
  */
-export interface Session {
-  id: string
-  workspaceId: string
+export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
   workspaceName: string
-  name?: string
   /** Preview of first user message (from JSONL header, for lazy-loaded sessions) */
   preview?: string
   lastMessageAt: number
   messages: Message[]
   isProcessing: boolean
-  isFlagged?: boolean
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
   sessionStatus?: SessionStatus
   /** Labels (additive tags, many-per-session — bare IDs or "id::value" entries) */
   labels?: string[]
-  lastReadMessageId?: string
   /**
    * Explicit unread flag - single source of truth for NEW badge.
    * Set to true when assistant message completes while user is NOT viewing.
@@ -77,12 +72,11 @@ export interface Session {
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
   lastFinalMessageId?: string
   isAsyncOperationOngoing?: boolean
-  /** @deprecated Use isAsyncOperationOngoing instead */
-  isRegeneratingTitle?: boolean
   currentStatus?: {
     message: string
     statusType?: string
   }
+  /** override: optional in runtime dto (core Session requires it) */
   createdAt?: number
   messageCount?: number
   tokenUsage?: {
@@ -98,7 +92,6 @@ export interface Session {
   }
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean
-  isArchived?: boolean
   archivedAt?: number
   supportsBranching?: boolean
 }
@@ -176,7 +169,6 @@ export type SessionEvent =
   | { type: 'status'; sessionId: string; message: string; statusType?: 'compacting' }
   | { type: 'info'; sessionId: string; message: string; statusType?: 'compaction_complete'; level?: 'info' | 'warning' | 'error' | 'success'; timestamp?: number }
   | { type: 'title_generated'; sessionId: string; title: string }
-  | { type: 'title_regenerating'; sessionId: string; isRegenerating: boolean }
   | { type: 'async_operation'; sessionId: string; isOngoing: boolean }
   | { type: 'working_directory_changed'; sessionId: string; workingDirectory: string }
   | { type: 'permission_request'; sessionId: string; request: PermissionRequest }
@@ -312,16 +304,8 @@ export interface DirectoryListingResult {
 // File types
 // ---------------------------------------------------------------------------
 
-export interface FileAttachment {
-  type: 'image' | 'text' | 'pdf' | 'office' | 'audio' | 'unknown'
-  path: string
-  name: string
-  mimeType: string
-  base64?: string
-  text?: string
-  size: number
-  thumbnailBase64?: string
-}
+// Re-export FileAttachment from utils/files (canonical source)
+export type { FileAttachment } from '../utils/files'
 
 export interface SessionFile {
   name: string
@@ -343,10 +327,9 @@ export interface FileSearchResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolved Anthropic OAuth identity (issue #838), captured from the
- * token-exchange response. Shape mirrors `ClaudeOAuthIdentity` in
- * `auth/claude-oauth.ts`; kept in the protocol layer so DTOs stay decoupled
- * from the auth module. All fields optional and fail-soft.
+ * Resolved OAuth identity (issue #838), captured from the
+ * token-exchange response by the caller and threaded through the
+ * SETUP_LLM_CONNECTION payload. All fields optional and fail-soft.
  */
 export interface ClaudeOAuthIdentityDto {
   account?: { uuid?: string; emailAddress?: string }

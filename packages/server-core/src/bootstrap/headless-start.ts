@@ -1,12 +1,13 @@
+import { timingSafeEqual } from 'node:crypto'
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs'
 import { uptime as osUptime } from 'node:os'
 import { join } from 'node:path'
 import { OAuthFlowStore } from '@craft-agent/shared/auth'
-import { ensureConfigDir, loadStoredConfig, saveConfig } from '@craft-agent/shared/config'
+import { ensureConfigDir, getWorkspaceByNameOrId, loadStoredConfig, saveConfig } from '@craft-agent/shared/config'
 import { CONFIG_DIR } from '@craft-agent/shared/config/paths'
 import { setBundledAssetsRoot } from '@craft-agent/shared/utils'
 import { WsRpcServer, type WsRpcTlsOptions } from '../transport/server'
-import type { EventSink, RpcServer } from '../transport/types'
+import type { EventSink, RpcServer, WorkspaceAuthorizationRequest } from '../transport/types'
 import { createHeadlessPlatform } from '../runtime/platform-headless'
 import type { PlatformServices } from '../runtime/platform'
 
@@ -48,6 +49,8 @@ export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   tls?: WsRpcTlsOptions
   /** Cookie-based session validator for web UI auth on WebSocket upgrade. */
   validateSessionCookie?: (cookieHeader: string | null) => Promise<boolean>
+  /** Workspace authorization hook for transport handshake/reconnect/switch. */
+  authorizeWorkspace?: (request: WorkspaceAuthorizationRequest) => Promise<boolean> | boolean
   /**
    * Optional HTTP request handler for non-WebSocket requests on the RPC port.
    * When provided, the WsRpcServer serves HTTP (e.g. WebUI) on the same port.
@@ -136,24 +139,17 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * Parse the lock file content. Supports both the new JSON format
- * (`{pid, startedAt}`) and the legacy plain-PID format for backwards
- * compatibility during upgrades.
+ * Parse the lock file content (JSON format: `{pid, startedAt}`).
  */
 function parseLockContent(raw: string): LockPayload | null {
   const trimmed = raw.trim()
-  // Try JSON first (new format)
-  if (trimmed.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>
-      const pid = typeof parsed.pid === 'number' ? parsed.pid : NaN
-      const startedAt = typeof parsed.startedAt === 'number' ? parsed.startedAt : 0
-      if (!isNaN(pid)) return { pid, startedAt }
-    } catch { /* fall through to legacy parse */ }
-  }
-  // Legacy format: plain PID number
-  const pid = parseInt(trimmed, 10)
-  if (!isNaN(pid)) return { pid, startedAt: 0 }
+  if (!trimmed.startsWith('{')) return null
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>
+    const pid = typeof parsed.pid === 'number' ? parsed.pid : NaN
+    const startedAt = typeof parsed.startedAt === 'number' ? parsed.startedAt : 0
+    if (!isNaN(pid)) return { pid, startedAt }
+  } catch { /* invalid JSON */ }
   return null
 }
 
@@ -299,8 +295,18 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
     host: rpcHost,
     port: rpcPort,
     requireAuth: true,
-    validateToken: async (t) => t === serverToken,
+    validateToken: async (t) => {
+      if (typeof t !== 'string') return false
+      // Constant-time comparison to mitigate timing attacks against the server token.
+      // Length check is not timing-safe, but leaking length info is low risk.
+      const a = Buffer.from(t)
+      const b = Buffer.from(serverToken)
+      return a.length === b.length && timingSafeEqual(a, b)
+    },
     validateSessionCookie: options.validateSessionCookie,
+    authorizeWorkspace: options.authorizeWorkspace ?? ((request) => (
+      !request.workspaceId || Boolean(getWorkspaceByNameOrId(request.workspaceId))
+    )),
     serverId: options.serverId ?? 'headless',
     serverVersion: options.serverVersion,
     tls: options.tls,

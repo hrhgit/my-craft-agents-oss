@@ -8,7 +8,7 @@
  */
 
 import { WebSocketServer, type WebSocket } from 'ws'
-import { createServer as createHttpServer, type Server as HttpServer } from 'node:http'
+import { createServer as createHttpServer, type Server as HttpServer, type IncomingMessage } from 'node:http'
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https'
 import { randomUUID } from 'node:crypto'
 import {
@@ -18,12 +18,18 @@ import {
   EVENT_BUFFER_MAX_SIZE,
   EVENT_BUFFER_TTL_MS,
   DISCONNECTED_CLIENT_TTL_MS,
-  isErrorCode,
+  isTransportErrorCode,
   type MessageEnvelope,
   type PushTarget,
-  type ErrorCode,
+  type TransportErrorCode,
 } from '@craft-agent/shared/protocol'
-import type { RpcServer, HandlerFn, RequestContext } from './types'
+import type {
+  RpcServer,
+  HandlerFn,
+  RequestContext,
+  WorkspaceAuthorizationRequest,
+  WorkspaceAuthMethod,
+} from './types'
 import { serializeEnvelope, deserializeEnvelope } from './codec'
 import { createLogger } from '@craft-agent/shared/utils'
 
@@ -43,6 +49,8 @@ interface ClientConnection {
   ws: WebSocket
   workspaceId: string | null
   webContentsId: number | null
+  authMethod: WorkspaceAuthMethod
+  authToken?: string
   capabilities: Set<string>
   missedPongs: number
   alive: boolean
@@ -91,6 +99,12 @@ export interface WsRpcServerOptions {
    * If provided, a valid session cookie is accepted as an alternative to a bearer token.
    */
   validateSessionCookie?: (cookieHeader: string | null) => Promise<boolean>
+  /**
+   * Authorizes a workspace binding after transport auth succeeds. The server
+   * calls this for handshake/reconnect workspace claims and for later
+   * SWITCH_WORKSPACE routing updates.
+   */
+  authorizeWorkspace?: (request: WorkspaceAuthorizationRequest) => Promise<boolean> | boolean
   /** Server identity stamp on outgoing events. Default: 'local' */
   serverId?: string
   /** TLS configuration. When provided, the server listens on wss:// instead of ws://. */
@@ -115,6 +129,57 @@ export interface WsRpcServerOptions {
 
 const transportLog = createLogger('ws-rpc-server')
 
+/**
+ * Max WebSocket message size (single frame payload).
+ *
+ * Product upload limits live in the file RPC handlers and large attachment
+ * payloads should use chunked transfer once they cross the inline threshold.
+ * This remains only a transport guard: large enough for legitimate inline RPC
+ * calls and small enough to bound accidental single-frame memory spikes.
+ */
+const WS_MAX_PAYLOAD = 64 * 1024 * 1024 // 64 MiB
+
+export function isLoopbackHost(host: string): boolean {
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]'
+}
+
+export function isWildcardBindHost(host: string): boolean {
+  return host === '0.0.0.0' || host === '::' || host === '[::]'
+}
+
+function normalizeHost(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host
+}
+
+function hostFromHeader(hostHeader: string | string[] | undefined): string | null {
+  const raw = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader
+  if (!raw) return null
+  try {
+    return new URL(`http://${raw}`).hostname
+  } catch {
+    return null
+  }
+}
+
+export function isAllowedWsOrigin(origin: string | undefined, bindHost: string, requestHost?: string | string[]): boolean {
+  if (isLoopbackHost(bindHost)) return true
+  if (!origin) return false
+
+  try {
+    const originHost = normalizeHost(new URL(origin).hostname)
+    if (isLoopbackHost(originHost)) return true
+
+    if (isWildcardBindHost(bindHost)) {
+      const expectedHost = requestHost ? hostFromHeader(requestHost) : null
+      return !!expectedHost && originHost === normalizeHost(expectedHost)
+    }
+
+    return originHost === normalizeHost(bindHost)
+  } catch {
+    return false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // WsRpcServer
 // ---------------------------------------------------------------------------
@@ -138,6 +203,7 @@ export class WsRpcServer implements RpcServer {
   private readonly requireAuth: boolean
   private readonly validateToken: ((token: string) => Promise<boolean>) | null
   private readonly validateSessionCookie: ((cookieHeader: string | null) => Promise<boolean>) | null
+  private readonly authorizeWorkspace: WsRpcServerOptions['authorizeWorkspace']
   private readonly serverId: string
   private readonly tlsOptions: WsRpcTlsOptions | null
   private readonly serverVersion: string
@@ -152,6 +218,7 @@ export class WsRpcServer implements RpcServer {
     this.requireAuth = opts?.requireAuth ?? false
     this.validateToken = opts?.validateToken ?? null
     this.validateSessionCookie = opts?.validateSessionCookie ?? null
+    this.authorizeWorkspace = opts?.authorizeWorkspace
     this.serverId = opts?.serverId ?? 'local'
     this.serverVersion = opts?.serverVersion ?? ''
     this.tlsOptions = opts?.tls ?? null
@@ -261,7 +328,35 @@ export class WsRpcServer implements RpcServer {
   // Lifecycle
   // -------------------------------------------------------------------------
 
+  /** True when the server binds to a loopback address (local-only mode). */
+  private isLoopbackHost(): boolean {
+    return isLoopbackHost(this.host)
+  }
+
+  /**
+   * Builds a verifyClient callback for the WebSocketServer.
+   *
+   * In local (loopback) mode any Origin is accepted — the Electron renderer
+   * may use file://, app://, or other custom schemes that would otherwise be
+   * rejected.
+   *
+   * In remote mode the Origin header is validated against an allowlist
+   * (loopback hosts for development + the server's own bind host) to prevent
+   * Cross-Site WebSocket Hijacking (CSWSH).
+   */
+  private createVerifyClient(): (info: { origin: string; req: IncomingMessage; secure: boolean }) => boolean {
+    return (info) => isAllowedWsOrigin(info.origin, this.host, info.req.headers.host)
+  }
+
   async listen(): Promise<void> {
+    // Warn about insecure non-loopback binding without auth (does not force-enable
+    // auth to avoid breaking existing deployments that rely on network-level isolation).
+    if (!this.isLoopbackHost() && !this.requireAuth) {
+      transportLog.warn(
+        `WebSocket server bound to non-loopback host ${this.host} without authentication — this is insecure`,
+      )
+    }
+
     return new Promise((resolve, reject) => {
       if (this.tlsOptions) {
         // TLS mode: create HTTPS server, attach WebSocketServer to it.
@@ -278,7 +373,11 @@ export class WsRpcServer implements RpcServer {
           this.httpHandler,
         )
 
-        this.wss = new WebSocketServer({ server: this.httpsServer })
+        this.wss = new WebSocketServer({
+          server: this.httpsServer,
+          verifyClient: this.createVerifyClient(),
+          maxPayload: WS_MAX_PAYLOAD,
+        })
 
         this.httpsServer.on('error', (err) => reject(err))
 
@@ -294,7 +393,11 @@ export class WsRpcServer implements RpcServer {
         // Plain WS + HTTP handler: create an HTTP server for both.
         this._protocol = 'ws'
         this.httpServer = createHttpServer(this.httpHandler)
-        this.wss = new WebSocketServer({ server: this.httpServer })
+        this.wss = new WebSocketServer({
+          server: this.httpServer,
+          verifyClient: this.createVerifyClient(),
+          maxPayload: WS_MAX_PAYLOAD,
+        })
 
         this.httpServer.on('error', (err) => reject(err))
 
@@ -312,6 +415,8 @@ export class WsRpcServer implements RpcServer {
         this.wss = new WebSocketServer({
           host: this.host,
           port: this.requestedPort,
+          verifyClient: this.createVerifyClient(),
+          maxPayload: WS_MAX_PAYLOAD,
         })
 
         this.wss.on('listening', () => {
@@ -367,6 +472,22 @@ export class WsRpcServer implements RpcServer {
   // -------------------------------------------------------------------------
   // Connection handling
   // -------------------------------------------------------------------------
+
+  private async isWorkspaceAuthorized(request: WorkspaceAuthorizationRequest): Promise<boolean> {
+    if (!this.authorizeWorkspace) return true
+    try {
+      return await this.authorizeWorkspace(request)
+    } catch (error) {
+      transportLog.warn('Workspace authorization hook failed', {
+        workspaceId: request.workspaceId,
+        webContentsId: request.webContentsId,
+        clientId: request.clientId,
+        phase: request.phase,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    }
+  }
 
   private onConnection(ws: WebSocket, upgradeRequestCookie: string | null): void {
     // Reject if at capacity
@@ -427,17 +548,24 @@ export class WsRpcServer implements RpcServer {
         }
 
         // Auth check — bearer token OR session cookie (web UI)
+        let authMethod: WorkspaceAuthMethod = 'none'
         if (this.requireAuth) {
           let authenticated = false
 
           // 1. Try bearer token (standard path)
           if (envelope.token && this.validateToken) {
             authenticated = await this.validateToken(envelope.token)
+            if (authenticated) {
+              authMethod = 'token'
+            }
           }
 
           // 2. Fallback: try session cookie from HTTP upgrade request (web UI path)
           if (!authenticated && this.validateSessionCookie && upgradeRequestCookie) {
             authenticated = await this.validateSessionCookie(upgradeRequestCookie)
+            if (authenticated) {
+              authMethod = 'cookie'
+            }
           }
 
           if (!authenticated) {
@@ -460,6 +588,20 @@ export class WsRpcServer implements RpcServer {
               prevClient.webContentsId === (envelope.webContentsId ?? null)
 
             if (identityMatch) {
+              const authorized = await this.isWorkspaceAuthorized({
+                workspaceId: prevClient.workspaceId,
+                webContentsId: prevClient.webContentsId,
+                clientId: prevClient.id,
+                token: envelope.token,
+                authMethod,
+                phase: 'reconnect',
+              })
+              if (!authorized) {
+                this.sendError(ws, envelope.id, 'AUTH_FAILED', 'Workspace not authorized')
+                ws.close(4005, 'Workspace not authorized')
+                return
+              }
+
               // Valid reconnect — prepare client state but do NOT add to
               // this.clients yet. The client stays in disconnectedClients
               // during replay so that push() can't interleave new events
@@ -471,6 +613,12 @@ export class WsRpcServer implements RpcServer {
               prevClient.ws = ws
               prevClient.alive = true
               prevClient.missedPongs = 0
+              prevClient.authMethod = authMethod
+              if (envelope.token) {
+                prevClient.authToken = envelope.token
+              } else {
+                delete prevClient.authToken
+              }
               handshakeCompleted = true
 
               // Determine replay vs stale using the per-client delivery sequence.
@@ -556,11 +704,29 @@ export class WsRpcServer implements RpcServer {
 
         // ── Normal fresh connect ──
         const clientId = randomUUID()
+        const workspaceId = envelope.workspaceId ?? null
+        const webContentsId = envelope.webContentsId ?? null
+        const authorized = await this.isWorkspaceAuthorized({
+          workspaceId,
+          webContentsId,
+          clientId,
+          token: envelope.token,
+          authMethod,
+          phase: 'handshake',
+        })
+        if (!authorized) {
+          this.sendError(ws, envelope.id, 'AUTH_FAILED', 'Workspace not authorized')
+          ws.close(4005, 'Workspace not authorized')
+          return
+        }
+
         const client: ClientConnection = {
           id: clientId,
           ws,
-          workspaceId: envelope.workspaceId ?? null,
-          webContentsId: envelope.webContentsId ?? null,
+          workspaceId,
+          webContentsId,
+          authMethod,
+          ...(envelope.token ? { authToken: envelope.token } : {}),
           capabilities: new Set(envelope.clientCapabilities ?? []),
           missedPongs: 0,
           alive: true,
@@ -677,7 +843,7 @@ export class WsRpcServer implements RpcServer {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const rawCode = (err as { code?: unknown } | null)?.code
-      const code: ErrorCode = isErrorCode(rawCode) ? rawCode : 'HANDLER_ERROR'
+      const code: TransportErrorCode = isTransportErrorCode(rawCode) ? rawCode : 'HANDLER_ERROR'
       this.sendResponseError(client.ws, id, channel, code, message)
     }
   }
@@ -813,11 +979,25 @@ export class WsRpcServer implements RpcServer {
   }
 
   /** Update a client's workspaceId (called after SWITCH_WORKSPACE so push routing stays correct). */
-  updateClientWorkspace(clientId: string, workspaceId: string): void {
+  async updateClientWorkspace(clientId: string, workspaceId: string): Promise<void> {
     const client = this.clients.get(clientId)
-    if (client) {
-      client.workspaceId = workspaceId
+    if (!client) {
+      throw new Error(`Client not connected: ${clientId}`)
     }
+
+    const authorized = await this.isWorkspaceAuthorized({
+      workspaceId,
+      webContentsId: client.webContentsId,
+      clientId,
+      token: client.authToken,
+      authMethod: client.authMethod,
+      phase: 'switch',
+    })
+    if (!authorized) {
+      throw new Error(`Workspace not authorized: ${workspaceId}`)
+    }
+
+    client.workspaceId = workspaceId
   }
 
   private findClientByWs(ws: WebSocket): ClientConnection | undefined {
@@ -830,7 +1010,7 @@ export class WsRpcServer implements RpcServer {
   /** Handler/request errors — sent as type:'response' with error field. */
   private sendResponseError(
     ws: WebSocket, id: string, channel: string | undefined,
-    code: ErrorCode, message: string,
+    code: TransportErrorCode, message: string,
   ): void {
     const envelope: MessageEnvelope = {
       id,
@@ -842,7 +1022,7 @@ export class WsRpcServer implements RpcServer {
   }
 
   /** Protocol-level errors only (handshake rejection, version mismatch). May close connection. */
-  private sendError(ws: WebSocket, id: string, code: ErrorCode, message: string): void {
+  private sendError(ws: WebSocket, id: string, code: TransportErrorCode, message: string): void {
     const envelope: MessageEnvelope = {
       id,
       type: 'error',

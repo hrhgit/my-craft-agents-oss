@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, mkdtempSync, renameSync } from 'fs';
-import { extname, basename, resolve, join, relative } from 'path';
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, statSync, writeFileSync, unlinkSync, mkdtempSync, renameSync } from 'fs';
+import { extname, basename, resolve, join, relative, dirname } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 
@@ -13,11 +13,27 @@ export function stripBom(text: string): string {
 }
 
 /**
+ * Extract a string message from an unknown error value.
+ * Replaces the repeated `error instanceof Error ? error.message : String(error)` pattern.
+ */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
  * Parse a JSON string, stripping any leading UTF-8 BOM.
  * Use this instead of raw JSON.parse() for any content that may originate from a file.
  */
 export function safeJsonParse(text: string): unknown {
   return JSON.parse(stripBom(text));
+}
+
+/**
+ * Escape special regex characters in a string so it can be used as a literal
+ * pattern inside a RegExp. Shared canonical implementation.
+ */
+export function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -34,12 +50,29 @@ export function readJsonFileSync<T = unknown>(filePath: string): T {
  * Uses write-to-temp-then-rename pattern which is atomic on POSIX systems.
  */
 export function atomicWriteFileSync(filePath: string, data: string): void {
-  const tmpPath = filePath + '.tmp';
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let fd: number | undefined;
   try {
-    writeFileSync(tmpPath, data);
+    fd = openSync(tmpPath, 'wx');
+    writeFileSync(fd, data, 'utf-8');
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = undefined;
     renameSync(tmpPath, filePath);
+    try {
+      const dirFd = openSync(dirname(filePath), 'r');
+      try {
+        fsyncSync(dirFd);
+      } finally {
+        closeSync(dirFd);
+      }
+    } catch {
+      // Directory fsync is not supported on every platform/filesystem.
+    }
   } catch (error) {
-    // Clean up temp file if rename failed
+    if (fd !== undefined) {
+      try { closeSync(fd); } catch {}
+    }
     try { unlinkSync(tmpPath); } catch {}
     throw error;
   }
@@ -57,6 +90,8 @@ export interface FileAttachment {
   storedPath?: string;
   /** Path to converted markdown version (for office files) */
   markdownPath?: string;
+  /** Base64 thumbnail preview (for Quick Look / image previews in UI) */
+  thumbnailBase64?: string;
 }
 
 // Supported image types for Claude API
@@ -109,8 +144,13 @@ const AUDIO_EXTENSIONS: Record<string, string> = {
   '.webm': 'audio/webm',
 };
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB limit
-const MAX_TEXT_SIZE = 100 * 1024; // 100KB for text files
+export const ATTACHMENT_SINGLE_FILE_LIMIT_BYTES = 50 * 1024 * 1024;
+export const ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES = 100 * 1024 * 1024;
+export const ATTACHMENT_INLINE_RPC_LIMIT_BYTES = 5 * 1024 * 1024;
+export const ATTACHMENT_TEXT_INLINE_LIMIT_BYTES = 2 * 1024 * 1024;
+
+const MAX_FILE_SIZE = ATTACHMENT_SINGLE_FILE_LIMIT_BYTES;
+const MAX_TEXT_SIZE = ATTACHMENT_TEXT_INLINE_LIMIT_BYTES;
 
 // Claude API image limits - images exceeding these will fail silently
 // See: https://docs.anthropic.com/en/docs/build-with-claude/vision

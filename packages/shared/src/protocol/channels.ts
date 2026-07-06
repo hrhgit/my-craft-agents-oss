@@ -10,11 +10,7 @@ export const RPC_CHANNELS = {
   server: {
     GET_WORKSPACES: 'server:getWorkspaces',
     CREATE_WORKSPACE: 'server:createWorkspace',
-    GET_STATUS: 'server:getStatus',
-    GET_HEALTH: 'server:getHealth',
-    GET_ACTIVE_SESSIONS: 'server:getActiveSessions',
     SHUTTING_DOWN: 'server:shuttingDown',
-    STATUS_CHANGED: 'server:statusChanged',
     HOME_DIR: 'server:homeDir',
   },
   sessions: {
@@ -47,6 +43,7 @@ export const RPC_CHANNELS = {
     IMPORT: 'sessions:import',
     EXPORT_REMOTE_TRANSFER: 'sessions:exportRemoteTransfer',
     IMPORT_REMOTE_TRANSFER: 'sessions:importRemoteTransfer',
+    LIST_CHILD_SESSIONS: 'sessions:listChildSessions',
   },
   transfer: {
     START: 'transfer:start',
@@ -68,6 +65,7 @@ export const RPC_CHANNELS = {
     GET_MODE: 'window:getMode',
     OPEN_WORKSPACE: 'window:openWorkspace',
     OPEN_SESSION_IN_NEW_WINDOW: 'window:openSessionInNewWindow',
+    OPEN_CHILD_SESSION_WINDOW: 'window:openChildSessionWindow',
     SWITCH_WORKSPACE: 'window:switchWorkspace',
     CLOSE: 'window:close',
     CLOSE_REQUESTED: 'window:closeRequested',
@@ -156,8 +154,6 @@ export const RPC_CHANNELS = {
     NAVIGATE: 'deeplink:navigate',
   },
   auth: {
-    LOGOUT: 'auth:logout',
-    SHOW_LOGOUT_CONFIRMATION: 'auth:showLogoutConfirmation',
     SHOW_DELETE_SESSION_CONFIRMATION: 'auth:showDeleteSessionConfirmation',
   },
   credentials: {
@@ -165,7 +161,6 @@ export const RPC_CHANNELS = {
   },
   onboarding: {
     GET_AUTH_STATE: 'onboarding:getAuthState',
-    VALIDATE_MCP: 'onboarding:validateMcp',
     START_MCP_OAUTH: 'onboarding:startMcpOAuth',
     DEFER_SETUP: 'onboarding:deferSetup',
   },
@@ -303,8 +298,6 @@ export const RPC_CHANNELS = {
     SET_BROWSER_TOOL_ENABLED: 'tools:setBrowserToolEnabled',
   },
   piExtensions: {
-    GET_ENABLED: 'piExtensions:getEnabled',
-    SET_ENABLED: 'piExtensions:setEnabled',
     GET_DELEGATE_PROMPT_AUTOMATION: 'piExtensions:getDelegatePromptAutomation',
     SET_DELEGATE_PROMPT_AUTOMATION: 'piExtensions:setDelegatePromptAutomation',
     GET_SETTINGS: 'piExtensions:getSettings',
@@ -314,12 +307,10 @@ export const RPC_CHANNELS = {
     GET_EXTENSION_STATES: 'piExtensions:getExtensionStates',
     SET_EXTENSION_ENABLED: 'piExtensions:setExtensionEnabled',
   },
-  // 扩展事件桥接：pi-agent-server 子进程的扩展事件转发到渲染进程
+  // 扩展事件桥接：Pi RpcClient的扩展事件转发到渲染进程
   extensions: {
     EVENT: 'extensions:event',
-    REMOTEUI_REQUEST: 'extensions:remoteuiRequest',
     REMOTEUI_RESPONSE: 'extensions:remoteuiResponse',
-    COMMAND_REGISTERED: 'extensions:commandRegistered',
     COMMAND_INVOKE: 'extensions:commandInvoke',
   },
   caching: {

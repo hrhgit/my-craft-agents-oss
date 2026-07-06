@@ -7,7 +7,7 @@
  * agent-facing string the Pi agent returns.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, it, expect } from 'bun:test'
 import { CodedError } from '../../protocol/types.ts'
 
 // We re-implement the mapping inline here as a contract test — if the
@@ -48,7 +48,3 @@ describe('pi-agent browser_tool error mapping (contract)', () => {
     expect(err).toBeInstanceOf(Error)
   })
 })
-
-// Silence unused warnings — these are kept to make refactor breakage visible.
-beforeEach(() => {})
-afterEach(() => {})

@@ -5,7 +5,7 @@
  * Provides common abort reasons, session state, and cleanup patterns.
  *
  * The actual abort implementation is provider-specific. PiAgent signals the
- * pi-agent-server subprocess via JSONL.
+ * Pi RpcClient.
  *
  * This module provides the shared types and utilities that both use.
  */

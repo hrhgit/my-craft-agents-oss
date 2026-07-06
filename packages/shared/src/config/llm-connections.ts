@@ -13,10 +13,8 @@
 // injected at app startup via registerPiModelResolver().
 import {
   type ModelDefinition,
-  ANTHROPIC_MODELS,
   normalizeDeprecatedModelId,
 } from './models';
-import type { CredentialManager } from '../credentials/manager.ts';
 
 // ============================================================
 // Pi Model Resolver (dependency injection to avoid Pi SDK in renderer)
@@ -42,17 +40,27 @@ export function registerPiModelResolver(resolver: PiModelResolver): void {
  * Provider type determines which provider route to use.
  * This is separate from auth mechanism - a provider may support multiple auth types.
  *
- * - 'anthropic': Anthropic-compatible Claude connection routed through the Pi backend
  * - 'pi': Pi unified LLM API (20+ providers via @earendil-works/pi-ai)
  * - 'pi_compat': Pi with custom endpoint (Ollama, self-hosted models, Anthropic-compat endpoints)
  *
- * Legacy values (bedrock, vertex, anthropic_compat) are migrated on startup
+ * Legacy values (anthropic, bedrock, vertex, anthropic_compat) are migrated on startup
  * by migrateLegacyProviderTypes() in storage.ts.
  */
 export type LlmProviderType =
-  | 'anthropic'
   | 'pi'
   | 'pi_compat';
+
+/**
+ * @deprecated Legacy providerType values are migration input only. Runtime
+ * connections must use {@link LlmProviderType}.
+ */
+export type LegacyLlmProviderType =
+  | 'bedrock'
+  | 'vertex'
+  | 'anthropic_compat'
+  | 'openai'
+  | 'openai_compat'
+  | 'copilot';
 
 /**
  * @deprecated Use LlmProviderType instead. Kept for migration compatibility.
@@ -252,8 +260,8 @@ export function isDeniedMiniModelId(modelId: string, piAuthProvider?: string): b
 /**
  * Get the mini/utility model ID for a connection.
  * Provider-aware search:
- *   - Anthropic: find any model with "haiku" in its id/name
- *   - Pi: find any model with "mini" or "flash" in its id/name
+ *   - Pi Anthropic auth: find any model with "haiku" in its id/name
+ *   - Other Pi auth: find any model with "mini" or "flash" in its id/name
  *   - Otherwise: last model in the list
  *
  * Auth-flavor-aware: skips models that the user's `piAuthProvider` would reject
@@ -285,8 +293,8 @@ export function getSummarizationModel(
  * Provider-aware small model resolution.
  * Shared implementation for getMiniModel() and getSummarizationModel().
  *
- *   - Anthropic: find "haiku"
- *   - Pi: find "mini" or "flash"
+ *   - Pi Anthropic/Bedrock auth: find "haiku"
+ *   - Other Pi auth: find "mini" or "flash"
  *   - Otherwise: last model in the list
  *
  * Skips models denied by {@link isDeniedMiniModelId} for the connection's
@@ -308,7 +316,10 @@ function findSmallModel(
   // Provider-aware keyword search
   const keywords: string[] = [];
 
-  if (isAnthropicProvider(connection.providerType)) {
+  if (
+    connection.piAuthProvider === 'anthropic' ||
+    connection.piAuthProvider === 'amazon-bedrock'
+  ) {
     keywords.push('haiku');
   } else if (isPiProvider(connection.providerType)) {
     keywords.push('mini', 'flash');
@@ -402,18 +413,6 @@ export function authTypeToCredentialStorageType(authType: LlmAuthType): LlmCrede
 }
 
 /**
- * @deprecated Use authTypeToCredentialStorageType instead.
- * Kept for backwards compatibility during migration.
- */
-export function authTypeToCredentialType(authType: LlmAuthType): 'api_key' | 'oauth_token' | null {
-  const storageType = authTypeToCredentialStorageType(authType);
-  if (storageType === 'api_key' || storageType === 'oauth_token') {
-    return storageType;
-  }
-  return null;
-}
-
-/**
  * Check if an auth type requires a custom endpoint URL.
  * @param authType - LLM auth type
  * @returns true if endpoint URL field should be shown in UI
@@ -430,15 +429,6 @@ export function authTypeRequiresEndpoint(authType: LlmAuthType): boolean {
  */
 export function isCompatProvider(providerType: LlmProviderType): boolean {
   return providerType === 'pi_compat';
-}
-
-/**
- * Check if a provider type uses Anthropic-compatible auth and model metadata.
- * @param providerType - Provider type to check
- * @returns true if this provider is the Anthropic-compatible route
- */
-export function isAnthropicProvider(providerType: LlmProviderType): boolean {
-  return providerType === 'anthropic';
 }
 
 /**
@@ -467,16 +457,12 @@ export function isPiProvider(providerType: LlmProviderType): boolean {
 /**
  * Default mid-stream send behavior for a given provider type.
  *
- * - 'anthropic' → 'queue': Claude's emulated steer (PreToolUse hook injection)
- *   has a real failure mode — if no tool fires before the turn ends, the steer
- *   becomes `steer_undelivered` and gets re-queued anyway, paying for the
- *   original turn's tokens for nothing. Default to queue for predictability.
- * - 'pi' / 'pi_compat' → 'steer': Pi's native `.steer()` is non-destructive
- *   (delivers after the current tool finishes, keeps full context). No
- *   downside to defaulting to immediate steering.
+ * Pi is the only runtime provider. Provider brands such as Anthropic are Pi
+ * auth/model configuration, so all runtime connections default to Pi's native
+ * non-destructive `.steer()` behavior.
  */
-export function defaultMidStreamBehavior(providerType: LlmProviderType): MidStreamBehavior {
-  return providerType === 'anthropic' ? 'queue' : 'steer';
+export function defaultMidStreamBehavior(_providerType: LlmProviderType): MidStreamBehavior {
+  return 'steer';
 }
 
 /**
@@ -583,8 +569,7 @@ export function getModelsForProviderType(providerType: LlmProviderType, piAuthPr
     return _piModelResolver(piAuthProvider);
   }
 
-  // Anthropic uses Claude models with bare Anthropic IDs.
-  return ANTHROPIC_MODELS;
+  return [];
 }
 
 /**
@@ -635,9 +620,8 @@ export function getDefaultModelsForConnection(providerType: LlmProviderType, piA
         // Try direct match first (works for non-Bedrock providers)
         const direct = preferred.findIndex(p => bare === p || bare.startsWith(`${p}-`))
         if (direct >= 0) return direct
-        // For Bedrock: reverse-map native ID to bare, then match
-        const reversed = fromBedrockNativeId(bare)
-        if (reversed !== bare) {
+        const reversed = BEDROCK_REVERSE_MAP[bare]
+        if (reversed) {
           return preferred.findIndex(p => reversed === p || reversed.startsWith(`${p}-`))
         }
         return -1
@@ -651,8 +635,7 @@ export function getDefaultModelsForConnection(providerType: LlmProviderType, piA
     return models;
   }
   if (providerType === 'pi_compat') return [];  // Dynamic — user specifies
-  // anthropic
-  return ANTHROPIC_MODELS;
+  return [];
 }
 
 /**
@@ -735,7 +718,6 @@ export function isValidProviderAuthCombination(
   authType: LlmAuthType
 ): boolean {
   const validCombinations: Record<LlmProviderType, LlmAuthType[]> = {
-    anthropic: ['api_key', 'oauth'],
     pi: ['api_key', 'oauth', 'iam_credentials', 'environment', 'none'],
     pi_compat: ['api_key_with_endpoint', 'none'],
   };
@@ -854,51 +836,6 @@ export function normalizeBedrockModelId(
 }
 
 // ============================================================
-// Migration Helpers
-// ============================================================
-
-/**
- * Migrate legacy connection type to new provider type.
- * Used during config migration.
- *
- * @param legacyType - Legacy LlmConnectionType value
- * @returns New LlmProviderType value
- */
-export function migrateConnectionType(legacyType: LlmConnectionType): LlmProviderType {
-  switch (legacyType) {
-    case 'anthropic':
-      return 'anthropic';
-    case 'openai':
-      return 'pi';
-    case 'openai-compat':
-      return 'pi_compat';
-  }
-}
-
-/**
- * Migrate legacy auth type to new auth type.
- * Determines new auth type based on legacy type + connection context.
- *
- * @param legacyAuthType - Legacy auth type ('api_key' | 'oauth' | 'none')
- * @param hasCustomEndpoint - Whether connection has a custom baseUrl
- * @returns New LlmAuthType value
- */
-export function migrateAuthType(
-  legacyAuthType: 'api_key' | 'oauth' | 'none',
-  hasCustomEndpoint: boolean
-): LlmAuthType {
-  switch (legacyAuthType) {
-    case 'api_key':
-      // If has custom endpoint, use api_key_with_endpoint
-      return hasCustomEndpoint ? 'api_key_with_endpoint' : 'api_key';
-    case 'oauth':
-      return 'oauth';
-    case 'none':
-      return 'none';
-  }
-}
-
-// ============================================================
 // Auth Environment Variable Resolution
 // ============================================================
 
@@ -963,124 +900,10 @@ export function resetManagedAnthropicAuthEnvVars(): void {
   }
 }
 
-/**
- * Result of resolving auth env vars for an LLM connection.
+/*
+ * Pi runtime standard note: LlmProviderType is intentionally limited to Pi runtime routes.
+ * Provider brands such as Anthropic, OpenAI, Google, Bedrock, and custom endpoints
+ * are represented as Pi auth/provider/model configuration rather than as Craft
+ * backend provider branches. Legacy providerType strings may still appear while
+ * reading migration input, but new persisted connections must use pi or pi_compat.
  */
-export interface ResolvedAuthEnvVars {
-  /** Environment variables to set (e.g., ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) */
-  envVars: Record<string, string>;
-  /** Whether credentials were successfully resolved */
-  success: boolean;
-  /** Warning message if auth resolution encountered issues */
-  warning?: string;
-}
-
-/**
- * Resolve authentication environment variables for an LLM connection.
- *
- * Provider-agnostic: switches on providerType to determine which env vars
- * to set and how to retrieve credentials. Shared by:
- * - `SessionManager.reinitializeAuth()` (applies to process.env)
- * - `PiAgent.postInit()` (applies to process.env + envOverrides)
- *
- * Providers that handle auth internally (openai, copilot, pi) return
- * empty envVars — their auth is managed in postInit() via native mechanisms.
- *
- * @param connection - The LLM connection config
- * @param connectionSlug - Connection slug for credential lookup
- * @param credentialManager - Credential manager instance
- * @param getValidOAuthToken - Function to get a valid (refreshed) OAuth token
- * @returns Resolved env vars and status
- */
-export async function resolveAuthEnvVars(
-  connection: LlmConnection,
-  connectionSlug: string,
-  credentialManager: CredentialManager,
-  getValidOAuthToken: (slug: string) => Promise<{ accessToken?: string | null }>,
-): Promise<ResolvedAuthEnvVars> {
-  const envVars: Record<string, string> = {};
-
-  // Only Anthropic-SDK-based providers use env var auth
-  // OpenAI (Codex), Copilot, and Pi handle auth internally in their postInit()
-  if (!isAnthropicProvider(connection.providerType)) {
-    return { envVars, success: true };
-  }
-
-  // Set base URL if configured
-  if (connection.baseUrl) {
-    envVars.ANTHROPIC_BASE_URL = connection.baseUrl;
-  }
-
-  const authType = connection.authType;
-
-  if (authType === 'api_key' || authType === 'api_key_with_endpoint' || authType === 'bearer_token') {
-    const apiKey = await credentialManager.getLlmApiKey(connectionSlug);
-    if (apiKey) {
-      envVars.ANTHROPIC_API_KEY = apiKey;
-    } else if (connection.baseUrl) {
-      // Keyless provider (e.g. Ollama)
-      envVars.ANTHROPIC_API_KEY = 'not-needed';
-    } else {
-      return { envVars, success: false, warning: `No API key found for: ${connectionSlug}` };
-    }
-  } else if (authType === 'oauth') {
-    if (connection.providerType === 'anthropic') {
-      // Anthropic OAuth uses getValidClaudeOAuthToken which handles token refresh
-      const tokenResult = await getValidOAuthToken(connectionSlug);
-      if (tokenResult.accessToken) {
-        envVars.CLAUDE_CODE_OAUTH_TOKEN = tokenResult.accessToken;
-      } else {
-        return { envVars, success: false, warning: `Failed to get OAuth token for: ${connectionSlug}` };
-      }
-    } else {
-      // Fallback OAuth path (should not be reached after legacy migration)
-      const llmOAuth = await credentialManager.getLlmOAuth(connectionSlug);
-      if (llmOAuth?.accessToken) {
-        envVars.CLAUDE_CODE_OAUTH_TOKEN = llmOAuth.accessToken;
-      } else {
-        return { envVars, success: false, warning: `No OAuth token found for: ${connectionSlug}` };
-      }
-    }
-  } else if (authType === 'environment') {
-    // Environment auth — credentials come from process.env, nothing to inject
-    return { envVars, success: true };
-  }
-
-  return { envVars, success: true };
-}
-
-/**
- * Migrate a legacy LlmConnection to the new format.
- * Creates a new connection object with providerType instead of type.
- *
- * @param legacy - Legacy connection with 'type' field
- * @returns Migrated connection with 'providerType' field
- */
-export function migrateLlmConnection(legacy: {
-  slug: string;
-  name: string;
-  type: LlmConnectionType;
-  baseUrl?: string;
-  authType: 'api_key' | 'oauth' | 'none';
-  models?: ModelDefinition[];
-  defaultModel?: string;
-  createdAt: number;
-  lastUsedAt?: number;
-}): LlmConnection {
-  const providerType = migrateConnectionType(legacy.type);
-  const hasCustomEndpoint = !!legacy.baseUrl && legacy.type !== 'anthropic';
-  const authType = migrateAuthType(legacy.authType, hasCustomEndpoint);
-
-  return {
-    slug: legacy.slug,
-    name: legacy.name,
-    providerType,
-    type: legacy.type, // Keep for backwards compatibility
-    baseUrl: legacy.baseUrl,
-    authType,
-    models: legacy.models,
-    defaultModel: legacy.defaultModel,
-    createdAt: legacy.createdAt,
-    lastUsedAt: legacy.lastUsedAt,
-  };
-}

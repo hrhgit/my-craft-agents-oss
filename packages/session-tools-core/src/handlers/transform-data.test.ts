@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { SessionToolContext } from '../context.ts';
 import { handleTransformData } from './transform-data.ts';
+import { getResultText } from '../types.ts';
 
 describe('transform_data path containment', () => {
   let rootDir: string;
@@ -11,6 +12,7 @@ describe('transform_data path containment', () => {
   let dataDir: string;
   let siblingDir: string;
   let skillsDir: string;
+  let projectSkillsDir: string;
 
   beforeEach(() => {
     rootDir = mkdtempSync(join(tmpdir(), 'transform-data-boundary-'));
@@ -18,15 +20,18 @@ describe('transform_data path containment', () => {
     dataDir = join(sessionDir, 'data');
     siblingDir = join(rootDir, 'session-evil');
     skillsDir = join(rootDir, 'skills');
+    projectSkillsDir = join(rootDir, 'project', '.pi', 'skills');
 
     mkdirSync(sessionDir, { recursive: true });
     mkdirSync(dataDir, { recursive: true });
     mkdirSync(siblingDir, { recursive: true });
     mkdirSync(join(skillsDir, 'branding', 'assets'), { recursive: true });
+    mkdirSync(join(projectSkillsDir, 'project-kit', 'assets'), { recursive: true });
 
     writeFileSync(join(sessionDir, 'in.txt'), 'hello');
     writeFileSync(join(siblingDir, 'outside.txt'), 'evil');
     writeFileSync(join(skillsDir, 'branding', 'assets', 'template.pptx'), 'fake-pptx');
+    writeFileSync(join(projectSkillsDir, 'project-kit', 'assets', 'input.csv'), 'a,b\n1,2');
   });
 
   afterEach(() => {
@@ -68,7 +73,7 @@ describe('transform_data path containment', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('outputFile must be within the session data directory');
+    expect(getResultText(result)).toContain('outputFile must be within the session data directory');
   });
 
   it('rejects input path in sibling directory with shared prefix', async () => {
@@ -80,7 +85,7 @@ describe('transform_data path containment', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('inputFile must be within the session or skills directory');
+    expect(getResultText(result)).toContain('inputFile must be within the session or skills directory');
   });
 
   it('rejects output path that escapes via symlink', async () => {
@@ -100,7 +105,7 @@ describe('transform_data path containment', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('outputFile must be within the session data directory');
+    expect(getResultText(result)).toContain('outputFile must be within the session data directory');
   });
 
   it('allows valid descendant paths and writes output', async () => {
@@ -128,6 +133,19 @@ describe('transform_data path containment', () => {
     expect(existsSync(join(dataDir, 'out.json'))).toBe(true);
   });
 
+  it('allows input files from configured Pi skill roots', async () => {
+    const skillAsset = join(projectSkillsDir, 'project-kit', 'assets', 'input.csv');
+    const result = await handleTransformData({ ...ctx(), skillPaths: [skillsDir, projectSkillsDir] }, {
+      language: 'node',
+      script: "const fs=require('node:fs');const data=fs.readFileSync(process.argv.at(-2),'utf-8');fs.writeFileSync(process.argv.at(-1), data);",
+      inputFiles: [skillAsset],
+      outputFile: 'out.csv',
+    });
+
+    expect(result.isError).toBe(false);
+    expect(existsSync(join(dataDir, 'out.csv'))).toBe(true);
+  });
+
   it('still rejects input files outside both session and skills directories', async () => {
     const result = await handleTransformData(ctx(), {
       language: 'node',
@@ -137,7 +155,7 @@ describe('transform_data path containment', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('inputFile must be within the session or skills directory');
+    expect(getResultText(result)).toContain('inputFile must be within the session or skills directory');
   });
 
   it('rejects input path in skills dir that escapes via symlink', async () => {
@@ -158,7 +176,7 @@ describe('transform_data path containment', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('inputFile must be within the session or skills directory');
+    expect(getResultText(result)).toContain('inputFile must be within the session or skills directory');
   });
 
   it('rejects skills path when skillsPath is not available in context', async () => {
@@ -173,6 +191,6 @@ describe('transform_data path containment', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('inputFile must be within the session or skills directory');
+    expect(getResultText(result)).toContain('inputFile must be within the session or skills directory');
   });
 });

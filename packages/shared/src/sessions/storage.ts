@@ -2,7 +2,9 @@
  * Session Storage
  *
  * Workspace-scoped session CRUD operations.
- * Sessions are stored at {workspaceRootPath}/sessions/{id}/session.jsonl
+ * Sessions are stored at ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl
+ * (Pi tree JSONL v3 format; legacy {workspaceRootPath}/sessions/{id}/session.jsonl
+ * retained for backward compatibility).
  * Each session folder contains:
  * - session.jsonl (main data in JSONL format: line 1 = header, lines 2+ = messages)
  * - attachments/ (file attachments)
@@ -23,48 +25,29 @@ import {
   unlinkSync,
 } from 'fs';
 import { dirname, join, basename, resolve } from 'path';
-import { getWorkspaceSessionsPath } from '../workspaces/storage.ts';
 import { generateUniqueSessionId } from './slug-generator.ts';
-import { toPortablePath, expandPath, pathStartsWith } from '../utils/paths.ts';
-import { sanitizeSessionId } from './validation.ts';
+import { toPortablePath, expandPath, isPathWithinDirectory, normalizePathForComparison } from '../utils/paths.ts';
+import { atomicWriteFileSync } from '../utils/files.ts';
+import { sanitizeSessionId, validateSessionId } from './validation.ts';
 import { perf } from '../utils/perf.ts';
 import type {
-  SessionConfig,
   StoredSession,
-  SessionMetadata,
   SessionTokenUsage,
   SessionHeader,
-  SessionStatus,
   StoredMessage,
 } from './types.ts';
 import type { Plan } from '../agent/plan-types.ts';
 import { validateSessionStatus } from '../statuses/validation.ts';
 import { debug } from '../utils/debug.ts';
-import { getStatusCategory } from '../statuses/storage.ts';
 import { readSessionHeader, readSessionJsonl } from './jsonl.ts';
 import { sessionPersistenceQueue } from './persistence-queue.ts';
-import { PI_SESSIONS_DIR, PI_PROJECT_SESSIONS_DIR } from '../config/paths.ts';
-import { readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionJsonl, readTreeSessionMetadata, writeTreeSessionCraftMetadata } from './tree-jsonl.ts';
+import { PI_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
+import { readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionJsonl, readTreeSessionMetadata, writeTreeSessionCraftMetadata, writeTreeSessionCraftMetadataAsync, acquireTreeSessionFileLock } from './tree-jsonl.ts';
 
-// Re-export types for convenience
-export type { SessionConfig } from './types.ts';
-
-let sharedPiSessionStorageEnabled = false;
 let sharedPiSessionsDirOverride: string | undefined;
 
-/**
- * Enable storing Craft-managed sessions under the Pi sessions directory.
- *
- * This is intentionally set by the server/runtime layer instead of reading
- * config here, because config storage imports sessions and a direct import
- * back into config would create a fragile module cycle.
- */
-export function setSharedPiSessionStorageEnabled(enabled: boolean): void {
-  sharedPiSessionStorageEnabled = enabled;
-}
-
-export function getSharedPiSessionStorageEnabled(): boolean {
-  return sharedPiSessionStorageEnabled;
+export interface EnsureSharedPiTreeSessionFileOptions {
+  lastWrittenHeaderSignature?: string;
 }
 
 /**
@@ -78,27 +61,32 @@ function getPiSessionsRoot(): string {
   return sharedPiSessionsDirOverride ?? PI_SESSIONS_DIR;
 }
 
-function encodePiSessionCwd(cwd: string): string {
-  const resolvedCwd = resolve(expandPath(cwd));
-  return `--${resolvedCwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
+/**
+ * Session storage root is ALWAYS under the Pi sessions directory now.
+ * The legacy `~/.craft-agent/workspaces/{id}/sessions/` path is only read by
+ * the migration tool (migration tool) and is never written to.
+ */
+function getSessionStorageRootPath(workspaceRootPath: string, _workingDirectory?: string): string {
+  return join(getPiSessionsRoot(), encodePiSessionCwd(workspaceRootPath));
 }
 
-function getSessionStorageRootPath(workspaceRootPath: string, workingDirectory?: string): string {
-  if (!sharedPiSessionStorageEnabled) {
-    return getWorkspaceSessionsPath(workspaceRootPath);
+export function getSharedPiSidecarPathForFile(sessionFile: string, sessionId: string): string {
+  const safeSessionId = sanitizeSessionId(sessionId);
+  if (!safeSessionId) {
+    throw new Error('Security Error: Invalid session ID - empty sanitized value');
   }
-  const cwd = workingDirectory || workspaceRootPath;
-  return join(getPiSessionsRoot(), encodePiSessionCwd(cwd));
-}
-
-function getDefaultSessionPath(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string {
-  const safeSessionId = sanitizeSessionId(sessionId);
-  return join(getSessionStorageRootPath(workspaceRootPath, workingDirectory), safeSessionId);
-}
-
-function getSharedPiSidecarPathForFile(sessionFile: string, sessionId: string): string {
-  const safeSessionId = sanitizeSessionId(sessionId);
   return join(dirname(sessionFile), '.craft', safeSessionId);
+}
+
+/**
+ * Build the Pi session file name (`{ISO-timestamp}_{safeId}.jsonl`).
+ * Shared by `getPiNativeSessionFilePath` and the one-shot migration tool to
+ * keep a single source of truth for the file-name layout.
+ */
+export function buildPiSessionFileName(sessionId: string, createdAt?: number): string {
+  const timestampMs = typeof createdAt === 'number' && Number.isFinite(createdAt) ? createdAt : Date.now();
+  const fileTimestamp = new Date(timestampMs).toISOString().replace(/[:.]/g, '-');
+  return `${fileTimestamp}_${sanitizeSessionId(sessionId)}.jsonl`;
 }
 
 export function getPiNativeSessionFilePath(
@@ -107,10 +95,7 @@ export function getPiNativeSessionFilePath(
   workingDirectory?: string,
   createdAt?: number,
 ): string {
-  const timestampMs = typeof createdAt === 'number' && Number.isFinite(createdAt) ? createdAt : Date.now();
-  const timestamp = new Date(timestampMs).toISOString();
-  const fileTimestamp = timestamp.replace(/[:.]/g, '-');
-  return join(getPiNativeSessionDir(workspaceRootPath, workingDirectory), `${fileTimestamp}_${sanitizeSessionId(sessionId)}.jsonl`);
+  return join(getPiNativeSessionDir(workspaceRootPath, workingDirectory), buildPiSessionFileName(sessionId, createdAt));
 }
 
 function findSharedPiSessionFileInDir(cwdPath: string, sessionId: string): string | null {
@@ -148,15 +133,15 @@ function findSharedPiSessionFileInDir(cwdPath: string, sessionId: string): strin
   return null;
 }
 
-function findSharedPiSessionFile(sessionId: string, workspaceRootPath?: string, workingDirectory?: string): string | null {
-  if (!sharedPiSessionStorageEnabled) return null;
+function findSharedPiSessionFile(sessionId: string, workspaceRootPath?: string, _workingDirectory?: string): string | null {
   const root = getPiSessionsRoot();
   if (!existsSync(root)) return null;
 
   if (workspaceRootPath) {
-    const scopedDir = join(root, encodePiSessionCwd(workingDirectory || workspaceRootPath));
+    const scopedDir = join(root, encodePiSessionCwd(workspaceRootPath));
     const scopedFile = findSharedPiSessionFileInDir(scopedDir, sessionId);
     if (scopedFile) return scopedFile;
+    return null;
   }
 
   try {
@@ -172,82 +157,82 @@ function findSharedPiSessionFile(sessionId: string, workspaceRootPath?: string, 
   return null;
 }
 
-function findSharedPiSessionPath(sessionId: string, workspaceRootPath?: string, workingDirectory?: string): string | null {
-  const filePath = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory);
-  if (!filePath) return null;
-  if (basename(filePath) === 'session.jsonl') return dirname(filePath);
-  return getSharedPiSidecarPathForFile(filePath, sessionId);
+/**
+ * List Craft session directories by scanning only the workspace root bucket.
+ *
+ * Complete-unification semantics require the Craft owner metadata to match the
+ * workspace root. Sessions in other cwd buckets belong to the workspace rooted
+ * at that cwd (or are legacy orphans until migrated).
+ */
+function sameWorkspacePath(a: string | undefined, b: string): boolean {
+  if (!a) return false;
+  try {
+    return normalizePathForComparison(expandPath(a)) === normalizePathForComparison(expandPath(b));
+  } catch {
+    return false;
+  }
 }
 
 function listCraftSessionDirs(workspaceRootPath: string): Array<{ sessionId: string; sessionDir: string; jsonlFile: string }> {
-  if (!sharedPiSessionStorageEnabled) {
-    const sessionsDir = getWorkspaceSessionsPath(workspaceRootPath);
-    if (!existsSync(sessionsDir)) return [];
-    const entries = readdirSync(sessionsDir, { withFileTypes: true });
-    return entries
-      .filter(entry => entry.isDirectory())
-      .map(entry => {
-        const sessionDir = join(sessionsDir, entry.name);
-        return { sessionId: entry.name, sessionDir, jsonlFile: join(sessionDir, 'session.jsonl') };
-      });
-  }
-
   const root = getPiSessionsRoot();
   if (!existsSync(root)) return [];
   const result: Array<{ sessionId: string; sessionDir: string; jsonlFile: string }> = [];
-  try {
-    const cwdDirs = readdirSync(root, { withFileTypes: true });
-    for (const cwdDir of cwdDirs) {
-      if (!cwdDir.isDirectory()) continue;
-      const cwdPath = join(root, cwdDir.name);
-      let entries: import('fs').Dirent[];
-      try {
-        entries = readdirSync(cwdPath, { withFileTypes: true });
-      } catch {
-        continue;
-      }
+  const seenFiles = new Set<string>();
+
+  const addSessionFile = (jsonlFile: string): void => {
+    if (seenFiles.has(jsonlFile)) return;
+
+    const treeHeader = readTreeSessionHeader(jsonlFile);
+    let sessionId: string | undefined;
+    let headerWorkspaceRootPath: string | undefined;
+    if (treeHeader) {
+      sessionId = treeHeader.craft?.id ?? treeHeader.id;
+      headerWorkspaceRootPath = treeHeader.craft?.workspaceRootPath;
+    } else {
+      const header = readSessionHeader(jsonlFile);
+      if (!header) return;
+      sessionId = header.craftId;
+      headerWorkspaceRootPath = header.workspaceRootPath;
+    }
+
+    if (!sessionId) {
+      sessionId = basename(jsonlFile, '.jsonl');
+    }
+    if (!sameWorkspacePath(headerWorkspaceRootPath, workspaceRootPath)) {
+      return;
+    }
+    seenFiles.add(jsonlFile);
+    result.push({
+      sessionId,
+      sessionDir: getSharedPiSidecarPathForFile(jsonlFile, sessionId),
+      jsonlFile,
+    });
+  };
+
+  const scanCwdPath = (cwdPath: string): void => {
+    if (!existsSync(cwdPath)) return;
+    try {
+      const entries = readdirSync(cwdPath, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-          const jsonlFile = join(cwdPath, entry.name);
-          const parsed = readTreeSessionJsonl(jsonlFile);
-          const sessionId = parsed?.header.craft?.id ?? parsed?.header.id ?? basename(entry.name, '.jsonl');
-          result.push({
-            sessionId,
-            sessionDir: getSharedPiSidecarPathForFile(jsonlFile, sessionId),
-            jsonlFile,
-          });
+          addSessionFile(join(cwdPath, entry.name));
         } else if (entry.isDirectory()) {
           // Backward compatibility for legacy Craft-managed session folders
-          // stored below the Pi cwd bucket.
-          const sessionDir = join(cwdPath, entry.name);
-          const jsonlFile = join(sessionDir, 'session.jsonl');
+          // stored below the Pi cwd bucket (early shared-storage experiment).
+          const jsonlFile = join(cwdPath, entry.name, 'session.jsonl');
           if (existsSync(jsonlFile)) {
-            result.push({ sessionId: entry.name, sessionDir, jsonlFile });
+            addSessionFile(jsonlFile);
           }
         }
       }
+    } catch {
+      // Ignore malformed/unreadable Pi sessions directories.
     }
-  } catch {
-    // Ignore malformed/unreadable Pi sessions directories.
-  }
+  };
+
+  const cwdPath = join(root, encodePiSessionCwd(workspaceRootPath));
+  scanCwdPath(cwdPath);
   return result;
-}
-
-function pathKey(path: string): string {
-  const portableNormalized = path.replace(/^~[\\/]/, '~/');
-  const resolved = resolve(expandPath(portableNormalized));
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-}
-
-function headerBelongsToWorkspace(header: SessionHeader, workspaceRootPath: string): boolean {
-  if (!sharedPiSessionStorageEnabled) return true;
-  if (!header.workspaceRootPath) return true;
-  if (pathKey(header.workspaceRootPath) === pathKey(workspaceRootPath)) return true;
-
-  // Pure Pi sessions do not have Craft workspace metadata; their header cwd is
-  // projected as workspaceRootPath. Treat sessions started inside the current
-  // workspace as belonging here, so Craft can resume Pi history directly.
-  return pathStartsWith(expandPath(header.workspaceRootPath), expandPath(workspaceRootPath));
 }
 
 // ============================================================
@@ -266,51 +251,72 @@ export function ensureSessionsDir(workspaceRootPath: string, workingDirectory?: 
 }
 
 /**
- * Get path to a session's directory
+ * Get path to a session's directory (the .craft/{sessionId}/ sidecar dir).
+ *
+ * Always resolves to the sidecar directory next to the Pi
+ * session JSONL file. The legacy `~/.craft-agent/workspaces/{id}/sessions/{id}/`
+ * path is no longer used for new sessions.
  *
  * SECURITY: Uses sanitizeSessionId() as defense-in-depth to prevent path traversal.
  * Callers should still validate sessionId before calling this function.
  */
 export function getSessionPath(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string {
   // Defense-in-depth: strip any path components from sessionId
-  if (sharedPiSessionStorageEnabled) {
-    const filePath = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory)
-      ?? getPiNativeSessionFilePath(workspaceRootPath, sessionId, workingDirectory);
-    return getSharedPiSidecarPathForFile(filePath, sessionId);
-  }
-  return findSharedPiSessionPath(sessionId, workspaceRootPath, workingDirectory) ?? getDefaultSessionPath(workspaceRootPath, sessionId, workingDirectory);
+  const filePath = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory)
+    ?? getPiNativeSessionFilePath(workspaceRootPath, sessionId, workingDirectory);
+  return getSharedPiSidecarPathForFile(filePath, sessionId);
 }
 
 /**
- * Get path to a session's JSONL file (inside session folder)
+ * Get path to a session's Pi tree JSONL file.
+ *
+ * Always returns a path under `~/.pi/agent/sessions/{encoded-cwd}/`.
  */
 export function getSessionFilePath(workspaceRootPath: string, sessionId: string, workingDirectory?: string, createdAt?: number): string {
   const sharedPiFile = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory);
   if (sharedPiFile) return sharedPiFile;
-  if (sharedPiSessionStorageEnabled) {
-    return getPiNativeSessionFilePath(workspaceRootPath, sessionId, workingDirectory, createdAt);
-  }
-  return join(getSessionPath(workspaceRootPath, sessionId, workingDirectory), 'session.jsonl');
+  return getPiNativeSessionFilePath(workspaceRootPath, sessionId, workingDirectory, createdAt);
+}
+
+/**
+ * Same as getSessionFilePath but never creates directories as a side effect.
+ *
+ * Returns null when no shared Pi session file is found AND the native Pi
+ * session bucket directory does not exist (i.e., the path would only exist
+ * after a side-effecting mkdir). Use this in read-only contexts (search,
+ * listing, existence checks) to avoid creating empty bucket directories.
+ */
+export function tryGetSessionFilePath(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string | null {
+  const sharedPiFile = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory);
+  if (sharedPiFile) return sharedPiFile;
+  // Mirror getPiNativeSessionFilePath logic but without mkdir side effect.
+  const dir = join(getPiSessionsRoot(), encodePiSessionCwd(workspaceRootPath));
+  if (!existsSync(dir)) return null;
+  return join(dir, buildPiSessionFileName(sessionId));
 }
 
 /**
  * Get the native Pi session directory for a cwd when shared Pi storage is on.
  */
-export function getPiNativeSessionDir(workspaceRootPath: string, workingDirectory?: string): string {
-  const cwd = workingDirectory || workspaceRootPath;
-  const dir = join(getPiSessionsRoot(), encodePiSessionCwd(cwd));
+export function getPiNativeSessionDir(workspaceRootPath: string, _workingDirectory?: string): string {
+  const dir = join(getPiSessionsRoot(), encodePiSessionCwd(workspaceRootPath));
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
   return dir;
 }
 
-export function ensureSharedPiTreeSessionFile(session: StoredSession): string | null {
-  if (!sharedPiSessionStorageEnabled) return null;
-
+/**
+ * Ensure the Pi tree JSONL session file exists and has the latest Craft metadata.
+ *
+ * Always creates/updates the Pi tree JSONL v3 file. Returns the
+ * file path (never null). The Craft metadata is written into the `craft` field
+ * of the Pi header via writeTreeSessionCraftMetadata().
+ */
+export function ensureSharedPiTreeSessionFile(session: StoredSession): string {
   const sessionFile = getSessionFilePath(
     session.workspaceRootPath,
-    session.id,
+    session.craftId,
     session.workingDirectory,
     session.createdAt,
   );
@@ -319,19 +325,70 @@ export function ensureSharedPiTreeSessionFile(session: StoredSession): string | 
     return sessionFile;
   }
 
-  const cwd = resolve(expandPath(session.workingDirectory || session.workspaceRootPath));
+  const cwd = resolve(expandPath(session.workspaceRootPath));
   const timestamp = new Date(session.createdAt || Date.now()).toISOString();
   const header = {
     type: 'session',
     version: 3,
-    id: session.sdkSessionId || session.id,
+    id: session.sdkSessionId || session.craftId,
     timestamp,
     cwd,
   };
 
   mkdirSync(dirname(sessionFile), { recursive: true });
-  writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, 'utf-8');
+  try {
+    writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, { encoding: 'utf-8', flag: 'wx' });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw error;
+    }
+  }
   writeTreeSessionCraftMetadata(sessionFile, session);
+  return sessionFile;
+}
+
+/**
+ * Async 版本——使用 acquireTreeSessionFileLockAsync 避免阻塞事件循环。
+ * 供持久化队列等 async 热路径使用。
+ */
+export async function ensureSharedPiTreeSessionFileAsync(
+  session: StoredSession,
+  options: EnsureSharedPiTreeSessionFileOptions = {},
+): Promise<string> {
+  const sessionFile = getSessionFilePath(
+    session.workspaceRootPath,
+    session.craftId,
+    session.workingDirectory,
+    session.createdAt,
+  );
+  if (existsSync(sessionFile)) {
+    await writeTreeSessionCraftMetadataAsync(sessionFile, session, {
+      lastWrittenHeaderSignature: options.lastWrittenHeaderSignature,
+    });
+    return sessionFile;
+  }
+
+  const cwd = resolve(expandPath(session.workspaceRootPath));
+  const timestamp = new Date(session.createdAt || Date.now()).toISOString();
+  const header = {
+    type: 'session',
+    version: 3,
+    id: session.sdkSessionId || session.craftId,
+    timestamp,
+    cwd,
+  };
+
+  mkdirSync(dirname(sessionFile), { recursive: true });
+  try {
+    writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, { encoding: 'utf-8', flag: 'wx' });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw error;
+    }
+  }
+  await writeTreeSessionCraftMetadataAsync(sessionFile, session, {
+    lastWrittenHeaderSignature: options.lastWrittenHeaderSignature,
+  });
   return sessionFile;
 }
 
@@ -429,38 +486,36 @@ export async function createSession(
   options?: {
     name?: string;
     workingDirectory?: string;
-    permissionMode?: SessionConfig['permissionMode'];
+    permissionMode?: SessionHeader['permissionMode'];
     enabledSourceSlugs?: string[];
     model?: string;
     llmConnection?: string;
     hidden?: boolean;
-    sessionStatus?: SessionConfig['sessionStatus'];
+    sessionStatus?: SessionHeader['sessionStatus'];
     labels?: string[];
     isFlagged?: boolean;
   }
-): Promise<SessionConfig> {
-  ensureSessionsDir(workspaceRootPath, options?.workingDirectory);
+): Promise<SessionHeader> {
+  ensureSessionsDir(workspaceRootPath);
 
   const now = Date.now();
   const sessionId = generateSessionId(workspaceRootPath);
 
   // Create session directory with all subdirectories (plans, attachments)
-  ensureSessionDir(workspaceRootPath, sessionId, options?.workingDirectory);
+  ensureSessionDir(workspaceRootPath, sessionId);
 
-  // Set sdkCwd to initial working directory or session path - this never changes
-  // The SDK stores session transcripts at ~/.claude/projects/{cwd-slugified}/
-  // If workingDirectory changes later, sdkCwd stays the same to preserve session resumption
-  const sdkCwd = sharedPiSessionStorageEnabled
-    ? (options?.workingDirectory ?? workspaceRootPath)
-    : (options?.workingDirectory ?? getSessionPath(workspaceRootPath, sessionId, options?.workingDirectory));
+  // Complete-unification semantics: workspace root is the only execution cwd
+  // and the only session bucket owner.
+  const workingDirectory = workspaceRootPath;
+  const sdkCwd = workspaceRootPath;
 
-  const session: SessionConfig = {
-    id: sessionId,
+  const session: SessionHeader = {
+    craftId: sessionId,
     workspaceRootPath,
     name: options?.name,
     createdAt: now,
     lastUsedAt: now,
-    workingDirectory: options?.workingDirectory,
+    workingDirectory,
     sdkCwd,
     permissionMode: options?.permissionMode,
     enabledSourceSlugs: options?.enabledSourceSlugs,
@@ -490,64 +545,6 @@ export async function createSession(
 }
 
 /**
- * Get or create a session with a specific ID
- * Used for --session <id> flag to allow user-defined session IDs
- */
-export async function getOrCreateSessionById(
-  workspaceRootPath: string,
-  sessionId: string
-): Promise<SessionConfig> {
-  const existing = loadSession(workspaceRootPath, sessionId);
-  if (existing) {
-    return {
-      id: existing.id,
-      sdkSessionId: existing.sdkSessionId,
-      workspaceRootPath: existing.workspaceRootPath,
-      name: existing.name,
-      createdAt: existing.createdAt,
-      lastUsedAt: existing.lastUsedAt,
-      sdkCwd: existing.sdkCwd,
-      workingDirectory: existing.workingDirectory,
-    };
-  }
-
-  // Create new session with the specified ID
-  ensureSessionsDir(workspaceRootPath);
-
-  // Create session directory with all subdirectories (plans, attachments)
-  ensureSessionDir(workspaceRootPath, sessionId);
-
-  const now = Date.now();
-  // Set sdkCwd to session path - this never changes (ensures SDK can find session transcripts)
-  const sdkCwd = sharedPiSessionStorageEnabled
-    ? workspaceRootPath
-    : getSessionPath(workspaceRootPath, sessionId);
-
-  const session: SessionConfig = {
-    id: sessionId,
-    workspaceRootPath,
-    sdkCwd,
-    createdAt: now,
-    lastUsedAt: now,
-  };
-
-  const storedSession: StoredSession = {
-    ...session,
-    messages: [],
-    tokenUsage: {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      contextTokens: 0,
-      costUsd: 0,
-    },
-  };
-  await saveSession(storedSession);
-
-  return session;
-}
-
-/**
  * Save session immediately using the persistence queue.
  * Enqueues the session and flushes to ensure immediate write.
  *
@@ -558,7 +555,7 @@ export async function getOrCreateSessionById(
  */
 export async function saveSession(session: StoredSession): Promise<void> {
   sessionPersistenceQueue.enqueue(session);
-  await sessionPersistenceQueue.flush(session.id);
+  await sessionPersistenceQueue.flush(session.craftId);
 }
 
 /**
@@ -593,12 +590,19 @@ export function loadSession(workspaceRootPath: string, sessionId: string): Store
  * Lists sessions from folder structure.
  *
  * Uses JSONL header for fast loading (only reads first line of each file).
+ *
+ * Sessions are aggregated by the workspace's cwd —
+ * {@link listCraftSessionDirs} already restricts the scan to the matching
+ * `~/.pi/agent/sessions/{encoded-cwd}/` bucket, so every session found here
+ * belongs to this workspace's cwd view by construction (no per-header
+ * workspaceRootPath filtering needed). Multiple workspaces pointing at the
+ * same cwd see the same list.
  */
-export function listSessions(workspaceRootPath: string): SessionMetadata[] {
+export function listSessions(workspaceRootPath: string): SessionHeader[] {
   const span = perf.span('session.listSessions');
   const sessionDirs = listCraftSessionDirs(workspaceRootPath);
   span.mark('readdir');
-  const sessions: SessionMetadata[] = [];
+  const sessions: SessionHeader[] = [];
 
   for (const { jsonlFile } of sessionDirs) {
     // Clean up orphaned .tmp files from crashed atomic writes.
@@ -610,7 +614,7 @@ export function listSessions(workspaceRootPath: string): SessionMetadata[] {
 
     if (existsSync(jsonlFile)) {
       const header = readSessionHeader(jsonlFile);
-      if (header && headerBelongsToWorkspace(header, workspaceRootPath)) {
+      if (header) {
         const metadata = headerToMetadata(header, workspaceRootPath);
         if (metadata) sessions.push(metadata);
       }
@@ -636,75 +640,29 @@ export function listSessions(workspaceRootPath: string): SessionMetadata[] {
 export function readPiSessionFile(
   filePath: string,
   workspaceRootPath: string,
-): SessionMetadata | null {
+): SessionHeader | null {
   return readTreeSessionMetadata(filePath, workspaceRootPath, 'pi-');
 }
 
 /**
- * List Pi CLI sessions from a sessions directory (e.g. ~/.pi/agent/sessions/).
- * Scans all subdirectories for .jsonl files.
- * Returns SessionMetadata[] mapped from Pi session format.
- */
-export function listPiCliSessions(
-  sessionsDir: string = PI_SESSIONS_DIR,
-  workspaceRootPath: string = '',
-): SessionMetadata[] {
-  if (!existsSync(sessionsDir)) return [];
-
-  const sessions: SessionMetadata[] = [];
-  try {
-    const entries = readdirSync(sessionsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const subdir = join(sessionsDir, entry.name);
-        try {
-          const files = readdirSync(subdir, { withFileTypes: true });
-          for (const file of files) {
-            if (file.isFile() && file.name.endsWith('.jsonl')) {
-              const filePath = join(subdir, file.name);
-              const metadata = readPiSessionFile(filePath, workspaceRootPath);
-              if (metadata) sessions.push(metadata);
-            }
-          }
-        } catch {
-          // Ignore errors reading subdirectory
-        }
-      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        // Also support flat layout (sessions directly in sessionsDir)
-        const filePath = join(sessionsDir, entry.name);
-        const metadata = readPiSessionFile(filePath, workspaceRootPath);
-        if (metadata) sessions.push(metadata);
-      }
-    }
-  } catch {
-    // Ignore errors reading sessions directory
-  }
-
-  return sessions.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
-}
-
-/**
- * List project-level Pi sessions from {projectRoot}/.pi/sessions/.
- */
-export function listPiProjectSessions(
-  projectRoot: string,
-  workspaceRootPath: string = projectRoot,
-): SessionMetadata[] {
-  const dir = join(projectRoot, PI_PROJECT_SESSIONS_DIR);
-  return listPiCliSessions(dir, workspaceRootPath);
-}
-
-/**
- * Find a Pi session JSONL file by Pi session ID.
+ * Find a Pi session JSONL file by Pi session ID or Craft session ID (craftId).
+ *
+ * 按两种 ID 查找，与内部 findSharedPiSessionFileInDir 保持一致：
+ * - Pi session ID (header.id，对应文件名 {timestamp}_{piSessionId}.jsonl)
+ * - Craft session ID (header.craft.id，craftId)
+ *
+ * 这样调用方无论传入 piSessionId 还是 craftId 都能正确找到文件，
+ * 避免 craftId ≠ piSessionId 时查找失败。
+ *
  * Searches subdirectories and flat layout in the sessions directory.
  */
 export function findPiSessionFile(
   sessionsDir: string,
-  piSessionId: string,
+  sessionId: string,
 ): string | null {
   if (!existsSync(sessionsDir)) return null;
-  const target = `${piSessionId}.jsonl`;
-  const timestampedSuffix = `_${piSessionId}.jsonl`;
+  const target = `${sessionId}.jsonl`;
+  const timestampedSuffix = `_${sessionId}.jsonl`;
   try {
     const entries = readdirSync(sessionsDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -719,7 +677,7 @@ export function findPiSessionFile(
                 return filePath;
               }
               const parsed = readTreeSessionJsonl(filePath);
-              if (parsed?.header.id === piSessionId) {
+              if (parsed?.header.id === sessionId || parsed?.header.craft?.id === sessionId) {
                 return filePath;
               }
             }
@@ -733,7 +691,7 @@ export function findPiSessionFile(
           return filePath;
         }
         const parsed = readTreeSessionJsonl(filePath);
-        if (parsed?.header.id === piSessionId) {
+        if (parsed?.header.id === sessionId || parsed?.header.craft?.id === sessionId) {
           return filePath;
         }
       }
@@ -742,6 +700,10 @@ export function findPiSessionFile(
     // Ignore errors reading sessions directory
   }
   return null;
+}
+
+export function findPiSessionFileInDefaultRoot(sessionId: string): string | null {
+  return findPiSessionFile(getPiSessionsRoot(), sessionId);
 }
 
 /**
@@ -755,10 +717,10 @@ export function loadPiSessionMessages(filePath: string): StoredMessage[] {
 }
 
 /**
- * Convert SessionHeader to SessionMetadata
+ * Enrich SessionHeader with UI-only metadata (planCount) and validate fields.
  * Used for fast session list loading from JSONL format.
  */
-function headerToMetadata(header: SessionHeader, workspaceRootPath: string): SessionMetadata | null {
+function headerToMetadata(header: SessionHeader, workspaceRootPath: string): SessionHeader | null {
   try {
     // Migration: accept old 'todoState' field from pre-rename session files
     const rawStatus = header.sessionStatus ?? (header as unknown as { todoState?: string }).todoState;
@@ -766,29 +728,21 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
     const validatedStatus = validateSessionStatus(workspaceRootPath, rawStatus);
 
     // Count plan files for this session
-    const planCount = listPlanFiles(workspaceRootPath, header.id).length;
+    const planCount = listPlanFiles(workspaceRootPath, header.craftId).length;
 
-    // Migration: For sessions created before sdkCwd was added, use workingDirectory as fallback.
-    const workingDir = header.workingDirectory ? expandPath(header.workingDirectory) : undefined;
-    const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workingDir;
-
-    // Destructure fields that don't exist on SessionMetadata or need overrides
-    const {
-      enabledSourceSlugs: _es, pendingPlanExecution: _pp,
-      sessionStatus: _ss, workingDirectory: _wd, sdkCwd: _sc,
-      workspaceRootPath: _wrp, ...headerFields
-    } = header;
+    const workingDir = workspaceRootPath;
+    const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workspaceRootPath;
 
     return {
-      ...headerFields,
+      ...header,
       workspaceRootPath,
       sessionStatus: validatedStatus,
       planCount: planCount > 0 ? planCount : undefined,
       workingDirectory: workingDir,
       sdkCwd,
-    } as SessionMetadata;
+    } as SessionHeader;
   } catch (error) {
-    debug(`[sessions] Failed to convert header to metadata for session "${header?.id}" in ${workspaceRootPath}:`, error);
+    debug(`[sessions] Failed to convert header to metadata for session "${header?.craftId}" in ${workspaceRootPath}:`, error);
     return null;
   }
 }
@@ -797,9 +751,23 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
  * Delete a session and its associated files
  * Deletes session folder and all associated files
  */
-export function deleteSession(workspaceRootPath: string, sessionId: string): boolean {
+export async function deleteSession(workspaceRootPath: string, sessionId: string): Promise<boolean> {
+  validateSessionId(sessionId);
+
+  // Cancel any pending persistence write so it cannot resurrect the session
+  // file (or its craft metadata) after we delete it on disk below.
+  // Awaiting cancel() also waits for any in-progress write to finish, so the
+  // write cannot recreate the deleted files (or their craft metadata sidecar).
+  await sessionPersistenceQueue.cancel(sessionId, { preventFutureEnqueue: true });
+
   try {
-    // Delete session directory (includes session.json, attachments, plans)
+    // 1. Delete the Pi tree JSONL session file (the authoritative transcript)
+    const sessionFile = getSessionFilePath(workspaceRootPath, sessionId);
+    if (existsSync(sessionFile)) {
+      try { rmSync(sessionFile); } catch { /* ignore */ }
+    }
+
+    // 2. Delete the sidecar directory (.craft/{sessionId}/ with attachments, plans, etc.)
     const sessionDir = getSessionPath(workspaceRootPath, sessionId);
     if (existsSync(sessionDir)) {
       rmSync(sessionDir, { recursive: true });
@@ -812,25 +780,35 @@ export function deleteSession(workspaceRootPath: string, sessionId: string): boo
 }
 
 /**
- * Clear messages from a session while preserving metadata.
- * Used for /clear command to reset conversation without creating a new session.
- * Also clears the SDK session ID to start a fresh Claude conversation.
+ * Clear all entries (lines after the header) from a Pi tree JSONL session file.
+ * Preserves the header (first line) which contains session metadata.
+ * No-op if the file does not exist.
+ *
+ * This is required because the persistence queue only updates the header's
+ * `craft` metadata via {@link writeTreeSessionCraftMetadata} — the Pi entry
+ * body is owned by the Pi runtime and is not rewritten by Craft. So to make
+ * /clear actually clear the on-disk transcript, we must truncate the file
+ * to just its header here.
  */
-export async function clearSessionMessages(workspaceRootPath: string, sessionId: string): Promise<void> {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (session) {
-    // Clear messages and SDK session ID but preserve metadata
-    session.messages = [];
-    session.sdkSessionId = undefined;
-    // Reset token usage to zero
-    session.tokenUsage = {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      contextTokens: 0,
-      costUsd: 0,
-    };
-    await saveSession(session);
+function clearPiSessionFileEntries(workspaceRootPath: string, sessionId: string): void {
+  const sessionFile = getSessionFilePath(workspaceRootPath, sessionId);
+  if (!existsSync(sessionFile)) return;
+
+  const release = acquireTreeSessionFileLock(sessionFile);
+  try {
+    const content = readFileSync(sessionFile, 'utf-8');
+    const firstNewline = content.indexOf('\n');
+    const headerLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
+    if (!headerLine.trim()) return;
+
+    // Atomic write via tmp + rename so a crash mid-write cannot truncate the
+    // authoritative transcript. The file lock above serializes concurrent
+    // writers (e.g. the persistence queue updating the header's craft metadata).
+    atomicWriteFileSync(sessionFile, `${headerLine}\n`);
+  } catch {
+    // Ignore errors — the in-memory session is already cleared.
+  } finally {
+    release();
   }
 }
 
@@ -838,12 +816,12 @@ export async function clearSessionMessages(workspaceRootPath: string, sessionId:
  * Get or create the latest session for a workspace
  * Uses listActiveSessions to exclude archived sessions
  */
-export async function getOrCreateLatestSession(workspaceRootPath: string): Promise<SessionConfig> {
+export async function getOrCreateLatestSession(workspaceRootPath: string): Promise<SessionHeader> {
   const sessions = listActiveSessions(workspaceRootPath);
   if (sessions.length > 0 && sessions[0]) {
     const latest = sessions[0];
     return {
-      id: latest.id,
+      craftId: latest.craftId,
       sdkSessionId: latest.sdkSessionId,
       workspaceRootPath: latest.workspaceRootPath,
       name: latest.name,
@@ -857,21 +835,6 @@ export async function getOrCreateLatestSession(workspaceRootPath: string): Promi
 // ============================================================
 // Session Metadata Updates
 // ============================================================
-
-/**
- * Update SDK session ID for a session
- */
-export async function updateSessionSdkId(
-  workspaceRootPath: string,
-  sessionId: string,
-  sdkSessionId: string
-): Promise<void> {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (session) {
-    session.sdkSessionId = sdkSessionId;
-    await saveSession(session);
-  }
-}
 
 /**
  * Check if sdkCwd can be safely updated for a session.
@@ -895,7 +858,7 @@ export function canUpdateSdkCwd(session: StoredSession): boolean {
 export async function updateSessionMetadata(
   workspaceRootPath: string,
   sessionId: string,
-  updates: Partial<Pick<SessionConfig,
+  updates: Partial<Pick<SessionHeader,
     | 'isFlagged'
     | 'name'
     | 'sessionStatus'
@@ -922,7 +885,7 @@ export async function updateSessionMetadata(
   if (updates.sessionStatus !== undefined) session.sessionStatus = updates.sessionStatus;
   if (updates.labels !== undefined) session.labels = updates.labels;
   if (updates.enabledSourceSlugs !== undefined) session.enabledSourceSlugs = updates.enabledSourceSlugs;
-  if (updates.workingDirectory !== undefined) session.workingDirectory = updates.workingDirectory;
+  if (updates.workingDirectory !== undefined) session.workingDirectory = workspaceRootPath;
   if (updates.sdkCwd !== undefined) session.sdkCwd = updates.sdkCwd;
   if (updates.permissionMode !== undefined) session.permissionMode = updates.permissionMode;
   if ('lastReadMessageId' in updates) session.lastReadMessageId = updates.lastReadMessageId;
@@ -935,62 +898,6 @@ export async function updateSessionMetadata(
   if ('archivedAt' in updates) session.archivedAt = updates.archivedAt;
 
   await saveSession(session);
-}
-
-/**
- * Flag a session
- */
-export async function flagSession(workspaceRootPath: string, sessionId: string): Promise<void> {
-  await updateSessionMetadata(workspaceRootPath, sessionId, { isFlagged: true });
-}
-
-/**
- * Unflag a session
- */
-export async function unflagSession(workspaceRootPath: string, sessionId: string): Promise<void> {
-  await updateSessionMetadata(workspaceRootPath, sessionId, { isFlagged: false });
-}
-
-/**
- * Set session status
- */
-export async function setSessionStatus(
-  workspaceRootPath: string,
-  sessionId: string,
-  sessionStatus: SessionStatus
-): Promise<void> {
-  await updateSessionMetadata(workspaceRootPath, sessionId, { sessionStatus });
-}
-
-/**
- * Set labels for a session
- */
-export async function setSessionLabels(
-  workspaceRootPath: string,
-  sessionId: string,
-  labels: string[]
-): Promise<void> {
-  await updateSessionMetadata(workspaceRootPath, sessionId, { labels });
-}
-
-/**
- * Archive a session
- */
-export async function archiveSession(workspaceRootPath: string, sessionId: string): Promise<void> {
-  await updateSessionMetadata(workspaceRootPath, sessionId, {
-    isArchived: true,
-    archivedAt: Date.now(),
-  });
-}
-
-/**
- * Unarchive a session
- */
-export async function unarchiveSession(workspaceRootPath: string, sessionId: string): Promise<void> {
-  await updateSessionMetadata(workspaceRootPath, sessionId, {
-    isArchived: false,
-    archivedAt: undefined,
-  });
 }
 
 // ============================================================
@@ -1089,70 +996,10 @@ export function getPendingPlanExecution(
 // ============================================================
 
 /**
- * List flagged sessions (excludes archived)
- */
-export function listFlaggedSessions(workspaceRootPath: string): SessionMetadata[] {
-  return listActiveSessions(workspaceRootPath).filter(s => s.isFlagged === true);
-}
-
-/**
- * List completed sessions (category: closed)
- * Includes done, cancelled, and any custom "closed" statuses
- * Excludes archived sessions
- */
-export function listCompletedSessions(workspaceRootPath: string): SessionMetadata[] {
-  return listActiveSessions(workspaceRootPath).filter(s => {
-    const category = getStatusCategory(workspaceRootPath, s.sessionStatus || 'todo');
-    return category === 'closed';
-  });
-}
-
-/**
- * List inbox sessions (category: open)
- * Includes todo, in-progress, needs-review, and any custom "open" statuses
- * Excludes archived sessions
- */
-export function listInboxSessions(workspaceRootPath: string): SessionMetadata[] {
-  return listActiveSessions(workspaceRootPath).filter(s => {
-    const category = getStatusCategory(workspaceRootPath, s.sessionStatus || 'todo');
-    return category === 'open';
-  });
-}
-
-/**
- * List archived sessions
- */
-export function listArchivedSessions(workspaceRootPath: string): SessionMetadata[] {
-  return listSessions(workspaceRootPath).filter(s => s.isArchived === true);
-}
-
-/**
  * List active (non-archived) sessions
  */
-export function listActiveSessions(workspaceRootPath: string): SessionMetadata[] {
+export function listActiveSessions(workspaceRootPath: string): SessionHeader[] {
   return listSessions(workspaceRootPath).filter(s => s.isArchived !== true);
-}
-
-/**
- * Delete archived sessions older than the specified number of days
- * Returns the number of sessions deleted
- */
-export function deleteOldArchivedSessions(workspaceRootPath: string, retentionDays: number): number {
-  const cutoffTime = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
-  const archivedSessions = listArchivedSessions(workspaceRootPath);
-  let deletedCount = 0;
-
-  for (const session of archivedSessions) {
-    // Use archivedAt if available, otherwise fall back to lastUsedAt
-    const archiveTime = session.archivedAt ?? session.lastUsedAt;
-    if (archiveTime < cutoffTime) {
-      if (deleteSession(workspaceRootPath, session.id)) {
-        deletedCount++;
-      }
-    }
-  }
-
-  return deletedCount;
 }
 
 // ============================================================
@@ -1319,6 +1166,24 @@ export function parsePlanFromMarkdown(content: string, planId: string): Plan | n
 }
 
 /**
+ * Validate a plan file name and resolve its safe path within plansDir.
+ * Rejects path separators and any path that escapes plansDir.
+ * Throws on path traversal attempts.
+ */
+function resolvePlanFilePath(plansDir: string, fileName: string): string {
+  const safeName = basename(fileName);
+  if (safeName !== fileName) {
+    throw new Error('Invalid plan file name: path separators not allowed');
+  }
+  const filePath = join(plansDir, `${safeName}.md`);
+  const resolved = resolve(filePath);
+  if (!isPathWithinDirectory(resolved, plansDir)) {
+    throw new Error('Path traversal detected');
+  }
+  return filePath;
+}
+
+/**
  * Save a plan to a markdown file
  */
 export function savePlanToFile(
@@ -1329,7 +1194,7 @@ export function savePlanToFile(
 ): string {
   const plansDir = ensurePlansDir(workspaceRootPath, sessionId);
   const name = fileName || generatePlanFileName(plan, plansDir);
-  const filePath = join(plansDir, `${name}.md`);
+  const filePath = resolvePlanFilePath(plansDir, name);
   const content = formatPlanAsMarkdown(plan);
 
   writeFileSync(filePath, content, 'utf-8');
@@ -1345,30 +1210,13 @@ export function loadPlanFromFile(
   fileName: string
 ): Plan | null {
   const plansDir = getSessionPlansPath(workspaceRootPath, sessionId);
-  const filePath = join(plansDir, `${fileName}.md`);
+  const filePath = resolvePlanFilePath(plansDir, fileName);
   if (!existsSync(filePath)) {
     return null;
   }
 
   try {
     const content = readFileSync(filePath, 'utf-8');
-    return parsePlanFromMarkdown(content, fileName);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Load a plan from a full file path
- */
-export function loadPlanFromPath(filePath: string): Plan | null {
-  if (!existsSync(filePath)) {
-    return null;
-  }
-
-  try {
-    const content = readFileSync(filePath, 'utf-8');
-    const fileName = basename(filePath).replace('.md', '') || 'unknown';
     return parsePlanFromMarkdown(content, fileName);
   } catch {
     return null;
@@ -1416,23 +1264,12 @@ export function deletePlanFile(
   fileName: string
 ): boolean {
   const plansDir = getSessionPlansPath(workspaceRootPath, sessionId);
-  const filePath = join(plansDir, `${fileName}.md`);
+  const filePath = resolvePlanFilePath(plansDir, fileName);
   if (existsSync(filePath)) {
     unlinkSync(filePath);
     return true;
   }
   return false;
-}
-
-/**
- * Get the most recent plan file for a session
- */
-export function getMostRecentPlanFile(
-  workspaceRootPath: string,
-  sessionId: string
-): { name: string; path: string } | null {
-  const files = listPlanFiles(workspaceRootPath, sessionId);
-  return files.length > 0 ? files[0]! : null;
 }
 
 // ============================================================

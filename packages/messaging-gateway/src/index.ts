@@ -30,6 +30,7 @@ export type {
   ButtonPress,
   ChannelBinding,
   BindingConfig,
+  RawBindingConfig,
   MessagingConfig,
   MessagingLogger,
   MessagingLogContext,

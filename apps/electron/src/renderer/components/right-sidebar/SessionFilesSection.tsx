@@ -25,6 +25,7 @@ import {
   StyledContextMenuContent,
   StyledContextMenuItem,
 } from '@/components/ui/styled-context-menu'
+import { HoverRevealIcon } from '@/components/ui/HoverRevealIcon'
 import type { SessionFile } from '../../../shared/types'
 import { cn } from '@/lib/utils'
 import * as storage from '@/lib/local-storage'
@@ -314,17 +315,14 @@ function FileTreeItem({
               {getFileIcon(file, isExpanded)}
             </span>
             {/* Toggle chevron - shown on hover */}
-            <span
-              className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer"
+            <HoverRevealIcon
+              icon={ChevronRight}
               onClick={handleChevronClick}
-            >
-              <ChevronRight
-                className={cn(
-                  "h-3.5 w-3.5 text-muted-foreground transition-transform duration-200",
-                  isExpanded && "rotate-90"
-                )}
-              />
-            </span>
+              iconClassName={cn(
+                "h-3.5 w-3.5 text-muted-foreground transition-transform duration-200",
+                isExpanded && "rotate-90"
+              )}
+            />
           </>
         ) : (
           /* Non-directory files: show thumbnail preview for previewable types,

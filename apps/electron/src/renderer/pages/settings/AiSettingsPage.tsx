@@ -326,8 +326,7 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
                   ...llmConnections.map((conn) => ({
                     value: conn.slug,
                     label: conn.name,
-                    description: conn.providerType === 'anthropic' ? 'Anthropic' :
-                                 conn.providerType === 'pi' ? 'Craft Agents Backend' :
+                    description: conn.providerType === 'pi' ? (conn.piAuthProvider ? `Pi (${PI_AUTH_PROVIDER_LABELS[conn.piAuthProvider] ?? conn.piAuthProvider})` : 'Pi') :
                                  conn.providerType || 'Unknown',
                   })),
                 ]}
@@ -567,7 +566,7 @@ export default function AiSettingsPage() {
                       value: conn.slug,
                       label: conn.name,
                       description: conn.providerType === 'pi_compat' ? (conn.baseUrl?.toLowerCase().includes('manifest.build') ? 'Manifest' : 'Pi Compatible Endpoint') :
-                                   conn.providerType === 'pi' || conn.providerType === 'anthropic'
+                                   conn.providerType === 'pi'
                                      ? (conn.piAuthProvider ? `Pi (${PI_AUTH_PROVIDER_LABELS[conn.piAuthProvider] ?? conn.piAuthProvider})` : 'Pi')
                                      :
                                    conn.providerType || 'Unknown',

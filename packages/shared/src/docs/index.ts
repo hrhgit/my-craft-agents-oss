@@ -9,12 +9,11 @@
  */
 
 import { join } from 'path';
-import { homedir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'fs';
 import { getBundledAssetsDir } from '../utils/paths.ts';
+import { CONFIG_DIR } from '../config/paths.ts';
 import { debug } from '../utils/debug.ts';
 
-const CONFIG_DIR = join(homedir(), '.craft-agent');
 const DOCS_DIR = join(CONFIG_DIR, 'docs');
 
 // Track if docs have been initialized this session (prevents re-init on hot reload)
@@ -76,20 +75,6 @@ function getBundledDocs(): Record<string, string> {
   return _bundledDocs;
 }
 
-/**
- * Get the docs directory path
- */
-export function getDocsDir(): string {
-  return DOCS_DIR;
-}
-
-/**
- * Get path to a specific doc file
- */
-export function getDocPath(filename: string): string {
-  return join(DOCS_DIR, filename);
-}
-
 // App root path reference for prompt/display text only.
 // IMPORTANT: This is intentionally a human-readable, non-instance-aware path.
 // Do NOT use APP_ROOT for real filesystem reads/writes.
@@ -124,21 +109,6 @@ export const DOC_REFS = {
 } as const;
 
 /**
- * Check if docs directory exists
- */
-export function docsExist(): boolean {
-  return existsSync(DOCS_DIR);
-}
-
-/**
- * List available doc files
- */
-export function listDocs(): string[] {
-  if (!existsSync(DOCS_DIR)) return [];
-  return readdirSync(DOCS_DIR).filter(f => f.endsWith('.md'));
-}
-
-/**
  * Initialize docs directory with bundled documentation.
  * Always writes all docs on launch to ensure consistency across debug and release modes.
  */
@@ -169,18 +139,6 @@ export function initializeDocs(): void {
 
 // Export the lazy getter for external access
 export { getBundledDocs };
-
-// Re-export source guides utilities (parsing only - bundled guides removed)
-export {
-  parseSourceGuide,
-  getSourceGuide,
-  getSourceGuideForDomain,
-  getSourceKnowledge,
-  extractDomainFromSource,
-  extractDomainFromUrl,
-  type ParsedSourceGuide,
-  type SourceGuideFrontmatter,
-} from './source-guides.ts';
 
 // Re-export doc links (for UI help popovers)
 export {

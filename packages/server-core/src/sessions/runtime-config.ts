@@ -1,10 +1,10 @@
-import type { AgentProvider, LlmAuthType } from '@craft-agent/shared/agent/backend'
+import type { LlmAuthType, ModelProvider } from '@craft-agent/shared/agent/backend'
 import { isCompatProvider, modelSupportsImages, type LlmConnection } from '@craft-agent/shared/config'
 import type { FileAttachment } from '@craft-agent/shared/protocol'
 
 export interface BackendRuntimeSignatureInput {
   connection: LlmConnection | null
-  provider: AgentProvider
+  provider: ModelProvider
   authType?: LlmAuthType
   resolvedModel: string
 }
@@ -41,7 +41,7 @@ function normalizeCustomModels(connection: LlmConnection): Array<Record<string, 
  * effect.
  *
  * Concretely, `update_runtime_config` (see `pi-agent.ts:requestRuntimeConfigUpdate`
- * and the matching handler at `pi-agent-server/src/index.ts:handleUpdateRuntimeConfig`)
+ * and the matching handler at `Pi RpcClient/src/index.ts:handleUpdateRuntimeConfig`)
  * carries `model, providerType, authType, baseUrl, customEndpoint, customModels` —
  * but NOT `piAuthProvider`, and switching `slug`/`providerType`/`authType` mid-life
  * pulls in credential routing and provider-registry state the subprocess doesn't

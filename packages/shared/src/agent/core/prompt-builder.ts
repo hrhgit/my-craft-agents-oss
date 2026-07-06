@@ -113,7 +113,7 @@ export class PromptBuilder {
 
     // Session state (permission mode, plans folder path, data folder path).
     // Only this volatile builder may consume the one-shot mode-change signal.
-    const sessionId = this.config.session?.id ?? `temp-${Date.now()}`;
+    const sessionId = this.config.session?.craftId ?? `temp-${Date.now()}`;
     const plansFolderPath = options.plansFolderPath ??
       getSessionPlansPath(this.workspaceRootPath, sessionId);
     const dataFolderPath = options.dataFolderPath ??
@@ -180,7 +180,7 @@ export class PromptBuilder {
    * Get working directory context for prompt injection.
    */
   getWorkingDirectoryContext(): string | null {
-    const sessionId = this.config.session?.id;
+    const sessionId = this.config.session?.craftId;
     const effectiveWorkingDir = this.config.session?.workingDirectory ??
       (sessionId ? getSessionPath(this.workspaceRootPath, sessionId) : undefined);
     const isSessionRoot = !this.config.session?.workingDirectory && !!sessionId;

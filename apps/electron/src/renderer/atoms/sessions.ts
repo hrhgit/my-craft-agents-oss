@@ -51,8 +51,6 @@ export interface SessionMeta {
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
   /** Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration) */
   isAsyncOperationOngoing?: boolean
-  /** @deprecated Use isAsyncOperationOngoing instead */
-  isRegeneratingTitle?: boolean
   /** Model override for this session */
   model?: string
   /** LLM connection slug for this session */
@@ -101,7 +99,7 @@ export function extractSessionMeta(session: Session): SessionMeta {
   const {
     messages: _msgs, sessionFolderPath: _sf, supportsBranching: _sb,
     workspaceName: _wn, thinkingLevel: _tl, currentStatus: _cs,
-    isAsyncOperationOngoing, isRegeneratingTitle,
+    isAsyncOperationOngoing,
     messageCount, lastFinalMessageId: sessionLastFinal,
     ...sessionFields
   } = session
@@ -110,8 +108,7 @@ export function extractSessionMeta(session: Session): SessionMeta {
     ...sessionFields,
     lastFinalMessageId: sessionLastFinal ?? findLastFinalMessageId(messages),
     messageCount: messageCount ?? messages.length ?? 0,
-    isAsyncOperationOngoing: isAsyncOperationOngoing ?? isRegeneratingTitle,
-    isRegeneratingTitle,
+    isAsyncOperationOngoing,
   } as SessionMeta
 }
 

@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs'
+import { appendFileSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { serializeSession, validateBundle, MAX_BUNDLE_SIZE_BYTES } from '../bundle'
-import { writeSessionJsonl } from '../jsonl'
-import type { StoredSession, SessionHeader } from '../types'
+import { serializeSession, validateBundle } from '../bundle'
+import { ensureSharedPiTreeSessionFile, setSharedPiSessionsDirForTests, getSessionPath } from '../storage'
+import type { StoredSession, StoredMessage } from '../types'
 
 // ============================================================
 // Helpers
@@ -18,7 +18,7 @@ function makeTmpDir(): string {
 
 function makeStoredSession(overrides: Partial<StoredSession> = {}): StoredSession {
   return {
-    id: '260101-test-session',
+    craftId: '260101-test-session',
     workspaceRootPath: '/tmp/ws',
     createdAt: 1000,
     lastUsedAt: 2000,
@@ -48,15 +48,54 @@ function makeStoredSession(overrides: Partial<StoredSession> = {}): StoredSessio
   } as StoredSession
 }
 
+/**
+ * Append StoredMessage entries to a Pi tree JSONL v3 file as `message` tree
+ * entries. `ensureSharedPiTreeSessionFile` only writes the header; the message
+ * body is owned by the Pi runtime, so tests must append entries manually.
+ */
+function appendPiTreeMessages(sessionFile: string, messages: StoredMessage[]): void {
+  let parentId: string | null = null
+  const lines: string[] = []
+  for (const msg of messages) {
+    if (msg.type !== 'user' && msg.type !== 'assistant') continue
+    const entry = {
+      type: 'message',
+      id: msg.id,
+      parentId,
+      timestamp: new Date(msg.timestamp ?? Date.now()).toISOString(),
+      message: {
+        role: msg.type,
+        content: msg.content,
+        timestamp: msg.timestamp,
+      },
+    }
+    lines.push(JSON.stringify(entry))
+    parentId = msg.id
+  }
+  if (lines.length > 0) {
+    appendFileSync(sessionFile, lines.join('\n') + '\n', 'utf-8')
+  }
+}
+
+/**
+ * Set up a session in the Pi tree JSONL v3 format under the test Pi sessions dir.
+ * Returns the sidecar directory (.craft/{sessionId}/) where attachments, plans,
+ * etc. should be placed.
+ */
 function setupSessionDir(workspaceRoot: string, session: StoredSession): string {
-  const sessionsDir = join(workspaceRoot, 'sessions', session.id)
-  mkdirSync(sessionsDir, { recursive: true })
+  session.workspaceRootPath = workspaceRoot
+  session.workingDirectory = workspaceRoot
+  // ensureSharedPiTreeSessionFile creates the Pi tree JSONL v3 file with the
+  // header + craft metadata. It does NOT write message entries (the Pi runtime
+  // owns those), so we append them manually for test fixtures.
+  const sessionFile = ensureSharedPiTreeSessionFile(session)
+  appendPiTreeMessages(sessionFile, session.messages)
 
-  // Write JSONL
-  const jsonlPath = join(sessionsDir, 'session.jsonl')
-  writeSessionJsonl(jsonlPath, session)
-
-  return sessionsDir
+  // Create the sidecar directory (.craft/{sessionId}/) for attachment/plan/data
+  // files. ensureSharedPiTreeSessionFile does not create this directory.
+  const sidecarDir = getSessionPath(workspaceRoot, session.craftId)
+  mkdirSync(sidecarDir, { recursive: true })
+  return sidecarDir
 }
 
 // ============================================================
@@ -68,9 +107,12 @@ describe('serializeSession', () => {
 
   beforeEach(() => {
     tmpDir = makeTmpDir()
+    // Override the Pi sessions dir to a temp location for isolation.
+    setSharedPiSessionsDirForTests(join(tmpDir, 'pi-sessions'))
   })
 
   afterEach(() => {
+    setSharedPiSessionsDirForTests(undefined)
     if (existsSync(tmpDir)) {
       rmSync(tmpDir, { recursive: true })
     }
@@ -80,11 +122,11 @@ describe('serializeSession', () => {
     const session = makeStoredSession()
     setupSessionDir(tmpDir, session)
 
-    const bundle = serializeSession(tmpDir, session.id)
+    const bundle = serializeSession(tmpDir, session.craftId)
 
     expect(bundle).not.toBeNull()
     expect(bundle!.version).toBe(1)
-    expect(bundle!.session.header.id).toBe(session.id)
+    expect(bundle!.session.header.craftId).toBe(session.craftId)
     expect(bundle!.session.messages).toHaveLength(2)
     expect(bundle!.session.messages[0]!.content).toBe('Hello world')
     expect(bundle!.session.messages[1]!.content).toBe('Hi there!')
@@ -100,11 +142,11 @@ describe('serializeSession', () => {
     mkdirSync(attachDir, { recursive: true })
     writeFileSync(join(attachDir, 'screenshot.png'), Buffer.from('fake-png-data'))
 
-    const bundle = serializeSession(tmpDir, session.id)
+    const bundle = serializeSession(tmpDir, session.craftId)
 
     expect(bundle).not.toBeNull()
     expect(bundle!.files).toHaveLength(1)
-    expect(bundle!.files[0]!.relativePath).toBe(join('attachments', 'screenshot.png'))
+    expect(bundle!.files[0]!.relativePath).toBe('attachments/screenshot.png')
     expect(bundle!.files[0]!.size).toBe(13) // 'fake-png-data'.length
     // Verify base64 round-trips correctly
     const decoded = Buffer.from(bundle!.files[0]!.contentBase64, 'base64').toString()
@@ -122,12 +164,12 @@ describe('serializeSession', () => {
     mkdirSync(join(sessionDir, 'data'), { recursive: true })
     writeFileSync(join(sessionDir, 'data', 'result.json'), '{"rows":[]}')
 
-    const bundle = serializeSession(tmpDir, session.id)
+    const bundle = serializeSession(tmpDir, session.craftId)
 
     expect(bundle).not.toBeNull()
     expect(bundle!.files).toHaveLength(2)
     const paths = bundle!.files.map(f => f.relativePath).sort()
-    expect(paths).toEqual([join('data', 'result.json'), join('plans', 'my-plan.md')])
+    expect(paths).toEqual(['data/result.json', 'plans/my-plan.md'])
   })
 
   it('preserves notes.md in bundle', () => {
@@ -136,7 +178,7 @@ describe('serializeSession', () => {
 
     writeFileSync(join(sessionDir, 'notes.md'), '# My Notes\nSome notes here.')
 
-    const bundle = serializeSession(tmpDir, session.id)
+    const bundle = serializeSession(tmpDir, session.craftId)
 
     expect(bundle).not.toBeNull()
     const notesFile = bundle!.files.find(f => f.relativePath === 'notes.md')
@@ -151,7 +193,7 @@ describe('serializeSession', () => {
     mkdirSync(join(sessionDir, 'tmp'), { recursive: true })
     writeFileSync(join(sessionDir, 'tmp', 'cache.dat'), 'cached data')
 
-    const bundle = serializeSession(tmpDir, session.id)
+    const bundle = serializeSession(tmpDir, session.craftId)
 
     expect(bundle).not.toBeNull()
     const tmpFiles = bundle!.files.filter(f => f.relativePath.startsWith('tmp'))
@@ -164,7 +206,7 @@ describe('serializeSession', () => {
 
     writeFileSync(join(sessionDir, '.hidden'), 'secret')
 
-    const bundle = serializeSession(tmpDir, session.id)
+    const bundle = serializeSession(tmpDir, session.craftId)
 
     expect(bundle).not.toBeNull()
     const dotFiles = bundle!.files.filter(f => f.relativePath.startsWith('.'))
@@ -175,7 +217,7 @@ describe('serializeSession', () => {
     const session = makeStoredSession()
     setupSessionDir(tmpDir, session)
 
-    const bundle = serializeSession(tmpDir, session.id)
+    const bundle = serializeSession(tmpDir, session.craftId)
 
     expect(bundle).not.toBeNull()
     const jsonlFiles = bundle!.files.filter(f => f.relativePath.includes('session.jsonl'))
@@ -196,7 +238,7 @@ describe('serializeSession', () => {
     })
     setupSessionDir(tmpDir, session)
 
-    const bundle = serializeSession(tmpDir, session.id)
+    const bundle = serializeSession(tmpDir, session.craftId)
 
     expect(bundle).not.toBeNull()
     expect(bundle!.session.header.isFlagged).toBe(true)
@@ -248,5 +290,25 @@ describe('validateBundle', () => {
 
   it('rejects header without createdAt', () => {
     expect(validateBundle({ version: 1, session: { header: { id: 'x' }, messages: [] }, files: [] })).toBe(false)
+  })
+
+  it('rejects unsafe session ids', () => {
+    expect(validateBundle({
+      version: 1,
+      session: {
+        header: { craftId: '../escape', createdAt: 1 },
+        messages: [],
+      },
+      files: [],
+    })).toBe(false)
+
+    expect(validateBundle({
+      version: 1,
+      session: {
+        header: { id: '../../legacy', createdAt: 1 },
+        messages: [],
+      },
+      files: [],
+    })).toBe(false)
   })
 })

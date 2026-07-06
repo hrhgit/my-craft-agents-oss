@@ -6,18 +6,12 @@
 
 export * from './types.ts';
 export {
-  GLOBAL_AGENT_SKILLS_DIR,
-  PROJECT_AGENT_SKILLS_DIR,
   loadSkill,
   loadAllSkills,
   invalidateSkillsCache,
   loadSkillBySlug,
-  getSkillIconPath,
   deleteSkill,
-  skillExists,
-  listSkillSlugs,
   skillNeedsIconDownload,
   downloadSkillIcon,
-  getActiveSkillsTiers,
   resolveSkillDir,
 } from './storage.ts';

@@ -5,7 +5,7 @@ import { isEmoji } from '@craft-agent/shared/utils/icon-constants'
 import { resolveEntityColor, getDefaultStatusColor } from '@craft-agent/shared/colors'
 import type { EntityColor } from '@craft-agent/shared/colors'
 import { StatusIcon } from '@/components/ui/status-icon'
-import { iconCache } from '@/lib/icon-cache'
+import { clearEntityIconCache } from '@/lib/icon-cache'
 
 // ============================================================================
 // Types
@@ -169,7 +169,5 @@ export function getState(
  * Clears status-prefixed entries from the unified icon cache.
  */
 export function clearIconCache(): void {
-  for (const key of iconCache.keys()) {
-    if (key.startsWith('status:')) iconCache.delete(key)
-  }
+  clearEntityIconCache({ entityType: 'status' })
 }

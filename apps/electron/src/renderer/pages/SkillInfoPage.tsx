@@ -96,22 +96,6 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
     }
   }, [canRevealLocally, skill, t])
 
-  // Handle delete
-  const handleDelete = useCallback(async () => {
-    if (!skill) return
-
-    try {
-      if (skill.source !== 'workspace') return
-      await window.electronAPI.deleteSkill(workspaceId, skillSlug)
-      toast.success(t('skillInfo.deletedSkill', { name: skill.metadata.name }))
-      navigate(routes.view.skills())
-    } catch (err) {
-      toast.error(t('skillInfo.failedToDelete'), {
-        description: err instanceof Error ? err.message : undefined,
-      })
-    }
-  }, [skill, workspaceId, skillSlug])
-
   // Handle opening in new window
   const handleOpenInNewWindow = useCallback(() => {
     window.electronAPI.openUrl(`craftagents://skills/skill/${skillSlug}?window=focused`)
@@ -119,7 +103,6 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
 
   // Get skill name for header
   const skillName = skill?.metadata.name || skillSlug
-  const canDeleteSkill = skill?.source === 'workspace'
 
   // Format path to show just the skill-relative portion (skills/{slug}/)
   const formatPath = (path: string) => {
@@ -158,9 +141,8 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
             onOpenInNewWindow={handleOpenInNewWindow}
             onShowInFinder={handleOpenInFinder}
             canShowInFinder={canRevealLocally}
-            onDelete={canDeleteSkill ? handleDelete : undefined}
-            canDelete={canDeleteSkill}
-            deleteLabel={canDeleteSkill ? t('skillInfo.deleteSkill') : t('skillInfo.managedByProject')}
+            canDelete={false}
+            deleteLabel={t('skillInfo.managedByProject')}
           />
         }
       />
@@ -196,9 +178,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
                 {skill.metadata.description}
               </Info_Table.Row>
               <Info_Table.Row label={t('common.source')}>
-                {skill.source === 'project' ? t('skillInfo.sourceProject') :
-                 skill.source === 'global' ? t('skillInfo.sourceGlobal') :
-                 t('skillInfo.sourceWorkspace')}
+                {skill.source === 'project' ? t('skillInfo.sourceProject') : t('skillInfo.sourceGlobal')}
               </Info_Table.Row>
               <Info_Table.Row label={t('common.location')}>
                 <button

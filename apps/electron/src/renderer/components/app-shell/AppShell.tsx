@@ -75,7 +75,8 @@ import { PanelStackContainer } from "./PanelStackContainer"
 import { CompactSessionListFilter } from "./CompactSessionListFilter"
 import type { ChatDisplayHandle } from "./ChatDisplay"
 import { LeftSidebar } from "./LeftSidebar"
-import { useSession } from "@/hooks/useSession"
+import { useSessionSelectionStore } from "@/hooks/useSession"
+import { createInitialState } from "@/hooks/useMultiSelect"
 import { ensureSessionMessagesLoadedAtom } from "@/atoms/sessions"
 import { AppShellProvider, type AppShellContextType } from "@/context/AppShellContext"
 import { EscapeInterruptProvider, useEscapeInterrupt } from "@/context/EscapeInterruptContext"
@@ -141,7 +142,7 @@ import {
   RADIUS_INNER,
 } from "./panel-constants"
 import { hasOpenOverlay } from "@/lib/overlay-detection"
-import { clearSourceIconCaches } from "@/lib/icon-cache"
+import { clearEntityIconCache } from "@/lib/icon-cache"
 import { dispatchFocusInputEvent } from "./input/focus-input-events"
 
 /**
@@ -523,7 +524,6 @@ function AppShellContent({
     onOpenSettings,
     onOpenKeyboardShortcuts,
     onOpenStoredUserPreferences,
-    onReset,
     onSendMessage,
     openNewChat,
     pendingPermissions,
@@ -580,7 +580,7 @@ function AppShellContent({
   const [sessionListHandleY, setSessionListHandleY] = React.useState<number | null>(null)
   const resizeHandleRef = React.useRef<HTMLDivElement>(null)
   const sessionListHandleRef = React.useRef<HTMLDivElement>(null)
-  const [session, setSession] = useSession()
+  const { state: session, setState: setSession } = useSessionSelectionStore()
   const { resolvedMode, isDark, setMode } = useTheme()
   const { canGoBack, canGoForward, goBack, goForward, navigateToSource, navigateToSession } = useNavigation()
 
@@ -921,7 +921,7 @@ function AppShellContent({
     const cleanup = window.electronAPI.onSourcesChanged((workspaceId, updatedSources) => {
       if (workspaceId !== activeWorkspaceId) return
       // Clear icon cache so updated source icons are re-fetched on render
-      clearSourceIconCaches()
+      clearEntityIconCache({ entityType: 'source' })
       setSources(updatedSources || [])
     })
     return cleanup
@@ -1296,19 +1296,17 @@ function AppShellContent({
   // Workspace-level unread indicators (needed for workspace selectors across all workspaces)
   const [workspaceUnreadMap, setWorkspaceUnreadMap] = useState<Record<string, boolean>>({})
 
-  // Reload skills when active session's workingDirectory changes (for project-level skills)
-  // Skills are loaded from: global (~/.agents/skills/), workspace, and project ({workingDirectory}/.agents/skills/)
-  const activeSessionWorkingDirectory = session.selected
-    ? sessionMetaMap.get(session.selected)?.workingDirectory
-    : undefined
+  // Skills are scoped to the workspace root under complete-unification semantics.
+  // Keep the legacy variable name for downstream DTO compatibility.
+  const activeSessionWorkingDirectory = activeWorkspace?.rootPath
   React.useEffect(() => {
     if (!activeWorkspaceId) return
-    window.electronAPI.getSkills(activeWorkspaceId, activeSessionWorkingDirectory).then((loaded) => {
+    window.electronAPI.getSkills(activeWorkspaceId).then((loaded) => {
       setSkills(loaded || [])
     }).catch(err => {
       console.error('[Chat] Failed to load skills:', err)
     })
-  }, [activeWorkspaceId, activeSessionWorkingDirectory])
+  }, [activeWorkspaceId, activeWorkspace?.rootPath])
 
   // Filter session metadata by active workspace
   // Also exclude hidden sessions (mini-agent sessions) from all counts and lists
@@ -1570,7 +1568,7 @@ function AppShellContent({
   const handleDeleteSession = useCallback(async (sessionId: string, skipConfirmation?: boolean): Promise<boolean> => {
     // Clear selection first if this is the selected session
     if (session.selected === sessionId) {
-      setSession({ selected: null })
+      setSession(createInitialState())
     }
     return onDeleteSession(sessionId, skipConfirmation)
   }, [session.selected, setSession, onDeleteSession])
@@ -1907,18 +1905,6 @@ function AppShellContent({
     } catch (error) {
       console.error('[Chat] Failed to delete source:', error)
       toast.error(t('toast.failedToDeleteSource'))
-    }
-  }, [activeWorkspace])
-
-  // Delete Skill
-  const handleDeleteSkill = useCallback(async (skillSlug: string) => {
-    if (!activeWorkspace) return
-    try {
-      await window.electronAPI.deleteSkill(activeWorkspace.id, skillSlug)
-      toast.success(t('toast.deletedSkill', { slug: skillSlug }))
-    } catch (error) {
-      console.error('[Chat] Failed to delete skill:', error)
-      toast.error(t('toast.failedToDeleteSkill'))
     }
   }, [activeWorkspace])
 
@@ -3177,7 +3163,6 @@ function AppShellContent({
                 workspaceId={activeWorkspaceId}
                 workspaceRootPath={activeWorkspace?.rootPath}
                 onSkillClick={handleSkillSelect}
-                onDeleteSkill={handleDeleteSkill}
                 selectedSkillSlug={isSkillsNavigation(navState) && navState.details?.type === 'skill' ? navState.details.skillSlug : null}
               />
             )}

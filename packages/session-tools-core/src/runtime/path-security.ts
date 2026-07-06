@@ -1,35 +1,12 @@
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
+import { isWithin, isPathWithinDirectory } from '@craft-agent/shared/utils';
 
-function normalizePath(path: string): string {
-  return process.platform === 'win32' ? path.toLowerCase() : path;
-}
-
-function isWithin(base: string, target: string): boolean {
-  const normalizedBase = normalizePath(base);
-  const normalizedTarget = normalizePath(target);
-  const rel = relative(normalizedBase, normalizedTarget);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-}
+// Re-export unified isPathWithinDirectory from shared for existing consumers.
+export { isPathWithinDirectory };
 
 function realpathIfExists(path: string): string {
   return existsSync(path) ? realpathSync.native(path) : resolve(path);
-}
-
-/**
- * Lexical + symlink-aware containment check for existing paths.
- */
-export function isPathWithinDirectory(targetPath: string, baseDir: string): boolean {
-  const resolvedTarget = resolve(targetPath);
-  const resolvedBase = resolve(baseDir);
-
-  if (!isWithin(resolvedBase, resolvedTarget)) {
-    return false;
-  }
-
-  const realBase = realpathIfExists(resolvedBase);
-  const realTarget = realpathIfExists(resolvedTarget);
-  return isWithin(realBase, realTarget);
 }
 
 /**

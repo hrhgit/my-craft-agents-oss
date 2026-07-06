@@ -5,6 +5,7 @@ import { loadSource, loadWorkspaceSources, getSourceCredentialManager } from '@c
 import { createPendingFlow } from '@craft-agent/shared/auth'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
+import { getWorkspaceOrThrow } from '../utils'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.oauth.START,
@@ -94,10 +95,7 @@ export function registerOAuthHandlers(server: RpcServer, deps: HandlerDeps): voi
       throw new Error('No workspace bound to this client')
     }
 
-    const workspace = getWorkspaceByNameOrId(ctx.workspaceId)
-    if (!workspace) {
-      throw new Error(`Workspace not found: ${ctx.workspaceId}`)
-    }
+    const workspace = getWorkspaceOrThrow(ctx.workspaceId)
 
     const source = loadSource(workspace.rootPath, sourceSlug)
     if (!source) {
@@ -181,10 +179,7 @@ export function registerOAuthHandlers(server: RpcServer, deps: HandlerDeps): voi
       throw new Error('No workspace bound to this client')
     }
 
-    const workspace = getWorkspaceByNameOrId(ctx.workspaceId)
-    if (!workspace) {
-      throw new Error(`Workspace not found: ${ctx.workspaceId}`)
-    }
+    const workspace = getWorkspaceOrThrow(ctx.workspaceId)
 
     const source = loadSource(workspace.rootPath, sourceSlug)
     if (!source) {

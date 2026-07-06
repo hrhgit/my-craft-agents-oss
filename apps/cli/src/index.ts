@@ -8,7 +8,15 @@
  */
 
 import { resolve } from 'path'
+import { resolveCustomEndpointSetup } from '@craft-agent/server-core/domain'
+import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { CliRpcClient } from './client.ts'
+import {
+  asRemoteUIRequest,
+  handleRemoteUIInteractive,
+  handleRemoteUINonInteractive,
+  type RemoteUIResponder,
+} from './remote-ui.ts'
 
 // ---------------------------------------------------------------------------
 // Arg parsing
@@ -38,6 +46,8 @@ export interface CliArgs {
   model: string
   apiKey: string
   baseUrl: string
+  // RemoteUI 交互模式：false=自动取消（默认），true=终端渲染对话框
+  interactive: boolean
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -63,6 +73,7 @@ export function parseArgs(argv: string[]): CliArgs {
   let model = ''
   let apiKey = ''
   let baseUrl = ''
+  let interactive = false
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
@@ -126,6 +137,9 @@ export function parseArgs(argv: string[]): CliArgs {
       case '--base-url':
         baseUrl = args[++i] ?? ''
         break
+      case '--interactive':
+        interactive = true
+        break
       case '--help':
       case '-h':
         command = 'help'
@@ -154,7 +168,7 @@ export function parseArgs(argv: string[]): CliArgs {
   if (!apiKey) apiKey = process.env.LLM_API_KEY ?? ''
   if (!baseUrl) baseUrl = process.env.LLM_BASE_URL ?? ''
 
-  return { url, token, workspace, timeout, json, tlsCa, sendTimeout, command, rest, sources, mode, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl }
+  return { url, token, workspace, timeout, json, tlsCa, sendTimeout, command, rest, sources, mode, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl, interactive }
 }
 
 // ---------------------------------------------------------------------------
@@ -410,45 +424,54 @@ async function sendAndStream(
   const streamJson = args.outputFormat === 'stream-json'
 
   const unsub = client.on('session:event', (event: unknown) => {
-    const ev = event as { type: string; sessionId: string; [key: string]: unknown }
-    if (ev.sessionId !== sessionId) return
+    // F24: Wrap the entire handler body in try/catch so a thrown error in
+    // event processing (e.g. malformed payload, stdout write failure) cannot
+    // crash the streaming loop or leave `finished` unset, which would hang
+    // the CLI until the send timeout. Errors are surfaced to stderr but do
+    // not abort the subscription.
+    try {
+      const ev = event as { type: string; sessionId: string; [key: string]: unknown }
+      if (ev.sessionId !== sessionId) return
 
-    if (streamJson) {
-      process.stdout.write(JSON.stringify(ev) + '\n')
-    }
-
-    switch (ev.type) {
-      case 'text_delta':
-        if (!streamJson) process.stdout.write(ev.delta as string)
-        break
-      case 'tool_start':
-        if (!streamJson) process.stdout.write(`\n[tool: ${ev.toolName}${ev.toolIntent ? ` — ${ev.toolIntent}` : ''}]\n`)
-        break
-      case 'tool_result': {
-        if (!streamJson) {
-          const result = String(ev.result ?? '')
-          if (result.length > 200) {
-            process.stdout.write(`${result.slice(0, 200)}...\n`)
-          } else if (result) {
-            process.stdout.write(`${result}\n`)
-          }
-        }
-        break
+      if (streamJson) {
+        process.stdout.write(JSON.stringify(ev) + '\n')
       }
-      case 'error':
-        if (!streamJson) err(String(ev.error))
-        exitCode = 1
-        finished = true
-        break
-      case 'complete':
-        if (!streamJson) process.stdout.write('\n')
-        finished = true
-        break
-      case 'interrupted':
-        if (!streamJson) process.stdout.write('\n[interrupted]\n')
-        exitCode = 130
-        finished = true
-        break
+
+      switch (ev.type) {
+        case 'text_delta':
+          if (!streamJson) process.stdout.write(ev.delta as string)
+          break
+        case 'tool_start':
+          if (!streamJson) process.stdout.write(`\n[tool: ${ev.toolName}${ev.toolIntent ? ` — ${ev.toolIntent}` : ''}]\n`)
+          break
+        case 'tool_result': {
+          if (!streamJson) {
+            const result = String(ev.result ?? '')
+            if (result.length > 200) {
+              process.stdout.write(`${result.slice(0, 200)}...\n`)
+            } else if (result) {
+              process.stdout.write(`${result}\n`)
+            }
+          }
+          break
+        }
+        case 'error':
+          if (!streamJson) err(String(ev.error))
+          exitCode = 1
+          finished = true
+          break
+        case 'complete':
+          if (!streamJson) process.stdout.write('\n')
+          finished = true
+          break
+        case 'interrupted':
+          if (!streamJson) process.stdout.write('\n[interrupted]\n')
+          exitCode = 130
+          finished = true
+          break
+      }
+    } catch (e) {
+      err(`session:event handler error: ${e instanceof Error ? e.message : String(e)}`)
     }
   })
 
@@ -554,6 +577,44 @@ export function resolveApiKey(provider: string, explicit: string): string {
   )
 }
 
+function resolveOptionalApiKey(provider: string, explicit: string): string | undefined {
+  try {
+    return resolveApiKey(provider, explicit)
+  } catch {
+    return undefined
+  }
+}
+
+export function resolveCustomEndpointCliSetup(provider: string, baseUrl: string, explicitKey: string): {
+  providerType: 'pi_compat'
+  authType: 'none' | 'api_key_with_endpoint'
+  customEndpoint: { api: 'anthropic-messages' | 'openai-completions' }
+  defaultModel: string
+  credential?: string
+  displayName: string
+} {
+  const customEndpoint = {
+    api: provider === 'anthropic' ? 'anthropic-messages' as const : 'openai-completions' as const,
+  }
+  const credential = resolveOptionalApiKey(provider, explicitKey)
+  const branch = resolveCustomEndpointSetup({
+    baseUrl,
+    credential,
+    customEndpointApi: customEndpoint.api,
+  })
+  if (branch.authType !== 'none' && !credential) {
+    resolveApiKey(provider, explicitKey)
+  }
+  return {
+    providerType: 'pi_compat',
+    authType: branch.authType,
+    customEndpoint,
+    defaultModel: provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o',
+    ...(credential && { credential }),
+    displayName: branch.name ?? `${getProviderDisplayName(provider)} (Custom Endpoint)`,
+  }
+}
+
 export function shouldSetupLlmConnection(existingConnectionCount: number, args: Pick<CliArgs, 'provider' | 'baseUrl'>): boolean {
   return existingConnectionCount === 0 || !!args.baseUrl || args.provider !== 'anthropic'
 }
@@ -563,27 +624,31 @@ async function setupLlmConnection(
   args: CliArgs,
 ): Promise<{ connectionSlug: string }> {
   const { provider, baseUrl } = args
-  const key = resolveApiKey(provider, args.apiKey)
   const connectionSlug = `${provider}-cli`
 
   let providerType: string
   let authType: string
-  const setupPayload: Record<string, unknown> = { slug: connectionSlug, credential: key }
+  let displayName = getProviderDisplayName(provider)
+  const setupPayload: Record<string, unknown> = { slug: connectionSlug }
 
   if (baseUrl) {
     // Custom endpoint — send the same payload shape as the desktop UI.
-    // The server handler (llm-connections.ts:102-110) detects customEndpoint + baseUrl
-    // and sets providerType='pi_compat', piAuthProvider, etc.
-    providerType = 'pi_compat'
-    authType = 'api_key_with_endpoint'
+    // The server handler detects customEndpoint + baseUrl and resolves
+    // loopback endpoints without credentials to authType='none'.
+    const customSetup = resolveCustomEndpointCliSetup(provider, baseUrl, args.apiKey)
+    providerType = customSetup.providerType
+    authType = customSetup.authType
+    displayName = customSetup.displayName
     setupPayload.baseUrl = baseUrl
-    setupPayload.customEndpoint = {
-      api: provider === 'anthropic' ? 'anthropic-messages' : 'openai-completions',
-    }
-    setupPayload.defaultModel = provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o'
+    setupPayload.customEndpoint = customSetup.customEndpoint
+    setupPayload.defaultModel = customSetup.defaultModel
+    if (customSetup.credential) setupPayload.credential = customSetup.credential
   } else if (provider === 'anthropic') {
-    providerType = 'anthropic'
+    const key = resolveApiKey(provider, args.apiKey)
+    providerType = 'pi'
     authType = 'api_key'
+    setupPayload.credential = key
+    setupPayload.piAuthProvider = 'anthropic'
   } else if (provider === 'amazon-bedrock') {
     // Bedrock uses IAM credentials, not a single API key
     const accessKeyId = process.env.AWS_ACCESS_KEY_ID
@@ -603,14 +668,16 @@ async function setupLlmConnection(
     setupPayload.awsRegion = region
     delete setupPayload.credential // IAM credentials go through iamCredentials field
   } else {
+    const key = resolveApiKey(provider, args.apiKey)
     providerType = 'pi'
     authType = 'api_key'
+    setupPayload.credential = key
     setupPayload.piAuthProvider = provider
   }
 
   await client.invoke('LLM_Connection:save', {
     slug: connectionSlug,
-    name: getProviderDisplayName(provider),
+    name: displayName,
     providerType,
     authType,
     createdAt: Date.now(),
@@ -637,8 +704,25 @@ async function cmdRun(args: CliArgs): Promise<void> {
 
   let client: CliRpcClient | undefined = server.client
   let sessionId: string | undefined
+  // 交互对话框进行中时为 true — 此时 SIGINT 由 readline 处理（取消当前请求），
+  // onSignal 应跳过，避免误取消整个会话并退出进程。
+  let inInteractiveDialog = false
+  // F6: 串行化 remoteui:request 处理——同一时刻只处理一个对话框，
+  // 避免多个 readline 同时绑定 stdin 导致输入乱码。
+  let dialogQueue: Promise<void> = Promise.resolve()
+  // extensions:EVENT 订阅取消器（在 cleanup 中调用）
+  let unsubExtensions: (() => void) | undefined
+  // F29: idempotency guard — cleanup can be invoked concurrently by the
+  // signal handler (SIGINT/SIGTERM) and by the normal finally block. Without
+  // a guard, the second invocation would re-await server.stop() / destroy()
+  // and could race with the first, producing unhandled rejections or
+  // double-delete session errors.
+  let cleaned = false
 
   const cleanup = async () => {
+    if (cleaned) return
+    cleaned = true
+    unsubExtensions?.()
     if (sessionId && client?.isConnected && !args.noCleanup) {
       await client.invoke('sessions:delete', sessionId).catch(() => {})
     }
@@ -648,6 +732,8 @@ async function cmdRun(args: CliArgs): Promise<void> {
 
   // Signal handling — cancel + clean up on SIGINT/SIGTERM
   const onSignal = async () => {
+    // 交互对话框期间由 readline 的 SIGINT handler 取消当前请求，不退出进程
+    if (inInteractiveDialog) return
     if (sessionId && client?.isConnected) {
       await client.invoke('sessions:cancel', sessionId).catch(() => {})
     }
@@ -659,6 +745,45 @@ async function cmdRun(args: CliArgs): Promise<void> {
 
   try {
     await client.connect()
+
+    // 订阅 pi 扩展事件频道（remoteui:request 等）。
+    // 服务端通过 eventSink(extensions:event, { to: 'workspace' }, event) 广播，
+    // 客户端经 window:switchWorkspace 绑定到工作区后即可接收。
+    unsubExtensions = client.on(RPC_CHANNELS.extensions.EVENT, (event: unknown) => {
+      const request = asRemoteUIRequest(event)
+      if (!request) return // 忽略非 remoteui_request 事件
+
+      // F6: 串行化处理——将每个 remoteui:request 排入 Promise 链，
+      // 确保同一时刻只处理一个对话框，避免多个 readline 同时绑定 stdin。
+      dialogQueue = dialogQueue
+        .then(async () => {
+          inInteractiveDialog = args.interactive
+          try {
+            const respond: RemoteUIResponder = async (sid, rid, payload, reason) => {
+              await client!.invoke(
+                RPC_CHANNELS.extensions.REMOTEUI_RESPONSE,
+                sid,
+                rid,
+                payload,
+                reason,
+              )
+            }
+            const log = (m: string) => process.stderr.write(m + '\n')
+            if (args.interactive) {
+              await handleRemoteUIInteractive(request, respond, log)
+            } else {
+              await handleRemoteUINonInteractive(request, respond, log)
+            }
+          } catch (e) {
+            process.stderr.write(
+              `[RemoteUI] Handler error: ${e instanceof Error ? e.message : String(e)}\n`,
+            )
+          } finally {
+            inInteractiveDialog = false
+          }
+        })
+        .catch(() => {}) // 防止链断裂影响后续请求
+    })
 
     // Bootstrap workspace from directory if specified
     let bootstrappedWorkspaceId: string | undefined
@@ -1076,28 +1201,28 @@ export function getValidateSteps(): ValidateStep[] {
         // Custom endpoint: always create/update when --base-url is provided
         if (ctx.baseUrl) {
           const provider = ctx.provider || 'anthropic'
-          let key = ''
+          let customSetup: ReturnType<typeof resolveCustomEndpointCliSetup>
           try {
-            key = resolveApiKey(provider, ctx.apiKey || '')
+            customSetup = resolveCustomEndpointCliSetup(provider, ctx.baseUrl, ctx.apiKey || '')
           } catch (error) {
             return `0 connections (${error instanceof Error ? error.message : 'missing API key'})`
           }
           const slug = `${provider}-cli`
-          const isAnthropicApi = provider === 'anthropic'
           await client.invoke('LLM_Connection:save', {
             slug,
-            name: `${getProviderDisplayName(provider)} (Custom Endpoint)`,
-            providerType: 'pi_compat',
-            authType: 'api_key_with_endpoint',
+            name: customSetup.displayName,
+            providerType: customSetup.providerType,
+            authType: customSetup.authType,
             createdAt: Date.now(),
           })
-          const result = await client.invoke('settings:setupLlmConnection', {
+          const setupPayload: Record<string, unknown> = {
             slug,
-            credential: key,
             baseUrl: ctx.baseUrl,
-            customEndpoint: { api: isAnthropicApi ? 'anthropic-messages' : 'openai-completions' },
-            defaultModel: isAnthropicApi ? 'claude-sonnet-4-6' : 'gpt-4o',
-          }) as { success: boolean; error?: string }
+            customEndpoint: customSetup.customEndpoint,
+            defaultModel: customSetup.defaultModel,
+          }
+          if (customSetup.credential) setupPayload.credential = customSetup.credential
+          const result = await client.invoke('settings:setupLlmConnection', setupPayload) as { success: boolean; error?: string }
           if (!result?.success) return `setup failed: ${result?.error ?? 'unknown'}`
           await client.invoke('LLM_Connection:setDefault', slug)
           return `${r?.length ?? 0} existing + custom endpoint via ${ctx.baseUrl}`
@@ -1145,7 +1270,7 @@ export function getValidateSteps(): ValidateStep[] {
           return `0 connections (${error instanceof Error ? error.message : 'missing API key'})`
         }
         const slug = `${provider}-cli`
-        const providerType = provider === 'anthropic' ? 'anthropic' : 'pi'
+        const providerType = 'pi'
         const authType = 'api_key'
         await client.invoke('LLM_Connection:save', {
           slug,
@@ -1154,9 +1279,7 @@ export function getValidateSteps(): ValidateStep[] {
           authType,
           createdAt: Date.now(),
         })
-        const setupPayload = provider === 'anthropic'
-          ? { slug, credential: key }
-          : { slug, credential: key, piAuthProvider: provider }
+        const setupPayload = { slug, credential: key, piAuthProvider: provider }
         const result = await client.invoke('settings:setupLlmConnection', setupPayload) as { success: boolean; error?: string }
         if (!result?.success) return `setup failed: ${result?.error ?? 'unknown'}`
         await client.invoke('LLM_Connection:setDefault', slug)
@@ -1904,7 +2027,7 @@ Connection:
   --json                 Raw JSON output for scripting
 
 LLM Configuration (for 'run' command):
-  --provider <name>      LLM provider (default: anthropic, or $LLM_PROVIDER)
+  --provider <name>      LLM provider (default: anthropic alias, or $LLM_PROVIDER)
                          Supported: anthropic, openai, google, openrouter, groq, mistral, deepseek, xai, ...
   --model <id>           Model to use (or $LLM_MODEL)
   --api-key <key>        API key (or $LLM_API_KEY, or provider-specific e.g. $OPENAI_API_KEY)
@@ -1918,6 +2041,9 @@ Commands:
                          --output-format     text or stream-json (default: text)
                          --no-cleanup        Keep session after completion
                          --server-entry      Path to server/index.ts
+                         --interactive       Render pi extension remoteui:request dialogs
+                                             in the terminal (select/editor). Default:
+                                             auto-cancel with reason "non-interactive".
   ping                   Verify connectivity (clientId + latency)
   health                 Check credential store health
   versions               Show server runtime versions
@@ -1960,6 +2086,10 @@ Examples:
 
 export async function main(argv: string[] = process.argv): Promise<void> {
   const args = parseArgs(argv)
+
+  // F14: 标记 CLI 模式——子进程（spawnLocalServer）继承此环境变量，
+  // pi-agent.ts 据此跳过 browser_tool 注册（CLI 无浏览器窗口，调用只会返回运行时错误）。
+  process.env.CRAFT_CLI_MODE = '1'
 
   // Set custom CA before any WS connections
   if (args.tlsCa) {

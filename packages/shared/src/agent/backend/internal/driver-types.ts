@@ -1,5 +1,5 @@
 import type {
-  AgentProvider,
+  ModelProvider,
   BackendConfig,
   BackendHostRuntimeContext,
   CoreBackendConfig,
@@ -17,7 +17,6 @@ export interface BackendRuntimePaths {
   sessionServer?: string;
   node?: string;
   bridgeServer?: string;
-  piServer?: string;
 }
 
 export interface BackendRuntimePayload extends Record<string, unknown> {
@@ -30,13 +29,13 @@ export interface BackendRuntimePayload extends Record<string, unknown> {
   /** Models registered for a custom endpoint. Strings default to 128K context; objects allow overrides. */
   customModels?: Array<string | { id: string; contextWindow?: number; supportsImages?: boolean }>;
   /** API key from ~/.pi/agent/models.json for pi_compat custom-endpoint providers.
-   *  Passed to the subprocess via init.apiKey so registerProvider() validation passes. */
+   *  Passed to Pi auth/runtime setup so provider validation can pass. */
   customEndpointApiKey?: string;
 }
 
 export interface BackendResolutionContext {
   connection: LlmConnection | null;
-  provider: AgentProvider;
+  provider: ModelProvider;
   authType?: LlmAuthType;
   resolvedModel: string;
   capabilities: {
@@ -87,7 +86,7 @@ export interface DriverValidateStoredConnectionArgs extends DriverHostRuntimeArg
 }
 
 export interface DriverTestConnectionArgs extends DriverHostRuntimeArgs {
-  provider: AgentProvider;
+  provider: ModelProvider;
   apiKey: string;
   model: string;
   baseUrl?: string;
@@ -96,7 +95,7 @@ export interface DriverTestConnectionArgs extends DriverHostRuntimeArgs {
 }
 
 export interface ProviderDriver {
-  provider: AgentProvider;
+  provider: ModelProvider;
   initializeHostRuntime?: (args: DriverHostRuntimeArgs) => void;
   fetchModels?: (args: DriverFetchModelsArgs) => Promise<ModelFetchResult>;
   validateStoredConnection?: (args: DriverValidateStoredConnectionArgs) => Promise<StoredConnectionValidationResult>;
@@ -116,11 +115,11 @@ export function getBackendRuntime(config: BackendConfig): BackendRuntimePayload 
   return (config.runtime ?? {}) as BackendRuntimePayload;
 }
 
-export function getDefaultProviderType(provider: AgentProvider): LlmProviderType {
+export function getDefaultProviderType(provider: ModelProvider): LlmProviderType {
   switch (provider) {
-    case 'anthropic':
-      return 'anthropic';
     case 'pi':
       return 'pi';
   }
 }
+
+/* Pi-only driver provider standard. */

@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { extname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import * as lark from '@larksuiteoapi/node-sdk'
+import { errorMessage } from '@craft-agent/shared/utils'
 import type {
   PlatformAdapter,
   PlatformConfig,
@@ -264,7 +265,7 @@ export class LarkAdapter implements PlatformAdapter {
       onError: (err: unknown) => {
         this.log.error('[lark] ws error', {
           event: 'lark_ws_error',
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         })
       },
       onReconnecting: () => {
@@ -472,7 +473,7 @@ export class LarkAdapter implements PlatformAdapter {
               ? errObj.msg
               : undefined,
         larkError: responseData?.error,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
         payloadSize: cardJson.length,
         payloadPreview: cardJson.slice(0, 500),
         buttonCount: buttons.length,
@@ -508,7 +509,7 @@ export class LarkAdapter implements PlatformAdapter {
           this.log.warn('[lark] failed to patch card with real messageId', {
             event: 'lark_card_patch_failed',
             messageId,
-            error: err instanceof Error ? err.message : String(err),
+            error: errorMessage(err),
           })
         }
       }
@@ -529,7 +530,7 @@ export class LarkAdapter implements PlatformAdapter {
       this.log.warn('[lark] clearButtons failed', {
         event: 'lark_clear_buttons_failed',
         messageId,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       })
     }
   }
@@ -582,7 +583,7 @@ export class LarkAdapter implements PlatformAdapter {
         this.log.warn('[lark] caption follow-up failed', {
           event: 'lark_caption_failed',
           messageId,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         })
       })
     }
@@ -764,7 +765,7 @@ export class LarkAdapter implements PlatformAdapter {
         event: 'lark_resource_download_failed',
         messageId: args.messageId,
         fileKey: args.fileKey,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       })
       return null
     }

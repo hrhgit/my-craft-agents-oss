@@ -6,7 +6,7 @@
  *
  * 事件流：
  *   pi 扩展 ctx.registerCommand(name, handler, opts)
- *   → pi-agent-server 子进程 JSONL extension_command_registered
+ *   → Pi RpcClient command listing
  *   → pi-extension-bridge 桥接层 → eventSink
  *   → RPC_CHANNELS.extensions.EVENT → renderer 的 onExtensionEvent 监听器
  *   → 此 hook 累积命令到 state，供命令面板（slash menu）注入展示
@@ -14,7 +14,7 @@
  * 触发执行：
  *   用户在 slash menu 选中扩展命令 → triggerCommand(name, args)
  *   → window.electronAPI.invokeExtensionCommand(sessionId, name, args)
- *   → 主进程通过 extension_command_invoke 向子进程转发
+ *   → 主进程通过 Pi RpcClient 触发命令
  *
  * 说明：
  * - `onExtensionEvent` 监听器已在 ElectronAPI + CHANNEL_MAP 注册（Task 3 共用）。

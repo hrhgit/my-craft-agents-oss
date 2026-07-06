@@ -8,7 +8,6 @@ import { StepFormLayout } from "./primitives"
 
 interface ReauthScreenProps {
   onLogin: () => Promise<void>
-  onReset: () => void
 }
 
 /**
@@ -17,7 +16,7 @@ interface ReauthScreenProps {
  * Shown when the user has existing workspaces/config but the Craft token
  * is missing or expired. Much simpler than full onboarding - just re-authenticate.
  */
-export function ReauthScreen({ onLogin, onReset }: ReauthScreenProps) {
+export function ReauthScreen({ onLogin }: ReauthScreenProps) {
   const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -77,15 +76,6 @@ export function ReauthScreen({ onLogin, onReset }: ReauthScreenProps) {
                     {t("onboarding.reauth.loginWithCraft")}
                   </>
                 )}
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={onReset}
-                disabled={isLoading}
-                className="w-full max-w-[320px] bg-foreground-2 shadow-minimal text-foreground hover:bg-foreground/5 rounded-lg"
-                size="sm"
-              >
-                {t("onboarding.reauth.resetApp")}
               </Button>
             </div>
           }

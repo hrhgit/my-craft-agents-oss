@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { SessionToolContext } from '../context.ts';
 import { handleScriptSandbox } from './script-sandbox.ts';
+import { getResultText } from '../types.ts';
 
 describe('script_sandbox', () => {
   let rootDir: string;
@@ -63,7 +64,7 @@ describe('script_sandbox', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('inputFile must be within the session directory');
+    expect(getResultText(result)).toContain('inputFile must be within the session directory');
   });
 
   it('enforces network/filesystem isolation or fails with clear diagnostics', async () => {
@@ -73,7 +74,7 @@ describe('script_sandbox', () => {
       timeoutMs: 1500,
     });
 
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     if (result.isError) {
       expect(text.length > 0).toBe(true);
@@ -102,7 +103,7 @@ describe('script_sandbox', () => {
       timeoutMs: 1500,
     });
 
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     if (
       text.includes('filesystem isolation') ||
@@ -127,7 +128,7 @@ describe('script_sandbox', () => {
       timeoutMs: 1500,
     });
 
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
     if (
       result.isError &&
       (
@@ -152,7 +153,7 @@ describe('script_sandbox', () => {
       timeoutMs: 200,
     });
 
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
     if (
       result.isError &&
       (

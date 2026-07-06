@@ -94,8 +94,8 @@ export interface PanelHeaderProps {
   paddingLeft?: string
   /** Optional className for additional styling */
   className?: string
-  /** Whether title is being regenerated (shows shimmer effect) */
-  isRegeneratingTitle?: boolean
+  /** Whether title is busy with an async operation (shows shimmer effect) */
+  isTitleBusy?: boolean
 }
 
 /**
@@ -113,7 +113,7 @@ export function PanelHeader({
   compensateForStoplight,
   paddingLeft,
   className,
-  isRegeneratingTitle,
+  isTitleBusy,
 }: PanelHeaderProps) {
   // Fall back to AppShellContext.leadingAction so per-panel back buttons (set by
   // PanelSlot in compact mode) propagate to every page's PanelHeader without each
@@ -149,7 +149,7 @@ export function PanelHeader({
     >
       <h1 className={cn(
         "text-sm font-semibold truncate font-sans leading-tight",
-        isRegeneratingTitle && "animate-shimmer-text"
+        isTitleBusy && "animate-shimmer-text"
       )}>{title}</h1>
       {badge}
     </motion.div>

@@ -5,7 +5,7 @@
  */
 
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
 import { getCredentialManager, SOURCE_CREDENTIAL_TYPES } from '@craft-agent/shared/credentials'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
@@ -24,15 +24,15 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
   // Export workspace resources to a portable bundle
   server.handle(
     RPC_CHANNELS.resources.EXPORT,
-    async (_ctx, workspaceId: string, options: ExportResourcesOptions) => {
-      const workspace = getWorkspaceByNameOrId(workspaceId)
-      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`)
+    async (ctx, workspaceId: string, options: ExportResourcesOptions) => {
+      const resolvedWorkspaceId = resolveWorkspaceId(ctx.workspaceId, workspaceId) ?? workspaceId
+      const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
       const { exportResources } = await import('@craft-agent/shared/resources')
       const result = exportResources(workspace.rootPath, options)
 
       deps.platform.logger?.info(
-        `RESOURCES_EXPORT: Exported from ${workspaceId}: ` +
+        `RESOURCES_EXPORT: Exported from ${resolvedWorkspaceId}: ` +
         `${result.bundle.resources.sources?.length ?? 0} sources, ` +
         `${result.bundle.resources.skills?.length ?? 0} skills, ` +
         `${result.bundle.resources.automations?.length ?? 0} automations` +
@@ -46,9 +46,9 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
   // Import a resource bundle into a workspace
   server.handle(
     RPC_CHANNELS.resources.IMPORT,
-    async (_ctx, workspaceId: string, bundle: ResourceBundle, mode: ResourceImportMode) => {
-      const workspace = getWorkspaceByNameOrId(workspaceId)
-      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`)
+    async (ctx, workspaceId: string, bundle: ResourceBundle, mode: ResourceImportMode) => {
+      const resolvedWorkspaceId = resolveWorkspaceId(ctx.workspaceId, workspaceId) ?? workspaceId
+      const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
       const { importResources } = await import('@craft-agent/shared/resources')
       const credManager = getCredentialManager()
@@ -71,7 +71,7 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       })
 
       deps.platform.logger?.info(
-        `RESOURCES_IMPORT: Imported into ${workspaceId} (mode=${mode}): ` +
+        `RESOURCES_IMPORT: Imported into ${resolvedWorkspaceId} (mode=${mode}): ` +
         `sources=${result.sources.imported.length} imported, ${result.sources.skipped.length} skipped, ${result.sources.failed.length} failed; ` +
         `skills=${result.skills.imported.length} imported, ${result.skills.skipped.length} skipped, ${result.skills.failed.length} failed; ` +
         `automations=${result.automations.imported.length} imported, ${result.automations.skipped.length} skipped, ${result.automations.failed.length} failed`,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { handleUpdatePreferences, type UpdatePreferencesArgs } from './update-preferences.ts';
 import type { SessionToolContext } from '../context.ts';
+import { getResultText } from '../types.ts';
 
 type WriteRecord = Record<string, unknown>;
 
@@ -20,8 +21,8 @@ describe('handleUpdatePreferences', () => {
     const result = await handleUpdatePreferences(ctx, { name: 'Alice', timezone: 'Europe/Budapest' });
     expect(writes).toHaveLength(1);
     expect(writes[0]).toEqual({ name: 'Alice', timezone: 'Europe/Budapest' });
-    expect(result.content[0]?.text).toContain('name');
-    expect(result.content[0]?.text).toContain('timezone');
+    expect(getResultText(result)).toContain('name');
+    expect(getResultText(result)).toContain('timezone');
   });
 
   it('merges city/region/country into a single location object', async () => {
@@ -47,6 +48,6 @@ describe('handleUpdatePreferences', () => {
     const { ctx, writes } = createCtx();
     const result = await handleUpdatePreferences(ctx, {});
     expect(writes).toHaveLength(0);
-    expect(result.content[0]?.text).toContain('No preferences were updated');
+    expect(getResultText(result)).toContain('No preferences were updated');
   });
 });

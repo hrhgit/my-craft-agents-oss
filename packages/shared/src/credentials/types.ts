@@ -1,14 +1,14 @@
 /**
  * Credential Storage Types
  *
- * Defines the types for secure credential storage using AES-256-GCM encryption.
+ * Defines the types for credential storage using pi auth.json.
  * Supports global and source-scoped credentials.
  *
  * Credential key format: "{type}::{scope...}"
  *
  * Examples:
- *   - anthropic_api_key::global
- *   - claude_oauth::global
+ *   - llm_api_key::{connectionSlug}
+ *   - llm_oauth::{connectionSlug}
  *   - source_oauth::{workspaceId}::{sourceId}
  *   - source_bearer::{workspaceId}::{sourceId}
  *
@@ -17,9 +17,6 @@
 
 /** Types of credentials we store */
 export type CredentialType =
-  // Global credentials (legacy, kept for backwards compatibility)
-  | 'anthropic_api_key'  // Anthropic API key for Claude
-  | 'claude_oauth'       // Claude OAuth token (Max subscription)
   // LLM connection credentials (keyed by connection slug)
   | 'llm_api_key'        // API key for LLM connection
   | 'llm_oauth'          // OAuth token for LLM connection
@@ -37,8 +34,6 @@ export type CredentialType =
 
 /** Valid credential types for validation */
 const VALID_CREDENTIAL_TYPES: readonly CredentialType[] = [
-  'anthropic_api_key',
-  'claude_oauth',
   'llm_api_key',
   'llm_oauth',
   'llm_iam',
@@ -213,7 +208,7 @@ export function credentialIdToAccount(id: CredentialId): string {
 /** Types of credential health issues detected at startup */
 export type CredentialHealthIssueType =
   | 'file_corrupted'         // Credential file exists but can't be parsed
-  | 'decryption_failed'      // File exists but can't be decrypted (machine migration)
+  | 'decryption_failed'      // Legacy: AES-256-GCM era, no longer produced (plaintext JSON now)
   | 'no_default_credentials' // No credentials for the default connection
 
 /** A single credential health issue */

@@ -2,8 +2,8 @@
  * Session-Scoped Tool Callback Registry
  *
  * Extracted from session-scoped-tools.ts to break the dependency between
- * the callback registry (shared by Claude + Pi paths) and the Claude SDK
- * adapter layer (only used by ClaudeAgent).
+ * the callback registry (shared across agent paths) and the SDK adapter
+ * layer.
  *
  * The registry is a simple Map keyed by sessionId. Each backend registers
  * callbacks when a session starts and merges additional callbacks (e.g.
@@ -20,7 +20,7 @@ import { debug } from '../utils/debug.ts';
  */
 export interface SessionScopedToolCallbacks {
   /**
-   * Called when a plan is submitted via SubmitPlan tool.
+   * Called when a plan is submitted (plan workflow now handled by pi plan-mode extension).
    * Receives the path to the plan markdown file.
    */
   onPlanSubmitted?: (planPath: string) => void;

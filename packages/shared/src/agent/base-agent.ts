@@ -18,7 +18,6 @@ import { join } from 'node:path';
 
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
-import { expandPath } from '../utils/paths.ts';
 import { buildTransferredSessionContext } from './conversation-summary.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
 import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from './thinking-levels.ts';
@@ -270,7 +269,7 @@ export abstract class BaseAgent implements AgentBackend {
     this.config = config;
     // Use session's workingDirectory if set (user-changeable), fallback to workspace root
     this.workingDirectory = config.session?.workingDirectory ?? config.workspace.rootPath ?? process.cwd();
-    this._sessionId = config.session?.id || `agent-${Date.now()}`;
+    this._sessionId = config.session?.craftId || `agent-${Date.now()}`;
     this._model = config.model || defaultModel;
     this._thinkingLevel = normalizeThinkingLevel(config.thinkingLevel) ?? DEFAULT_THINKING_LEVEL;
 
@@ -405,11 +404,11 @@ export abstract class BaseAgent implements AgentBackend {
   // ============================================================
 
   /**
-   * Handle successful completion of a session MCP tool (SubmitPlan, auth tools).
+   * Handle successful completion of a session MCP tool (auth tools).
    *
    * WHY THIS IS ON BaseAgent:
    * -------------------------
-   * Session-scoped tools (SubmitPlan, source_oauth_trigger, etc.) run in an
+   * Session-scoped tools (source_oauth_trigger, etc.) run in an
    * EXTERNAL MCP server subprocess (packages/session-mcp-server). That subprocess
    * has its own process memory, so when it calls getSessionScopedToolCallbacks(),
    * the callback registry is empty — it was populated in THIS process, not the subprocess.
@@ -418,8 +417,6 @@ export abstract class BaseAgent implements AgentBackend {
    * stream and calls THIS shared method to fire the appropriate callback.
    *
    * CALLBACKS FIRED:
-   * - SubmitPlan → this.onPlanSubmitted(planPath)
-   *   → Electron reads plan file, shows plan card, calls interruptForHandoff(PlanSubmitted)
    * - Auth tools → this.onAuthRequest(authRequest)
    *   → Electron shows auth dialog, calls interruptForHandoff(AuthRequest)
    */
@@ -427,18 +424,6 @@ export abstract class BaseAgent implements AgentBackend {
     toolName: string,
     args: Record<string, unknown>
   ): void {
-    // SubmitPlan — trigger plan view in the UI.
-    // The Electron SessionManager's onPlanSubmitted callback will:
-    //   1. Read the plan file content
-    //   2. Create a plan message (role: 'plan')
-    //   3. Send plan_submitted event to renderer
-    //   4. Call interruptForHandoff(AbortReason.PlanSubmitted) → turn terminates
-    if (toolName === 'SubmitPlan' && args.planPath) {
-      this.debug(`SubmitPlan completed: ${args.planPath}`);
-      this.onPlanSubmitted?.(args.planPath as string);
-      return;
-    }
-
     // Auth tools — trigger auth request in the UI.
     // Maps MCP tool names to auth request types.
     const authToolTypes: Record<string, string> = {
@@ -458,7 +443,7 @@ export abstract class BaseAgent implements AgentBackend {
       this.onAuthRequest({
         type: authType,
         requestId: `${Date.now()}-auth`,
-        sessionId: this.config.session?.id || '',
+        sessionId: this.config.session?.craftId || '',
         sourceSlug,
         sourceName,
         ...(authType === 'credential' && {
@@ -841,8 +826,8 @@ ${formattedMessages}
    * @returns Session path, or undefined if session/workspace not configured
    */
   protected getSessionStoragePath(): string | undefined {
-    if (!this.config.session?.id || !this.config.workspace.rootPath) return undefined;
-    return getSessionPath(this.config.workspace.rootPath, this.config.session.id);
+    if (!this.config.session?.craftId || !this.config.workspace.rootPath) return undefined;
+    return getSessionPath(this.config.workspace.rootPath, this.config.session.craftId);
   }
 
   // ============================================================
@@ -1161,9 +1146,6 @@ ${formattedMessages}
       permissionMode: input.permissionMode as SpawnSessionRequest['permissionMode'],
       thinkingLevel: input.thinkingLevel as SpawnSessionRequest['thinkingLevel'],
       labels: input.labels as string[] | undefined,
-      workingDirectory: typeof input.workingDirectory === 'string' && input.workingDirectory
-        ? expandPath(input.workingDirectory)
-        : undefined,
       attachments: input.attachments as SpawnSessionRequest['attachments'],
     };
 

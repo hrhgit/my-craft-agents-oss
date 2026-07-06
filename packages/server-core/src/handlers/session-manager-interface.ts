@@ -136,7 +136,16 @@ export interface ISessionManager {
     sessionId: string,
     commandId: string,
     args?: string,
-  ): boolean
+  ): Promise<boolean>
+
+  /**
+   * List child sessions in pi's session tree spawned from the given session.
+   * Returns child session infos filtered by header.spawnedFrom === piSessionId.
+   * Empty array when the backend doesn't support listChildSessions.
+   */
+  listChildSessions(
+    sessionId: string,
+  ): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]>
 
   // ---------------------------------------------------------------------------
   // Plans

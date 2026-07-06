@@ -14,7 +14,7 @@ import {
 } from '../access-control'
 import {
   normalizeBindingConfig,
-  type BindingConfig,
+  type RawBindingConfig,
   type IncomingMessage,
   type MessagingConfig,
   type PlatformAccessMode,
@@ -53,7 +53,7 @@ function buildConfig(args: {
   }
 }
 
-function bindingWith(overrides: Partial<BindingConfig> = {}) {
+function bindingWith(overrides: RawBindingConfig = {}) {
   return {
     config: normalizeBindingConfig('telegram', overrides),
   }
@@ -204,7 +204,7 @@ describe('evaluateBindingAccess', () => {
 
 describe('normalizeBindingConfig migration', () => {
   it('persisted config without accessMode defaults to "open"', () => {
-    const raw = { responseMode: 'progress', streamResponses: true } as Partial<BindingConfig>
+    const raw = { responseMode: 'progress', streamResponses: true } as RawBindingConfig
     const normalized = normalizeBindingConfig('telegram', raw)
     expect(normalized.accessMode).toBe('open')
     expect(normalized.allowedSenderIds).toEqual([])

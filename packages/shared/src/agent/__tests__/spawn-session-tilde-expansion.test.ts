@@ -1,14 +1,4 @@
-/**
- * Regression test for #575
- *
- * spawn_session must expand `~`, `${HOME}`, and relative paths in
- * `workingDirectory` before handing the request to `onSpawnSession`.
- * Otherwise `child_process.spawn({ cwd })` receives a literal tilde-path
- * and the SDK fails with a misleading executable-not-found error.
- */
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
 import type { SpawnSessionRequest, SpawnSessionResult } from '../base-agent.ts';
 import { TestAgent, createMockBackendConfig } from './test-utils.ts';
 
@@ -34,7 +24,7 @@ function setup() {
   return { agent, captured };
 }
 
-describe('preExecuteSpawnSession workingDirectory normalization', () => {
+describe('preExecuteSpawnSession workingDirectory compatibility', () => {
   let agent: SpawnTestAgent;
   let captured: SpawnSessionRequest[];
 
@@ -42,35 +32,10 @@ describe('preExecuteSpawnSession workingDirectory normalization', () => {
     ({ agent, captured } = setup());
   });
 
-  it('expands `~` to the home directory', async () => {
+  it('ignores deprecated workingDirectory overrides', async () => {
     await agent.invokeSpawn({ prompt: 'hi', workingDirectory: '~' });
     expect(captured).toHaveLength(1);
-    expect(captured[0]?.workingDirectory).toBe(homedir());
-  });
-
-  it('expands `~/foo` to an absolute path under home', async () => {
-    await agent.invokeSpawn({ prompt: 'hi', workingDirectory: '~/Documents/CraftAgents' });
-    expect(captured[0]?.workingDirectory).toBe(join(homedir(), 'Documents/CraftAgents'));
-  });
-
-  it('expands `${HOME}/foo`', async () => {
-    await agent.invokeSpawn({ prompt: 'hi', workingDirectory: '${HOME}/projects' });
-    expect(captured[0]?.workingDirectory).toBe(join(homedir(), 'projects'));
-  });
-
-  it('expands `$HOME/foo`', async () => {
-    await agent.invokeSpawn({ prompt: 'hi', workingDirectory: '$HOME/projects' });
-    expect(captured[0]?.workingDirectory).toBe(join(homedir(), 'projects'));
-  });
-
-  it('leaves absolute paths unchanged (aside from normalization)', async () => {
-    await agent.invokeSpawn({ prompt: 'hi', workingDirectory: '/tmp/abs/path' });
-    expect(captured[0]?.workingDirectory).toBe('/tmp/abs/path');
-  });
-
-  it('resolves relative paths against cwd', async () => {
-    await agent.invokeSpawn({ prompt: 'hi', workingDirectory: 'relative/dir' });
-    expect(captured[0]?.workingDirectory).toBe(resolve(process.cwd(), 'relative/dir'));
+    expect(captured[0]?.workingDirectory).toBeUndefined();
   });
 
   it('passes through undefined when workingDirectory is omitted', async () => {

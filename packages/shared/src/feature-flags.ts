@@ -74,8 +74,6 @@ export function isDelegatePromptAutomationEnabled(): boolean {
 }
 
 export const FEATURE_FLAGS = {
-  /** Enable Opus 4.7 fast mode (speed:"fast" + beta header). 6x pricing. */
-  fastMode: false,
   /**
    * Enable agent developer feedback tool.
    *

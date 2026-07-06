@@ -244,23 +244,3 @@ export class ConfigWatcherManager {
     debug(formattedMessage);
   }
 }
-
-/**
- * Create and optionally start a ConfigWatcherManager.
- *
- * @param config - Manager configuration
- * @param callbacks - Callbacks for config changes
- * @param autoStart - Whether to start watching immediately (default: true)
- * @returns ConfigWatcherManager instance
- */
-export function createConfigWatcherManager(
-  config: ConfigWatcherManagerConfig,
-  callbacks: ConfigWatcherManagerCallbacks = {},
-  autoStart = true
-): ConfigWatcherManager {
-  const manager = new ConfigWatcherManager(config, callbacks);
-  if (autoStart) {
-    manager.start();
-  }
-  return manager;
-}

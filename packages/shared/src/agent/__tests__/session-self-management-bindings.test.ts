@@ -6,7 +6,7 @@ import {
 } from '../session-scoped-tools.ts';
 import { createSessionToolContext } from '../session-tool-context.ts';
 import { attachSessionSelfManagementBindings } from '../session-self-management-bindings.ts';
-import type { SessionToolContext, SessionInfo } from '@craft-agent/session-tools-core';
+import type { SessionToolContext, SessionInfo, TextContent } from '@craft-agent/session-tools-core';
 import { SESSION_TOOL_REGISTRY } from '@craft-agent/session-tools-core';
 
 // Minimal noop callbacks for createSessionToolContext
@@ -271,21 +271,21 @@ describe('Claude/Pi session self-management parity', () => {
     const labelsHandler = SESSION_TOOL_REGISTRY.get('set_session_labels')!.handler!;
     const labelsResult = await labelsHandler(ctx, { labels: ['test'] });
     expect(labelsResult.isError).toBe(true);
-    expect(labelsResult.content[0]!.text).toContain('not available in this context');
+    expect((labelsResult.content[0] as TextContent).text).toContain('not available in this context');
 
     const statusHandler = SESSION_TOOL_REGISTRY.get('set_session_status')!.handler!;
     const statusResult = await statusHandler(ctx, { status: 'done' });
     expect(statusResult.isError).toBe(true);
-    expect(statusResult.content[0]!.text).toContain('not available in this context');
+    expect((statusResult.content[0] as TextContent).text).toContain('not available in this context');
 
     const infoHandler = SESSION_TOOL_REGISTRY.get('get_session_info')!.handler!;
     const infoResult = await infoHandler(ctx, {});
     expect(infoResult.isError).toBe(true);
-    expect(infoResult.content[0]!.text).toContain('not available in this context');
+    expect((infoResult.content[0] as TextContent).text).toContain('not available in this context');
 
     const listHandler = SESSION_TOOL_REGISTRY.get('list_sessions')!.handler!;
     const listResult = await listHandler(ctx, {});
     expect(listResult.isError).toBe(true);
-    expect(listResult.content[0]!.text).toContain('not available in this context');
+    expect((listResult.content[0] as TextContent).text).toContain('not available in this context');
   });
 });

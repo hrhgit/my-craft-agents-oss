@@ -19,7 +19,7 @@ function makeTmpDir(): string {
 
 function makeStoredSession(workspaceRootPath: string): StoredSession {
   return {
-    id: 'session-1',
+    craftId: 'session-1',
     workspaceRootPath,
     createdAt: 1000,
     lastUsedAt: 1000,

@@ -1,15 +1,15 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'path'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, getDefaultThinkingLevel, setDefaultThinkingLevel } from '@craft-agent/shared/config'
+import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getDefaultThinkingLevel, setDefaultThinkingLevel } from '@craft-agent/shared/config'
 import { isValidThinkingLevel, normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
+import * as configStorage from '@craft-agent/shared/config/storage'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
-import { getWorkspaceOrThrow } from '@craft-agent/server-core/handlers'
+import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '@craft-agent/server-core/handlers'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
-import { isValidWorkingDirectory } from '../../utils/path-validation'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.workspace.SETTINGS_GET,
@@ -39,8 +39,6 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL,
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
-  RPC_CHANNELS.piExtensions.GET_ENABLED,
-  RPC_CHANNELS.piExtensions.SET_ENABLED,
   RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION,
   RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION,
   RPC_CHANNELS.piExtensions.GET_SETTINGS,
@@ -63,7 +61,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     if (!isValidThinkingLevel(level)) {
       throw new Error(`Invalid thinking level: ${level}. Valid values: ${VALID_THINKING_LEVELS_LIST}`)
     }
-    const success = setDefaultThinkingLevel(level)
+    const success = await setDefaultThinkingLevel(level)
     if (!success) {
       throw new Error('Failed to persist default thinking level')
     }
@@ -75,14 +73,25 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Get session-specific model
-  server.handle(RPC_CHANNELS.sessions.GET_MODEL, async (_ctx, sessionId: string, _workspaceId: string): Promise<string | null> => {
+  server.handle(RPC_CHANNELS.sessions.GET_MODEL, async (ctx, sessionId: string, workspaceId: string): Promise<string | null> => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
     const session = await deps.sessionManager.getSession(sessionId)
+    if (wid && session && session.workspaceId !== wid) {
+      throw new Error(`Session workspace mismatch: session ${sessionId} belongs to workspace ${session.workspaceId}, but caller is authenticated to ${wid}`)
+    }
     return session?.model ?? null
   })
 
   // Set session-specific model (and optionally connection)
-  server.handle(RPC_CHANNELS.sessions.SET_MODEL, async (_ctx, sessionId: string, workspaceId: string, model: string | null, connection?: string) => {
-    await deps.sessionManager.updateSessionModel(sessionId, workspaceId, model, connection)
+  server.handle(RPC_CHANNELS.sessions.SET_MODEL, async (ctx, sessionId: string, workspaceId: string, model: string | null, connection?: string) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    if (wid) {
+      const session = await deps.sessionManager.getSession(sessionId)
+      if (session && session.workspaceId !== wid) {
+        throw new Error(`Session workspace mismatch: session ${sessionId} belongs to workspace ${session.workspaceId}, but caller is authenticated to ${wid}`)
+      }
+    }
+    await deps.sessionManager.updateSessionModel(sessionId, wid, model, connection)
     deps.platform.logger.info(`Session ${sessionId} model updated to: ${model}${connection ? ` (connection: ${connection})` : ''}`)
   })
 
@@ -100,12 +109,11 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Get workspace settings (model, permission mode, working directory, credential strategy)
-  server.handle(RPC_CHANNELS.workspace.SETTINGS_GET, async (_ctx, workspaceId: string) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) {
-      deps.platform.logger.error(`Workspace not found: ${workspaceId}`)
-      return null
-    }
+  server.handle(RPC_CHANNELS.workspace.SETTINGS_GET, async (ctx, workspaceId: string) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
+    if (!wid) return null
+    const workspace = getWorkspaceOrNull(wid, deps.platform.logger, 'WORKSPACE_SETTINGS_GET')
+    if (!workspace) return null
 
     // Load workspace config
     const { loadWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
@@ -117,7 +125,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       permissionMode: config?.defaults?.permissionMode,
       cyclablePermissionModes: config?.defaults?.cyclablePermissionModes,
       thinkingLevel: normalizeThinkingLevel(config?.defaults?.thinkingLevel),
-      workingDirectory: config?.defaults?.workingDirectory,
+      workingDirectory: workspace.rootPath,
       localMcpEnabled: config?.localMcpServers?.enabled ?? true,
       defaultLlmConnection: config?.defaults?.defaultLlmConnection,
       enabledSourceSlugs: config?.defaults?.enabledSourceSlugs ?? [],
@@ -125,8 +133,9 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Update a workspace setting
-  server.handle(RPC_CHANNELS.workspace.SETTINGS_UPDATE, async (_ctx, workspaceId: string, key: string, value: unknown) => {
-    const workspace = getWorkspaceOrThrow(workspaceId)
+  server.handle(RPC_CHANNELS.workspace.SETTINGS_UPDATE, async (ctx, workspaceId: string, key: string, value: unknown) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    const workspace = getWorkspaceOrThrow(wid)
     const normalizedValue = key === 'workingDirectory' && typeof value === 'string'
       ? value.trim()
       : value
@@ -139,23 +148,15 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
     // Validate defaultLlmConnection exists before saving
     if (key === 'defaultLlmConnection' && normalizedValue !== undefined && normalizedValue !== null) {
-      const { getLlmConnection } = await import('@craft-agent/shared/config/storage')
-      if (!getLlmConnection(normalizedValue as string)) {
+      if (!configStorage.getLlmConnection(normalizedValue as string)) {
         throw new Error(`LLM connection "${normalizedValue}" not found`)
-      }
-    }
-
-    if (key === 'workingDirectory' && normalizedValue !== undefined && normalizedValue !== null) {
-      const validation = isValidWorkingDirectory(String(normalizedValue))
-      if (!validation.valid) {
-        throw new Error(validation.reason!)
       }
     }
 
     const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
     const config = loadWorkspaceConfig(workspace.rootPath)
     if (!config) {
-      throw new Error(`Failed to load workspace config: ${workspaceId}`)
+      throw new Error(`Failed to load workspace config: ${wid}`)
     }
 
     // Handle 'name' specially - it's a top-level config property, not in defaults
@@ -165,6 +166,11 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       // Store in localMcpServers.enabled (top-level, not in defaults)
       config.localMcpServers = config.localMcpServers || { enabled: true }
       config.localMcpServers.enabled = Boolean(normalizedValue)
+    } else if (key === 'workingDirectory') {
+      // Deprecated: cwd is workspace identity. Keep the key accepted so older
+      // renderers can clear stale values, but never persist a divergent cwd.
+      config.defaults = config.defaults || {}
+      delete config.defaults.workingDirectory
     } else {
       // Update the setting in defaults
       config.defaults = config.defaults || {}
@@ -232,38 +238,32 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Get auto-capitalisation setting
   server.handle(RPC_CHANNELS.input.GET_AUTO_CAPITALISATION, async () => {
-    const { getAutoCapitalisation } = await import('@craft-agent/shared/config/storage')
-    return getAutoCapitalisation()
+    return configStorage.getAutoCapitalisation()
   })
 
   // Set auto-capitalisation setting
   server.handle(RPC_CHANNELS.input.SET_AUTO_CAPITALISATION, async (_ctx, enabled: boolean) => {
-    const { setAutoCapitalisation } = await import('@craft-agent/shared/config/storage')
-    setAutoCapitalisation(enabled)
+    configStorage.setAutoCapitalisation(enabled)
   })
 
   // Get send message key setting
   server.handle(RPC_CHANNELS.input.GET_SEND_MESSAGE_KEY, async () => {
-    const { getSendMessageKey } = await import('@craft-agent/shared/config/storage')
-    return getSendMessageKey()
+    return configStorage.getSendMessageKey()
   })
 
   // Set send message key setting
   server.handle(RPC_CHANNELS.input.SET_SEND_MESSAGE_KEY, async (_ctx, key: 'enter' | 'cmd-enter') => {
-    const { setSendMessageKey } = await import('@craft-agent/shared/config/storage')
-    setSendMessageKey(key)
+    configStorage.setSendMessageKey(key)
   })
 
   // Get spell check setting
   server.handle(RPC_CHANNELS.input.GET_SPELL_CHECK, async () => {
-    const { getSpellCheck } = await import('@craft-agent/shared/config/storage')
-    return getSpellCheck()
+    return configStorage.getSpellCheck()
   })
 
   // Set spell check setting
   server.handle(RPC_CHANNELS.input.SET_SPELL_CHECK, async (_ctx, enabled: boolean) => {
-    const { setSpellCheck } = await import('@craft-agent/shared/config/storage')
-    setSpellCheck(enabled)
+    configStorage.setSpellCheck(enabled)
   })
 
   // ============================================================
@@ -272,8 +272,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Get keep awake while running setting
   server.handle(RPC_CHANNELS.power.GET_KEEP_AWAKE, async () => {
-    const { getKeepAwakeWhileRunning } = await import('@craft-agent/shared/config/storage')
-    return getKeepAwakeWhileRunning()
+    return configStorage.getKeepAwakeWhileRunning()
   })
 
   // ============================================================
@@ -282,14 +281,12 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Get rich tool descriptions setting
   server.handle(RPC_CHANNELS.appearance.GET_RICH_TOOL_DESCRIPTIONS, async () => {
-    const { getRichToolDescriptions } = await import('@craft-agent/shared/config/storage')
-    return getRichToolDescriptions()
+    return configStorage.getRichToolDescriptions()
   })
 
   // Set rich tool descriptions setting
   server.handle(RPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS, async (_ctx, enabled: boolean) => {
-    const { setRichToolDescriptions } = await import('@craft-agent/shared/config/storage')
-    setRichToolDescriptions(enabled)
+    configStorage.setRichToolDescriptions(enabled)
   })
 
   // ============================================================
@@ -298,26 +295,22 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Get extended prompt cache (1h TTL) setting
   server.handle(RPC_CHANNELS.caching.GET_EXTENDED_PROMPT_CACHE, async () => {
-    const { getExtendedPromptCache } = await import('@craft-agent/shared/config/storage')
-    return getExtendedPromptCache()
+    return configStorage.getExtendedPromptCache()
   })
 
   // Set extended prompt cache (1h TTL) setting
   server.handle(RPC_CHANNELS.caching.SET_EXTENDED_PROMPT_CACHE, async (_ctx, enabled: boolean) => {
-    const { setExtendedPromptCache } = await import('@craft-agent/shared/config/storage')
-    setExtendedPromptCache(enabled)
+    await configStorage.setExtendedPromptCache(enabled)
   })
 
   // Get 1M context window setting
   server.handle(RPC_CHANNELS.caching.GET_ENABLE_1M_CONTEXT, async () => {
-    const { getEnable1MContext } = await import('@craft-agent/shared/config/storage')
-    return getEnable1MContext()
+    return configStorage.getEnable1MContext()
   })
 
   // Set 1M context window setting
   server.handle(RPC_CHANNELS.caching.SET_ENABLE_1M_CONTEXT, async (_ctx, enabled: boolean) => {
-    const { setEnable1MContext } = await import('@craft-agent/shared/config/storage')
-    setEnable1MContext(enabled)
+    await configStorage.setEnable1MContext(enabled)
   })
 
   // ============================================================
@@ -326,14 +319,12 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Get rtk Bash-output compression setting
   server.handle(RPC_CHANNELS.rtk.GET_ENABLED, async () => {
-    const { getRtkEnabled } = await import('@craft-agent/shared/config/storage')
-    return getRtkEnabled()
+    return configStorage.getRtkEnabled()
   })
 
   // Set rtk Bash-output compression setting
   server.handle(RPC_CHANNELS.rtk.SET_ENABLED, async (_ctx, enabled: boolean) => {
-    const { setRtkEnabled } = await import('@craft-agent/shared/config/storage')
-    setRtkEnabled(enabled)
+    await configStorage.setRtkEnabled(enabled)
   })
 
   // Detect rtk installation (used by Settings UI to swap install prompt ↔ toggle)
@@ -353,52 +344,35 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   server.handle(RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED, async () => {
-    const { getBrowserToolEnabled } = await import('@craft-agent/shared/config/storage')
-    return getBrowserToolEnabled()
+    return configStorage.getBrowserToolEnabled()
   })
 
   server.handle(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED, async (_ctx, enabled: boolean) => {
-    const { setBrowserToolEnabled } = await import('@craft-agent/shared/config/storage')
-    setBrowserToolEnabled(enabled)
+    await configStorage.setBrowserToolEnabled(enabled)
   })
 
   // ============================================================
   // Pi Extensions 集成开关（控制全局 pi 扩展加载与 automation 委托）
   // ============================================================
 
-  server.handle(RPC_CHANNELS.piExtensions.GET_ENABLED, async () => {
-    const { getPiExtensionsEnabled } = await import('@craft-agent/shared/config/storage')
-    return getPiExtensionsEnabled()
-  })
-
-  server.handle(RPC_CHANNELS.piExtensions.SET_ENABLED, async (_ctx, enabled: boolean) => {
-    const { setPiExtensionsEnabled } = await import('@craft-agent/shared/config/storage')
-    setPiExtensionsEnabled(enabled)
-  })
-
   server.handle(RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION, async () => {
-    const { getPiExtensionsDelegatePromptAutomation } = await import('@craft-agent/shared/config/storage')
-    return getPiExtensionsDelegatePromptAutomation()
+    return configStorage.getPiExtensionsDelegatePromptAutomation()
   })
 
   server.handle(RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION, async (_ctx, delegate: boolean) => {
-    const { setPiExtensionsDelegatePromptAutomation } = await import('@craft-agent/shared/config/storage')
-    setPiExtensionsDelegatePromptAutomation(delegate)
+    await configStorage.setPiExtensionsDelegatePromptAutomation(delegate)
   })
 
   server.handle(RPC_CHANNELS.piExtensions.GET_SETTINGS, async () => {
-    const { getPiExtensionSettings } = await import('@craft-agent/shared/config/storage')
-    return getPiExtensionSettings()
+    return configStorage.getPiExtensionSettings()
   })
 
   server.handle(RPC_CHANNELS.piExtensions.SET_SETTINGS, async (_ctx, settings: import('@craft-agent/shared/config').StoredPiExtensionSettings) => {
-    const { setPiExtensionSettings } = await import('@craft-agent/shared/config/storage')
-    return setPiExtensionSettings(settings)
+    return await configStorage.setPiExtensionSettings(settings)
   })
 
   server.handle(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS, async (_ctx, patch: import('@craft-agent/shared/config').StoredPiExtensionSettings) => {
-    const { updatePiExtensionSettings } = await import('@craft-agent/shared/config/storage')
-    return updatePiExtensionSettings(patch)
+    return await configStorage.updatePiExtensionSettings(patch)
   })
 
   // 逐扩展启停：读写 ~/.pi/agent/settings.json 的 extensions.<name>.enabled
@@ -414,7 +388,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   server.handle(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED, async (_ctx, payload: { name: string; enabled: boolean }) => {
     const { writePiExtensionEnabled } = await import('@craft-agent/shared/config/pi-global-config')
-    writePiExtensionEnabled(payload.name, payload.enabled)
+    await writePiExtensionEnabled(payload.name, payload.enabled)
   })
 
   // ============================================================
@@ -423,7 +397,6 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Get network proxy settings
   server.handle(RPC_CHANNELS.settings.GET_NETWORK_PROXY, async () => {
-    const { getNetworkProxySettings } = await import('@craft-agent/shared/config/storage')
-    return getNetworkProxySettings()
+    return configStorage.getNetworkProxySettings()
   })
 }

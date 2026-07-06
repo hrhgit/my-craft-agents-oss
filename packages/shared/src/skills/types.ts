@@ -28,8 +28,14 @@ export interface SkillMetadata {
   requiredSources?: string[];
 }
 
-/** Source of a loaded skill */
-export type SkillSource = 'global' | 'workspace' | 'project';
+/**
+ * Source of a loaded skill.
+ *
+ * 实际生效层级（见 storage.ts getActiveSkillsTiers）：
+ * - 'global'  — ~/.pi/agent/skills/（Pi 全局）
+ * - 'project' — {projectRoot}/.pi/skills/（项目级，优先级高于 global）
+ */
+export type SkillSource = 'global' | 'project';
 
 /**
  * Plugin name for project-level and global skills.

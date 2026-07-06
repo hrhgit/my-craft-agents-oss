@@ -9,6 +9,7 @@ import tsParser from '@typescript-eslint/parser'
 import tsPlugin from '@typescript-eslint/eslint-plugin'
 import noDirectOpenImport from './eslint-rules/no-direct-open-import.cjs'
 import noInlineSourceAuthCheck from './eslint-rules/no-inline-source-auth-check.cjs'
+import noRawPiFileIo from './eslint-rules/no-raw-pi-file-io.cjs'
 
 export default [
   // Ignore patterns
@@ -38,6 +39,7 @@ export default [
         rules: {
           'no-direct-open-import': noDirectOpenImport,
           'no-inline-source-auth-check': noInlineSourceAuthCheck,
+          'no-raw-pi-file-io': noRawPiFileIo,
         },
       },
     },
@@ -46,6 +48,8 @@ export default [
       'craft-shared/no-direct-open-import': 'error',
       // Prevent inline source.config.isAuthenticated checks — use isSourceUsable() instead
       'craft-shared/no-inline-source-auth-check': 'error',
+      // Prevent new raw ~/.pi/agent file access outside documented seams
+      'craft-shared/no-raw-pi-file-io': 'error',
 
       // Red line: Pi SDK (@earendil-works/pi-*) is bottom-layer. Shared/host code must
       // talk to Pi via RpcClient through the sanctioned backend area only. See
@@ -78,10 +82,14 @@ export default [
   //   - models-pi.ts: static model/provider catalog (getModels/getProviders) used for
   //     PRE-AUTH provider listing in connection setup. RpcClient.getAvailableModels()
   //     requires a live authenticated session and cannot serve this path.
+  //   - pi-agent.ts: the Craft backend adapter over Pi's PUBLIC RpcClient.
   {
     files: [
       'src/credentials/backends/secure-storage.ts',
       'src/config/models-pi.ts',
+      'src/config/pi-global-config.ts',
+      'src/sessions/tree-jsonl.ts',
+      'src/agent/pi-agent.ts',
     ],
     rules: {
       'no-restricted-syntax': 'off',

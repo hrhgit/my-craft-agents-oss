@@ -56,8 +56,6 @@ import { getCoAuthorPreference } from '../config/preferences.ts';
 // Credential manager for token storage
 import { getCredentialManager } from '../credentials/manager.ts';
 
-import { refreshClaudeToken } from '../auth/claude-token.ts';
-
 // Session-scoped tool callbacks (for source auth, etc.)
 import {
   registerSessionScopedToolCallbacks,
@@ -354,9 +352,34 @@ export class PiAgent extends BaseAgent {
   // ============================================================
 
   private async ensureRpcClient(): Promise<PiRpcClient> {
+    // Fast path: client already initialized successfully.
     if (this.rpcClient && this.rpcClientReady) {
-      await this.rpcClientReady;
-      return this.rpcClient;
+      try {
+        await this.rpcClientReady;
+      } catch {
+        // The ready promise can reject before cleanup runs; clear the stale
+        // handles and retry below instead of permanently poisoning callers.
+        this.rpcClient = null;
+        this.rpcClientReady = null;
+      }
+      if (this.rpcClient) {
+        return this.rpcClient;
+      }
+    }
+
+    // Mutex: if a startRpcClient() is in flight, await its promise instead of
+    // starting a second subprocess. startRpcClient assigns this.rpcClientReady
+    // before any await, so reading it here is safe within a single microtask.
+    if (this.rpcClientReady) {
+      try {
+        await this.rpcClientReady;
+      } catch {
+        // startRpcClient failed and reset rpcClientReady to null; fall through to retry.
+        this.rpcClient = null;
+        this.rpcClientReady = null;
+      }
+      if (this.rpcClient) return this.rpcClient;
+      // startRpcClient failed and reset rpcClientReady to null; fall through to retry.
     }
 
     await this.startRpcClient();
@@ -402,7 +425,20 @@ export class PiAgent extends BaseAgent {
     return args;
   }
 
-  private async startRpcClient(): Promise<void> {
+  private startRpcClient(): Promise<void> {
+    if (this.rpcClientReady) return this.rpcClientReady;
+
+    const ready = this.startRpcClientUnlocked().catch((error) => {
+      if (this.rpcClientReady === ready) {
+        this.rpcClientReady = null;
+      }
+      throw error;
+    });
+    this.rpcClientReady = ready;
+    return ready;
+  }
+
+  private async startRpcClientUnlocked(): Promise<void> {
     const runtime = getBackendRuntime(this.config);
     const nodePath = runtime.paths?.node || process.execPath;
     const cwd = this.resolvedCwd();
@@ -482,9 +518,18 @@ export class PiAgent extends BaseAgent {
       .catch((error) => {
         this.rpcClientReady = null;
         this.rpcCapabilities = null;
+        // 清理事件监听器与子进程，避免握手失败时产生孤儿进程
+        try { this.unsubscribePiEvent?.(); } catch {}
+        try { this.unsubscribePiClientEvent?.(); } catch {}
+        this.unsubscribePiEvent = null;
+        this.unsubscribePiClientEvent = null;
         if (this.rpcClient === rpcClient) {
           this.rpcClient = null;
         }
+        // stop() 会终止 Pi 子进程；ignore 错误因为子进程可能已退出
+        rpcClient.stop().catch((stopError) => {
+          this.debug(`Pi RpcClient stop() after start failure threw: ${stopError instanceof Error ? stopError.message : String(stopError)}`);
+        });
         throw error;
       });
 
@@ -538,9 +583,9 @@ export class PiAgent extends BaseAgent {
   /**
    * Build structured Pi auth from connection config.
    * Returns a provider-aware credential object for Pi startup,
-   * or null if no piAuthProvider is configured (falls back to legacy getApiKey).
+   * or null if no piAuthProvider is configured.
    *
-   * OAuth tokens from Craft (Claude Max, ChatGPT Plus, Copilot) are passed as
+   * OAuth tokens from Craft (ChatGPT Plus, Copilot) are passed as
    * api_key type because they function as bearer tokens that the Pi SDK's provider
    * modules use directly. The OAuth exchange happens on the Craft side; by the time
    * it reaches Pi, it's just an access token.
@@ -692,20 +737,7 @@ export class PiAgent extends BaseAgent {
       }
 
       try {
-        if (piAuthProvider === 'anthropic') {
-          const newTokens = await refreshClaudeToken(stored.refreshToken);
-          await credentialManager.setLlmOAuth(slug, {
-            accessToken: newTokens.accessToken,
-            refreshToken: newTokens.refreshToken,
-            expiresAt: newTokens.expiresAt,
-          });
-          await credentialManager.setClaudeOAuthCredentials({
-            accessToken: newTokens.accessToken,
-            refreshToken: newTokens.refreshToken,
-            expiresAt: newTokens.expiresAt,
-            source: 'native',
-          });
-        } else if (piAuthProvider === 'github-copilot') {
+        if (piAuthProvider === 'github-copilot') {
           // Copilot: refresh the short-lived Copilot token using the GitHub access token
           const { refreshGitHubCopilotToken } = await import('@earendil-works/pi-ai/oauth');
           const newCreds = await refreshGitHubCopilotToken(stored.refreshToken);
@@ -741,38 +773,6 @@ export class PiAgent extends BaseAgent {
       if (PiAgent.globalRefreshMutex.get(slug) === refreshPromise) {
         PiAgent.globalRefreshMutex.delete(slug);
       }
-    }
-  }
-
-  /**
-   * Retrieve API key from the credential manager for legacy provider fallback.
-   * Legacy fallback when piAuthProvider is not set.
-   * Prefer provider-aware Pi auth; this remains for older call sites.
-   */
-  private async getApiKey(): Promise<string | null> {
-    try {
-      const credentialManager = getCredentialManager();
-      const slug = this.config.connectionSlug || 'pi';
-
-      // Try LLM OAuth first (for OAuth-based connections)
-      const oauth = await credentialManager.getLlmOAuth(slug);
-      if (oauth?.accessToken) {
-        this.debug('Retrieved API key from LLM OAuth');
-        return oauth.accessToken;
-      }
-
-      // Try Anthropic API key
-      const apiKey = await credentialManager.getApiKey();
-      if (apiKey) {
-        this.debug('Retrieved Anthropic API key');
-        return apiKey;
-      }
-
-      this.debug('No API keys found for Pi agent');
-      return null;
-    } catch (error) {
-      this.debug(`Failed to retrieve API key: ${error}`);
-      return null;
     }
   }
 
@@ -881,6 +881,8 @@ export class PiAgent extends BaseAgent {
       });
     }
     this.eventQueue.complete();
+    // 错误路径下重置 overflow 状态机，避免跨 turn 残留导致后续 turn 死等
+    this.adapter.resetOverflowState();
   }
 
   /**
@@ -1376,32 +1378,42 @@ export class PiAgent extends BaseAgent {
     const previousSessionFile = previous.sessionFile;
     const parentSession = previousSessionFile ?? parentSessionId;
 
-    await client.newSession(parentSession);
-    if (options.name) {
-      await client.setSessionName(options.name);
-    }
-    if (options.thinkingLevel) {
-      await client.setThinkingLevel(options.thinkingLevel as any);
-    }
-    if (options.model) {
-      const provider = options.connection || getBackendRuntime(this.config).piAuthProvider || previous.model?.provider;
-      if (provider) {
-        await client.setModel(provider, options.model);
+    try {
+      await client.newSession(parentSession);
+      if (options.name) {
+        await client.setSessionName(options.name);
+      }
+      if (options.thinkingLevel) {
+        await client.setThinkingLevel(options.thinkingLevel as any);
+      }
+      if (options.model) {
+        const provider = options.connection || getBackendRuntime(this.config).piAuthProvider || previous.model?.provider;
+        if (provider) {
+          await client.setModel(provider, options.model);
+        }
+      }
+      if (options.prompt) {
+        await client.prompt(options.prompt);
+        await client.waitForIdle(120_000);
+      }
+
+      const state = await client.getState();
+      return {
+        sessionId: state.sessionId,
+        sessionPath: state.sessionFile ?? '',
+      };
+    } finally {
+      // 恢复 previous session，避免 prompt 抛错时 RpcClient 停留在 child session
+      // 导致下一次主 chat() 打到 child session 而非 parent session。
+      if (previousSessionFile) {
+        try {
+          await client.switchSession(previousSessionFile);
+        } catch (switchError) {
+          this.debug(`spawnChildSession: failed to restore previous session: ${switchError instanceof Error ? switchError.message : String(switchError)}`);
+          await this.stopRpcClient();
+        }
       }
     }
-    if (options.prompt) {
-      await client.prompt(options.prompt);
-      await client.waitForIdle(120_000);
-    }
-
-    const state = await client.getState();
-    if (previousSessionFile) {
-      await client.switchSession(previousSessionFile);
-    }
-    return {
-      sessionId: state.sessionId,
-      sessionPath: state.sessionFile ?? '',
-    };
   }
 
   /**
@@ -1686,10 +1698,13 @@ export class PiAgent extends BaseAgent {
       // Send prompt to Pi RpcClient
       const turnId = `turn-${++this.rpcIdCounter}`;
       this.debug(`Sending Pi RpcClient prompt ${turnId}`);
+      // Pi agent-session.ts 用 `systemPrompt !== undefined` 判断是否覆盖。
+      // 壳模式下 fullSystemPrompt === ''，必须传 undefined 让 Pi 回落到原生 system prompt，
+      // 否则会把原生 prompt 覆盖成空字符串，导致 agent 完全丢失 system prompt。
       await this.rpcClient!.prompt(
         userMessage,
         images.length > 0 ? images as any : undefined,
-        { systemPrompt: fullSystemPrompt },
+        { systemPrompt: fullSystemPrompt || undefined },
       );
 
       // Yield events as they arrive. The source-activation drain controller
@@ -1753,6 +1768,10 @@ export class PiAgent extends BaseAgent {
       yield { type: 'complete' };
     } finally {
       this._isProcessing = false;
+      // 每个 turn 结束后重置 overflow 状态机，避免跨 turn 残留导致下一 turn 死等。
+      // 注意：合法的跨 turn overflow recovery 在 turn 内已完成或 arm 了 fallback timer，
+      // turn 边界 reset 不会破坏正常恢复路径。
+      this.adapter.resetOverflowState();
     }
   }
 
@@ -1875,6 +1894,9 @@ export class PiAgent extends BaseAgent {
 
     // Clear bridge cache for this interrupted turn.
     this.preToolMetadataByCallId.clear();
+
+    // abort 后重置 overflow 状态机，避免下一 turn 残留 held/awaiting 状态
+    this.adapter.resetOverflowState();
   }
 
   forceAbort(reason: AbortReason): void {
@@ -1895,6 +1917,9 @@ export class PiAgent extends BaseAgent {
 
     // Clear bridge cache for aborted turn.
     this.preToolMetadataByCallId.clear();
+
+    // forceAbort 后重置 overflow 状态机，避免下一 turn 残留
+    this.adapter.resetOverflowState();
 
     // For PlanSubmitted and AuthRequest, just interrupt the turn
     if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {

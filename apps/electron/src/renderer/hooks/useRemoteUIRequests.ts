@@ -2,14 +2,14 @@
  * useRemoteUIRequests — 订阅 pi 扩展的 remoteui:request 事件并管理活跃请求状态。
  *
  * 事件流：
- *   pi 扩展 → pi.events.emit("remoteui:request") → pi-agent-server 子进程
- *   → JSONL remoteui_request → PiAgent.handleLine → onExtensionEvent 回调
+ *   pi 扩展 → Pi RpcClient extension_ui_request
+ *   → PiAgent.handlePiClientEvent → onExtensionEvent 回调
  *   → extensions:EVENT 频道广播 → 此 hook 接收
  *
  * 回传路径：
  *   respond() → window.electronAPI.sendRemoteUIResponse(sessionId, requestId, payload, reason)
  *   → RPC extensions:remoteuiResponse → SessionManager.sendRemoteUIResponse
- *   → PiAgent.sendRemoteUIResponse → 子进程 remoteui_response → pi.events.emit("remoteui:response")
+ *   → PiAgent.sendRemoteUIResponse → Pi RpcClient extension_ui_response
  *
  * 只允许一个 modal 同时显示：新请求到达时若已有活跃请求，则入队等待，
  * 当前请求被响应（确认/取消）后自动出队下一个。

@@ -14,33 +14,14 @@ function generatePanelId(): string {
 }
 
 export type PanelType = 'session' | 'source' | 'settings' | 'skills' | 'other'
-export type PanelLaneId = 'main'
 export type OpenIntent = 'implicit' | 'explicit'
-
-export interface PanelLanePolicy {
-  id: PanelLaneId
-  order: number
-  allowedTypes: PanelType[]
-  locked: boolean
-  singleton: boolean
-}
-
-export const PANEL_LANE_POLICIES: Record<PanelLaneId, PanelLanePolicy> = {
-  main: {
-    id: 'main',
-    order: 0,
-    allowedTypes: ['session', 'source', 'settings', 'skills', 'other'],
-    locked: false,
-    singleton: false,
-  },
-}
 
 export interface PanelStackEntry {
   id: string
   route: ViewRoute
   proportion: number
   panelType: PanelType
-  laneId: PanelLaneId
+  laneId: 'main'
 }
 
 export const panelStackAtom = atom<PanelStackEntry[]>([])
@@ -78,10 +59,6 @@ export function getPanelTypeFromRoute(route: ViewRoute): PanelType {
     default:
       return 'other'
   }
-}
-
-export function getDefaultLaneForType(_type: PanelType): PanelLaneId {
-  return 'main'
 }
 
 function createEntry(route: ViewRoute, proportion: number, id?: string): PanelStackEntry {
@@ -125,7 +102,6 @@ export const pushPanelAtom = atom(
   (get, set, { route, afterIndex }: {
     route: ViewRoute
     afterIndex?: number
-    targetLaneId?: PanelLaneId
     intent?: OpenIntent
   }) => {
     const stack = get(panelStackAtom)

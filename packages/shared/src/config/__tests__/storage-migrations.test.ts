@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { inferModelSelectionMode, shouldMigratePiOpenAiProvider, shouldRepairPiApiKeyCodexProvider } from '../storage'
+import { inferModelSelectionMode, shouldMigratePiOpenAiProvider, shouldRepairPiApiKeyCodexProvider } from '../migrations'
 
 describe('shouldMigratePiOpenAiProvider', () => {
   it('migrates legacy Pi OAuth OpenAI connections to openai-codex', () => {

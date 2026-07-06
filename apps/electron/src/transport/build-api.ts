@@ -7,13 +7,18 @@
 
 import type { RpcClient } from '@craft-agent/server-core/transport'
 import type { ElectronAPI } from '../shared/types'
+import {
+  CHUNKED_TRANSFER_THRESHOLD,
+  invokeChunked,
+  prepareChunkedPayload,
+} from './chunked-payload'
 
 // ---------------------------------------------------------------------------
 // Channel map entry
 // ---------------------------------------------------------------------------
 
 export type ChannelMapEntry =
-  | { type: 'invoke'; channel: string; transform?: (result: any) => any }
+  | { type: 'invoke'; channel: string; transform?: (result: any) => any; largeArgIndex?: number }
   | { type: 'listener'; channel: string }
 
 export type ChannelMap = Record<string, ChannelMapEntry>
@@ -36,9 +41,9 @@ export function buildClientApi(
       fn = (cb: (...args: any[]) => void) => client.on(entry.channel, cb)
     } else if (entry.transform) {
       const t = entry.transform
-      fn = async (...args: any[]) => t(await client.invoke(entry.channel, ...args))
+      fn = async (...args: any[]) => t(await invokeMaybeChunked(client, entry.channel, args, entry.largeArgIndex))
     } else {
-      fn = (...args: any[]) => client.invoke(entry.channel, ...args)
+      fn = (...args: any[]) => invokeMaybeChunked(client, entry.channel, args, entry.largeArgIndex)
     }
 
     // Dotted keys like "browserPane.create" become nested: api.browserPane.create
@@ -62,4 +67,27 @@ export function buildClientApi(
   api.isChannelAvailable = isChannelAvailable ?? (() => true)
 
   return api as ElectronAPI
+}
+
+async function invokeMaybeChunked(
+  client: RpcClient,
+  channel: string,
+  args: any[],
+  largeArgIndex?: number,
+): Promise<any> {
+  if (largeArgIndex === undefined) {
+    return client.invoke(channel, ...args)
+  }
+
+  const value = args[largeArgIndex]
+  if (value === undefined || value === null) {
+    return client.invoke(channel, ...args)
+  }
+
+  const prepared = await prepareChunkedPayload(value)
+  if (prepared.bytes.length < CHUNKED_TRANSFER_THRESHOLD) {
+    return client.invoke(channel, ...args)
+  }
+
+  return invokeChunked(client, channel, args, largeArgIndex, undefined, prepared)
 }

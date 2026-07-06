@@ -307,10 +307,9 @@ Create a plan when:
 
 ### Creating a Plan
 
-1. Write your plan to a markdown file in the session's plans folder
-2. Call `SubmitPlan` with the file path
-3. The user sees a formatted plan with an "Accept Plan" button
-4. Clicking "Accept Plan" exits Explore mode and begins implementation
+1. Write your plan to a markdown file in the session's plans folder (`plansFolderPath`)
+2. The user automatically sees a formatted plan with an "Accept Plan" button
+3. Clicking "Accept Plan" exits Explore mode and begins implementation
 
 ### Plan Format
 
@@ -330,9 +329,8 @@ Brief description of what this plan accomplishes.
 
 The recommended workflow:
 1. **Explore** - Read files, search code, understand the codebase
-2. **Plan** - Write a structured plan to the plans folder
-3. **Submit** - Call `SubmitPlan` to present to user
-4. **Accept** - User clicks "Accept Plan" to exit Explore mode
-5. **Execute** - Implement the plan with full permissions
+2. **Plan** - Write a structured plan to the plans folder (`plansFolderPath`)
+3. **Accept** - User clicks "Accept Plan" to exit Explore mode
+4. **Execute** - Implement the plan with full permissions
 
 This provides a smooth transition from exploration to implementation with user oversight.

@@ -1,5 +1,5 @@
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
@@ -10,9 +10,9 @@ export const HANDLED_CHANNELS = [
 
 export function registerStatusesHandlers(server: RpcServer, _deps: HandlerDeps): void {
   // List all statuses for a workspace
-  server.handle(RPC_CHANNELS.statuses.LIST, async (_ctx, workspaceId: string) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+  server.handle(RPC_CHANNELS.statuses.LIST, async (ctx, workspaceId: string) => {
+    const resolvedWorkspaceId = resolveWorkspaceId(ctx.workspaceId, workspaceId) ?? workspaceId
+    const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
     const { listStatuses } = await import('@craft-agent/shared/statuses')
     return listStatuses(workspace.rootPath)
@@ -20,9 +20,9 @@ export function registerStatusesHandlers(server: RpcServer, _deps: HandlerDeps):
 
   // Reorder statuses (drag-and-drop). Receives new ordered array of status IDs.
   // Config watcher will detect the file change and broadcast STATUSES_CHANGED.
-  server.handle(RPC_CHANNELS.statuses.REORDER, async (_ctx, workspaceId: string, orderedIds: string[]) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+  server.handle(RPC_CHANNELS.statuses.REORDER, async (ctx, workspaceId: string, orderedIds: string[]) => {
+    const resolvedWorkspaceId = resolveWorkspaceId(ctx.workspaceId, workspaceId) ?? workspaceId
+    const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
     const { reorderStatuses } = await import('@craft-agent/shared/statuses')
     reorderStatuses(workspace.rootPath, orderedIds)

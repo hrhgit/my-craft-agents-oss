@@ -12,6 +12,7 @@ import {
 import { ContextMenuProvider } from '@/components/ui/menu-context'
 import { SidebarMenu, type SidebarMenuType } from './SidebarMenu'
 import { SortableList, type SortableItemData } from '@/components/ui/sortable-list'
+import { HoverRevealIcon } from '@/components/ui/HoverRevealIcon'
 
 /** Context menu configuration for sidebar items */
 export interface SidebarContextMenuConfig {
@@ -507,22 +508,19 @@ const SidebarButton = React.forwardRef<HTMLButtonElement, SidebarButtonProps & R
                 {renderIcon(link)}
               </span>
               {/* Toggle chevron - shown on hover. data-no-dnd prevents drag activation on click. */}
-              <span
-                className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer"
-                data-no-dnd="true"
-                data-touch-reveal="true"
+              <HoverRevealIcon
+                icon={ChevronRight}
+                dataNoDnd
+                dataTouchReveal
                 onClick={(e) => {
                   e.stopPropagation()
                   link.onToggle?.()
                 }}
-              >
-                <ChevronRight
-                  className={cn(
-                    "h-3.5 w-3.5 text-muted-foreground transition-transform duration-200",
-                    link.expanded && "rotate-90"
-                  )}
-                />
-              </span>
+                iconClassName={cn(
+                  "h-3.5 w-3.5 text-muted-foreground transition-transform duration-200",
+                  link.expanded && "rotate-90"
+                )}
+              />
             </>
           ) : (
             renderIcon(link)

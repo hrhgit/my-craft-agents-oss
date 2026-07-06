@@ -14,10 +14,6 @@ import {
 // ============================================================
 
 describe('defaultMidStreamBehavior', () => {
-  it("returns 'queue' for anthropic (Claude's emulated steer is fragile)", () => {
-    expect(defaultMidStreamBehavior('anthropic')).toBe('queue')
-  })
-
   it("returns 'steer' for pi (Pi's native steer is non-destructive)", () => {
     expect(defaultMidStreamBehavior('pi')).toBe('steer')
   })
@@ -28,11 +24,11 @@ describe('defaultMidStreamBehavior', () => {
 })
 
 describe('resolveMidStreamBehavior', () => {
-  const baseAnthropic = { providerType: 'anthropic' as const }
+  const basePiAnthropic = { providerType: 'pi' as const, piAuthProvider: 'anthropic' }
   const basePi = { providerType: 'pi' as const }
 
   it('returns the explicit value when set to steer', () => {
-    expect(resolveMidStreamBehavior({ ...baseAnthropic, midStreamBehavior: 'steer' })).toBe('steer')
+    expect(resolveMidStreamBehavior({ ...basePiAnthropic, midStreamBehavior: 'steer' })).toBe('steer')
   })
 
   it('returns the explicit value when set to queue', () => {
@@ -40,14 +36,14 @@ describe('resolveMidStreamBehavior', () => {
   })
 
   it('falls back to default when midStreamBehavior is undefined (legacy connection)', () => {
-    expect(resolveMidStreamBehavior(baseAnthropic)).toBe('queue')
+    expect(resolveMidStreamBehavior(basePiAnthropic)).toBe('steer')
     expect(resolveMidStreamBehavior(basePi)).toBe('steer')
   })
 
   it('falls back to default when midStreamBehavior has an unknown value (corrupt config.json)', () => {
-    const corruptAnthropic = { ...baseAnthropic, midStreamBehavior: 'invalid' as never }
+    const corruptPiAnthropic = { ...basePiAnthropic, midStreamBehavior: 'invalid' as never }
     const corruptPi = { ...basePi, midStreamBehavior: '' as never }
-    expect(resolveMidStreamBehavior(corruptAnthropic)).toBe('queue')
+    expect(resolveMidStreamBehavior(corruptPiAnthropic)).toBe('steer')
     expect(resolveMidStreamBehavior(corruptPi)).toBe('steer')
   })
 })
@@ -60,8 +56,10 @@ const STORAGE_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'storage.t
 
 function setupConfig(llmConnections: LlmConnection[]) {
   const configDir = mkdtempSync(join(tmpdir(), 'craft-agent-midstream-'))
+  const piAgentDir = join(configDir, 'pi-agent')
   const workspaceRoot = join(configDir, 'workspaces', 'my-workspace')
   mkdirSync(workspaceRoot, { recursive: true })
+  mkdirSync(piAgentDir, { recursive: true })
 
   writeFileSync(
     join(workspaceRoot, 'config.json'),
@@ -75,6 +73,12 @@ function setupConfig(llmConnections: LlmConnection[]) {
     'utf-8',
   )
 
+  writeFileSync(
+    join(piAgentDir, 'models.json'),
+    JSON.stringify({ providers: {}, craftConnections: llmConnections }, null, 2),
+    'utf-8',
+  )
+
   const configPath = join(configDir, 'config.json')
   writeFileSync(
     configPath,
@@ -83,7 +87,6 @@ function setupConfig(llmConnections: LlmConnection[]) {
       activeWorkspaceId: 'ws-1',
       activeSessionId: null,
       defaultLlmConnection: llmConnections[0]?.slug ?? null,
-      llmConnections,
     }, null, 2),
     'utf-8',
   )
@@ -95,7 +98,7 @@ function setupConfig(llmConnections: LlmConnection[]) {
       '--eval',
       `import { updateLlmConnection } from '${STORAGE_MODULE_PATH}'; const ok = updateLlmConnection(${JSON.stringify(slug)}, ${updatesJson}); process.exit(ok ? 0 : 1);`,
     ], {
-      env: { ...process.env, CRAFT_CONFIG_DIR: configDir },
+      env: { ...process.env, CRAFT_CONFIG_DIR: configDir, PI_CODING_AGENT_DIR: piAgentDir },
       stdout: 'pipe',
       stderr: 'pipe',
     })
@@ -106,8 +109,8 @@ function setupConfig(llmConnections: LlmConnection[]) {
   }
 
   function readConnection(slug: string) {
-    const config = JSON.parse(readFileSync(configPath, 'utf-8'))
-    return config.llmConnections.find((c: { slug: string }) => c.slug === slug)
+    const models = JSON.parse(readFileSync(join(piAgentDir, 'models.json'), 'utf-8'))
+    return models.craftConnections.find((c: { slug: string }) => c.slug === slug)
   }
 
   return { runUpdate, readConnection }
@@ -134,7 +137,7 @@ describe('updateLlmConnection persists midStreamBehavior', () => {
 
   it("flips midStreamBehavior from 'queue' to 'steer'", () => {
     const { runUpdate, readConnection } = setupConfig([
-      makeConnection({ providerType: 'anthropic', authType: 'api_key', midStreamBehavior: 'queue' }),
+      makeConnection({ providerType: 'pi', piAuthProvider: 'anthropic', authType: 'api_key', midStreamBehavior: 'queue' }),
     ])
     expect(runUpdate('pi-test', { midStreamBehavior: 'steer' })).toBe(true)
     expect(readConnection('pi-test').midStreamBehavior).toBe('steer')

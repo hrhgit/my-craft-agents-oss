@@ -26,7 +26,6 @@ import type {
   InfoEvent,
   InterruptedEvent,
   TitleGeneratedEvent,
-  TitleRegeneratingEvent,
   AsyncOperationEvent,
   WorkingDirectoryChangedEvent,
   PermissionModeChangedEvent,
@@ -356,7 +355,7 @@ export function handleInterrupted(
 }
 
 /**
- * Handle title_generated - update session title and clear regenerating state
+ * Handle title_generated - update session title
  */
 export function handleTitleGenerated(
   state: SessionState,
@@ -369,30 +368,6 @@ export function handleTitleGenerated(
       session: {
         ...session,
         name: event.title,
-        // Clear regenerating state - title generation completed
-        isRegeneratingTitle: false,
-      },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle title_regenerating - set regenerating state for shimmer effect
- * @deprecated Use handleAsyncOperation instead
- */
-export function handleTitleRegenerating(
-  state: SessionState,
-  event: TitleRegeneratingEvent
-): ProcessResult {
-  const { session, streaming } = state
-
-  return {
-    state: {
-      session: {
-        ...session,
-        isRegeneratingTitle: event.isRegenerating,
       },
       streaming,
     },

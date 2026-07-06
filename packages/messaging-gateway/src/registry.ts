@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import type { PushTarget } from '@craft-agent/shared/protocol'
 import type { CredentialManager } from '@craft-agent/shared/credentials'
+import { errorMessage } from '@craft-agent/shared/utils'
 import type {
   ISessionManager,
   IMessagingGatewayRegistry,
@@ -185,7 +186,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
             configured: true,
             connected: false,
             state: 'error',
-            lastError: err instanceof Error ? err.message : String(err),
+            lastError: errorMessage(err),
           })
         })
       } else {
@@ -553,7 +554,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
         reused: Boolean(beforeCacheHit),
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorMessage(err)
       this.log.warn('automation topic bind failed', {
         event: 'automation_topic_bind_failed',
         workspaceId: args.workspaceId,
@@ -1093,7 +1094,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
         configured: true,
         connected: false,
         state: 'error',
-        lastError: err instanceof Error ? err.message : String(err),
+        lastError: errorMessage(err),
       })
       throw err
     }
@@ -1160,7 +1161,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
         configured: true,
         connected: false,
         state: 'error',
-        lastError: err instanceof Error ? err.message : String(err),
+        lastError: errorMessage(err),
       })
       throw err
     }

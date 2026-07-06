@@ -47,7 +47,7 @@ export type {
 };
 
 // Auth types for onboarding
-import type { AuthState, SetupNeeds } from '@craft-agent/shared/auth/types';
+import type { AuthState, SetupNeeds } from '@craft-agent/shared/auth';
 import type { AuthType } from '@craft-agent/shared/config/types';
 export type { AuthState, SetupNeeds, AuthType };
 
@@ -283,6 +283,12 @@ export interface ElectronAPI {
   getWindowMode(): Promise<string | null>
   openWorkspace(workspaceId: string): Promise<void>
   openSessionInNewWindow(workspaceId: string, sessionId: string): Promise<void>
+  /**
+   * Open a pi session tree child session in a new independent BrowserWindow.
+   * Desktop-only — the CLI does not support independent windows.
+   * The workspace is resolved from the calling window on the main side.
+   */
+  openChildSessionWindow(sessionId: string, options?: { title?: string; width?: number; height?: number }): Promise<void>
   switchWorkspace(workspaceId: string): Promise<void>
   closeWindow(): Promise<void>
   confirmCloseWindow(): Promise<void>
@@ -377,9 +383,7 @@ export interface ElectronAPI {
   onDeepLinkNavigate(callback: (nav: DeepLinkNavigation) => void): () => void
 
   // Auth
-  showLogoutConfirmation(): Promise<boolean>
   showDeleteSessionConfirmation(name: string): Promise<boolean>
-  logout(): Promise<void>
 
   // Credential health check (startup validation)
   getCredentialHealth(): Promise<CredentialHealthStatus>
@@ -539,8 +543,6 @@ export interface ElectronAPI {
   setBrowserToolEnabled(enabled: boolean): Promise<void>
 
   // Pi Extensions 集成开关
-  getPiExtensionsEnabled(): Promise<boolean>
-  setPiExtensionsEnabled(enabled: boolean): Promise<void>
   getPiExtensionsDelegatePromptAutomation(): Promise<boolean>
   setPiExtensionsDelegatePromptAutomation(delegate: boolean): Promise<void>
   getPiExtensionSettings(): Promise<PiExtensionSettings>
@@ -554,6 +556,8 @@ export interface ElectronAPI {
   // 回复 remoteui:request（payload=null 表示取消）
   sendRemoteUIResponse(sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): Promise<boolean>
   invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>): Promise<boolean>
+  // Pi session tree — list child sessions spawned from the given parent session
+  listChildSessions(sessionId: string): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]>
 
   // Appearance settings
   getRichToolDescriptions(): Promise<boolean>

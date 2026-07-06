@@ -1,11 +1,11 @@
 import { readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { appendAutomationHistoryEntry } from '@craft-agent/shared/automations/history-store'
 import { AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER } from '@craft-agent/shared/automations/constants'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
+import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
 
 // History file name — matches AUTOMATIONS_HISTORY_FILE from @craft-agent/shared/automations/constants
 const HISTORY_FILE = 'automations-history.jsonl'
@@ -24,8 +24,7 @@ function withConfigMutex<T>(workspaceRoot: string, fn: () => Promise<T>): Promis
 // Shared helper: resolve workspace, read automations.json, validate matcher, mutate, write back
 interface AutomationsConfigJson { automations?: Record<string, Record<string, unknown>[]>; [key: string]: unknown }
 async function withAutomationMatcher(workspaceId: string, eventName: string, matcherIndex: number, mutate: (matchers: Record<string, unknown>[], index: number, config: AutomationsConfigJson, genId: () => string) => void) {
-  const workspace = getWorkspaceByNameOrId(workspaceId)
-  if (!workspace) throw new Error('Workspace not found')
+  const workspace = getWorkspaceOrThrow(workspaceId)
 
   await withConfigMutex(workspace.rootPath, async () => {
     const { resolveAutomationsConfigPath, generateShortId } = await import('@craft-agent/shared/automations/resolve-config-path')
@@ -69,13 +68,12 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   const log = deps.platform.logger
 
   // Get automations config for a workspace (read-only, resolves path server-side)
-  server.handle(RPC_CHANNELS.automations.GET, async (_ctx, workspaceId: string) => {
-    log.info(`AUTOMATIONS_GET: Loading automations for workspace: ${workspaceId}`)
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) {
-      log.error(`AUTOMATIONS_GET: Workspace not found: ${workspaceId}`)
-      return null
-    }
+  server.handle(RPC_CHANNELS.automations.GET, async (ctx, workspaceId: string) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
+    if (!wid) return null
+    log.info(`AUTOMATIONS_GET: Loading automations for workspace: ${wid}`)
+    const workspace = getWorkspaceOrNull(wid, log, 'AUTOMATIONS_GET')
+    if (!workspace) return null
     try {
       const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
       const configPath = resolveAutomationsConfigPath(workspace.rootPath)
@@ -87,7 +85,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
       return parsed
     } catch (error) {
       if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
-        log.info(`AUTOMATIONS_GET: No automations.json found for workspace ${workspaceId}`)
+        log.info(`AUTOMATIONS_GET: No automations.json found for workspace ${wid}`)
         return null // No automations configured yet
       }
       log.error(`AUTOMATIONS_GET: Error loading automations:`, error)
@@ -95,9 +93,10 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     }
   })
 
-  server.handle(RPC_CHANNELS.automations.TEST, async (_ctx, payload: import('@craft-agent/shared/protocol').TestAutomationPayload) => {
-    const workspace = getWorkspaceByNameOrId(payload.workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+  server.handle(RPC_CHANNELS.automations.TEST, async (ctx, payload: import('@craft-agent/shared/protocol').TestAutomationPayload) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, payload.workspaceId)!
+    payload.workspaceId = wid
+    const workspace = getWorkspaceOrThrow(wid)
 
     const results: import('@craft-agent/shared/protocol').TestAutomationActionResult[] = []
     const { parsePromptReferences } = await import('@craft-agent/shared/automations')
@@ -195,8 +194,9 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Automation enabled state management (toggle enabled/disabled in automations.json)
-  server.handle(RPC_CHANNELS.automations.SET_ENABLED, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
-    await withAutomationMatcher(workspaceId, eventName, matcherIndex, (matchers, idx) => {
+  server.handle(RPC_CHANNELS.automations.SET_ENABLED, async (ctx, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    await withAutomationMatcher(wid, eventName, matcherIndex, (matchers, idx) => {
       if (enabled) {
         delete matchers[idx].enabled
       } else {
@@ -206,8 +206,9 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Duplicate an automation matcher
-  server.handle(RPC_CHANNELS.automations.DUPLICATE, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
-    await withAutomationMatcher(workspaceId, eventName, matcherIndex, (matchers, idx, _config, genId) => {
+  server.handle(RPC_CHANNELS.automations.DUPLICATE, async (ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    await withAutomationMatcher(wid, eventName, matcherIndex, (matchers, idx, _config, genId) => {
       const clone = JSON.parse(JSON.stringify(matchers[idx]))
       clone.id = genId()
       clone.name = clone.name ? `${clone.name} Copy` : 'Untitled Copy'
@@ -216,8 +217,9 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Delete an automation matcher
-  server.handle(RPC_CHANNELS.automations.DELETE, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
-    await withAutomationMatcher(workspaceId, eventName, matcherIndex, (matchers, idx, config) => {
+  server.handle(RPC_CHANNELS.automations.DELETE, async (ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    await withAutomationMatcher(wid, eventName, matcherIndex, (matchers, idx, config) => {
       matchers.splice(idx, 1)
       if (matchers.length === 0) {
         const eventMap = config.automations
@@ -227,9 +229,9 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Read execution history for a specific automation
-  server.handle(RPC_CHANNELS.automations.GET_HISTORY, async (_ctx, workspaceId: string, automationId: string, limit = AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+  server.handle(RPC_CHANNELS.automations.GET_HISTORY, async (ctx, workspaceId: string, automationId: string, limit = AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    const workspace = getWorkspaceOrThrow(wid)
 
     const clampedLimit = Math.max(1, Math.min(limit, AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER))
     const historyPath = join(workspace.rootPath, HISTORY_FILE)
@@ -248,9 +250,9 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Replay webhook actions for a specific automation matcher
-  server.handle(RPC_CHANNELS.automations.REPLAY, async (_ctx, workspaceId: string, automationId: string, eventName: string) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+  server.handle(RPC_CHANNELS.automations.REPLAY, async (ctx, workspaceId: string, automationId: string, eventName: string) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    const workspace = getWorkspaceOrThrow(wid)
 
     const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
     const configPath = resolveAutomationsConfigPath(workspace.rootPath)
@@ -293,9 +295,9 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Return last execution timestamp for all automations
-  server.handle(RPC_CHANNELS.automations.GET_LAST_EXECUTED, async (_ctx, workspaceId: string) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+  server.handle(RPC_CHANNELS.automations.GET_LAST_EXECUTED, async (ctx, workspaceId: string) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    const workspace = getWorkspaceOrThrow(wid)
 
     const historyPath = join(workspace.rootPath, HISTORY_FILE)
     try {

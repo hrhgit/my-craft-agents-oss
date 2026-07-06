@@ -60,7 +60,7 @@ export interface ApiKeyInputProps {
   /** Disable the input (e.g. during validation) */
   disabled?: boolean
   /** Provider type determines which presets and placeholders to show */
-  providerType?: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'
+  providerType?: 'openai' | 'pi' | 'google' | 'pi_api_key'
   /** Pre-fill values when editing an existing connection */
   initialValues?: {
     apiKey?: string
@@ -80,9 +80,8 @@ interface Preset {
   placeholder?: string
 }
 
-// Anthropic provider presets - for Claude Code backend
-// Also used by Pi API key flow (same providers, routed via Pi SDK)
-const ANTHROPIC_PRESETS: Preset[] = [
+// Pi API key provider presets — third-party providers routed via Pi SDK
+const PI_API_KEY_PRESETS: Preset[] = [
   { key: 'anthropic', label: 'Anthropic', url: 'https://api.anthropic.com', placeholder: 'sk-ant-...' },
   { key: 'openai', label: 'OpenAI', url: 'https://api.openai.com/v1', placeholder: 'sk-...' },
   { key: 'openai-eu', label: 'OpenAI EU', url: 'https://eu.api.openai.com/v1', placeholder: 'sk-...' },
@@ -131,21 +130,17 @@ const GOOGLE_PRESETS: Preset[] = [
   { key: 'google', label: 'Google AI Studio', url: '' },
 ]
 
-/** Presets that require the Pi SDK for authentication — hidden in Anthropic API Key mode */
-const PI_ONLY_PRESET_KEYS: ReadonlySet<string> = new Set(['minimax-global', 'minimax-cn'])
-
 const COMPAT_ANTHROPIC_DEFAULTS = 'claude-opus-4-8, claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5'
 const COMPAT_OPENAI_DEFAULTS = 'openai/gpt-5.2-codex, openai/gpt-5.1-codex-mini'
 const COMPAT_MINIMAX_DEFAULTS = 'MiniMax-M2.5, MiniMax-M2.5-highspeed'
 const COMPAT_KIMI_DEFAULTS = 'k2p5, kimi-k2-thinking'
 
-function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'): Preset[] {
-  if (providerType === 'pi_api_key') return ANTHROPIC_PRESETS
+function getPresetsForProvider(providerType: 'openai' | 'pi' | 'google' | 'pi_api_key'): Preset[] {
+  if (providerType === 'pi_api_key') return PI_API_KEY_PRESETS
   if (providerType === 'google') return GOOGLE_PRESETS
   if (providerType === 'pi') return PI_PRESETS
   if (providerType === 'openai') return OPENAI_PRESETS
-  // Anthropic mode: exclude presets that only work via Pi SDK
-  return ANTHROPIC_PRESETS.filter(p => !PI_ONLY_PRESET_KEYS.has(p.key))
+  return OPENAI_PRESETS
 }
 
 function getPresetForUrl(url: string, presets: Preset[]): PresetKey {
@@ -170,7 +165,7 @@ export function ApiKeyInput({
   onSubmit,
   formId = "api-key-form",
   disabled,
-  providerType = 'anthropic',
+  providerType = 'pi_api_key',
   initialValues,
 }: ApiKeyInputProps) {
   // Get presets based on provider type

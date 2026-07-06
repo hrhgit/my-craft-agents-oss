@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSy
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { handleConfigValidate } from './config-validate.ts';
+import { getResultText } from '../types.ts';
 
 function createCtx(workspacePath: string) {
   return {
@@ -47,11 +48,11 @@ describe('config-validate automations target', () => {
     writeFileSync(join(tempDir, 'automations.json'), JSON.stringify({ version: 2, automations: {} }));
 
     const result = await handleConfigValidate(createCtx(tempDir), { target: 'automations' });
-    expect(result.content[0]?.text).toContain('Validation passed');
+    expect(getResultText(result)).toContain('Validation passed');
   });
 
   it('returns no-config message when automations.json does not exist', async () => {
     const result = await handleConfigValidate(createCtx(tempDir), { target: 'automations' });
-    expect(result.content[0]?.text).toContain('No automations.json');
+    expect(getResultText(result)).toContain('No automations.json');
   });
 });

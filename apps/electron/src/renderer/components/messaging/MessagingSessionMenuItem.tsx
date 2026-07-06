@@ -113,7 +113,7 @@ export function useMessagingConnect({
   }, [sessionId, onTelegramNotConfigured, classifyError, setMessagingDialog, t])
 }
 
-export interface MessagingSessionMenuItemProps extends UseMessagingConnectOptions {}
+export type MessagingSessionMenuItemProps = UseMessagingConnectOptions
 
 export function MessagingSessionMenuItem(props: MessagingSessionMenuItemProps) {
   const { t } = useTranslation()

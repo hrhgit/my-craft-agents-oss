@@ -69,14 +69,6 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
     ],
     canRetry: false,
   },
-  invalid_credentials: {
-    title: 'Invalid Credentials',
-    message: 'Your API key or OAuth token is missing or invalid.',
-    actions: [
-      { key: 's', label: 'Update credentials', command: '/settings', action: 'settings' },
-    ],
-    canRetry: false,
-  },
   // response_too_large is set by the UI tool-result handler; parseError
   // never produces it, but the union requires a definition entry.
   response_too_large: {
@@ -94,14 +86,6 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
     ],
     canRetry: false,
   },
-  token_expired: {
-    title: 'Workspace Session Expired',
-    message: 'Your workspace authentication has expired. Please re-authenticate the workspace.',
-    actions: [
-      { key: 'w', label: 'Open workspace menu', command: '/workspace' },
-    ],
-    canRetry: false,
-  },
   rate_limited: {
     title: 'Rate Limited',
     message: 'Rate limit reached. Will auto-retry shortly.',
@@ -114,15 +98,6 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
   service_error: {
     title: 'Service Error',
     message: 'The AI service is temporarily unavailable. This usually resolves on its own.',
-    actions: [
-      { key: 'r', label: 'Retry', action: 'retry' },
-    ],
-    canRetry: true,
-    retryDelayMs: 2000,
-  },
-  service_unavailable: {
-    title: 'Service Unavailable',
-    message: 'The AI service is experiencing issues. All credentials appear valid. Try again in a moment.',
     actions: [
       { key: 'r', label: 'Retry', action: 'retry' },
     ],
@@ -155,15 +130,6 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
       { key: 'w', label: 'Open workspace menu', command: '/workspace' },
     ],
     canRetry: false,
-  },
-  mcp_unreachable: {
-    title: 'MCP Server Unreachable',
-    message: 'Cannot connect to the Craft MCP server. Check your network connection.',
-    actions: [
-      { key: 'r', label: 'Retry', action: 'retry' },
-    ],
-    canRetry: true,
-    retryDelayMs: 2000,
   },
   billing_error: {
     title: 'Payment Required',
@@ -227,30 +193,6 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
       { key: 'r', label: 'Retry', action: 'retry' },
     ],
     canRetry: true,
-  },
-  sdk_binary_missing: {
-    title: 'Agent runtime missing from app bundle',
-    message:
-      'The agent runtime expected on disk is not present. ' +
-      'This usually means the app bundle is incomplete (interrupted download, partial update, ' +
-      'or a security tool removed it). Reinstalling Craft Agents typically fixes this.',
-    actions: [
-      { key: 'r', label: 'Retry', action: 'retry' },
-    ],
-    canRetry: true,
-    retryDelayMs: 1000,
-  },
-  sdk_cwd_missing: {
-    title: 'Branch source unavailable on this machine',
-    message:
-      "The folder this branched session was forked from doesn't exist on this machine. " +
-      'This typically happens after importing a session from another workspace. ' +
-      'Retrying will start a fresh fork from a summary of the parent conversation.',
-    actions: [
-      { key: 'r', label: 'Retry', action: 'retry' },
-    ],
-    canRetry: true,
-    retryDelayMs: 1000,
   },
   unknown_error: {
     title: 'Error',
@@ -499,20 +441,6 @@ export function parseError(
 }
 
 /**
- * Check if an error is a billing/auth error that blocks usage
- */
-export function isBillingError(error: AgentError): boolean {
-  return error.code === 'billing_error' || error.code === 'invalid_api_key' || error.code === 'expired_oauth_token';
-}
-
-/**
- * Check if an error can be automatically retried
- */
-export function canAutoRetry(error: AgentError): boolean {
-  return error.canRetry && error.retryDelayMs !== undefined;
-}
-
-/**
  * Parse SDK error text and return a typed AgentError if detected.
  *
  * The SDK emits errors in two distinctive formats:
@@ -548,11 +476,4 @@ export function parseSDKErrorText(text: string): AgentError | null {
   }
 
   return null;
-}
-
-/**
- * Quick check if text looks like an SDK error (for filtering).
- */
-export function isSDKErrorText(text: string): boolean {
-  return parseSDKErrorText(text) !== null;
 }

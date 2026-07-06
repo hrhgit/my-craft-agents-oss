@@ -26,15 +26,15 @@
  */
 
 import { join } from 'node:path'
-import { homedir } from 'node:os'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { version as packageVersion } from '../package.json'
 import { enableDebug } from '@craft-agent/shared/utils/debug'
 import { bootstrapServer, startHealthHttpServer, generateServerToken } from '@craft-agent/server-core/bootstrap'
 import { validateSession, createWebuiHandler, nodeHttpAdapter } from '@craft-agent/server-core/webui'
 import type { WebuiHandler } from '@craft-agent/server-core/webui'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
-import { getWorkspaces } from '@craft-agent/shared/config'
+import { CONFIG_DIR, getWorkspaces } from '@craft-agent/shared/config'
+import { errorMessage } from '@craft-agent/shared/utils'
 import { createMessagingBootstrap, type MessagingBootstrapHandle } from '@craft-agent/messaging-gateway'
 
 // --generate-token: print a crypto-random token and exit
@@ -55,7 +55,7 @@ process.env.CRAFT_IS_PACKAGED ??= 'false'
 // SDK subprocess abort can reject promises that propagate up unhandled;
 // Bun (unlike Node) terminates the process on unhandled rejections by default.
 process.on('unhandledRejection', (reason) => {
-  const msg = reason instanceof Error ? reason.message : String(reason)
+  const msg = errorMessage(reason)
   console.error(`[server] Unhandled rejection (caught, not crashing): ${msg}`)
 })
 
@@ -84,7 +84,7 @@ function parseOptionalWebSocketUrl(name: string, value: string | undefined): str
     }
     return value
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     console.error(`Invalid ${name}: ${message}`)
     process.exit(1)
   }
@@ -211,7 +211,7 @@ const instance = await (async () => {
           sessionManager,
           credentialManager: getCredentialManager(),
           getMessagingDir: (wsId: string) =>
-            join(homedir(), '.craft-agent', 'workspaces', wsId, 'messaging'),
+            join(CONFIG_DIR, 'workspaces', wsId, 'messaging'),
           // Headless has no legacy messaging dir — workspaces start clean.
           whatsapp: {
             workerEntry: waWorkerEntry,
@@ -249,7 +249,7 @@ const instance = await (async () => {
       cleanupClientResources: cleanupSessionFileWatchForClient,
     })
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error))
+    console.error(errorMessage(error))
     process.exit(1)
   }
 })()
@@ -306,8 +306,12 @@ const healthServer = await startHealthHttpServer({
 })
 
 const serverProto = instance.protocol === 'wss' ? 'https' : 'http'
+// Write token to a file with 0600 permissions instead of stdout,
+// because container/logging systems often persist stdout and would leak the token.
+const tokenFilePath = join(CONFIG_DIR, '.server-token')
+writeFileSync(tokenFilePath, instance.token, { mode: 0o600 })
 console.log(`CRAFT_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
-console.log(`CRAFT_SERVER_TOKEN=${instance.token}`)
+console.log(`CRAFT_SERVER_TOKEN_FILE=${tokenFilePath}`)
 if (webuiHandler) {
   console.log(`CRAFT_WEBUI_URL=${serverProto}://0.0.0.0:${instance.port}`)
 }

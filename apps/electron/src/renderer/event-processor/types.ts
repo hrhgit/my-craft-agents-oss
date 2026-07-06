@@ -251,17 +251,6 @@ export interface TitleGeneratedEvent {
 }
 
 /**
- * Title regenerating event - indicates title regeneration has started/finished
- * Used to show shimmer effect on title during regeneration
- * @deprecated Use AsyncOperationEvent instead
- */
-export interface TitleRegeneratingEvent {
-  type: 'title_regenerating'
-  sessionId: string
-  isRegenerating: boolean
-}
-
-/**
  * Generic async operation state event
  * Used to show shimmer effect during any async operation (sharing, updating, revoking, title regeneration)
  */
@@ -495,7 +484,6 @@ export type AgentEvent =
   | InfoEvent
   | InterruptedEvent
   | TitleGeneratedEvent
-  | TitleRegeneratingEvent
   | AsyncOperationEvent
   | WorkingDirectoryChangedEvent
   | WorkingDirectoryErrorEvent

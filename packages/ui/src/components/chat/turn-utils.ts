@@ -510,7 +510,7 @@ export function groupMessagesByTurn(messages: Message[], options: GroupTurnsOpti
     }
 
     // Plan messages are added as activities to be time-sorted with tool calls
-    // This ensures SubmitPlan tool appears before the plan content chronologically
+    // This ensures the plan submission appears before the plan content chronologically
     if (message.role === 'plan') {
       if (!currentTurn) {
         // Edge case: plan without preceding activities

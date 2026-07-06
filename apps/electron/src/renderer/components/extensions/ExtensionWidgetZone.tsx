@@ -141,7 +141,7 @@ export function ExtensionWidgetZone({ className }: ExtensionWidgetZoneProps) {
     return Array.from(widgets.values()).filter(w => {
       if (w.placement !== 'belowEditor') return false
       if (w.key === PROMPT_AUTOMATION_WIDGET_KEY) {
-        // 扩展启停已迁移到 pi settings.json，craft 侧仅检查全局开关与 widget 可见性
+        // craft 侧仅检查全局开关与 widget 可见性
         return settings?.enabled !== false &&
           settings?.promptAutomation.widgetVisible !== false
       }

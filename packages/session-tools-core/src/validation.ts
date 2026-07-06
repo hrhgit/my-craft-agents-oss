@@ -8,12 +8,8 @@
 import { z } from 'zod';
 import matter from 'gray-matter';
 import { existsSync, readFileSync } from 'node:fs';
+import { stripBom } from '@craft-agent/shared/utils';
 import type { ValidationResult, ValidationIssue } from './types.ts';
-
-/** Strip UTF-8 BOM that breaks JSON.parse */
-function stripBom(text: string): string {
-  return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
-}
 
 // ============================================================
 // Validation Result Helpers
@@ -158,34 +154,11 @@ export function zodErrorToIssues(error: z.ZodError, filePath: string): Validatio
 }
 
 // ============================================================
-// Slug Validation
+// Slug Validation (re-exported from @craft-agent/shared)
 // ============================================================
 
-/**
- * Regex for valid slugs: lowercase alphanumeric with hyphens
- */
-export const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
-
-/**
- * Validate a slug format
- */
-export function validateSlug(slug: string): ValidationResult {
-  if (!SLUG_REGEX.test(slug)) {
-    const suggestedSlug = slug
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .replace(/-+/g, '-');
-
-    return invalidResult(
-      'slug',
-      'Slug must be lowercase alphanumeric with hyphens',
-      `Suggested: '${suggestedSlug || 'valid-slug-name'}'`
-    );
-  }
-
-  return validResult();
-}
+export { SLUG_REGEX, validateSlug } from '@craft-agent/shared/config';
+import { validateSlug } from '@craft-agent/shared/config';
 
 // ============================================================
 // Skill Validation

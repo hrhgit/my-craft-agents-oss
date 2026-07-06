@@ -63,7 +63,7 @@ export interface MessageEnvelope {
 }
 
 export interface WireError {
-  code: ErrorCode
+  code: TransportErrorCode
   message: string
   data?: unknown
 }
@@ -72,7 +72,7 @@ export interface WireError {
 // Error codes
 // ---------------------------------------------------------------------------
 
-export type ErrorCode =
+export type TransportErrorCode =
   | 'HANDLER_ERROR'
   | 'CHANNEL_NOT_FOUND'
   | 'AUTH_FAILED'
@@ -92,7 +92,7 @@ export type ErrorCode =
   | 'BROWSER_REMOTE_UPLOAD_NOT_SUPPORTED'
   | 'BROWSER_REMOTE_EVALUATE_BLOCKED'
 
-const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
+const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<TransportErrorCode>([
   'HANDLER_ERROR',
   'CHANNEL_NOT_FOUND',
   'AUTH_FAILED',
@@ -113,7 +113,7 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'BROWSER_REMOTE_EVALUATE_BLOCKED',
 ])
 
-export function isErrorCode(value: unknown): value is ErrorCode {
+export function isTransportErrorCode(value: unknown): value is TransportErrorCode {
   return typeof value === 'string' && KNOWN_ERROR_CODES.has(value)
 }
 
@@ -125,8 +125,8 @@ export function isErrorCode(value: unknown): value is ErrorCode {
  * `err.code === 'X'`, never `err instanceof CodedError`.
  */
 export class CodedError extends Error {
-  readonly code: ErrorCode
-  constructor(code: ErrorCode, message: string) {
+  readonly code: TransportErrorCode
+  constructor(code: TransportErrorCode, message: string) {
     super(message)
     this.code = code
     this.name = 'CodedError'

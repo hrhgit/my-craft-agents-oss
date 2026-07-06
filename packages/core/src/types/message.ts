@@ -448,17 +448,13 @@ export interface RecoveryAction {
  */
 export type ErrorCode =
   | 'invalid_api_key'
-  | 'invalid_credentials'
   | 'response_too_large'
   | 'expired_oauth_token'
-  | 'token_expired'
   | 'rate_limited'
   | 'service_error'
-  | 'service_unavailable'
   | 'network_error'
   | 'proxy_error'           // Proxy/firewall/captive portal intercepted the request
   | 'mcp_auth_required'
-  | 'mcp_unreachable'
   | 'billing_error'
   | 'model_no_tool_support'  // Model doesn't support tool/function calling
   | 'invalid_model'          // Model ID not found
@@ -467,8 +463,6 @@ export type ErrorCode =
   | 'image_too_large'        // Image exceeds API dimension/size limits
   | 'provider_error'         // AI provider experiencing issues (overloaded, unavailable)
   | 'queued_message_replay_failed'  // A message queued during an active turn could not be auto-replayed (#616)
-  | 'sdk_binary_missing'     // Agent runtime binary not present on disk (incomplete bundle)
-  | 'sdk_cwd_missing'        // Agent runtime cwd not present on disk (stale cross-machine import)
   | 'unknown_error';
 
 /**

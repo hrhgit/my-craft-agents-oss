@@ -2,8 +2,7 @@ import { normalize, isAbsolute, sep } from 'path'
 import { homedir, tmpdir } from 'os'
 import { realpath } from 'fs/promises'
 import { getWorkspaceByNameOrId, type Workspace } from '@craft-agent/shared/config'
-import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
-import type { PlatformServices } from '../runtime/platform'
+import type { Logger, PlatformServices } from '../runtime/platform'
 
 /**
  * Get workspace by ID or name, throwing if not found.
@@ -17,6 +16,72 @@ export function getWorkspaceOrThrow(workspaceId: string): Workspace {
   return workspace
 }
 
+/**
+ * Get workspace by name or id. Returns null and logs if not found.
+ * Use when the handler should return null/empty on missing workspace
+ * (caller decides whether to return null, [], or a fallback object).
+ */
+export function getWorkspaceOrNull(
+  workspaceId: string,
+  log: Logger,
+  tag: string,
+): Workspace | null {
+  const workspace = getWorkspaceByNameOrId(workspaceId)
+  if (!workspace) {
+    log.error(`${tag}: Workspace not found: ${workspaceId}`)
+    return null
+  }
+  return workspace
+}
+
+/**
+ * Resolve the authoritative workspaceId for an RPC handler.
+ *
+ * The transport layer stamps the handshake-authenticated `workspaceId` into
+ * `ctx.workspaceId` (see transport/server.ts onRequest). Handlers should
+ * treat that as the trusted value and only fall back to the `workspaceId`
+ * passed in `args` when ctx is absent (e.g. headless callers).
+ *
+ * - If both are set and differ, throw — this is the workspace-bypass signal.
+ * - If only ctx is set, use it.
+ * - If only args is set, use it (legacy/headless path).
+ * - If neither is set, returns undefined (handler should treat as global).
+ */
+export function resolveWorkspaceId(
+  ctxWorkspaceId: string | null | undefined,
+  argsWorkspaceId: string | undefined,
+): string | undefined {
+  if (ctxWorkspaceId && argsWorkspaceId && ctxWorkspaceId !== argsWorkspaceId) {
+    throw new Error(
+      `Workspace mismatch: authenticated workspace (${ctxWorkspaceId}) does not match requested (${argsWorkspaceId})`,
+    )
+  }
+  return ctxWorkspaceId ?? argsWorkspaceId
+}
+
+/**
+ * Returns true if the given absolute path matches a known sensitive file
+ * pattern (SSH keys, GnuPG, AWS credentials, env files, PEM/KEY files, etc.).
+ *
+ * Cross-platform: matches both `/` and `\` separators via `[\\/]`.
+ * Extracted from `validateFilePath` so bypass-by-design handlers can still
+ * block sensitive files without enforcing workspace-container checks.
+ */
+export function isSensitivePath(absPath: string): boolean {
+  const sensitivePatterns = [
+    /\.ssh[\\/]/,
+    /\.gnupg[\\/]/,
+    /\.aws[\\/]credentials/,
+    /\.env$/,
+    /\.env\./,
+    /credentials\.json$/,
+    /secrets?\./i,
+    /\.pem$/,
+    /\.key$/,
+  ]
+  return sensitivePatterns.some(pattern => pattern.test(absPath))
+}
+
 export function buildBackendHostRuntimeContext(platform: PlatformServices) {
   return {
     appRootPath: platform.appRootPath,
@@ -28,41 +93,30 @@ export function buildBackendHostRuntimeContext(platform: PlatformServices) {
 /**
  * Sanitizes a filename to prevent path traversal and filesystem issues.
  * Removes dangerous characters and limits length.
+ *
+ * Re-exported from `@craft-agent/shared/utils` so callers
+ * importing from `@craft-agent/server-core/handlers` keep working.
  */
-export function sanitizeFilename(name: string): string {
-  return name
-    // Remove path separators and traversal patterns
-    .replace(/[/\\]/g, '_')
-    // Remove Windows-forbidden characters: < > : " | ? *
-    .replace(/[<>:"|?*]/g, '_')
-    // Remove control characters (ASCII 0-31)
-    .replace(/[\x00-\x1f]/g, '')
-    // Collapse multiple dots (prevent hidden files and extension tricks)
-    .replace(/\.{2,}/g, '.')
-    // Remove leading/trailing dots and spaces (Windows issues)
-    .replace(/^[.\s]+|[.\s]+$/g, '')
-    // Limit length (200 chars is safe for all filesystems)
-    .slice(0, 200)
-    // Fallback if name is empty after sanitization
-    || 'unnamed'
-}
+export { sanitizeFilename } from '@craft-agent/shared/utils'
 
 /**
- * Resolve allowed directories for a workspace: its root path and configured
- * working directory (if set). Returns an empty array if the workspace is
- * unknown or has no relevant paths.
+ * Resolve allowed directories for a workspace.
+ *
+ * Complete-unification semantics make the workspace root the only workspace
+ * boundary. Legacy defaults.workingDirectory must not expand the permission
+ * surface; users who need another folder should create/switch workspaces.
  */
 export function getWorkspaceAllowedDirs(workspaceId?: string | null): string[] {
   if (!workspaceId) return []
   const workspace = getWorkspaceByNameOrId(workspaceId)
   if (!workspace) return []
 
-  const dirs: string[] = [workspace.rootPath]
-  const config = loadWorkspaceConfig(workspace.rootPath)
-  if (config?.defaults?.workingDirectory) {
-    dirs.push(config.defaults.workingDirectory)
-  }
-  return dirs
+  return [workspace.rootPath]
+}
+
+export interface ValidateFilePathOptions {
+  allowHome?: boolean
+  allowTmp?: boolean
 }
 
 /**
@@ -73,6 +127,7 @@ export function getWorkspaceAllowedDirs(workspaceId?: string | null): string[] {
 export async function validateFilePath(
   filePath: string,
   additionalAllowedDirs?: string[],
+  options: ValidateFilePathOptions = {},
 ): Promise<string> {
   // Normalize the path to resolve . and .. components
   let normalizedPath = normalize(filePath)
@@ -98,10 +153,10 @@ export async function validateFilePath(
 
   // Define allowed base directories
   const allowedDirs = [
-    homedir(),
-    tmpdir(),
+    options.allowHome === false ? undefined : homedir(),
+    options.allowTmp === false ? undefined : tmpdir(),
     ...(additionalAllowedDirs ?? []),
-  ].filter(Boolean)
+  ].filter((dir): dir is string => Boolean(dir))
 
   // Check if the real path is within an allowed directory (cross-platform)
   const isAllowed = allowedDirs.some(dir => {
@@ -115,20 +170,7 @@ export async function validateFilePath(
   }
 
   // Block sensitive files even within allowed directories.
-  // Use [\\/] to match both Unix / and Windows \ separators.
-  const sensitivePatterns = [
-    /\.ssh[\\/]/,
-    /\.gnupg[\\/]/,
-    /\.aws[\\/]credentials/,
-    /\.env$/,
-    /\.env\./,
-    /credentials\.json$/,
-    /secrets?\./i,
-    /\.pem$/,
-    /\.key$/,
-  ]
-
-  if (sensitivePatterns.some(pattern => pattern.test(realFilePath))) {
+  if (isSensitivePath(realFilePath)) {
     throw new Error('Access denied: cannot read sensitive files')
   }
 

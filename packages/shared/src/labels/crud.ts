@@ -291,7 +291,7 @@ function stripLabelFromSessions(
     // Check if any entry matches the deleted label ID (handles both boolean and valued entries)
     if (session.labels && session.labels.some((entry: string) => extractLabelId(entry) === deletedLabelId)) {
       const updatedLabels = session.labels.filter((entry: string) => extractLabelId(entry) !== deletedLabelId);
-      updateSessionMetadata(workspaceRootPath, session.id, { labels: updatedLabels });
+      updateSessionMetadata(workspaceRootPath, session.craftId, { labels: updatedLabels });
       strippedCount++;
     }
   }

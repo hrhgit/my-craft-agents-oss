@@ -265,7 +265,6 @@ const mockAppShellContext = {
   onOpenSettings: () => {},
   onOpenKeyboardShortcuts: () => {},
   onOpenStoredUserPreferences: () => {},
-  onReset: () => {},
   onSessionOptionsChange: () => {},
   onInputChange: () => {},
   onOpenFile: () => {},

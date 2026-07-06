@@ -48,7 +48,6 @@ export {
   findSourceIcon,
   downloadSourceIcon,
   sourceNeedsIconDownload,
-  isIconUrl,
   // Load operations
   loadSource,
   loadWorkspaceSources,
@@ -89,13 +88,6 @@ export type {
   SourceWithCredential,
   BuiltServers,
 } from './server-builder.ts';
-
-// Built-in Sources (always available in every workspace)
-export {
-  getDocsSource,
-  getBuiltinSources,
-  isBuiltinSource,
-} from './builtin-sources.ts';
 
 // API Tools (types)
 export type { SummarizeCallback } from './api-tools.ts';

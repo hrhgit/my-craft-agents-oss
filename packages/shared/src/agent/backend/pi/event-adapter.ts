@@ -202,7 +202,7 @@ export class PiEventAdapter extends BaseEventAdapter {
    * Adapt a Pi SDK event to zero or more Craft AgentEvents.
    */
   *adaptEvent(event: PiEvent): Generator<CraftAgentEvent> {
-    // Craft-injected event from pi-agent-server (not part of the Pi SDK).
+    // Craft-injected event from Pi RpcClient (not part of the Pi SDK).
     // The subprocess emits this immediately after each `message_end` to deliver
     // the correct `sdkTurnAnchor` (the leaf id AFTER the SDK has appended the
     // assistant entry). We forward it through as-is — SessionManager correlates
@@ -318,11 +318,11 @@ export class PiEventAdapter extends BaseEventAdapter {
         // Pi SDK emits message_end for ALL messages (user, assistant, toolResult).
         // Only process assistant messages — skip user prompts and tool results.
         const msg = event.message as { role?: string; stopReason?: string; errorMessage?: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost: { total: number } }; id?: string } | undefined;
-        // SDK message id, set by pi-agent-server when forwarding the event.
+        // SDK message id, set by Pi RpcClient when forwarding the event.
         // SessionManager uses this to correlate the follow-up `pi_turn_anchor`
         // event to the Craft assistant message created here (#782).
         const sdkMessageId = (event as { sdkMessageId?: string }).sdkMessageId ?? msg?.id;
-        // Active model's context window, forwarded by pi-agent-server. Lets us
+        // Active model's context window, forwarded by Pi RpcClient. Lets us
         // compute usage percent for models absent from craft's MODEL_REGISTRY
         // (custom-endpoint, pi-prefixed, OpenRouter, etc.). Updated each turn
         // so set_model mid-session is tracked.
@@ -410,7 +410,7 @@ export class PiEventAdapter extends BaseEventAdapter {
         // Canonical metadata from subprocess event payload (interceptor/bridge-authoritative path).
         const eventMeta = this.extractToolMetadataFromEvent(event);
 
-        // Backward-compatibility fallback: shared store (legacy side-channel),
+        // Backward-compatibility fallback: in-process shared store,
         // with id canonicalization fallback for mixed call-id formats.
         const { meta: storedMeta, keyTried } = this.resolveStoredMetadata(toolCallId);
 
@@ -625,7 +625,7 @@ export class PiEventAdapter extends BaseEventAdapter {
 
   /**
    * Extract canonical tool metadata from enriched tool_execution_start events.
-   * This is the interceptor-authoritative path emitted by pi-agent-server.
+   * This is the interceptor-authoritative path emitted by Pi RpcClient.
    */
   private extractToolMetadataFromEvent(event: PiEvent): { intent?: string; displayName?: string } | undefined {
     const metadata = (event as {

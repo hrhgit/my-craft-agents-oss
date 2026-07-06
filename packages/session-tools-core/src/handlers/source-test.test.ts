@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { handleSourceTest } from './source-test.ts';
 import type { SessionToolContext } from '../context.ts';
 import type { SourceConfig } from '../types.ts';
+import { getResultText } from '../types.ts';
 
 type ActivateResult = Awaited<
   ReturnType<NonNullable<SessionToolContext['activateSourceInSession']>>
@@ -144,7 +145,7 @@ describe('source_test auto-enable', () => {
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
 
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
     expect(text).toContain('Source auto-enabled in config');
     expect(text).toContain('turn will auto-restart');
     expect(activated).toBe('craft-kb');
@@ -168,7 +169,7 @@ describe('source_test auto-enable', () => {
     });
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     // No "auto-enabled in config" line because enabled was already true.
     expect(text).not.toContain('auto-enabled in config');
@@ -211,7 +212,7 @@ describe('source_test auto-enable', () => {
     });
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'broken' });
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     expect(result.isError).toBe(true);
     expect(activated).toBe(false);
@@ -232,7 +233,7 @@ describe('source_test auto-enable', () => {
     });
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     expect(text).toContain('auto-enabled in config');
     expect(text).toContain('Restart session to load tools');
@@ -252,7 +253,7 @@ describe('source_test auto-enable', () => {
     });
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     expect(text).toContain('session activation failed: build failed');
 
@@ -271,7 +272,7 @@ describe('source_test auto-enable', () => {
     });
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     // Both backends route through the same source_activated + auto_retry machinery
     // now, so the user-visible message is one line — no Claude vs Pi branching.
@@ -373,7 +374,7 @@ describe('source_test API connection branches', () => {
     });
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'good-api' });
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     expect(text).toContain('Validation passed');
     expect(text).not.toContain('Skipping activation');
@@ -399,7 +400,7 @@ describe('source_test API connection branches', () => {
     });
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'flaky-api' });
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     // The summary line must not be "✓ Validation passed" alone — it must be
     // the warnings variant, because the probe got a non-2xx the probe couldn't
@@ -431,7 +432,7 @@ describe('source_test API connection branches', () => {
     });
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'wrong-path-api' });
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     expect(text).toContain('Validation passed with warnings');
     expect(text).toContain('API returned 404');
@@ -455,7 +456,7 @@ describe('source_test API connection branches', () => {
     });
 
     const result = await handleSourceTest(ctx, { sourceSlug: 'auth-needed-api' });
-    const text = result.content[0]?.text ?? '';
+    const text = getResultText(result);
 
     expect(text).not.toContain('Skipping activation');
     expect(activated).toBe('auth-needed-api');

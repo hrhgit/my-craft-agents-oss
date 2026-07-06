@@ -233,7 +233,7 @@ async function testAnthropicCompatible(
 
 // ── pi_compat: 从 ~/.pi/agent/models.json 读取连接信息 ─────────────────
 //
-// Task 6 之后 config.llmConnections 不再含 pi-* 条目，pi_compat 连接的
+// 重构之后 config.llmConnections 不再含 pi-* 条目，pi_compat 连接的
 // customEndpoint/customModels 改由 ~/.pi/agent/models.json 作为唯一数据源
 // （SoT）。driver 只负责把连接信息透传给 Pi SDK 子进程，不参与实际推理。
 
@@ -324,8 +324,7 @@ export const piDriver: ProviderDriver = {
   buildRuntime: ({ context, providerOptions, resolvedPaths }) => {
     const inferredPiAuthProvider =
       providerOptions?.piAuthProvider
-      || context.connection?.piAuthProvider
-      || (context.connection?.providerType === 'anthropic' ? 'anthropic' : undefined);
+      || context.connection?.piAuthProvider;
 
     // pi_compat 连接的 customEndpoint/customModels 从 ~/.pi/agent/models.json 读取
     // （pi 文件为 SoT）。pi 文件中无对应 provider 时回退到 connection 自身字段，
@@ -357,7 +356,6 @@ export const piDriver: ProviderDriver = {
 
     return ({
     paths: {
-      piServer: resolvedPaths.piServerPath,
       interceptor: resolvedPaths.interceptorBundlePath,
       node: resolvedPaths.nodeRuntimePath,
     },
@@ -365,7 +363,7 @@ export const piDriver: ProviderDriver = {
     baseUrl: piCompatProvider?.baseUrl ?? context.connection?.baseUrl,
     customEndpoint,
     customModels,
-    // Pass apiKey from ~/.pi/agent/models.json so the subprocess can register
+    // Pass apiKey from ~/.pi/agent/models.json so Pi can register
     // the custom-endpoint provider. Without this, registerProvider() validation
     // fails with "apiKey or oauth is required when defining models".
     customEndpointApiKey: piCompatProvider?.apiKey,
@@ -407,7 +405,7 @@ export const piDriver: ProviderDriver = {
   testConnection: async (args: DriverTestConnectionArgs): Promise<{ success: boolean; error?: string } | null> => {
     const piAuthProvider = args.connection?.piAuthProvider;
     if (!piAuthProvider) {
-      // No provider hint — fall back to generic subprocess path
+      // No provider hint — fall back to generic connection validation path
       return null;
     }
 

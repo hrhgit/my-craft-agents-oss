@@ -14,12 +14,12 @@
 import { describe, expect, it, beforeEach } from 'bun:test'
 import { Renderer, type SessionEvent } from '../renderer'
 import {
-  DEFAULT_BINDING_CONFIG,
+  normalizeBindingConfig,
   type AdapterCapabilities,
   type ChannelBinding,
   type PlatformAdapter,
   type SentMessage,
-  type BindingConfig,
+  type RawBindingConfig,
   type ResponseMode,
 } from '../types'
 
@@ -90,7 +90,7 @@ function makeAdapter(
 // Fixture helpers
 // ---------------------------------------------------------------------------
 
-function makeBinding(overrides: Partial<BindingConfig> = {}): ChannelBinding {
+function makeBinding(overrides: RawBindingConfig = {}): ChannelBinding {
   return {
     id: 'bind-1',
     workspaceId: 'ws-1',
@@ -99,7 +99,7 @@ function makeBinding(overrides: Partial<BindingConfig> = {}): ChannelBinding {
     channelId: 'chan-1',
     enabled: true,
     createdAt: Date.now(),
-    config: { ...DEFAULT_BINDING_CONFIG, ...overrides },
+    config: normalizeBindingConfig('telegram', overrides),
   }
 }
 
@@ -400,10 +400,9 @@ describe('Renderer — legacy config coercion', () => {
   it('streamResponses=true with no responseMode → streaming behaviour', async () => {
     const renderer = new Renderer()
     const adapter = makeAdapter()
-    const binding = makeBinding()
-    // Simulate a legacy binding (responseMode field absent).
-    ;(binding.config as Partial<BindingConfig>).responseMode = undefined
-    binding.config.streamResponses = true
+    // Pass legacy `streamResponses` through the RawBindingConfig boundary;
+    // normalizeBindingConfig converts it to responseMode='streaming'.
+    const binding = makeBinding({ streamResponses: true })
 
     await play(renderer, binding, adapter, [ev.completeText('hi'), ev.complete()])
 
@@ -415,9 +414,7 @@ describe('Renderer — legacy config coercion', () => {
   it('streamResponses=false with no responseMode → final_only behaviour', async () => {
     const renderer = new Renderer()
     const adapter = makeAdapter()
-    const binding = makeBinding()
-    ;(binding.config as Partial<BindingConfig>).responseMode = undefined
-    binding.config.streamResponses = false
+    const binding = makeBinding({ streamResponses: false })
 
     await play(renderer, binding, adapter, [
       ev.toolStart('Read'),

@@ -14,12 +14,13 @@
  */
 
 import type { FileAttachment } from '@craft-agent/shared/protocol'
+import { ATTACHMENT_SINGLE_FILE_LIMIT_BYTES } from '@craft-agent/shared/utils'
 import type { DraftAttachmentContent, DraftAttachmentRef } from '@craft-agent/shared/config'
 
 /** Per-attachment cap on inlined draft content. Huge pastes are dropped from the draft
  *  (with a warn) rather than bloating drafts.json. Tuned to the same 20 MB limit the
  *  shared readFileAttachment helper uses for file reads. */
-export const CONTENT_PERSIST_CAP = 20 * 1024 * 1024
+export const CONTENT_PERSIST_CAP = ATTACHMENT_SINGLE_FILE_LIMIT_BYTES
 
 export function isAbsolutePath(p: string): boolean {
   if (!p) return false

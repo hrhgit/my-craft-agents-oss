@@ -3,9 +3,10 @@
  *
  * Public exports for workspace-scoped session management.
  *
- * Sessions are stored in JSONL format:
- * - Line 1: SessionHeader (metadata for fast list loading)
- * - Lines 2+: StoredMessage (one message per line)
+ * Sessions are stored in Pi tree JSONL v3 format at
+ * ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl.
+ * Legacy JSONL format ({workspaceRootPath}/sessions/{id}/session.jsonl) is
+ * supported for backward compatibility (Line 1: SessionHeader, Lines 2+: StoredMessage).
  */
 
 // Types
@@ -13,15 +14,22 @@ export type {
   SessionStatus,
   SessionTokenUsage,
   StoredMessage,
-  SessionConfig,
   StoredSession,
-  SessionMetadata,
   SessionHeader,
+  PiSessionHeader,
+  CraftSessionMetadata,
+  SessionComputedMetadata,
+  CraftSessionMetadataField,
+  SessionComputedMetadataField,
   SessionPersistentField,
 } from './types.ts';
 
 // Field constants
-export { SESSION_PERSISTENT_FIELDS } from './types.ts';
+export {
+  CRAFT_SESSION_METADATA_FIELDS,
+  SESSION_COMPUTED_METADATA_FIELDS,
+  SESSION_PERSISTENT_FIELDS,
+} from './types.ts';
 
 // Storage functions
 export {
@@ -30,6 +38,7 @@ export {
   ensureSessionDir,
   getSessionPath,
   getSessionFilePath,
+  tryGetSessionFilePath,
   getSessionAttachmentsPath,
   getSessionPlansPath,
   getPiNativeSessionDir,
@@ -39,20 +48,14 @@ export {
   generateSessionId,
   // Session CRUD
   createSession,
-  getOrCreateSessionById,
   saveSession,
   loadSession,
   listSessions,
   deleteSession,
-  clearSessionMessages,
   getOrCreateLatestSession,
   // Metadata updates
-  updateSessionSdkId,
   updateSessionMetadata,
   canUpdateSdkCwd,
-  flagSession,
-  unflagSession,
-  setSessionStatus,
   // Pending plan execution (Accept & Compact flow)
   setPendingPlanExecution,
   markCompactionComplete,
@@ -60,38 +63,18 @@ export {
   clearPendingPlanExecution,
   getPendingPlanExecution,
   // Session filtering
-  listFlaggedSessions,
-  listCompletedSessions,
-  listInboxSessions,
-  // Archive management
-  archiveSession,
-  unarchiveSession,
-  listArchivedSessions,
   listActiveSessions,
-  deleteOldArchivedSessions,
-  // Plan storage
-  formatPlanAsMarkdown,
-  parsePlanFromMarkdown,
-  savePlanToFile,
-  loadPlanFromFile,
-  loadPlanFromPath,
-  listPlanFiles,
-  deletePlanFile,
-  getMostRecentPlanFile,
   // Async persistence queue
   sessionPersistenceQueue,
   // Header metadata signature (for self-triggered event suppression)
   getHeaderMetadataSignature,
   // Shared Pi session storage mode
-  setSharedPiSessionStorageEnabled,
-  getSharedPiSessionStorageEnabled,
   setSharedPiSessionsDirForTests,
-  ensureSharedPiTreeSessionFile,
   // Pi CLI sessions (shell mode — shared with Craft in full-passthrough mode)
-  listPiCliSessions,
-  listPiProjectSessions,
   readPiSessionFile,
   findPiSessionFile,
+  findPiSessionFileInDefaultRoot,
+  getSharedPiSidecarPathForFile,
   loadPiSessionMessages,
 } from './storage.ts';
 
@@ -100,33 +83,26 @@ export {
   readSessionHeader,
   readSessionJsonl,
   writeSessionJsonl,
-  createSessionHeader,
 } from './jsonl.ts';
 
 // Tree JSONL shared session projection (Pi/Craft unified history format)
 export {
   looksLikeTreeSessionJsonl,
+  getCraftIdFromTreeHeader,
   readTreeSessionJsonl,
-  readTreeSessionAsStoredSession,
   readTreeSessionMetadata,
   writeTreeSessionCraftMetadata,
-  projectTreeSessionMessages,
+  writeCraftSessionOverlay,
+  appendStoredMessagesViaPiSessionManager,
 } from './tree-jsonl.ts';
 
 // Field utilities
-export { pickSessionFields } from './utils.ts';
+export { pickCraftSessionMetadata, pickSessionFields } from './utils.ts';
 
 // Slug generator utilities
 export {
-  generateDatePrefix,
-  generateHumanSlug,
   generateUniqueSessionId,
-  parseSessionId,
-  isHumanReadableId,
 } from './slug-generator.ts';
-
-// Word lists (for customization if needed)
-export { ADJECTIVES, NOUNS } from './word-lists.ts';
 
 // Session ID validation (security)
 export {
@@ -146,5 +122,3 @@ export {
   validateBundle,
   MAX_BUNDLE_SIZE_BYTES,
 } from './bundle.ts';
-
-

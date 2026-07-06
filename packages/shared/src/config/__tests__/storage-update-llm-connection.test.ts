@@ -12,6 +12,7 @@ const STORAGE_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'storage.t
  */
 function setup(llmConnections: any[]) {
   const configDir = mkdtempSync(join(tmpdir(), 'craft-agent-config-'))
+  const piAgentDir = join(configDir, 'pi-agent')
   const workspaceRoot = join(configDir, 'workspaces', 'my-workspace')
   mkdirSync(workspaceRoot, { recursive: true })
 
@@ -27,6 +28,13 @@ function setup(llmConnections: any[]) {
     'utf-8',
   )
 
+  mkdirSync(piAgentDir, { recursive: true })
+  writeFileSync(
+    join(piAgentDir, 'models.json'),
+    JSON.stringify({ providers: {}, craftConnections: llmConnections }, null, 2),
+    'utf-8',
+  )
+
   const configPath = join(configDir, 'config.json')
   writeFileSync(
     configPath,
@@ -35,7 +43,6 @@ function setup(llmConnections: any[]) {
       activeWorkspaceId: 'ws-1',
       activeSessionId: null,
       defaultLlmConnection: llmConnections[0]?.slug ?? null,
-      llmConnections,
     }, null, 2),
     'utf-8',
   )
@@ -47,7 +54,7 @@ function setup(llmConnections: any[]) {
       '--eval',
       `import { updateLlmConnection } from '${STORAGE_MODULE_PATH}'; const ok = updateLlmConnection(${JSON.stringify(slug)}, ${updatesJson}); process.exit(ok ? 0 : 1);`,
     ], {
-      env: { ...process.env, CRAFT_CONFIG_DIR: configDir },
+      env: { ...process.env, CRAFT_CONFIG_DIR: configDir, PI_CODING_AGENT_DIR: piAgentDir },
       stdout: 'pipe',
       stderr: 'pipe',
     })
@@ -58,11 +65,11 @@ function setup(llmConnections: any[]) {
   }
 
   function readConnection(slug: string): any {
-    const config = JSON.parse(readFileSync(configPath, 'utf-8'))
-    return config.llmConnections.find((c: any) => c.slug === slug)
+    const models = JSON.parse(readFileSync(join(piAgentDir, 'models.json'), 'utf-8'))
+    return models.craftConnections.find((c: any) => c.slug === slug)
   }
 
-  return { configDir, configPath, runUpdate, readConnection }
+  return { configDir, configPath, piAgentDir, runUpdate, readConnection }
 }
 
 function makeConnection(overrides: Record<string, unknown> = {}) {

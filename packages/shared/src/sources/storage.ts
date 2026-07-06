@@ -20,7 +20,6 @@ import type {
 import { validateSourceConfig } from '../config/validators.ts';
 import { debug } from '../utils/debug.ts';
 import { readJsonFileSync } from '../utils/files.ts';
-import { getBuiltinSources, isBuiltinSource, getDocsSource } from './builtin-sources.ts';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { getWorkspaceSourcesPath } from '../workspaces/storage.ts';
 // Circular import (credential-manager imports from this file) is safe here:
@@ -324,9 +323,6 @@ export function sourceNeedsIconDownload(
   return needsIconDownload(config.icon, iconPath);
 }
 
-// Re-export icon utilities for convenience
-export { isIconUrl } from '../utils/icon.ts';
-
 // ============================================================
 // Load Operations
 // ============================================================
@@ -412,21 +408,11 @@ export function isSourceUsable(source: LoadedSource): boolean {
 
 /**
  * Get sources by slugs for a workspace.
- * Includes both user-configured sources from disk and builtin sources
- * (like craft-agents-docs) that don't have filesystem folders.
+ * Loads user-configured sources from disk.
  */
 export function getSourcesBySlugs(workspaceRootPath: string, slugs: string[]): LoadedSource[] {
-  const workspaceId = basename(workspaceRootPath);
   const sources: LoadedSource[] = [];
   for (const slug of slugs) {
-    // Check builtin sources first (they don't exist on disk)
-    if (isBuiltinSource(slug)) {
-      // Currently only craft-agents-docs is a builtin source
-      if (slug === 'craft-agents-docs') {
-        sources.push(getDocsSource(workspaceId, workspaceRootPath));
-      }
-      continue;
-    }
     // Load user-configured source from disk
     const source = loadSource(workspaceRootPath, slug);
     if (source) {
@@ -437,18 +423,12 @@ export function getSourcesBySlugs(workspaceRootPath: string, slugs: string[]): L
 }
 
 /**
- * Load all sources for a workspace INCLUDING built-in sources.
- * Built-in sources (like craft-agents-docs) are always available and merged
- * with user-configured sources from the workspace.
+ * Load all sources for a workspace.
  *
- * Use this when the agent needs visibility into all available sources,
- * including system-provided ones that don't live on disk.
+ * Use this when the agent needs visibility into all available sources.
  */
 export function loadAllSources(workspaceRootPath: string): LoadedSource[] {
-  const workspaceId = basename(workspaceRootPath);
-  const userSources = loadWorkspaceSources(workspaceRootPath);
-  const builtinSources = getBuiltinSources(workspaceId, workspaceRootPath);
-  return [...userSources, ...builtinSources];
+  return loadWorkspaceSources(workspaceRootPath);
 }
 
 // ============================================================

@@ -6,6 +6,71 @@ This guide explains how to customize the visual theme of Craft Agent.
 
 Craft Agent uses a 6-color theme system with support for both app-level defaults and per-workspace overrides.
 
+## Theme System Architecture (TUI vs GUI)
+
+Craft is built on top of Pi (the shared TUI coding-agent core). The two layers
+have **independent theme systems** that communicate only through a `string[]`
+protocol. Neither side reads the other's theme object.
+
+### TUI Theme (managed by Pi)
+
+| Aspect | Value |
+|--------|-------|
+| **Owner** | Pi (the underlying TUI agent) |
+| **Storage** | Pi `settings.json` / Pi-internal theme state (never read by Craft) |
+| **Consumers** | Pi CLI terminal rendering; the `theme` argument passed to Pi extension widget `renderFn(width, theme)` |
+| **Fields** | Terminal-oriented attributes — colors, text styles (bold/dim/italic), ANSI mappings |
+| **Lifecycle** | Loaded and mutated entirely inside the `Pi RpcClient` child process |
+
+The TUI theme never crosses the child-process boundary as an object. Craft GUI
+does not import, read, or import the type of the Pi theme.
+
+### GUI Theme (managed by Craft shell)
+
+| Aspect | Value |
+|--------|-------|
+| **Owner** | Craft shell (Electron renderer) |
+| **Storage** | `~/.craft-agent/theme.json` (overrides) and `~/.craft-agent/themes/{name}.json` (presets) |
+| **Consumers** | Electron renderer CSS variables, component styles, Shiki syntax highlighting |
+| **Fields** | 6-color OKLCH palette (`background`, `foreground`, `accent`, `info`, `success`, `destructive`), surface colors, fonts, spacing, scenic mode |
+| **Lifecycle** | Loaded by the main process, applied to the renderer as CSS variables; live-updated on file change |
+
+The rest of this document describes the **GUI theme only**.
+
+### Decoupling Protocol
+
+Pi and Craft are decoupled by a `string[]` contract. The flow for extension
+widgets:
+
+1. A Pi extension calls `ctx.ui.setWidget(key, renderFn, { placement })`.
+2. Inside the `Pi RpcClient` child process, the bridged
+   `ExtensionUIContext` (built on Pi SDK's `createHeadlessUIContext`) invokes
+   `renderFn(width, theme)` — `width` is the terminal width in characters,
+   `theme` is the Pi TUI theme object. Both come from the child process.
+3. The child process resolves `renderFn` to a plain `string[]` (one string per
+   rendered line) and forwards it over JSONL as an `extension_widget` message:
+   `{ type: 'extension_widget', key, content: string[], placement, source }`.
+4. The Craft main process relays the message to the renderer via IPC.
+5. The renderer (`ExtensionWidgetZone`, `PlanProgressWidget`, …) renders the
+   `string[]` verbatim. **It never sees the Pi `theme` object.**
+
+Consequences of this contract:
+
+- Craft GUI does not touch the Pi theme object; fg/bold/ANSI → plain-text
+  downgrading happens inside the child process bridge.
+- Craft GUI theme (the 6-color OKLCH palette) is independent of the Pi TUI
+  theme. Changing one does not affect the other.
+- Pi extensions cannot reach the Craft GUI theme, the DOM, or Electron APIs —
+  they run in the child process and only receive `(width, theme)`.
+
+For the `renderFn` contract from the extension author's perspective, see
+[pi-extensions.md](./pi-extensions.md).
+
+## GUI Theme Reference
+
+The remainder of this document describes the **GUI theme** (managed by the Craft
+shell). For the TUI theme, see Pi's own documentation.
+
 ### Theme Hierarchy
 
 1. **App default**: Selected in Settings → Appearance → Default Theme

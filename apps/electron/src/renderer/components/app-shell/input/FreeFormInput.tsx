@@ -83,6 +83,10 @@ import { derivePickerMode } from './picker-mode'
 import type { FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@craft-agent/shared/agent/thinking-levels'
+import {
+  ATTACHMENT_INLINE_RPC_LIMIT_BYTES,
+  ATTACHMENT_SINGLE_FILE_LIMIT_BYTES,
+} from '@craft-agent/shared/utils'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { hasOpenOverlay } from '@/lib/overlay-detection'
 import { ToolbarStatusSlot } from './ToolbarStatusSlot'
@@ -112,26 +116,21 @@ function formatFollowUpChipText(text: string, fallback: string, maxLength = 50):
     : normalized
 }
 
-// SDK triggers compaction at ~77.5% of the context window (e.g. ~155k for a 200k window).
-// Both the ContextUsageRing and the warning badge compute against this threshold so their
-// percentages stay consistent — 100% means compaction is imminent.
-const COMPACTION_THRESHOLD_RATIO = 0.775
-
+// Both the ContextUsageRing and the warning badge compute against the full
+// context window so their percentages stay consistent — 100% means the context
+// window is fully consumed. The warning badge still fires at 80% of the
+// compaction threshold (~77.5% of the window) to give early warning.
 function getContextUsagePercent(
   contextStatus: FreeFormInputProps['contextStatus'],
   currentModel: string,
-): { percent: number | null; inputTokens?: number; compactionThreshold?: number; contextWindow?: number } {
+): { percent: number | null; inputTokens?: number; contextWindow?: number } {
   const effectiveContextWindow = contextStatus?.contextWindow || getModelContextWindow(currentModel)
-  const compactionThreshold = effectiveContextWindow
-    ? Math.round(effectiveContextWindow * COMPACTION_THRESHOLD_RATIO)
-    : undefined
-  if (!contextStatus?.inputTokens || !compactionThreshold) {
-    return { percent: null, inputTokens: contextStatus?.inputTokens, compactionThreshold, contextWindow: effectiveContextWindow }
+  if (!contextStatus?.inputTokens || !effectiveContextWindow) {
+    return { percent: null, inputTokens: contextStatus?.inputTokens, contextWindow: effectiveContextWindow }
   }
   return {
-    percent: Math.min(99, Math.round((contextStatus.inputTokens / compactionThreshold) * 100)),
+    percent: Math.min(100, Math.round((contextStatus.inputTokens / effectiveContextWindow) * 100)),
     inputTokens: contextStatus.inputTokens,
-    compactionThreshold,
     contextWindow: effectiveContextWindow,
   }
 }
@@ -174,8 +173,8 @@ function ContextUsageRing({
         </div>
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">
-        {usage.inputTokens && usage.compactionThreshold
-          ? `${formatTokenCount(usage.inputTokens)} / ${formatTokenCount(usage.compactionThreshold)} tokens (${usage.percent}% to compaction)`
+        {usage.inputTokens && usage.contextWindow
+          ? `${formatTokenCount(usage.inputTokens)} / ${formatTokenCount(usage.contextWindow)} tokens (${usage.percent}%)`
           : 'Context usage unavailable'}
       </TooltipContent>
     </Tooltip>
@@ -831,7 +830,7 @@ export function FreeFormInput({
       // 该 RPC 由 pi-extension-bridge 桥接层（Task 2）实现：主进程收到 invokeExtensionCommand
       // 后，向子进程发送 { type: 'extension_command_invoke', name: 'plan-finalize', args }
       // 消息，由 Pi SDK 转发给 plan-mode 扩展的 registerCommand handler。
-      // 桥接层未就绪时回退到原有 SubmitPlan 文本提交路径，保证 UI 按钮可用。
+      // 桥接层未就绪时的回退路径，保证 UI 按钮可用。
       const w = window as unknown as {
         electronAPI?: {
           invokeExtensionCommand?: (
@@ -1166,7 +1165,7 @@ export function FreeFormInput({
     onSelectCommand: handleSlashCommand,
     onSelectFolder: handleSlashFolderSelect,
     activeCommands,
-    recentFolders,
+    recentFolders: onWorkingDirectoryChange ? recentFolders : [],
     homeDir,
     extraSections: extensionSections,
   })
@@ -1334,8 +1333,36 @@ export function FreeFormInput({
   const readFileAsAttachment = async (file: File, overrideName?: string): Promise<FileAttachment | null> => {
     // Capture the absolute OS path at attach time. Works for <input type="file"> and
     // OS drag-drop; returns null for clipboard paste and web-drag (no disk origin).
-    // When null, the draft layer falls back to persisting content inline (Track C).
+    // Local files are path-first so large attachments do not cross renderer RPC as base64.
     const realPath = hasElectronAPI ? window.electronAPI.getFilePath?.(file) ?? null : null
+
+    if (file.size > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES) {
+      console.warn(`[FreeFormInput] Attachment exceeds ${ATTACHMENT_SINGLE_FILE_LIMIT_BYTES} bytes: ${file.name}`)
+      return null
+    }
+
+    let type: FileAttachment['type'] = 'unknown'
+    const fileName = overrideName || file.name
+    if (file.type.startsWith('image/')) type = 'image'
+    else if (file.type === 'application/pdf') type = 'pdf'
+    else if (file.type.includes('text') || fileName.match(/\.(txt|md|json|js|ts|tsx|py|css|html)$/i)) type = 'text'
+    else if (file.type.includes('officedocument') || fileName.match(/\.(docx?|xlsx?|pptx?)$/i)) type = 'office'
+
+    const mimeType = file.type || 'application/octet-stream'
+
+    if (realPath) {
+      return {
+        type,
+        path: realPath,
+        name: fileName,
+        mimeType,
+        size: file.size,
+      }
+    }
+
+    if (file.size > ATTACHMENT_INLINE_RPC_LIMIT_BYTES) {
+      console.info(`[FreeFormInput] Attachment without local path will use chunked upload: ${file.name}`)
+    }
 
     return new Promise((resolve) => {
       const reader = new FileReader()
@@ -1350,15 +1377,6 @@ export function FreeFormInput({
           binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)))
         }
         const base64 = btoa(binary)
-
-        let type: FileAttachment['type'] = 'unknown'
-        const fileName = overrideName || file.name
-        if (file.type.startsWith('image/')) type = 'image'
-        else if (file.type === 'application/pdf') type = 'pdf'
-        else if (file.type.includes('text') || fileName.match(/\.(txt|md|json|js|ts|tsx|py|css|html)$/i)) type = 'text'
-        else if (file.type.includes('officedocument') || fileName.match(/\.(docx?|xlsx?|pptx?)$/i)) type = 'office'
-
-        const mimeType = file.type || 'application/octet-stream'
 
         // For text files, decode the ArrayBuffer as UTF-8 text
         let text: string | undefined
@@ -2631,12 +2649,15 @@ export function FreeFormInput({
           />
 
           {/* 5.5 Context Usage Warning Badge - shows when approaching auto-compaction threshold.
-              Reuses getContextUsagePercent so the ring and badge always agree. */}
+              Percentage matches the ring (full-window denominator); the trigger threshold
+              is 80% of the compaction threshold (~62% of the full window) so the user is
+              warned before the SDK auto-compacts at ~77.5% of the window. */}
           {(() => {
             const usage = getContextUsagePercent(contextStatus, currentModel)
             const usagePercent = usage.percent
-            // Show badge when >= 80% of compaction threshold AND not currently compacting
-            const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting
+            // Compaction triggers at ~77.5% of the window; warn at 80% of that.
+            const warningThresholdPercent = Math.round(0.775 * 0.8 * 100) // ~62
+            const showWarning = usagePercent !== null && usagePercent >= warningThresholdPercent && !contextStatus?.isCompacting
 
             if (!showWarning) return null
 

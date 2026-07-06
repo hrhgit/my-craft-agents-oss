@@ -36,7 +36,8 @@ import {
 } from '../../config/cli-domains.ts';
 import { FEATURE_FLAGS } from '../../feature-flags.ts';
 import { AGENTS_PLUGIN_NAME } from '../../skills/types.ts';
-import { GLOBAL_AGENT_SKILLS_DIR, PROJECT_AGENT_SKILLS_DIR } from '../../skills/storage.ts';
+import { validateSkillSlug } from '../../skills/storage.ts';
+import { PI_SKILLS_DIR, PI_PROJECT_SKILLS_DIR } from '../../config/paths.ts';
 import {
   shouldAllowToolInMode,
   isApiEndpointAllowed,
@@ -110,7 +111,6 @@ export const BUILT_IN_TOOLS = new Set([
   'MultiEdit',
   'NotebookEdit',
   'KillShell',
-  'SubmitPlan',
   'Skill',
   'SlashCommand',
   'TaskStop',
@@ -198,9 +198,9 @@ export function expandToolPaths(
  *
  * The SDK resolves skills as `pluginName:skillSlug` where the plugin name is
  * read from `.claude-plugin/plugin.json` `name` field. Skills can live in 3 tiers:
- *   1. Workspace: {workspaceRoot}/skills/{slug}/ → plugin name from plugin.json
- *   2. Project:   {workingDir}/.agents/skills/{slug}/ → plugin name = ".agents"
- *   3. Global:    ~/.agents/skills/{slug}/ → plugin name = ".agents"
+ *   1. Workspace: {workspaceRoot}/skills/{slug}/ → plugin name from plugin.json (legacy fallback)
+ *   2. Project:   {workingDir}/.pi/skills/{slug}/ → plugin name = ".agents"
+ *   3. Global:    ~/.pi/agent/skills/{slug}/ → plugin name = ".agents"
  *
  * This function resolves the bare slug to the correct plugin prefix by checking
  * which directory actually contains the skill. It also handles re-qualifying
@@ -227,6 +227,10 @@ export function qualifySkillName(
   // Extract the bare slug — strip any existing qualifier (e.g. "CraftAgentWS:commit" → "commit")
   const bareSlug = skill.includes(':') ? skill.split(':').pop()! : skill;
   if (!bareSlug) return { modified: false, input };
+  if (validateSkillSlug(bareSlug) === null) {
+    onDebug?.(`Skill tool: ignored unsafe skill slug "${bareSlug}"`);
+    return { modified: false, input };
+  }
 
   // If we don't have the workspace root path, fall back to simple workspace-only qualification
   if (!workspaceRootPath) {
@@ -261,20 +265,19 @@ function resolveSkillPlugin(
   workspaceRootPath: string,
   workingDirectory?: string,
 ): string {
-  // Priority order matches loadAllSkills: project (highest) > workspace > global (lowest)
+  // F18: Skills are unified to Pi native paths (~/.pi/agent/skills/ global +
+  // {projectRoot}/.pi/skills/ project). The legacy workspace tier
+  // ({workspaceRoot}/skills/) has been removed so that skill resolution here
+  // matches getActiveSkillsTiers() in storage.ts. Previously skill_validate
+  // could find skills in the legacy workspace dir while skills:get could not.
 
-  // 1. Project: {workingDir}/.agents/skills/{slug}/SKILL.md
-  if (workingDirectory && existsSync(join(workingDirectory, PROJECT_AGENT_SKILLS_DIR, bareSlug, 'SKILL.md'))) {
+  // 1. Project: {workingDir}/.pi/skills/{slug}/SKILL.md
+  if (workingDirectory && existsSync(join(workingDirectory, PI_PROJECT_SKILLS_DIR, bareSlug, 'SKILL.md'))) {
     return `${AGENTS_PLUGIN_NAME}:${bareSlug}`;
   }
 
-  // 2. Workspace: {workspaceRoot}/skills/{slug}/SKILL.md
-  if (existsSync(join(workspaceRootPath, 'skills', bareSlug, 'SKILL.md'))) {
-    return `${workspaceSlug}:${bareSlug}`;
-  }
-
-  // 3. Global: ~/.agents/skills/{slug}/SKILL.md
-  if (existsSync(join(GLOBAL_AGENT_SKILLS_DIR, bareSlug, 'SKILL.md'))) {
+  // 2. Global: ~/.pi/agent/skills/{slug}/SKILL.md
+  if (existsSync(join(PI_SKILLS_DIR, bareSlug, 'SKILL.md'))) {
     return `${AGENTS_PLUGIN_NAME}:${bareSlug}`;
   }
 
@@ -320,11 +323,6 @@ export function stripToolMetadata(
     input: cleanInput,
   };
 }
-
-/**
- * @deprecated Use stripToolMetadata instead. This alias is kept for backwards compatibility.
- */
-export const stripMcpMetadata = stripToolMetadata;
 
 // ============================================================
 // CONFIG FILE VALIDATION
@@ -788,7 +786,6 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   // ============================================================
   // 4. SPAWN_SESSION INTERCEPTION
   // ============================================================
-  // call_llm 已移除（双方均不保留）。
   if (toolName === 'mcp__session__spawn_session') {
     return { type: 'spawn_session_intercept', input };
   }

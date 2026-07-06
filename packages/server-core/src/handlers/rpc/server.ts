@@ -4,7 +4,7 @@ import { homedir } from 'os'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { addWorkspace, setActiveWorkspace } from '@craft-agent/shared/config'
 import { getDefaultWorkspacesDir, ensureDefaultWorkspacesDir } from '@craft-agent/shared/workspaces'
-import type { ServerStatus, ServerHealth } from '@craft-agent/core/types'
+import type { ServerHealth } from '@craft-agent/core/types'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import type { ServerHandlerContext } from '../../bootstrap/headless-start'
@@ -12,9 +12,6 @@ import type { ServerHandlerContext } from '../../bootstrap/headless-start'
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.server.GET_WORKSPACES,
   RPC_CHANNELS.server.CREATE_WORKSPACE,
-  RPC_CHANNELS.server.GET_STATUS,
-  RPC_CHANNELS.server.GET_HEALTH,
-  RPC_CHANNELS.server.GET_ACTIVE_SESSIONS,
   RPC_CHANNELS.server.HOME_DIR,
 ] as const
 
@@ -61,57 +58,6 @@ export function registerServerHandlers(
 
     const { rootPath: _rp, createdAt: _ca, ...info } = workspace
     return info
-  })
-
-  // -----------------------------------------------------------------------
-  // Server Status
-  // -----------------------------------------------------------------------
-
-  server.handle(RPC_CHANNELS.server.GET_STATUS, async () => {
-    const workspaces = sessionManager.getWorkspacesInfo()
-    const workspaceStatuses = workspaces.map(ws => {
-      const summary = sessionManager.getWorkspaceAutomationSummary(ws.id)
-      return {
-        id: ws.id,
-        name: ws.name,
-        slug: ws.slug,
-        activeSessions: sessionManager.getActiveSessionCount(ws.id),
-        automationCount: summary.automationCount,
-        schedulerRunning: summary.schedulerRunning,
-      }
-    })
-
-    const mem = process.memoryUsage()
-    const status: ServerStatus = {
-      serverId: ctx.serverId,
-      version: deps.platform.appVersion,
-      uptime: Math.round((Date.now() - ctx.startedAt) / 1000),
-      connectedClients: ctx.getConnectedClientCount(),
-      workspaces: workspaceStatuses,
-      memory: {
-        heapUsed: mem.heapUsed,
-        heapTotal: mem.heapTotal,
-        rss: mem.rss,
-      },
-    }
-
-    return status
-  })
-
-  // -----------------------------------------------------------------------
-  // Server Health
-  // -----------------------------------------------------------------------
-
-  server.handle(RPC_CHANNELS.server.GET_HEALTH, async () => {
-    return getHealthCheck(deps)
-  })
-
-  // -----------------------------------------------------------------------
-  // Active Session Discovery
-  // -----------------------------------------------------------------------
-
-  server.handle(RPC_CHANNELS.server.GET_ACTIVE_SESSIONS, async () => {
-    return sessionManager.getActiveSessionsInfo()
   })
 
   // -----------------------------------------------------------------------

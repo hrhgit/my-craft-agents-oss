@@ -34,6 +34,7 @@ import {
   TOOL_DESCRIPTIONS as BASE_DESCRIPTIONS,
   // Types
   type ToolResult,
+  type TextContent,
   type AuthRequest,
 } from '@craft-agent/session-tools-core';
 import { createSpawnSessionTool, type SpawnSessionFn } from './spawn-session-tool.ts';
@@ -155,7 +156,9 @@ export function isPathInPlansDir(path: string, workspacePath: string, sessionId:
  */
 function convertResult(result: ToolResult): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
   return {
-    content: result.content.map(c => ({ type: 'text' as const, text: c.text })),
+    content: result.content
+      .filter((c): c is TextContent => c.type === 'text')
+      .map(c => ({ type: 'text' as const, text: c.text })),
     ...(result.isError ? { isError: true } : {}),
   };
 }
@@ -193,14 +196,21 @@ export function cleanupSessionScopedTools(sessionId: string): void {
 // Tool Descriptions (base from registry + DOC_REF enrichments)
 // ============================================================
 
-const TOOL_DESCRIPTIONS: Record<string, string> = {
-  ...BASE_DESCRIPTIONS,
-  // Session tool enrichments with DOC_REFs
-  config_validate: BASE_DESCRIPTIONS.config_validate + `\n\n**Reference:** ${DOC_REFS.sources}`,
-  skill_validate: BASE_DESCRIPTIONS.skill_validate + `\n\n**Reference:** ${DOC_REFS.skills}`,
-  mermaid_validate: BASE_DESCRIPTIONS.mermaid_validate + `\n\n**Reference:** ${DOC_REFS.mermaid}`,
-  source_test: BASE_DESCRIPTIONS.source_test + `\n\n**Reference:** ${DOC_REFS.sources}`,
-};
+let toolDescriptionsCache: Record<string, string> | undefined;
+
+function getToolDescriptions(): Record<string, string> {
+  if (!toolDescriptionsCache) {
+    toolDescriptionsCache = {
+      ...BASE_DESCRIPTIONS,
+      // Session tool enrichments with DOC_REFs
+      config_validate: BASE_DESCRIPTIONS.config_validate + `\n\n**Reference:** ${DOC_REFS.sources}`,
+      skill_validate: BASE_DESCRIPTIONS.skill_validate + `\n\n**Reference:** ${DOC_REFS.skills}`,
+      mermaid_validate: BASE_DESCRIPTIONS.mermaid_validate + `\n\n**Reference:** ${DOC_REFS.mermaid}`,
+      source_test: BASE_DESCRIPTIONS.source_test + `\n\n**Reference:** ${DOC_REFS.sources}`,
+    };
+  }
+  return toolDescriptionsCache;
+}
 
 // ============================================================
 // Main Factory Function
@@ -247,7 +257,8 @@ export function getSessionScopedTools(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     function registryTool(name: string, schema: any) {
       const def = SESSION_TOOL_REGISTRY.get(name)!;
-      return createMcpTool(name, TOOL_DESCRIPTIONS[name] || def.description, schema, async (args: any) => {
+      const descriptions = getToolDescriptions();
+      return createMcpTool(name, descriptions[name] || def.description, schema, async (args: any) => {
         const result = await def.handler!(ctx, args);
         return convertResult(result);
       }, def.readOnly ? { annotations: { readOnlyHint: true } } : undefined);

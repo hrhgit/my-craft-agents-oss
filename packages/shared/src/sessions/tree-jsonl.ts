@@ -1,73 +1,131 @@
 /**
  * Tree JSONL session projection.
  *
- * This understands Pi v3-style append-only session logs and projects them into
- * Craft's flat StoredSession/StoredMessage shape for existing UI surfaces.
  */
 
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs';
-import { dirname } from 'path';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync } from 'fs';
+import { dirname, join } from 'path';
+import { SessionManager as PiSessionManager } from '@earendil-works/pi-coding-agent';
 import type { MessageRole } from '@craft-agent/core/types';
-import type { SessionHeader, SessionMetadata, StoredMessage, StoredSession } from './types.ts';
+import type {
+  CraftSessionMetadata,
+  SessionComputedMetadata,
+  SessionHeader,
+  SessionTokenUsage,
+  StoredMessage,
+  StoredSession,
+} from './types.ts';
+import { pickCraftSessionMetadata } from './utils.ts';
+import { sanitizeSessionId } from './validation.ts';
 import { debug } from '../utils/debug.ts';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
+import { atomicWriteFileSync } from '../utils/files.ts';
 
+/**
+ * On-disk shape of Craft extension fields in Pi tree JSONL v3 header.
+ *
+ * Maps `id` ↔ `CraftSessionMetadata.craftId`.
+ */
+export type CraftMetadataOnDisk =
+  Partial<Omit<CraftSessionMetadata, 'craftId'>>
+  & Partial<SessionComputedMetadata>
+  & {
+  /** Craft session ID (on-disk 字段名是 id，对应 SessionHeader.craftId) */
+  id?: string;
+};
+
+export interface TreeSessionSpawnConfig {
+  connection?: string;
+  model?: string;
+  enabledSources?: string[];
+  permissionMode?: string;
+  thinkingLevel?: string;
+}
+
+/** On-disk Pi tree JSONL v3 header (file 第一行). */
 export interface TreeSessionHeader {
   type: 'session';
   version?: number;
+  /** Pi session UUID (Pi runtime 主键). The Craft session ID is stored in `craft.id`. */
   id: string;
   timestamp: string;
   cwd: string;
   parentSession?: string;
-  craft?: Partial<SessionHeader>;
+  /** Pi shell-spawn parent session ID, used by spawn_session/listChildSessions. */
+  spawnedFrom?: string;
+  spawnConfig?: TreeSessionSpawnConfig;
+  craft?: CraftMetadataOnDisk;
 }
 
 const TREE_SESSION_FILE_LOCK_STALE_MS = 30_000;
 const TREE_SESSION_FILE_LOCK_RETRY_DELAY_MS = 25;
-const TREE_SESSION_FILE_LOCK_RETRY_COUNT = 1_400;
-const treeSessionFileLockSleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+// Sync 版本最多阻塞 500ms（20 × 25ms），避免长时间冻结事件循环。
+// 全量 35s 重试仅在 async 版本中可用。
+const TREE_SESSION_FILE_LOCK_SYNC_RETRY_COUNT = 20;
+const TREE_SESSION_FILE_LOCK_ASYNC_RETRY_COUNT = 1_400;
 
 function sleepSync(ms: number): void {
-  Atomics.wait(treeSessionFileLockSleepBuffer, 0, 0, ms);
+  // Atomics.wait 是真正的同步阻塞——仅在 sync 版本中使用，且最多 500ms。
+  const buf = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(buf, 0, 0, ms);
 }
 
-function acquireTreeSessionFileLock(sessionFile: string): () => void {
+function sleepAsync(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function tryAcquireLock(sessionFile: string): (() => void) | null {
   const lockDir = `${sessionFile}.lock`;
-  let lastError: unknown;
+  try {
+    mkdirSync(lockDir);
+    return () => {
+      try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EEXIST') {
+      throw error;
+    }
 
-  for (let attempt = 1; attempt <= TREE_SESSION_FILE_LOCK_RETRY_COUNT; attempt++) {
     try {
-      mkdirSync(lockDir);
-      return () => {
-        try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* ignore */ }
-      };
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== 'EEXIST') {
-        throw error;
+      const lockStat = statSync(lockDir);
+      if (lockStat.mtimeMs < Date.now() - TREE_SESSION_FILE_LOCK_STALE_MS) {
+        rmSync(lockDir, { recursive: true, force: true });
+        return null; // 重试
       }
+    } catch (statError) {
+      const statCode = (statError as NodeJS.ErrnoException).code;
+      if (statCode !== 'ENOENT') {
+        throw statError;
+      }
+    }
+    return null; // 锁仍被持有，重试
+  }
+}
 
-      try {
-        const lockStat = statSync(lockDir);
-        if (lockStat.mtimeMs < Date.now() - TREE_SESSION_FILE_LOCK_STALE_MS) {
-          rmSync(lockDir, { recursive: true, force: true });
-          continue;
-        }
-      } catch (statError) {
-        const statCode = (statError as NodeJS.ErrnoException).code;
-        if (statCode !== 'ENOENT') {
-          throw statError;
-        }
-      }
-
-      if (attempt === TREE_SESSION_FILE_LOCK_RETRY_COUNT) {
-        throw error;
-      }
-      lastError = error;
+export function acquireTreeSessionFileLock(sessionFile: string): () => void {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= TREE_SESSION_FILE_LOCK_SYNC_RETRY_COUNT; attempt++) {
+    const release = tryAcquireLock(sessionFile);
+    if (release) return release;
+    lastError = new Error(`Lock contention on ${sessionFile}`);
+    if (attempt < TREE_SESSION_FILE_LOCK_SYNC_RETRY_COUNT) {
       sleepSync(TREE_SESSION_FILE_LOCK_RETRY_DELAY_MS);
     }
   }
+  throw (lastError as Error) ?? new Error(`Failed to acquire tree session file lock: ${sessionFile}`);
+}
 
+export async function acquireTreeSessionFileLockAsync(sessionFile: string): Promise<() => void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= TREE_SESSION_FILE_LOCK_ASYNC_RETRY_COUNT; attempt++) {
+    const release = tryAcquireLock(sessionFile);
+    if (release) return release;
+    lastError = new Error(`Lock contention on ${sessionFile}`);
+    if (attempt < TREE_SESSION_FILE_LOCK_ASYNC_RETRY_COUNT) {
+      await sleepAsync(TREE_SESSION_FILE_LOCK_RETRY_DELAY_MS);
+    }
+  }
   throw (lastError as Error) ?? new Error(`Failed to acquire tree session file lock: ${sessionFile}`);
 }
 
@@ -176,6 +234,12 @@ interface ParsedTreeSession {
   entries: TreeSessionEntry[];
 }
 
+interface CraftOverlayFile {
+  version: 1;
+  messages?: Array<Partial<StoredMessage> & { id: string }>;
+  annotations?: Record<string, StoredMessage['annotations']>;
+}
+
 export interface TreeProjectionOptions {
   workspaceRootPath?: string;
   sessionFilePath?: string;
@@ -183,8 +247,218 @@ export interface TreeProjectionOptions {
   leafId?: string | null;
 }
 
+export interface WriteTreeSessionCraftMetadataOptions {
+  lastWrittenHeaderSignature?: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function getCraftIdFromTreeHeader(
+  header: TreeSessionHeader,
+  sessionIdPrefix = '',
+): string {
+  return header.craft?.id ?? `${sessionIdPrefix}${header.id}`;
+}
+
+function getCraftHeaderMetadataSignature(craft: Partial<CraftMetadataOnDisk>): string {
+  return JSON.stringify({
+    name: craft.name,
+    labels: craft.labels,
+    isFlagged: craft.isFlagged,
+    sessionStatus: craft.sessionStatus,
+    permissionMode: craft.permissionMode,
+    hasUnread: craft.hasUnread,
+    lastReadMessageId: craft.lastReadMessageId,
+  });
+}
+
+function hasExternalMetadataChange(
+  previousCraft: Partial<CraftMetadataOnDisk>,
+  options: WriteTreeSessionCraftMetadataOptions,
+): boolean {
+  return !!options.lastWrittenHeaderSignature
+    && getCraftHeaderMetadataSignature(previousCraft) !== options.lastWrittenHeaderSignature;
+}
+
+function buildCraftMetadataOnDisk(
+  session: StoredSession,
+  previousCraft: CraftMetadataOnDisk = {},
+  options: WriteTreeSessionCraftMetadataOptions = {},
+): CraftMetadataOnDisk {
+  const craftMetadata = {
+    ...previousCraft,
+    ...(pickCraftSessionMetadata(session) as Partial<CraftSessionMetadata>),
+    id: session.craftId,
+    workspaceRootPath: toPortablePath(session.workspaceRootPath),
+    workingDirectory: toPortablePath(session.workspaceRootPath),
+    lastUsedAt: session.lastUsedAt ?? Date.now(),
+    messageCount: session.messages.length,
+    preview: extractPreview(session.messages),
+    lastMessageRole: extractLastMessageRole(session.messages),
+    lastFinalMessageId: extractLastFinalMessageId(session.messages),
+    tokenUsage: session.tokenUsage,
+  } as CraftMetadataOnDisk & { craftId?: unknown };
+
+  if (hasExternalMetadataChange(previousCraft, options)) {
+    for (const field of [
+      'name',
+      'labels',
+      'isFlagged',
+      'sessionStatus',
+      'permissionMode',
+      'hasUnread',
+      'lastReadMessageId',
+    ] as const) {
+      if (field in previousCraft) {
+        (craftMetadata as Record<string, unknown>)[field] = previousCraft[field];
+      } else {
+        delete (craftMetadata as Record<string, unknown>)[field];
+      }
+    }
+  }
+
+  delete craftMetadata.craftId;
+  return craftMetadata;
+}
+
+function getCraftOverlayPath(sessionFile: string, craftId: string): string {
+  const safeCraftId = sanitizeSessionId(craftId) || '_invalid-session';
+  return join(dirname(sessionFile), '.craft', safeCraftId, 'overlay.json');
+}
+
+function isCanonicalStoredMessage(message: StoredMessage): boolean {
+  return message.type === 'user' || message.type === 'assistant' || message.type === 'tool';
+}
+
+function hasCraftOnlyMessageFields(message: StoredMessage): boolean {
+  const canonicalKeys = new Set(['id', 'type', 'content', 'timestamp']);
+  if (message.type === 'tool') {
+    canonicalKeys.add('toolName');
+    canonicalKeys.add('toolUseId');
+    canonicalKeys.add('toolInput');
+    canonicalKeys.add('toolResult');
+    canonicalKeys.add('isError');
+  }
+
+  return Object.keys(message).some(key => !canonicalKeys.has(key));
+}
+
+function buildCraftOnlyMessagePatch(message: StoredMessage): (Partial<StoredMessage> & { id: string }) | null {
+  if (!hasCraftOnlyMessageFields(message)) return null;
+
+  const canonicalKeys = new Set(['id', 'type', 'content', 'timestamp']);
+  if (message.type === 'tool') {
+    canonicalKeys.add('toolName');
+    canonicalKeys.add('toolUseId');
+    canonicalKeys.add('toolInput');
+    canonicalKeys.add('toolResult');
+    canonicalKeys.add('isError');
+  }
+
+  const patch: Partial<StoredMessage> & { id: string } = { id: message.id };
+  for (const key of Object.keys(message) as Array<keyof StoredMessage>) {
+    if (canonicalKeys.has(key)) continue;
+    patch[key] = message[key] as never;
+  }
+
+  return Object.keys(patch).length > 1 ? patch : null;
+}
+
+function buildCraftOverlay(session: StoredSession): CraftOverlayFile | null {
+  const messages = session.messages.flatMap((message) => {
+    if (!isCanonicalStoredMessage(message)) return [message];
+    const patch = buildCraftOnlyMessagePatch(message);
+    return patch ? [patch] : [];
+  });
+  const annotations: Record<string, StoredMessage['annotations']> = {};
+
+  for (const message of session.messages) {
+    if (message.annotations?.length) {
+      annotations[message.id] = message.annotations;
+    }
+  }
+
+  if (messages.length === 0 && Object.keys(annotations).length === 0) {
+    return null;
+  }
+
+  return {
+    version: 1,
+    messages: messages.length > 0 ? messages : undefined,
+    annotations: Object.keys(annotations).length > 0 ? annotations : undefined,
+  };
+}
+
+export function writeCraftSessionOverlay(sessionFile: string, session: StoredSession): void {
+  const overlay = buildCraftOverlay(session);
+  const overlayPath = getCraftOverlayPath(sessionFile, session.craftId);
+  if (!overlay) {
+    if (existsSync(overlayPath)) {
+      atomicWriteFileSync(overlayPath, JSON.stringify({ version: 1 }, null, 2) + '\n');
+    }
+    return;
+  }
+
+  const overlayDir = dirname(overlayPath);
+  if (!existsSync(overlayDir)) {
+    mkdirSync(overlayDir, { recursive: true });
+  }
+  atomicWriteFileSync(overlayPath, JSON.stringify(overlay, null, 2) + '\n');
+}
+
+function readCraftSessionOverlay(sessionFile: string, craftId: string): CraftOverlayFile | null {
+  const overlayPath = getCraftOverlayPath(sessionFile, craftId);
+  if (!existsSync(overlayPath)) return null;
+
+  try {
+    const parsed = JSON.parse(readFileSync(overlayPath, 'utf-8')) as unknown;
+    if (!isRecord(parsed) || parsed.version !== 1) return null;
+    const messages = Array.isArray(parsed.messages)
+      ? parsed.messages.filter(isRecord) as unknown as StoredMessage[]
+      : undefined;
+    const annotations = isRecord(parsed.annotations)
+      ? parsed.annotations as Record<string, StoredMessage['annotations']>
+      : undefined;
+    return { version: 1, messages, annotations };
+  } catch (error) {
+    debug('[tree-jsonl] Failed to read Craft overlay:', overlayPath, error);
+    return null;
+  }
+}
+
+function mergeCraftOverlayMessages(messages: StoredMessage[], overlay: CraftOverlayFile | null): StoredMessage[] {
+  if (!overlay) return messages;
+
+  const merged = messages.map(message => {
+    const annotations = overlay.annotations?.[message.id];
+    return annotations?.length ? { ...message, annotations } : message;
+  });
+
+  if (overlay.messages?.length) {
+    const indexById = new Map(merged.map((message, index) => [message.id, index]));
+    for (const overlayMessage of overlay.messages) {
+      const existingIndex = indexById.get(overlayMessage.id);
+      if (existingIndex === undefined) {
+        if (typeof overlayMessage.type !== 'string' || typeof overlayMessage.content !== 'string') {
+          continue;
+        }
+        indexById.set(overlayMessage.id, merged.length);
+        merged.push(overlayMessage as StoredMessage);
+        continue;
+      }
+      const existingMessage = merged[existingIndex];
+      if (!existingMessage) continue;
+      merged[existingIndex] = {
+        ...existingMessage,
+        ...overlayMessage,
+      };
+    }
+    merged.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  }
+
+  return merged;
 }
 
 export function isTreeSessionHeader(value: unknown): value is TreeSessionHeader {
@@ -206,17 +480,20 @@ export function isTreeSessionHeader(value: unknown): value is TreeSessionHeader 
 export function readTreeSessionHeader(sessionFile: string): TreeSessionHeader | null {
   try {
     const fd = openSync(sessionFile, 'r');
-    const buffer = Buffer.alloc(8192); // 8KB is plenty for the tree session header
-    const bytesRead = readSync(fd, buffer, 0, 8192, 0);
-    closeSync(fd);
-    if (bytesRead <= 0) return null;
-    const content = buffer.toString('utf-8', 0, bytesRead);
-    const firstNewline = content.indexOf('\n');
-    const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
-    if (!firstLine.trim()) return null;
-    const parsed = JSON.parse(firstLine) as unknown;
-    if (!isTreeSessionHeader(parsed)) return null;
-    return parsed;
+    try {
+      const buffer = Buffer.alloc(8192); // 8KB is plenty for the tree session header
+      const bytesRead = readSync(fd, buffer, 0, 8192, 0);
+      if (bytesRead <= 0) return null;
+      const content = buffer.toString('utf-8', 0, bytesRead);
+      const firstNewline = content.indexOf('\n');
+      const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
+      if (!firstLine.trim()) return null;
+      const parsed = JSON.parse(firstLine) as unknown;
+      if (!isTreeSessionHeader(parsed)) return null;
+      return parsed;
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return null;
   }
@@ -225,10 +502,8 @@ export function readTreeSessionHeader(sessionFile: string): TreeSessionHeader | 
 export function looksLikeTreeSessionJsonl(sessionFile: string): boolean {
   try {
     if (!existsSync(sessionFile)) return false;
-    const content = readFileSync(sessionFile, 'utf-8');
-    const firstLine = content.split('\n').find(line => line.trim().length > 0);
-    if (!firstLine) return false;
-    return isTreeSessionHeader(JSON.parse(firstLine));
+    const header = readTreeSessionHeader(sessionFile);
+    return header !== null;
   } catch {
     return false;
   }
@@ -236,31 +511,29 @@ export function looksLikeTreeSessionJsonl(sessionFile: string): boolean {
 
 export function readTreeSessionJsonl(sessionFile: string): ParsedTreeSession | null {
   try {
-    const content = readFileSync(sessionFile, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
-    if (lines.length === 0) return null;
+    // Keep the raw first-line header reader so Craft metadata (`header.craft`)
+    // is preserved. Pi's public SessionManager intentionally ignores Craft's
+    // opaque header extension fields.
+    const header = readTreeSessionHeader(sessionFile);
+    if (!header) return null;
 
-    const header = JSON.parse(lines[0]!) as unknown;
-    if (!isTreeSessionHeader(header)) return null;
-
-    const entries: TreeSessionEntry[] = [];
-    for (const line of lines.slice(1)) {
-      try {
-        const parsed = JSON.parse(line) as unknown;
-        if (isTreeEntry(parsed)) entries.push(parsed);
-      } catch {
-        debug('[tree-jsonl] Skipping malformed tree session line:', line.substring(0, 100));
-      }
-    }
+    // Delegate JSONL entry parsing/migration/tree indexing to Pi's public
+    // SessionManager instead of reimplementing Pi's session entry parser here.
+    const manager = PiSessionManager.open(sessionFile);
+    const entries = manager.getEntries() as unknown as TreeSessionEntry[];
 
     return { header, entries };
   } catch (error) {
-    debug('[tree-jsonl] Failed to read tree session:', sessionFile, error);
+    debug('[tree-jsonl] Failed to read tree session via Pi SessionManager:', sessionFile, error);
     return null;
   }
 }
 
-export function writeTreeSessionCraftMetadata(sessionFile: string, session: StoredSession): boolean {
+export function writeTreeSessionCraftMetadata(
+  sessionFile: string,
+  session: StoredSession,
+  options: WriteTreeSessionCraftMetadataOptions = {},
+): boolean {
   const release = acquireTreeSessionFileLock(sessionFile);
   try {
     const content = readFileSync(sessionFile, 'utf-8');
@@ -270,61 +543,16 @@ export function writeTreeSessionCraftMetadata(sessionFile: string, session: Stor
     const header = JSON.parse(lines[0]!) as unknown;
     if (!isTreeSessionHeader(header)) return false;
 
-    const previousCraft = isRecord(header.craft) ? header.craft as Partial<SessionHeader> : {};
-    const craftMetadata: Partial<SessionHeader> = {
-      ...previousCraft,
-      id: session.id,
-      sdkSessionId: session.sdkSessionId,
-      name: session.name,
-      createdAt: session.createdAt,
-      lastMessageAt: session.lastMessageAt,
-      isFlagged: session.isFlagged,
-      permissionMode: session.permissionMode,
-      previousPermissionMode: session.previousPermissionMode,
-      sessionStatus: session.sessionStatus,
-      labels: session.labels,
-      lastReadMessageId: session.lastReadMessageId,
-      hasUnread: session.hasUnread,
-      enabledSourceSlugs: session.enabledSourceSlugs,
-      workingDirectory: session.workingDirectory,
-      sdkCwd: session.sdkCwd,
-      sharedUrl: session.sharedUrl,
-      sharedId: session.sharedId,
-      model: session.model,
-      llmConnection: session.llmConnection,
-      connectionLocked: session.connectionLocked,
-      thinkingLevel: session.thinkingLevel,
-      pendingPlanExecution: session.pendingPlanExecution,
-      hidden: session.hidden,
-      isArchived: session.isArchived,
-      archivedAt: session.archivedAt,
-      branchFromMessageId: session.branchFromMessageId,
-      branchFromSdkSessionId: session.branchFromSdkSessionId,
-      branchFromSessionPath: session.branchFromSessionPath,
-      branchFromPiSessionFile: session.branchFromPiSessionFile,
-      branchFromSdkCwd: session.branchFromSdkCwd,
-      branchFromSdkTurnId: session.branchFromSdkTurnId,
-      transferredSessionSummary: session.transferredSessionSummary,
-      transferredSessionSummaryApplied: session.transferredSessionSummaryApplied,
-      triggeredBy: session.triggeredBy,
-      workspaceRootPath: toPortablePath(session.workspaceRootPath),
-      lastUsedAt: Date.now(),
-      messageCount: session.messages.length,
-      preview: extractPreview(session.messages),
-      lastMessageRole: extractLastMessageRole(session.messages),
-      lastFinalMessageId: extractLastFinalMessageId(session.messages),
-      tokenUsage: session.tokenUsage,
-    };
+    const previousCraft = isRecord(header.craft) ? header.craft as CraftMetadataOnDisk : {};
+    const craftMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
 
     const updatedHeader: TreeSessionHeader = {
       ...header,
       craft: craftMetadata,
     };
 
-    const tmpFile = sessionFile + '.tmp';
-    writeFileSync(tmpFile, [JSON.stringify(updatedHeader), ...lines.slice(1)].join('\n') + '\n');
-    try { unlinkSync(sessionFile); } catch { /* ignore */ }
-    renameSync(tmpFile, sessionFile);
+    atomicWriteFileSync(sessionFile, [JSON.stringify(updatedHeader), ...lines.slice(1)].join('\n') + '\n');
+    writeCraftSessionOverlay(sessionFile, session);
     return true;
   } catch (error) {
     debug('[tree-jsonl] Failed to update tree session Craft metadata:', sessionFile, error);
@@ -332,6 +560,282 @@ export function writeTreeSessionCraftMetadata(sessionFile: string, session: Stor
   } finally {
     release();
   }
+}
+
+/**
+ * Async 版本——使用 acquireTreeSessionFileLockAsync 避免阻塞事件循环。
+ * 供持久化队列等 async 热路径使用。
+ */
+export async function writeTreeSessionCraftMetadataAsync(
+  sessionFile: string,
+  session: StoredSession,
+  options: WriteTreeSessionCraftMetadataOptions = {},
+): Promise<boolean> {
+  const release = await acquireTreeSessionFileLockAsync(sessionFile);
+  try {
+    const content = readFileSync(sessionFile, 'utf-8');
+    const lines = content.split('\n').filter(Boolean);
+    if (lines.length === 0) return false;
+
+    const header = JSON.parse(lines[0]!) as unknown;
+    if (!isTreeSessionHeader(header)) return false;
+
+    const previousCraft = isRecord(header.craft) ? header.craft as CraftMetadataOnDisk : {};
+    const craftMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
+
+    const updatedHeader: TreeSessionHeader = {
+      ...header,
+      craft: craftMetadata,
+    };
+
+    atomicWriteFileSync(sessionFile, [JSON.stringify(updatedHeader), ...lines.slice(1)].join('\n') + '\n');
+    writeCraftSessionOverlay(sessionFile, session);
+    return true;
+  } catch (error) {
+    debug('[tree-jsonl] Failed to update tree session Craft metadata:', sessionFile, error);
+    return false;
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Create a new Pi tree JSONL v3 session file from a StoredSession.
+ *
+ * Used when writing to a file that does not yet exist (e.g., bundle import).
+ * Creates the Pi header + message entries, then merges Craft metadata into the
+ * header's `craft` field via {@link writeTreeSessionCraftMetadata}.
+ *
+ * Returns true on success, false on failure.
+ */
+export function createNewTreeSessionFile(sessionFile: string, session: StoredSession): boolean {
+  try {
+    const cwd = expandPath(session.workspaceRootPath);
+    const timestamp = new Date(session.createdAt || Date.now()).toISOString();
+    // Pi 顶层 id 用 sdkSessionId（Pi UUID），无则退回 craftId
+    const piSessionId = session.sdkSessionId || session.craftId;
+
+    const header: TreeSessionHeader = {
+      type: 'session',
+      version: 3,
+      id: piSessionId,
+      timestamp,
+      cwd,
+    };
+
+    const lines: string[] = [JSON.stringify(header)];
+
+    let parentId: string | null = null;
+    for (const msg of session.messages) {
+      const entry = storedMessageToTreeEntry(msg, parentId);
+      lines.push(JSON.stringify(entry));
+      parentId = entry.id;
+    }
+
+    const sessionDir = dirname(sessionFile);
+    if (!existsSync(sessionDir)) {
+      mkdirSync(sessionDir, { recursive: true });
+    }
+
+    atomicWriteFileSync(sessionFile, lines.join('\n') + '\n');
+
+    // Merge Craft metadata into the header's `craft` field
+    writeTreeSessionCraftMetadata(sessionFile, session);
+    writeCraftSessionOverlay(sessionFile, session);
+    return true;
+  } catch (error) {
+    debug('[tree-jsonl] Failed to create new tree session file:', sessionFile, error);
+    return false;
+  }
+}
+
+type PiAppendMessageInput = Parameters<PiSessionManager['appendMessage']>[0];
+
+function storedMessageToPiAppendMessage(msg: StoredMessage): PiAppendMessageInput | null {
+  const timestamp = msg.timestamp ?? Date.now();
+
+  if (msg.type === 'user' || msg.type === 'assistant') {
+    return {
+      role: msg.type,
+      content: msg.content,
+      timestamp,
+    } as PiAppendMessageInput;
+  }
+
+  if (msg.type === 'tool' && msg.toolUseId && msg.toolResult !== undefined) {
+    return {
+      role: 'toolResult',
+      toolCallId: msg.toolUseId,
+      toolName: msg.toolName,
+      content: [{ type: 'text', text: msg.toolResult ?? '' }],
+      isError: !!msg.isError,
+      timestamp,
+    } as PiAppendMessageInput;
+  }
+
+  if (msg.type === 'tool' && msg.toolName && msg.toolInput !== undefined) {
+    return {
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id: msg.toolUseId ?? msg.id,
+          name: msg.toolName,
+          arguments: msg.toolInput,
+        },
+      ],
+      timestamp,
+    } as PiAppendMessageInput;
+  }
+
+  return null;
+}
+
+function isTreeMessageEntry(entry: TreeSessionEntry): entry is TreeMessageEntry {
+  return entry.type === 'message' && isRecord((entry as TreeMessageEntry).message);
+}
+
+function comparablePiMessage(message: TreeAgentMessage | PiAppendMessageInput): string {
+  const record = message as Record<string, unknown>;
+  return JSON.stringify({
+    role: record.role,
+    content: record.content,
+    toolCallId: record.toolCallId,
+    toolName: record.toolName,
+    isError: record.isError,
+  });
+}
+
+function piMessagesEquivalent(existing: TreeAgentMessage, expected: PiAppendMessageInput): boolean {
+  return comparablePiMessage(existing) === comparablePiMessage(expected);
+}
+
+/**
+ * Import canonical transcript entries through Pi's public SessionManager API.
+ *
+ * The caller must create the header file first (Craft is allowed to write
+ * header metadata). This function appends only user/assistant/tool transcript
+ * messages; UI-only messages remain in the Craft overlay. Repeated calls with
+ * the same source messages are idempotent: existing matching Pi entries are
+ * reused and only a missing suffix is appended.
+ */
+export function appendStoredMessagesViaPiSessionManager(
+  sessionFile: string,
+  sessionDir: string,
+  cwd: string,
+  messages: StoredMessage[],
+): Map<string, string> {
+  const manager = PiSessionManager.open(sessionFile, sessionDir, cwd);
+  const idMap = new Map<string, string>();
+  const appendableMessages = messages.flatMap((msg) => {
+    const piMessage = storedMessageToPiAppendMessage(msg);
+    return piMessage ? [{ originalId: msg.id, piMessage }] : [];
+  });
+
+  const existingMessages = (manager.getEntries() as unknown as TreeSessionEntry[]).filter(isTreeMessageEntry);
+  let matchedCount = 0;
+  for (; matchedCount < Math.min(existingMessages.length, appendableMessages.length); matchedCount += 1) {
+    const existing = existingMessages[matchedCount]!;
+    const expected = appendableMessages[matchedCount]!;
+    if (!piMessagesEquivalent(existing.message, expected.piMessage)) {
+      throw new Error(`Target session already contains non-matching transcript entries: ${sessionFile}`);
+    }
+    idMap.set(expected.originalId, existing.id);
+  }
+
+  if (existingMessages.length > appendableMessages.length) {
+    debug(`[tree-jsonl] Import target already has ${existingMessages.length - appendableMessages.length} extra transcript entries; skipping duplicate append for ${sessionFile}`);
+    return idMap;
+  }
+
+  for (const { originalId, piMessage } of appendableMessages.slice(matchedCount)) {
+    idMap.set(originalId, manager.appendMessage(piMessage));
+  }
+  return idMap;
+}
+
+/**
+ * Convert a StoredMessage to a Pi tree message entry.
+ * Best-effort: preserves role, content, and tool fields. Messages that don't
+ * map cleanly to a Pi message entry (info, status) are emitted as
+ * custom_message entries so the conversation history is not lost.
+ */
+function storedMessageToTreeEntry(msg: StoredMessage, parentId: string | null): { type: string; id: string; parentId: string | null; timestamp: string; [key: string]: unknown } {
+  const timestamp = msg.timestamp
+    ? new Date(msg.timestamp).toISOString()
+    : new Date().toISOString();
+
+  // Tool result message
+  if (msg.type === 'tool' && msg.toolUseId && msg.toolResult !== undefined) {
+    return {
+      type: 'message',
+      id: msg.id,
+      parentId,
+      timestamp,
+      message: {
+        role: 'toolResult',
+        toolCallId: msg.toolUseId,
+        toolName: msg.toolName,
+        content: msg.toolResult ?? '',
+        isError: !!msg.isError,
+        timestamp: msg.timestamp,
+      },
+    };
+  }
+
+  // Tool call message (has toolInput but no toolResult)
+  if (msg.type === 'tool' && msg.toolName && msg.toolInput !== undefined) {
+    return {
+      type: 'message',
+      id: msg.id,
+      parentId,
+      timestamp,
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: msg.toolUseId ?? msg.id,
+            name: msg.toolName,
+            arguments: msg.toolInput,
+          },
+        ],
+        timestamp: msg.timestamp,
+      },
+    };
+  }
+
+  // User / assistant messages
+  if (msg.type === 'user' || msg.type === 'assistant') {
+    return {
+      type: 'message',
+      id: msg.id,
+      parentId,
+      timestamp,
+      message: {
+        role: msg.type,
+        content: msg.content,
+        timestamp: msg.timestamp,
+      },
+    };
+  }
+
+  // Info / status / plan / error → custom_message (preserves content)
+  return {
+    type: 'custom_message',
+    id: msg.id,
+    parentId,
+    timestamp,
+    customType: msg.type,
+    content: msg.content,
+    display: true,
+    details: {
+      toolName: msg.toolName,
+      infoLevel: msg.infoLevel,
+      statusType: msg.statusType,
+      isError: msg.isError,
+    },
+  };
 }
 
 function isTreeEntry(value: unknown): value is TreeSessionEntry {
@@ -607,13 +1111,49 @@ function latestSessionName(entries: TreeSessionEntry[]): string | undefined {
   return undefined;
 }
 
-function tokenUsageFromMessages(messages: StoredMessage[]) {
+/**
+ * 从 tree entries 聚合 token usage。
+ *
+ * Pi tree 的 assistant message 携带 usage 字段（input/output/cacheRead/cacheWrite/
+ * totalTokens/cost.total），投影到 StoredMessage 时会丢失，因此必须从 entries 聚合。
+ *
+ * contextTokens 取最后一条带 usage 的 assistant message 的 input——
+ * 这代表该 turn 的累积上下文大小，与 SessionTokenUsage.contextTokens 语义一致。
+ */
+function tokenUsageFromEntries(entries: TreeSessionEntry[]): SessionTokenUsage {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
+  let costUsd = 0;
+  let contextTokens = 0;
+
+  for (const entry of entries) {
+    if (entry.type !== 'message' || !('message' in entry)) continue;
+    const msg = entry.message;
+    if (msg.role !== 'assistant') continue;
+    const usage = msg.usage;
+    if (!usage) continue;
+
+    const input = typeof usage.input === 'number' ? usage.input : 0;
+    const output = typeof usage.output === 'number' ? usage.output : 0;
+    inputTokens += input;
+    outputTokens += output;
+    cacheReadTokens += typeof usage.cacheRead === 'number' ? usage.cacheRead : 0;
+    cacheCreationTokens += typeof usage.cacheWrite === 'number' ? usage.cacheWrite : 0;
+    costUsd += typeof usage.cost?.total === 'number' ? usage.cost.total : 0;
+    // 最后一条 assistant 的 input 即当前上下文大小
+    if (input > 0) contextTokens = input;
+  }
+
   return {
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-    contextTokens: 0,
-    costUsd: 0,
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    contextTokens,
+    costUsd,
+    cacheReadTokens: cacheReadTokens || undefined,
+    cacheCreationTokens: cacheCreationTokens || undefined,
   };
 }
 
@@ -649,67 +1189,72 @@ export function readTreeSessionAsStoredSession(
   const parsed = readTreeSessionJsonl(sessionFile);
   if (!parsed) return null;
 
-  const messages = projectTreeSessionMessages(parsed.entries, options.leafId);
+  const baseMessages = projectTreeSessionMessages(parsed.entries, options.leafId);
   const createdAt = new Date(parsed.header.timestamp).getTime() || Date.now();
   const stat = existsSync(sessionFile) ? statSync(sessionFile) : undefined;
   const lastUsedAt = stat?.mtimeMs ?? createdAt;
   const workspaceRootPath = options.workspaceRootPath ?? parsed.header.craft?.workspaceRootPath ?? parsed.header.cwd ?? dirname(sessionFile);
-  const id = `${options.sessionIdPrefix ?? ''}${parsed.header.id}`;
-  const craft = parsed.header.craft ?? {};
+  const craft = parsed.header.craft ?? {}
+  // on-disk craft.id → 扁平 SessionHeader.craftId
+  // 优先用 craft.id（Craft 人类可读 ID），无则退回 Pi 顶层 id + 前缀
+  const craftId = getCraftIdFromTreeHeader(parsed.header, options.sessionIdPrefix ?? '');
+  const messages = mergeCraftOverlayMessages(baseMessages, readCraftSessionOverlay(sessionFile, craftId));
+
+  // Strip on-disk `id` before spreading so it doesn't leak as a phantom `id`
+  // field onto SessionHeader (which declares only `craftId`). Without this,
+  // tree-derived headers would carry `.id === craftId` while legacy-derived
+  // headers carry no `.id`, causing silent source-dependent divergence.
+  const { id: _craftIdOnDisk, ...craftRest } = craft;
 
   return {
-    ...craft,
-    id,
+    ...craftRest,
+    craftId,
+    // Pi 原生字段（扁平化）
+    type: parsed.header.type,
+    version: parsed.header.version,
+    piSessionId: parsed.header.id,
+    piTimestamp: parsed.header.timestamp,
+    piCwd: parsed.header.cwd,
+    parentSession: parsed.header.parentSession,
+    // Craft 字段（从 craft 子对象取，无则用 fallback）
     workspaceRootPath: expandPath(workspaceRootPath),
-    sdkSessionId: craft.sdkSessionId ?? parsed.header.id,
+    // sdkSessionId 不回退到 parsed.header.id（Pi session id）。
+    // 历史上回退到 header.id 会在 craft.sdkSessionId 缺失时把 Pi id 当作 sdkSessionId，
+    // 但写入端在无 sdkSessionId 时会把 header.id 写成 craftId，导致重载后 sdkSessionId 被错误
+    // 设为 craftId 并自我 perpetuating。保持 undefined 让上层显式处理。
+    sdkSessionId: craft.sdkSessionId,
     createdAt: craft.createdAt ?? createdAt,
     lastUsedAt: craft.lastUsedAt ?? lastUsedAt,
     lastMessageAt: craft.lastMessageAt ?? lastUsedAt,
     name: craft.name ?? latestSessionName(parsed.entries),
-    workingDirectory: craft.workingDirectory ?? parsed.header.cwd,
-    sdkCwd: craft.sdkCwd ?? parsed.header.cwd,
+    workingDirectory: workspaceRootPath,
+    sdkCwd: craft.sdkCwd ?? workspaceRootPath,
+    messageCount: craft.messageCount ?? messages.length,
+    preview: craft.preview ?? extractPreview(messages),
+    lastMessageRole: craft.lastMessageRole ?? extractLastMessageRole(messages),
+    lastFinalMessageId: craft.lastFinalMessageId ?? extractLastFinalMessageId(messages),
     messages,
-    tokenUsage: craft.tokenUsage ?? tokenUsageFromMessages(messages),
+    tokenUsage: craft.tokenUsage ?? tokenUsageFromEntries(parsed.entries),
   } as StoredSession;
 }
 
+/**
+ * Read session as flat SessionHeader (for list loading).
+ * 合并 Pi 顶层字段和 craft 子对象为扁平 SessionHeader。
+ */
 export function readTreeSessionMetadata(
   sessionFile: string,
   workspaceRootPath?: string,
   sessionIdPrefix = '',
-): SessionMetadata | null {
+): SessionHeader | null {
   const stored = readTreeSessionAsStoredSession(sessionFile, {
     workspaceRootPath: workspaceRootPath || undefined,
     sessionIdPrefix,
   });
   if (!stored) return null;
 
-  return {
-    id: stored.id,
-    workspaceRootPath: stored.workspaceRootPath,
-    name: stored.name,
-    createdAt: stored.createdAt,
-    lastUsedAt: stored.lastUsedAt,
-    lastMessageAt: stored.lastMessageAt,
-    messageCount: stored.messages.length,
-    preview: extractPreview(stored.messages),
-    sdkSessionId: stored.sdkSessionId,
-    workingDirectory: stored.workingDirectory,
-    sdkCwd: stored.sdkCwd,
-    lastMessageRole: extractLastMessageRole(stored.messages),
-    lastFinalMessageId: extractLastFinalMessageId(stored.messages),
-    tokenUsage: stored.tokenUsage,
-    labels: stored.labels,
-    sessionStatus: stored.sessionStatus,
-    isFlagged: stored.isFlagged,
-    hidden: stored.hidden,
-    isArchived: stored.isArchived,
-    archivedAt: stored.archivedAt,
-    branchFromMessageId: stored.branchFromMessageId,
-    branchFromSdkSessionId: stored.branchFromSdkSessionId,
-    branchFromSessionPath: stored.branchFromSessionPath,
-    branchFromPiSessionFile: stored.branchFromPiSessionFile,
-    branchFromSdkCwd: stored.branchFromSdkCwd,
-    branchFromSdkTurnId: stored.branchFromSdkTurnId,
-  };
+  // StoredSession 是 SessionHeader 的扩展（多 messages + tokenUsage），
+  // 直接解构返回 SessionHeader 形状
+  const { messages: _messages, ...header } = stored;
+  return header as SessionHeader;
 }

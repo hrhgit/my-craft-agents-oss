@@ -16,10 +16,10 @@ import {
   statSync,
 } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
+import { CONFIG_DIR, PI_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
 import { getDefaultStatusConfig, saveStatusConfig, ensureDefaultIconFiles } from '../statuses/storage.ts';
 import { getDefaultLabelConfig, saveLabelConfig } from '../labels/storage.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
@@ -32,7 +32,6 @@ import type {
   WorkspaceSummary,
 } from './types.ts';
 
-const CONFIG_DIR = join(homedir(), '.craft-agent');
 const DEFAULT_WORKSPACES_DIR = join(CONFIG_DIR, 'workspaces');
 
 // ============================================================
@@ -73,19 +72,68 @@ export function getWorkspaceSourcesPath(rootPath: string): string {
 }
 
 /**
- * Get path to workspace sessions directory
- * @param rootPath - Absolute path to workspace root folder
- */
-export function getWorkspaceSessionsPath(rootPath: string): string {
-  return join(rootPath, 'sessions');
-}
-
-/**
  * Get path to workspace skills directory
  * @param rootPath - Absolute path to workspace root folder
  */
 export function getWorkspaceSkillsPath(rootPath: string): string {
   return join(rootPath, 'skills');
+}
+
+// ------------------------------------------------------------
+// Session view aggregation
+// ------------------------------------------------------------
+
+/**
+ * Resolve the cwd used for a workspace.
+ *
+ * Complete-unification semantics: workspace = cwd = Pi session bucket =
+ * configuration scope. The legacy `defaults.workingDirectory` field is kept
+ * only for migration/compatibility and never influences new session storage.
+ */
+export function getWorkspaceCwd(rootPath: string): string {
+  return rootPath;
+}
+
+/**
+ * Get the Pi sessions directory for a workspace root bucket.
+ *
+ * Returns `~/.pi/agent/sessions/{encoded-cwd}/` — the bucket where this
+ * workspace's sessions live. The encoded cwd is always the workspace root.
+ */
+export function getWorkspacePiSessionsDir(rootPath: string): string {
+  const encodedCwd = encodePiSessionCwd(getWorkspaceCwd(rootPath));
+  return join(PI_SESSIONS_DIR, encodedCwd);
+}
+
+/**
+ * Count Pi sessions for a workspace by scanning
+ * `~/.pi/agent/sessions/{encoded-workspace-root}/`.
+ *
+ * M12: Scanning coverage matches `listCraftSessionDirs` in sessions/storage.ts —
+ * counts both flat `.jsonl` files (new Pi tree format) and legacy subdirectory
+ * format (`{sessionId}/session.jsonl`). Does not read headers, so corrupt files
+ * that `listSessions` would skip are still counted here — the count is a close
+ * approximation, not an exact match to the rendered list length.
+ */
+export function countSessionsByCwd(rootPath: string): number {
+  const dir = getWorkspacePiSessionsDir(rootPath);
+  if (!existsSync(dir)) return 0;
+  try {
+    let count = 0;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        count++;
+      } else if (entry.isDirectory()) {
+        // Legacy subdirectory format: {sessionId}/session.jsonl
+        if (existsSync(join(dir, entry.name, 'session.jsonl'))) {
+          count++;
+        }
+      }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
 }
 
 // ============================================================
@@ -204,16 +252,14 @@ export function loadWorkspace(rootPath: string): LoadedWorkspace | null {
   // Ensure plugin manifest exists (migration for existing workspaces)
   ensurePluginManifest(rootPath, config.name);
 
-  // Ensure skills directory exists (migration for existing workspaces)
-  const skillsPath = getWorkspaceSkillsPath(rootPath);
-  if (!existsSync(skillsPath)) {
-    mkdirSync(skillsPath, { recursive: true });
-  }
+  // M11: No longer create the legacy {rootPath}/skills/ directory here.
+  // Task 10 migrated skills to {cwd}/.pi/skills/ (Pi native path); creating
+  // the old folder misleads users into placing skills in the wrong location.
 
   return {
     config,
     sourceSlugs: listSubdirNames(getWorkspaceSourcesPath(rootPath)),
-    sessionCount: countSubdirs(getWorkspaceSessionsPath(rootPath)),
+    sessionCount: countSessionsByCwd(rootPath),
   };
 }
 
@@ -229,7 +275,7 @@ export function getWorkspaceSummary(rootPath: string): WorkspaceSummary | null {
     slug: config.slug,
     name: config.name,
     sourceCount: countSubdirs(getWorkspaceSourcesPath(rootPath)),
-    sessionCount: countSubdirs(getWorkspaceSessionsPath(rootPath)),
+    sessionCount: countSessionsByCwd(rootPath),
     createdAt: config.createdAt,
     updatedAt: config.updatedAt,
   };
@@ -324,11 +370,19 @@ export function createWorkspaceAtPath(
     updatedAt: now,
   };
 
-  // Create workspace directory structure
+  // Create workspace directory structure.
+  // No `sessions/` subdirectory is created — sessions are
+  // aggregated by cwd from `~/.pi/agent/sessions/{encoded-cwd}/` .
+  //  No `skills/` subdirectory is created — workspace-level skills
+  // migrated to `{projectRoot}/.pi/skills/`. The legacy `{rootPath}/skills/`
+  // directory is no longer read by anyone (F18 removed the last legacy
+  // workspace-skill fallback paths in pre-tool-use.ts and skill-validate.ts;
+  // the stale `loadWorkspaceSkills` reference previously documented here
+  // does not exist in the codebase).
+  // `sources/`, labels/, statuses/, automations/ remain craft-shell
+  // owned and are still created below.
   mkdirSync(rootPath, { recursive: true });
   mkdirSync(getWorkspaceSourcesPath(rootPath), { recursive: true });
-  mkdirSync(getWorkspaceSessionsPath(rootPath), { recursive: true });
-  mkdirSync(getWorkspaceSkillsPath(rootPath), { recursive: true });
 
   // Save config
   saveWorkspaceConfig(rootPath, config);

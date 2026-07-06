@@ -64,12 +64,17 @@ function setupWorkspaceConfigDir() {
 }
 
 function runEval(configDir: string, code: string): string {
+  // Isolate ~/.pi/agent/settings.json to a per-config temp dir so the test
+  // neither pollutes the real pi settings nor reads stale real values.
+  // getDefaultThinkingLevel() now prefers pi settings.json as the SoT.
+  const piAgentDir = join(configDir, 'pi-agent')
+  mkdirSync(piAgentDir, { recursive: true })
   const run = Bun.spawnSync([
     process.execPath,
     '--eval',
     `import { getDefaultThinkingLevel, setDefaultThinkingLevel } from '${STORAGE_MODULE_PATH}'; ${code}`,
   ], {
-    env: { ...process.env, CRAFT_CONFIG_DIR: configDir },
+    env: { ...process.env, CRAFT_CONFIG_DIR: configDir, PI_CODING_AGENT_DIR: piAgentDir },
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -86,23 +91,26 @@ describe('default thinking level storage', () => {
     const { configDir } = setupWorkspaceConfigDir()
     const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")
     expect(output).toBe('off')
-  })
+  }, 15_000)
 
-  it('persists defaultThinkingLevel to config.json', () => {
+  it('persists defaultThinkingLevel to pi settings without writing config.json', () => {
     const { configDir, configPath } = setupWorkspaceConfigDir()
 
-    runEval(configDir, "setDefaultThinkingLevel('max'); console.log(String(getDefaultThinkingLevel()))")
+    runEval(configDir, "await setDefaultThinkingLevel('max'); console.log(String(getDefaultThinkingLevel()))")
 
     const config = JSON.parse(readFileSync(configPath, 'utf-8'))
-    expect(config.defaultThinkingLevel).toBe('max')
-  })
+    expect(config.defaultThinkingLevel).toBeUndefined()
+
+    const piSettings = JSON.parse(readFileSync(join(configDir, 'pi-agent', 'settings.json'), 'utf-8'))
+    expect(piSettings.defaultThinkingLevel).toBe('max')
+  }, 15_000)
 
   it('round-trips persisted value across processes', () => {
     const { configDir } = setupWorkspaceConfigDir()
-    runEval(configDir, "setDefaultThinkingLevel('medium')")
+    runEval(configDir, "await setDefaultThinkingLevel('medium')")
     const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")
     expect(output).toBe('medium')
-  })
+  }, 15_000)
 
   it('supports every thinking level', () => {
     const { configDir } = setupWorkspaceConfigDir()
@@ -112,22 +120,35 @@ describe('default thinking level storage', () => {
       `
       const levels = ${JSON.stringify(levels)};
       for (const level of levels) {
-        setDefaultThinkingLevel(level);
+        await setDefaultThinkingLevel(level);
         console.log(String(getDefaultThinkingLevel()));
       }
       `,
     )
     expect(output.split(/\r?\n/)).toEqual(levels)
-  })
+  }, 15_000)
 
-  it('migrates legacy "think" value to "medium"', () => {
-    const { configDir, configPath } = setupWorkspaceConfigDir()
-    // Manually write the legacy 'think' value to config
-    const config = JSON.parse(readFileSync(configPath, 'utf-8'))
-    config.defaultThinkingLevel = 'think'
-    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+  it('normalizes legacy "think" value from pi settings to "medium"', () => {
+    const { configDir } = setupWorkspaceConfigDir()
+    const piAgentDir = join(configDir, 'pi-agent')
+    mkdirSync(piAgentDir, { recursive: true })
+    writeFileSync(
+      join(piAgentDir, 'settings.json'),
+      JSON.stringify({ defaultThinkingLevel: 'think' }, null, 2),
+      'utf-8',
+    )
 
     const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")
     expect(output).toBe('medium')
-  })
+  }, 15_000)
+
+  it('does not read legacy defaultThinkingLevel from craft config', () => {
+    const { configDir, configPath } = setupWorkspaceConfigDir()
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+    config.defaultThinkingLevel = 'max'
+    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+
+    const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")
+    expect(output).toBe('off')
+  }, 15_000)
 })

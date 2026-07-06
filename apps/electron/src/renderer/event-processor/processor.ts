@@ -34,7 +34,6 @@ import {
   handleInfo,
   handleInterrupted,
   handleTitleGenerated,
-  handleTitleRegenerating,
   handleAsyncOperation,
   handleWorkingDirectoryChanged,
   handlePermissionModeChanged,
@@ -124,9 +123,6 @@ export function processEvent(
 
     case 'title_generated':
       return handleTitleGenerated(state, event)
-
-    case 'title_regenerating':
-      return handleTitleRegenerating(state, event)
 
     case 'async_operation':
       return handleAsyncOperation(state, event)

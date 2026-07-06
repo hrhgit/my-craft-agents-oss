@@ -688,14 +688,11 @@ export function useInlineMention({
         '[' + kind + ':' + value + '] '
 
       // Build the mention text based on type using bracket syntax.
-      // Skills use fully-qualified names (workspaceId:slug) because the SDK's
-      // Skill tool requires this format to resolve workspace-scoped skills.
+      // Skills use fully-qualified names (pluginName:slug) because the SDK's
+      // Skill tool requires this format to resolve skills.
       let mentionText: string
       if (item.type === 'skill') {
-        // Plugin name depends on which tier the skill came from:
-        //   workspace → workspaceId, project/global → ".agents"
-        const pluginName = item.skill?.source === 'workspace' ? workspaceId : AGENTS_PLUGIN_NAME
-        const qualifiedName = pluginName ? `${pluginName}:${item.id}` : item.id
+        const qualifiedName = `${AGENTS_PLUGIN_NAME}:${item.id}`
         mentionText = buildMentionText('skill', qualifiedName)
       } else if (item.type === 'source') {
         mentionText = buildMentionText('source', item.id)

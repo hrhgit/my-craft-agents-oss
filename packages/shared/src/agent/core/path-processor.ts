@@ -83,23 +83,6 @@ export class PathProcessor {
     return expandPath(path, basePath);
   }
 
-  /**
-   * Expand ~ to home directory (simple version for SDK inputs).
-   * Only handles ~ prefix, not $HOME variables.
-   *
-   * @param path - Path that may start with ~
-   * @returns Expanded path
-   */
-  expandTilde(path: string): string {
-    if (path === '~') {
-      return this.homeDir;
-    }
-    if (path.startsWith('~/')) {
-      return this.homeDir + path.slice(1);
-    }
-    return path;
-  }
-
   // ============================================================
   // Path Normalization
   // ============================================================

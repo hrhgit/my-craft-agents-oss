@@ -105,7 +105,7 @@ printAnnotation('Added first to user message for prompt caching optimization');
 // 2. Session State
 const sessionState = formatSessionState('260121-example-session', {
   plansFolderPath:
-    '/Users/example/.craft-agent/workspaces/abc123/sessions/260121-example-session/plans',
+    '/Users/example/.pi/agent/sessions/encoded-cwd/260121-example-session/plans',
 });
 printSection('2. SESSION STATE - formatSessionState()', sessionState, colors.magenta);
 printAnnotation('Contains: sessionId, permissionMode, modeTransition/modeChangedBy/modeChangedAt/modeVersion (when available), plansFolderPath');

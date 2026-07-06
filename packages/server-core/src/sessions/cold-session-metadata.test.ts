@@ -61,7 +61,7 @@ describe('cold-session metadata persistence', () => {
     const filePath = getSessionFilePath(tmpRoot, sessionId)
     mkdirSync(dirname(filePath), { recursive: true })
     const stored: StoredSession = {
-      id: sessionId,
+      craftId: sessionId,
       workspaceRootPath: tmpRoot,
       name: opts.name ?? 'cold session',
       sessionStatus: opts.sessionStatus ?? 'todo',
@@ -69,12 +69,13 @@ describe('cold-session metadata persistence', () => {
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       messages: opts.messages ?? [],
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, costUsd: 0 },
     } as StoredSession
     writeSessionJsonl(filePath, stored)
 
     const managed = createManagedSession(
       {
-        id: sessionId,
+        craftId: sessionId,
         name: stored.name,
         sessionStatus: stored.sessionStatus,
         labels: stored.labels,
@@ -89,7 +90,8 @@ describe('cold-session metadata persistence', () => {
   function readDiskHeader(sessionId: string): Record<string, unknown> {
     const path = getSessionFilePath(tmpRoot, sessionId)
     const firstLine = readFileSync(path, 'utf-8').split('\n')[0]
-    return JSON.parse(firstLine)
+    const header = JSON.parse(firstLine)
+    return { ...header, ...(header.craft ?? {}) }
   }
 
   function readDiskMessageIds(sessionId: string): string[] {

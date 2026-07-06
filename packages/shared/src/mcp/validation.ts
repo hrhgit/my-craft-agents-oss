@@ -10,6 +10,7 @@ import { CraftMcpClient } from './client.js';
 import { debug } from '../utils/debug.ts';
 import { normalizeMcpUrl } from '../sources/server-builder.ts';
 import type { McpTransport } from '../sources/types.ts';
+import { withTimeout } from '../agent/llm-tool.ts';
 
 export interface InvalidProperty {
   toolName: string;
@@ -368,24 +369,6 @@ export async function validateStdioMcpConnection(
     }
   }
 
-  const withTimeout = <T>(p: Promise<T>, ms: number, label: string): Promise<T> => {
-    return new Promise<T>((resolve, reject) => {
-      const id = setTimeout(() => {
-        reject(new Error(`Timeout: ${label} did not complete within ${ms}ms`));
-      }, ms);
-      p.then(
-        (v) => {
-          clearTimeout(id);
-          resolve(v);
-        },
-        (e) => {
-          clearTimeout(id);
-          reject(e);
-        },
-      );
-    });
-  };
-
   try {
     transport = new StdioClientTransport({
       command,
@@ -427,7 +410,7 @@ export async function validateStdioMcpConnection(
     const toolsResult = await withTimeout(
       client.listTools(),
       listToolsTimeoutResolved,
-      'tools/list',
+      `Timeout: tools/list did not complete within ${listToolsTimeoutResolved}ms`,
     );
     const tools = toolsResult.tools || [];
     const toolNames = tools.map((t: { name: string }) => t.name);

@@ -8,8 +8,13 @@
 import { RPC_CHANNELS } from '../shared/types'
 import type { ChannelMap } from './build-api'
 
-function invoke(channel: string, transform?: (result: any) => any) {
-  return { type: 'invoke' as const, channel, ...(transform && { transform }) }
+function invoke(channel: string, transform?: (result: any) => any, largeArgIndex?: number) {
+  return {
+    type: 'invoke' as const,
+    channel,
+    ...(transform && { transform }),
+    ...(largeArgIndex !== undefined && { largeArgIndex }),
+  }
 }
 
 function listener(channel: string) {
@@ -32,9 +37,9 @@ export const CHANNEL_MAP = {
   respondToCredential: invoke(RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL),
   sessionCommand: invoke(RPC_CHANNELS.sessions.COMMAND),
   exportSession: invoke(RPC_CHANNELS.sessions.EXPORT),
-  importSession: invoke(RPC_CHANNELS.sessions.IMPORT),
+  importSession: invoke(RPC_CHANNELS.sessions.IMPORT, undefined, 1),
   exportRemoteSessionTransfer: invoke(RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER),
-  importRemoteSessionTransfer: invoke(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER),
+  importRemoteSessionTransfer: invoke(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, undefined, 1),
   getPendingPlanExecution: invoke(RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION),
   getSessionPermissionModeState: invoke(RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE),
 
@@ -61,6 +66,7 @@ export const CHANNEL_MAP = {
   getWindowMode: invoke(RPC_CHANNELS.window.GET_MODE),
   openWorkspace: invoke(RPC_CHANNELS.window.OPEN_WORKSPACE),
   openSessionInNewWindow: invoke(RPC_CHANNELS.window.OPEN_SESSION_IN_NEW_WINDOW),
+  openChildSessionWindow: invoke(RPC_CHANNELS.window.OPEN_CHILD_SESSION_WINDOW),
   switchWorkspace: invoke(RPC_CHANNELS.window.SWITCH_WORKSPACE),
   closeWindow: invoke(RPC_CHANNELS.window.CLOSE),
   confirmCloseWindow: invoke(RPC_CHANNELS.window.CONFIRM_CLOSE),
@@ -76,7 +82,7 @@ export const CHANNEL_MAP = {
   openFileDialog: invoke(RPC_CHANNELS.file.OPEN_DIALOG),
   readFileAttachment: invoke(RPC_CHANNELS.file.READ_ATTACHMENT),
   readUserAttachment: invoke(RPC_CHANNELS.file.READ_USER_ATTACHMENT),
-  storeAttachment: invoke(RPC_CHANNELS.file.STORE_ATTACHMENT),
+  storeAttachment: invoke(RPC_CHANNELS.file.STORE_ATTACHMENT, undefined, 1),
   generateThumbnail: invoke(RPC_CHANNELS.file.GENERATE_THUMBNAIL),
 
   // Theme
@@ -117,9 +123,7 @@ export const CHANNEL_MAP = {
   onDeepLinkNavigate: listener(RPC_CHANNELS.deeplink.NAVIGATE),
 
   // Auth
-  showLogoutConfirmation: invoke(RPC_CHANNELS.auth.SHOW_LOGOUT_CONFIRMATION),
   showDeleteSessionConfirmation: invoke(RPC_CHANNELS.auth.SHOW_DELETE_SESSION_CONFIRMATION),
-  logout: invoke(RPC_CHANNELS.auth.LOGOUT),
   getCredentialHealth: invoke(RPC_CHANNELS.credentials.HEALTH_CHECK),
 
   // Onboarding
@@ -296,8 +300,6 @@ export const CHANNEL_MAP = {
   setBrowserToolEnabled: invoke(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED),
 
   // Pi Extensions 集成开关（控制全局 pi 扩展加载与 automation 委托）
-  getPiExtensionsEnabled: invoke(RPC_CHANNELS.piExtensions.GET_ENABLED),
-  setPiExtensionsEnabled: invoke(RPC_CHANNELS.piExtensions.SET_ENABLED),
   getPiExtensionsDelegatePromptAutomation: invoke(RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION),
   setPiExtensionsDelegatePromptAutomation: invoke(RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION),
   getPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.GET_SETTINGS),
@@ -310,6 +312,9 @@ export const CHANNEL_MAP = {
   onExtensionEvent: listener(RPC_CHANNELS.extensions.EVENT),
   sendRemoteUIResponse: invoke(RPC_CHANNELS.extensions.REMOTEUI_RESPONSE),
   invokeExtensionCommand: invoke(RPC_CHANNELS.extensions.COMMAND_INVOKE),
+
+  // Pi session tree — list child sessions spawned via spawn_session tool
+  listChildSessions: invoke(RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS),
 
   // Prompt caching & context
   getExtendedPromptCache: invoke(RPC_CHANNELS.caching.GET_EXTENDED_PROMPT_CACHE),

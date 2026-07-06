@@ -85,8 +85,8 @@ export interface CompactSessionMenuProps {
   title?: string
   /** Optional badge element rendered next to the title (e.g. agent badge). */
   badge?: React.ReactNode
-  /** Shimmer animation while the title is being regenerated. */
-  isRegeneratingTitle?: boolean
+  /** Shimmer animation while the title is busy with an async operation. */
+  isTitleBusy?: boolean
 
   // Session data — same as SessionMenu
   item: SessionMeta
@@ -126,7 +126,7 @@ export interface CompactSessionMenuProps {
 export function CompactSessionMenu({
   title,
   badge,
-  isRegeneratingTitle,
+  isTitleBusy,
   item,
   sessionStatuses,
   labels = [],
@@ -253,7 +253,7 @@ export function CompactSessionMenu({
               <h1
                 className={cn(
                   'text-sm font-semibold truncate font-sans leading-tight',
-                  isRegeneratingTitle && 'animate-shimmer-text',
+                  isTitleBusy && 'animate-shimmer-text',
                 )}
               >
                 {title}

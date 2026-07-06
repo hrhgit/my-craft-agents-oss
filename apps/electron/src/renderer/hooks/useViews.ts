@@ -10,10 +10,11 @@
  * Re-compiles on LABELS_CHANGED events (views changes trigger same broadcast).
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import type { ViewConfig, CompiledView, ViewEvaluationContext } from '@craft-agent/shared/views'
 import { compileAllViews, evaluateViews, buildViewContext } from '@craft-agent/shared/views'
 import type { SessionMeta } from '../atoms/sessions'
+import { useWorkspaceEntity } from './useWorkspaceEntity'
 
 export interface UseViewsResult {
   /** Raw view configs (for display in sidebar, settings, etc.) */
@@ -36,44 +37,18 @@ export interface UseViewsResult {
  * Subscribes to live changes via LABELS_CHANGED event (views trigger same broadcast).
  */
 export function useViews(workspaceId: string | null): UseViewsResult {
-  const [configs, setConfigs] = useState<ViewConfig[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const { data, isLoading, refresh } = useWorkspaceEntity<ViewConfig[]>({
+    workspaceId,
+    fetcher: (wid) => window.electronAPI.listViews(wid!),
+    subscribe: (wid, onChange) =>
+      // views changes trigger LABELS_CHANGED broadcast
+      window.electronAPI.onLabelsChanged((changedWorkspaceId) => {
+        if (changedWorkspaceId === wid) onChange()
+      }),
+    tag: 'useViews',
+  })
 
-  const refresh = useCallback(async () => {
-    if (!workspaceId) {
-      setConfigs([])
-      setIsLoading(false)
-      return
-    }
-
-    try {
-      setIsLoading(true)
-      const views = await window.electronAPI.listViews(workspaceId)
-      setConfigs(views)
-    } catch (err) {
-      console.error('[useViews] Failed to load views:', err)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [workspaceId])
-
-  // Load on workspace change
-  useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  // Subscribe to live changes (views changes trigger LABELS_CHANGED broadcast)
-  useEffect(() => {
-    if (!workspaceId) return
-
-    const cleanup = window.electronAPI.onLabelsChanged((changedWorkspaceId) => {
-      if (changedWorkspaceId === workspaceId) {
-        refresh()
-      }
-    })
-
-    return cleanup
-  }, [workspaceId, refresh])
+  const configs = data ?? []
 
   // Compile all expressions once when configs change.
   // This is the one-time parsing overhead — after this, evaluation is native speed.

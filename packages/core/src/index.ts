@@ -1,15 +1,12 @@
 /**
  * @craft-agent/core
  *
- * Core types and utilities for Craft Agent.
+ * Core types for Craft Agent.
  *
- * NOTE: This package currently only exports types and utilities.
+ * NOTE: This package currently only exports types.
  * Storage, credentials, agent, auth, mcp, and prompts are still
  * imported directly from src/ in the consuming apps.
  */
 
 // Re-export all types
 export * from './types/index.ts';
-
-// Re-export utilities
-export * from './utils/index.ts';

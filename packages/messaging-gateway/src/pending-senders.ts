@@ -13,21 +13,13 @@
  *    rejected attempt repopulates it.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import type {
   MessagingLogger,
   PendingRejectReason,
   PendingSender,
   PlatformType,
 } from './types'
-
-const NOOP_LOGGER: MessagingLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => NOOP_LOGGER,
-}
+import { JsonFileStore, NOOP_LOGGER } from './json-file-store'
 
 const MAX_ENTRIES = 50
 const TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -49,17 +41,12 @@ export interface RecordRejectionInput {
   threadId?: number
 }
 
-export class PendingSendersStore {
+export class PendingSendersStore extends JsonFileStore<PendingSender[]> {
   private entries: PendingSender[] = []
-  private readonly filePath: string
-  private readonly dirPath: string
-  private readonly log: MessagingLogger
   private changeListener?: () => void
 
   constructor(storageDir: string, logger: MessagingLogger = NOOP_LOGGER) {
-    this.dirPath = storageDir
-    this.filePath = join(storageDir, 'pending.json')
-    this.log = logger
+    super(storageDir, 'pending.json', logger)
     this.load()
   }
 
@@ -201,39 +188,20 @@ export class PendingSendersStore {
   }
 
   private load(): void {
-    try {
-      if (!existsSync(this.filePath)) return
-      const raw = readFileSync(this.filePath, 'utf-8')
-      const parsed = JSON.parse(raw)
-      if (!Array.isArray(parsed)) return
-      const now = Date.now()
-      this.entries = parsed
-        .filter(isPendingSender)
-        .filter((e) => now - e.lastAttemptAt < TTL_MS)
-    } catch (err) {
-      this.log.error('failed to load pending senders; resetting', {
-        event: 'pending_senders_load_failed',
-        filePath: this.filePath,
-        error: err,
-      })
+    const parsed = this.loadFile()
+    if (!Array.isArray(parsed)) {
       this.entries = []
+      return
     }
+    const now = Date.now()
+    this.entries = parsed
+      .filter(isPendingSender)
+      .filter((e) => now - e.lastAttemptAt < TTL_MS)
   }
 
   private save(): void {
-    try {
-      if (!existsSync(this.dirPath)) {
-        mkdirSync(this.dirPath, { recursive: true })
-      }
-      writeFileSync(this.filePath, JSON.stringify(this.entries, null, 2), 'utf-8')
-      this.changeListener?.()
-    } catch (err) {
-      this.log.error('failed to save pending senders', {
-        event: 'pending_senders_save_failed',
-        filePath: this.filePath,
-        error: err,
-      })
-    }
+    const ok = this.saveFile(this.entries)
+    if (ok) this.changeListener?.()
   }
 }
 

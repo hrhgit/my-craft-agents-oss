@@ -57,8 +57,9 @@ export async function handleTransformData(
   // Resolve and validate input files.
   // Allowed directories: session dir (tool results) and skills dir (skill assets).
   const allowedInputDirs = [sessionDir];
-  if (ctx.skillsPath) {
-    allowedInputDirs.push(resolve(ctx.skillsPath));
+  const skillPaths = ctx.skillPaths?.length ? ctx.skillPaths : (ctx.skillsPath ? [ctx.skillsPath] : []);
+  for (const skillPath of skillPaths) {
+    allowedInputDirs.push(resolve(skillPath));
   }
 
   const resolvedInputs: string[] = [];

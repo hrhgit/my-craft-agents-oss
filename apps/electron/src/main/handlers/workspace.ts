@@ -6,6 +6,7 @@ export const GUI_HANDLED_CHANNELS = [
   RPC_CHANNELS.remote.TEST_CONNECTION,
   RPC_CHANNELS.window.OPEN_WORKSPACE,
   RPC_CHANNELS.window.OPEN_SESSION_IN_NEW_WINDOW,
+  RPC_CHANNELS.window.OPEN_CHILD_SESSION_WINDOW,
   RPC_CHANNELS.window.CLOSE,
   RPC_CHANNELS.window.CONFIRM_CLOSE,
   RPC_CHANNELS.window.CANCEL_CLOSE,
@@ -19,7 +20,7 @@ export const GUI_HANDLED_CHANNELS = [
  * Returns the connected client or null + error message.
  */
 export async function connectToRemote(url: string, token: string, workspaceId?: string) {
-  const { WsRpcClient } = await import('../../transport/client')
+  const { WsRpcClient } = await import('@craft-agent/server-core/transport')
   const client = new WsRpcClient(url, {
     token,
     workspaceId,
@@ -109,6 +110,23 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
       initialDeepLink: deepLink,
     })
   })
+
+  // Open a pi child session in a new independent window.
+  // Desktop-only: the CLI has no windowing infrastructure. The workspace is
+  // resolved from the calling window so the renderer initialises with the
+  // correct workspace context (session list, transport routing, etc.).
+  server.handle(
+    RPC_CHANNELS.window.OPEN_CHILD_SESSION_WINDOW,
+    async (ctx, sessionId: string, options?: { title?: string; width?: number; height?: number }) => {
+      if (!windowManager) return
+      const workspaceId = windowManager.getWorkspaceForWindow(ctx.webContentsId!) ?? ''
+      windowManager.createChildSessionWindow(sessionId, {
+        ...options,
+        workspaceId,
+        parentWebContentsId: ctx.webContentsId ?? undefined,
+      })
+    },
+  )
 
   // Close the calling window (triggers close event which may be intercepted)
   server.handle(RPC_CHANNELS.window.CLOSE, (ctx) => {

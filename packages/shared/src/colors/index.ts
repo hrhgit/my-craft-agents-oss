@@ -13,11 +13,6 @@ export {
 
 export {
   resolveEntityColor,
-  parseSystemColor,
-  isSystemColorName,
-  isSystemColor,
-  deriveDarkVariant,
-  type ParsedSystemColor,
 } from './resolve.ts'
 
 export {

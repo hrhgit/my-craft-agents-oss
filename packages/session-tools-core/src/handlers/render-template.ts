@@ -10,8 +10,10 @@ import type { ToolResult } from '../types.ts';
 import { successResponse, errorResponse } from '../response.ts';
 import { loadTemplate, validateTemplateData } from '../templates/loader.ts';
 import { renderMustache } from '../templates/mustache.ts';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
+import { validateSlug } from '../validation.ts';
 
 export interface RenderTemplateArgs {
   source: string;
@@ -34,6 +36,29 @@ export async function handleRenderTemplate(
 ): Promise<ToolResult> {
   if (!ctx.dataPath) {
     return errorResponse('render_template requires dataPath in context.');
+  }
+
+  // Security: source comes from an untrusted tool call and is used to build a
+  // filesystem path. Reject anything that contains path separators (basename
+  // mismatch) or is not a bare slug, to prevent traversal outside sources/.
+  if (basename(args.source) !== args.source) {
+    return errorResponse(
+      `Invalid source "${args.source}": must not contain path separators.`
+    );
+  }
+  const sourceSlugResult = validateSlug(args.source);
+  if (!sourceSlugResult.valid) {
+    return errorResponse(
+      `Invalid source "${args.source}": source must be a lowercase alphanumeric slug (e.g., "linear").`
+    );
+  }
+
+  // Security: template is also untrusted and is concatenated into the template
+  // file path. Reject any value containing path separators.
+  if (basename(args.template) !== args.template) {
+    return errorResponse(
+      `Invalid template "${args.template}": must not contain path separators.`
+    );
   }
 
   const sourcePath = join(ctx.workspacePath, 'sources', args.source);
@@ -73,12 +98,23 @@ export async function handleRenderTemplate(
 
   const outputFileName = `${args.source}-${args.template}-${Date.now()}.html`;
   const outputPath = join(dataDir, outputFileName);
-  writeFileSync(outputPath, rendered, 'utf-8');
+
+  // Security: defense-in-depth — ensure the resolved output path stays within
+  // the session data directory before writing. source/template are already
+  // bare names, but this guards against any future bypass.
+  const resolvedOutput = resolve(dataDir, outputPath);
+  if (!isPathWithinDirectoryForCreation(resolvedOutput, dataDir)) {
+    return errorResponse(
+      `Output path escapes session data directory: ${outputPath}`
+    );
+  }
+
+  writeFileSync(resolvedOutput, rendered, 'utf-8');
 
   // Build response
   const lines: string[] = [];
   lines.push(`Rendered template: ${template.meta.name || args.template}`);
-  lines.push(`Output: ${outputPath}`);
+  lines.push(`Output: ${resolvedOutput}`);
   lines.push('');
   lines.push(`Use this absolute path as the "src" value in your html-preview block.`);
 

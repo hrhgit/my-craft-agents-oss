@@ -280,7 +280,8 @@ export const MOCK_LLM_CONNECTIONS: LlmConnectionWithStatus[] = [
   {
     slug: 'anthropic-builtin',
     name: 'Anthropic',
-    providerType: 'anthropic',
+    providerType: 'pi',
+    piAuthProvider: 'anthropic',
     authType: 'api_key',
     defaultModel: 'claude-opus-4-8',
     isAuthenticated: true,

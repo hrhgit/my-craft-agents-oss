@@ -7,14 +7,9 @@
 
 import type { Message, Session } from '../../shared/types'
 
-let messageIdCounter = 0
-
-/**
- * Generate a unique message ID
- */
-export function generateMessageId(): string {
-  return `msg-${Date.now()}-${++messageIdCounter}`
-}
+// Re-export canonical generateMessageId from @craft-agent/shared/protocol
+// (originally defined in @craft-agent/core/types/message.ts)
+export { generateMessageId } from '@craft-agent/shared/protocol'
 
 /**
  * Find message index by turnId

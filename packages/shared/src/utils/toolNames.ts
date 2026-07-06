@@ -38,6 +38,27 @@ export const PARENT_TASK_TOOLS: ReadonlySet<string> = new Set(['Task', 'Agent'])
 export const isParentTaskTool = (name: string): boolean => PARENT_TASK_TOOLS.has(name);
 
 /**
+ * Check whether a tool name is a parent task tool (Task/Agent) OR the TaskOutput tool.
+ * Used by safety-net logic that auto-completes orphaned child tools when a parent
+ * task or TaskOutput completes. TaskOutput is intentionally NOT added to
+ * PARENT_TASK_TOOLS (it is not a subagent launcher) — use this helper instead.
+ */
+export function isParentTaskOrTaskOutputTool(name: string): boolean {
+  return isParentTaskTool(name) || name === 'TaskOutput';
+}
+
+/**
+ * Infer whether a tool result represents an error. Some backends omit an explicit
+ * isError flag but still prefix the result text with [ERROR] / Error: / error:.
+ *
+ * @param result - The formatted tool result text to inspect.
+ * @param isErrorFlag - Optional explicit isError flag from the event.
+ */
+export function inferToolResultError(result: string, isErrorFlag?: boolean): boolean {
+  return isErrorFlag === true || /^\s*(\[ERROR\]|Error:|error:)/.test(result);
+}
+
+/**
  * Tools that should be hidden from the UI (purely internal state changes)
  */
 export const HIDDEN_TOOLS = new Set<string>([

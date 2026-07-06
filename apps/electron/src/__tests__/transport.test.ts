@@ -9,9 +9,9 @@ import { describe, test, expect, afterEach } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import { EVENT_BUFFER_MAX_SIZE, type MessageEnvelope } from '@craft-agent/shared/protocol'
-import { WsRpcServer } from '../transport/server'
-import { WsRpcClient } from '../transport/client'
-import { serializeEnvelope } from '../transport/codec'
+import { WsRpcServer } from '@craft-agent/server-core/transport'
+import { WsRpcClient } from '@craft-agent/server-core/transport'
+import { serializeEnvelope } from '@craft-agent/server-core/transport'
 
 // Helpers to manage cleanup
 let servers: WsRpcServer[] = []
@@ -63,8 +63,8 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<vo
 
 /** Create a server + connected client pair. */
 async function createPair(
-  serverOpts?: Partial<import('../transport/server').WsRpcServerOptions>,
-  clientOpts?: Partial<import('../transport/client').WsRpcClientOptions>,
+  serverOpts?: Partial<import('@craft-agent/server-core/transport').WsRpcServerOptions>,
+  clientOpts?: Partial<import('@craft-agent/server-core/transport').WsRpcClientOptions>,
 ) {
   let connectedClientId: string | null = null
   const server = trackServer(new WsRpcServer({
@@ -591,6 +591,39 @@ describe('auth', () => {
 
     await new Promise(r => setTimeout(r, 500))
     expect(client.isConnected).toBe(false)
+  })
+
+  test('server rejects handshake workspace claims that fail authorization', async () => {
+    const server = trackServer(new WsRpcServer({
+      host: '127.0.0.1',
+      port: 0,
+      authorizeWorkspace: ({ workspaceId }) => workspaceId !== 'blocked-workspace',
+    }))
+    await server.listen()
+
+    const client = trackClient(new WsRpcClient(`ws://127.0.0.1:${server.port}`, {
+      workspaceId: 'blocked-workspace',
+      autoReconnect: false,
+    }))
+    client.connect()
+
+    await waitForStatus(client, (s) => s === 'failed')
+    expect(client.isConnected).toBe(false)
+  })
+
+  test('server rejects unauthorized workspace switches', async () => {
+    const { server, clientId } = await createPair(
+      {
+        authorizeWorkspace: ({ workspaceId }) => workspaceId !== 'blocked-workspace',
+      },
+      {
+        clientCapabilities: ['workspace-switch-test'],
+      },
+    )
+
+    await expect(server.updateClientWorkspace(clientId, 'blocked-workspace')).rejects.toThrow('Workspace not authorized')
+    await server.updateClientWorkspace(clientId, 'allowed-workspace')
+    expect(server.findClientsWithCapability('workspace-switch-test', { workspaceId: 'allowed-workspace' })).toHaveLength(1)
   })
 })
 

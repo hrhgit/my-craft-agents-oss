@@ -3,8 +3,9 @@ import '../../../tests/setup/register-pi-model-resolver.ts'
 import {
   getDefaultModelsForConnection,
   getDefaultModelForConnection,
+  getMiniModel,
+  getSummarizationModel,
   isCompatProvider,
-  isAnthropicProvider,
   isPiProvider,
   toBedrockNativeId,
   fromBedrockNativeId,
@@ -18,14 +19,13 @@ import { ANTHROPIC_MODELS, getModelDisplayName, getModelContextWindow, getModelS
 // ============================================================
 
 describe('getDefaultModelsForConnection', () => {
-  it('anthropic returns ANTHROPIC_MODELS (ModelDefinition[])', () => {
-    const models = getDefaultModelsForConnection('anthropic')
-    expect(models).toEqual(ANTHROPIC_MODELS)
+  it('pi Anthropic auth returns Pi model definitions', () => {
+    const models = getDefaultModelsForConnection('pi', 'anthropic')
     expect(models.length).toBeGreaterThan(0)
-    // Verify they are ModelDefinition objects, not strings
     const first = models[0]!
     expect(typeof first).toBe('object')
     expect(typeof (first as any).id).toBe('string')
+    expect((first as any).id.startsWith('pi/')).toBe(true)
   })
 
   it('pi with piAuthProvider returns filtered models without deprecated Opus 4.6', () => {
@@ -51,12 +51,11 @@ describe('getDefaultModelsForConnection', () => {
 // ============================================================
 
 describe('getDefaultModelForConnection', () => {
-  it('returns first model ID for anthropic', () => {
-    const modelId = getDefaultModelForConnection('anthropic')
+  it('returns first model ID for Pi Anthropic auth', () => {
+    const modelId = getDefaultModelForConnection('pi', 'anthropic')
     expect(typeof modelId).toBe('string')
     expect(modelId.length).toBeGreaterThan(0)
-    // Should match the first ANTHROPIC_MODELS entry
-    expect(modelId).toBe(ANTHROPIC_MODELS[0]!.id)
+    expect(modelId.startsWith('pi/')).toBe(true)
   })
 
   // Regression: Pi 'anthropic' default must be present in its own model list
@@ -97,21 +96,11 @@ describe('isCompatProvider', () => {
   })
 
   it('returns false for anthropic', () => {
-    expect(isCompatProvider('anthropic')).toBe(false)
+    expect(isCompatProvider('anthropic' as any)).toBe(false)
   })
 
   it('returns false for pi', () => {
     expect(isCompatProvider('pi')).toBe(false)
-  })
-})
-
-describe('isAnthropicProvider', () => {
-  it('returns true for anthropic', () => {
-    expect(isAnthropicProvider('anthropic')).toBe(true)
-  })
-
-  it('returns false for pi', () => {
-    expect(isAnthropicProvider('pi')).toBe(false)
   })
 })
 
@@ -125,7 +114,7 @@ describe('isPiProvider', () => {
   })
 
   it('returns false for anthropic', () => {
-    expect(isPiProvider('anthropic')).toBe(false)
+    expect(isPiProvider('anthropic' as any)).toBe(false)
   })
 })
 
@@ -208,6 +197,22 @@ describe('Bedrock preferred defaults ordering', () => {
     const firstId = typeof models[0] === 'string' ? models[0] : (models[0] as any).id
     // First model should be a preferred model (claude-opus or claude-sonnet), not a deprecated one
     expect(firstId).toMatch(/claude-(opus|sonnet)-4/)
+  })
+})
+
+describe('Bedrock small model selection', () => {
+  it('prefers Haiku over large Claude models for mini and summarization work', () => {
+    const bedrockConnection = {
+      providerType: 'pi' as const,
+      piAuthProvider: 'amazon-bedrock',
+      models: [
+        'pi/claude-haiku-4-5',
+        'pi/claude-opus-4-8',
+      ],
+    }
+
+    expect(getMiniModel(bedrockConnection)).toBe('pi/claude-haiku-4-5')
+    expect(getSummarizationModel(bedrockConnection)).toBe('pi/claude-haiku-4-5')
   })
 })
 
@@ -325,8 +330,8 @@ describe('Claude Fable 5', () => {
     expect(isClaudeModel('claude-fable-5')).toBe(true)
   })
 
-  it('does NOT become the Anthropic default (Opus 4.8 stays default)', () => {
-    expect(getDefaultModelForConnection('anthropic')).toBe('claude-opus-4-8')
+  it('does NOT become the Pi Anthropic default (Opus 4.8 stays default)', () => {
+    expect(getDefaultModelForConnection('pi', 'anthropic')).toBe('pi/claude-opus-4-8')
   })
 
   it('round-trips through the Bedrock inference-profile mapping', () => {

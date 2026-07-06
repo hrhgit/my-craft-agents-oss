@@ -223,13 +223,13 @@ describe('qualifySkillName with filesystem resolution', () => {
     mkdirSync(join(workspaceRoot, 'skills', 'shared-skill'), { recursive: true })
     writeFileSync(join(workspaceRoot, 'skills', 'shared-skill', 'SKILL.md'), '---\nname: WS Shared\ndescription: test\n---\n')
 
-    // Create project skill: my-project/.agents/skills/proj-only/SKILL.md
-    mkdirSync(join(projectDir, '.agents', 'skills', 'proj-only'), { recursive: true })
-    writeFileSync(join(projectDir, '.agents', 'skills', 'proj-only', 'SKILL.md'), '---\nname: Proj Only\ndescription: test\n---\n')
+    // Create project skill: my-project/.pi/skills/proj-only/SKILL.md
+    mkdirSync(join(projectDir, '.pi', 'skills', 'proj-only'), { recursive: true })
+    writeFileSync(join(projectDir, '.pi', 'skills', 'proj-only', 'SKILL.md'), '---\nname: Proj Only\ndescription: test\n---\n')
 
     // Create project skill that also exists in workspace (for priority test)
-    mkdirSync(join(projectDir, '.agents', 'skills', 'shared-skill'), { recursive: true })
-    writeFileSync(join(projectDir, '.agents', 'skills', 'shared-skill', 'SKILL.md'), '---\nname: Proj Shared\ndescription: test\n---\n')
+    mkdirSync(join(projectDir, '.pi', 'skills', 'shared-skill'), { recursive: true })
+    writeFileSync(join(projectDir, '.pi', 'skills', 'shared-skill', 'SKILL.md'), '---\nname: Proj Shared\ndescription: test\n---\n')
   })
 
   afterAll(() => {

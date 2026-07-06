@@ -316,6 +316,3 @@ export function statusNeedsIconDownload(
   const iconPath = findStatusIcon(workspaceRootPath, status.id);
   return needsIconDownload(status.icon, iconPath);
 }
-
-// Re-export icon utilities for convenience
-export { isIconUrl } from '../utils/icon.ts';

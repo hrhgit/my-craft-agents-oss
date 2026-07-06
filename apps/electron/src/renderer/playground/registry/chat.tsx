@@ -205,7 +205,6 @@ const playgroundAppShellContext = {
   onOpenSettings: () => {},
   onOpenKeyboardShortcuts: () => {},
   onOpenStoredUserPreferences: () => {},
-  onReset: () => {},
   onSessionOptionsChange: () => {},
   onInputChange: () => {},
 }

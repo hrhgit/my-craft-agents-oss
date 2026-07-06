@@ -1,13 +1,13 @@
 /**
  * Pi 扩展事件桥接层
  *
- * 将 pi-agent-server 子进程通过 JSONL 转发的扩展事件（remoteui:request、
+ * 将 Pi RpcClient 转发的扩展事件（remoteui:request、
  * extension_notify、extension_widget、extension_command_registered）通过
  * eventSink 广播到渲染进程。
  *
  * 事件流：
- *   pi 扩展 → pi.events.emit("remoteui:request") → pi-agent-server 订阅
- *   → JSONL remoteui_request → PiAgent.handleLine → onExtensionEvent 回调
+ *   pi 扩展 → Pi RpcClient extension_ui_request
+ *   → PiAgent.handlePiClientEvent → onExtensionEvent 回调
  *   → 此桥接层 → eventSink → RPC_CHANNELS.extensions.EVENT → 渲染进程
  */
 
@@ -19,7 +19,7 @@ import type { EventSink } from '@craft-agent/server-core/transport'
  * 创建扩展事件转发回调。
  *
  * 由 SessionManager 在构造 backend config 时调用，将返回的回调传入
- * CoreBackendConfig.onExtensionEvent。当 PiAgent 收到子进程的扩展事件时，
+ * CoreBackendConfig.onExtensionEvent。当 PiAgent 收到 Pi RpcClient 的扩展事件时，
  * 通过此回调将事件广播到渲染进程。
  *
  * 对 remoteui_request 事件注入 sessionId，以便渲染进程在回传响应时

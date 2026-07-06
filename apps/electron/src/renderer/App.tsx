@@ -10,11 +10,11 @@ import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOp
 import { generateMessageId } from '../shared/types'
 import { useEventProcessor } from './event-processor'
 import type { AgentEvent, Effect } from './event-processor'
+import { normalizeSessionEvent } from './event-processor/normalize-session-event'
 import { AppShell } from '@/components/app-shell/AppShell'
 import type { AppShellContextType } from '@/context/AppShellContext'
 import { OnboardingWizard, ReauthScreen } from '@/components/onboarding'
 import { WorkspacePicker } from '@/components/workspace'
-import { ResetConfirmationDialog } from '@/components/ResetConfirmationDialog'
 import { SplashScreen } from '@/components/SplashScreen'
 import { TooltipProvider } from '@craft-agent/ui'
 import { FocusProvider } from '@/context/FocusContext'
@@ -23,7 +23,8 @@ import { DismissibleLayerProvider } from '@/context/DismissibleLayerContext'
 import { useWindowCloseHandler } from '@/hooks/useWindowCloseHandler'
 import { useOnboarding } from '@/hooks/useOnboarding'
 import { useNotifications } from '@/hooks/useNotifications'
-import { useSession } from '@/hooks/useSession'
+import { useSessionSelectionStore } from '@/hooks/useSession'
+import { createInitialState } from '@/hooks/useMultiSelect'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 import { NavigationProvider } from '@/contexts/NavigationContext'
 import { navigate, routes } from './lib/navigate'
@@ -33,6 +34,7 @@ import { coerceInputText } from './lib/input-text'
 import { getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
 import { formatSessionLoadFailure, shouldTreatSessionLoadFailureAsTransportFallback } from './lib/session-load'
 import { extractWorkspaceSlugFromPath } from '@craft-agent/shared/utils/workspace-slug'
+import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES } from '@craft-agent/shared/utils'
 import { DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
 import { initRendererPerf } from './lib/perf'
 import {
@@ -315,8 +317,6 @@ export default function App() {
 
   // Theme state (app-level only)
   const [appTheme, setAppTheme] = useState<ThemeOverrides | null>(null)
-  // Reset confirmation dialog
-  const [showResetDialog, setShowResetDialog] = useState(false)
 
   // Auto-update state
   const updateChecker = useUpdateChecker()
@@ -646,11 +646,6 @@ export default function App() {
     }
   }, [])
 
-  // Reauth reset handler - open reset confirmation dialog
-  const handleReauthReset = useCallback(() => {
-    setShowResetDialog(true)
-  }, [])
-
   // Check auth state and get window's workspace ID on mount
   useEffect(() => {
     const initialize = async () => {
@@ -685,7 +680,7 @@ export default function App() {
   }, [])
 
   // Session selection state
-  const [sessionSelection, setSession] = useSession()
+  const { state: sessionSelection, setState: setSession } = useSessionSelectionStore()
 
   // Notification system - shows native OS notifications and badge count
   const handleNavigateToSession = useCallback((sessionId: string) => {
@@ -909,7 +904,7 @@ export default function App() {
         return
       }
 
-      const agentEvent = event as unknown as AgentEvent
+      const agentEvent = normalizeSessionEvent(event)
 
       // Track activity for stale session watchdog
       trackSessionActivity(sessionId)
@@ -1206,10 +1201,48 @@ export default function App() {
       let processedAttachments: FileAttachment[] | undefined
 
       if (attachments?.length) {
+        const totalAttachmentBytes = attachments.reduce((sum, attachment) => sum + (attachment.size || 0), 0)
+        if (totalAttachmentBytes > ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES) {
+          throw new Error(`Attachments exceed the ${Math.round(ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES / 1024 / 1024)} MiB per-message limit`)
+        }
+        const oversized = attachments.find(attachment => (attachment.size || 0) > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES)
+        if (oversized) {
+          throw new Error(`"${oversized.name}" exceeds the ${Math.round(ATTACHMENT_SINGLE_FILE_LIMIT_BYTES / 1024 / 1024)} MiB single-file limit`)
+        }
+
+        const isAbsoluteLocalPath = (path: string) =>
+          /^(?:[a-zA-Z]:[\\/]|\/|\\\\)/.test(path)
+        const isPathOnlyAttachment = (attachment: FileAttachment) =>
+          !attachment.base64 &&
+          !attachment.text &&
+          typeof attachment.path === 'string' &&
+          isAbsoluteLocalPath(attachment.path)
+
+        const attachmentsForStorage = windowRemoteWorkspaceId
+          ? await Promise.all(attachments.map(async (attachment) => {
+              if (!isPathOnlyAttachment(attachment)) return attachment
+              try {
+                const materialized = await window.electronAPI.readUserAttachment(attachment.path)
+                if (!materialized) return attachment
+                return {
+                  ...materialized,
+                  type: attachment.type || materialized.type,
+                  name: attachment.name || materialized.name,
+                  mimeType: attachment.mimeType || materialized.mimeType,
+                  size: attachment.size || materialized.size,
+                  thumbnailBase64: attachment.thumbnailBase64 ?? materialized.thumbnailBase64,
+                }
+              } catch (error) {
+                console.warn(`Failed to materialize local attachment "${attachment.name}" for remote upload:`, error)
+                return attachment
+              }
+            }))
+          : attachments
+
         // Store each attachment to disk (generates thumbnails, converts Office→markdown)
         // Use allSettled so one failure doesn't kill all attachments
         const storeResults = await Promise.allSettled(
-          attachments.map(a => window.electronAPI.storeAttachment(sessionId, a))
+          attachmentsForStorage.map(a => window.electronAPI.storeAttachment(sessionId, a))
         )
 
         // Filter successful stores, warn about failures
@@ -1218,9 +1251,9 @@ export default function App() {
         storeResults.forEach((result, i) => {
           if (result.status === 'fulfilled') {
             storedAttachments!.push(result.value)
-            successfulAttachments.push(attachments[i])
+            successfulAttachments.push(attachmentsForStorage[i])
           } else {
-            console.warn(`Failed to store attachment "${attachments[i].name}":`, result.reason)
+            console.warn(`Failed to store attachment "${attachmentsForStorage[i].name}":`, result.reason)
           }
         })
 
@@ -1358,7 +1391,7 @@ export default function App() {
         ]
       }))
     }
-  }, [sessionOptions, updateSessionById, skills, sources, windowWorkspaceId])
+  }, [sessionOptions, updateSessionById, skills, sources, windowWorkspaceId, windowRemoteWorkspaceId])
 
   /**
    * Unified handler for all session option changes.
@@ -1667,36 +1700,6 @@ export default function App() {
     navigate(routes.view.settings('preferences'))
   }, [])
 
-  // Show reset confirmation dialog
-  const handleReset = useCallback(() => {
-    setShowResetDialog(true)
-  }, [])
-
-  // Execute reset after user confirms in dialog
-  const executeReset = useCallback(async () => {
-    try {
-      await window.electronAPI.logout()
-      // Reset all state
-      // Clear session atoms - initialize with empty array clears all per-session atoms
-      initializeSessions([])
-      setWorkspaces([])
-      setWindowWorkspaceId(null)
-      // Reset setupNeeds to force fresh onboarding start
-      setSetupNeeds({
-        needsBillingConfig: true,
-        needsCredentials: true,
-        isFullyConfigured: false,
-      })
-      // Reset onboarding hook state
-      onboarding.reset()
-      setAppState('onboarding')
-    } catch (error) {
-      console.error('Reset failed:', error)
-    } finally {
-      setShowResetDialog(false)
-    }
-  }, [onboarding, initializeSessions])
-
   // Handle workspace selection
   // - Default: switch workspace in same window (in-window switching)
   // - With openInNewWindow=true: open in new window (or focus existing)
@@ -1718,7 +1721,7 @@ export default function App() {
       // 3. Clear selected session - the old session belongs to the previous workspace
       // and should not remain selected when switching to a new workspace.
       // This prevents showing stale session data from the wrong workspace.
-      setSession({ selected: null })
+      setSession(createInitialState())
 
       // 4. Clear pending permissions/credentials (not relevant to new workspace)
       setPendingPermissions(new Map())
@@ -1812,7 +1815,6 @@ export default function App() {
     onOpenSettings: handleOpenSettings,
     onOpenKeyboardShortcuts: handleOpenKeyboardShortcuts,
     onOpenStoredUserPreferences: handleOpenStoredUserPreferences,
-    onReset: handleReset,
     // Session options
     onSessionOptionsChange: handleSessionOptionsChange,
     onInputChange: handleInputChange,
@@ -1854,7 +1856,6 @@ export default function App() {
     handleOpenSettings,
     handleOpenKeyboardShortcuts,
     handleOpenStoredUserPreferences,
-    handleReset,
     handleSessionOptionsChange,
     handleInputChange,
     handleAttachmentsChange,
@@ -1902,12 +1903,6 @@ export default function App() {
           <WindowCloseHandler />
           <ReauthScreen
             onLogin={handleReauthLogin}
-            onReset={handleReauthReset}
-          />
-          <ResetConfirmationDialog
-            open={showResetDialog}
-            onConfirm={executeReset}
-            onCancel={() => setShowResetDialog(false)}
           />
         </ModalProvider>
       </DismissibleLayerProvider>
@@ -2021,11 +2016,6 @@ export default function App() {
                 />
               )}
             </div>
-            <ResetConfirmationDialog
-              open={showResetDialog}
-              onConfirm={executeReset}
-              onCancel={() => setShowResetDialog(false)}
-            />
           </div>
 
           {/* File preview overlay — rendered by the link interceptor when a previewable file is clicked */}

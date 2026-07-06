@@ -6,13 +6,13 @@
  * Naming convention:
  * - PiAgent: Pi unified API implementation
  * - AgentBackend: Interface that all agents implement
- * - createAgent: Factory function to create agents
+ * - createBackend: Factory function to create agents
  *
  * Usage:
  * ```typescript
- * import { createAgent, type AgentBackend } from '@craft-agent/shared/agent/backend';
+ * import { createBackend, type AgentBackend } from '@craft-agent/shared/agent/backend';
  *
- * const agent = createAgent({
+ * const agent = createBackend({
  *   provider: 'pi',
  *   workspace: myWorkspace,
  *   model: 'pi/claude-sonnet-4-6',
@@ -27,7 +27,7 @@
 // Core types
 export type {
   AgentBackend,
-  AgentProvider,
+  ModelProvider,
   CoreBackendConfig,
   BackendConfig,
   BackendHostRuntimeContext,
@@ -50,32 +50,22 @@ export { AbortReason } from './types.ts';
 // Factory
 export {
   createBackend,
-  createAgent,
-  detectProvider,
-  getAvailableProviders,
-  isProviderAvailable,
   // LLM Connection support
-  connectionTypeToProvider,
-  connectionAuthTypeToBackendAuthType,
   resolveSessionConnection,
   resolveBackendContext,
   resolveSetupTestConnectionHint,
-  createConfigFromConnection,
   createBackendFromConnection,
   createBackendFromResolvedContext,
   initializeBackendHostRuntime,
   resolveBackendHostTooling,
   fetchBackendModels,
   validateStoredBackendConnection,
-  providerTypeToAgentProvider,
-  // Capabilities and utilities
-  BACKEND_CAPABILITIES,
+  AGENT_PROVIDER,
+  // Utilities
   resolveModelForProvider,
   getDefaultAuthType,
   cleanupSourceRuntimeArtifacts,
   testBackendConnection,
-  // Connection validation
-  validateConnection,
 } from './factory.ts';
 
 // Shared infrastructure
@@ -86,4 +76,4 @@ export { EventQueue } from './event-queue.ts';
 export { PiEventAdapter } from './pi/event-adapter.ts';
 
 // Agent implementations are imported directly by factory.ts
-// Consumers should use createAgent() / createBackend() instead of concrete classes
+// Consumers should use createBackend() instead of concrete classes

@@ -51,7 +51,7 @@ function firstUsefulLine(lines: string[]): string {
 }
 
 function isVisibleBySettings(name: BackgroundAgentName, settings: PiExtensionSettings | null): boolean {
-  // 扩展启停已迁移到 pi settings.json，craft 侧仅检查全局开关与 GUI 徽章可见性
+  // craft 侧仅检查全局开关与 GUI 徽章可见性
   if (!settings || settings.enabled === false) return false
   if (name === 'trace-audit') {
     return settings.traceAudit.showStatusBadge !== false

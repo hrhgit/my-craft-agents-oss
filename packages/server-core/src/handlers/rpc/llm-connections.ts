@@ -1,5 +1,5 @@
 import { RPC_CHANNELS, type LlmConnectionSetup } from '@craft-agent/shared/protocol'
-import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus, toBedrockNativeId, deriveBedrockRegionPrefix, type PiGlobalProvider, type PiGlobalSettings, type FetchedEndpointModel } from '@craft-agent/shared/config'
+import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus, toBedrockNativeId, deriveBedrockRegionPrefix, type PiGlobalProvider, type PiGlobalSettings, type FetchedEndpointModel } from '@craft-agent/shared/config'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { setSetupDeferred } from '@craft-agent/shared/config/storage'
 import {
@@ -68,7 +68,8 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       if (setup.baseUrl !== undefined) {
         updates.baseUrl = setup.baseUrl?.trim() || undefined
 
-        if (isAnthropicProvider(connection.providerType) && connection.authType !== 'oauth') {
+        const isAnthropicAuthConnection = connection.piAuthProvider === 'anthropic'
+        if (isAnthropicAuthConnection && connection.authType !== 'oauth') {
           if (hasConfiguredBaseUrl) {
             updates.providerType = 'pi_compat'
             updates.authType = 'api_key_with_endpoint'
@@ -109,7 +110,6 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         if (branch.name !== undefined) updates.name = branch.name
         if (branch.piAuthProvider !== undefined) updates.piAuthProvider = branch.piAuthProvider
 
-        // Brand-name override on first setup only (user-renamed connections aren't clobbered on re-save).
         if (isNewConnection && !updates.name && setup.baseUrl?.toLowerCase().includes('manifest.build')) {
           updates.name = 'Manifest'
         }
@@ -418,9 +418,8 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       try {
         savePiGlobalProvider(args.key, args.provider)
         pushTyped(server, RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
-        // Mirror the change into ~/.craft-agent/config.json + credentials.enc
-        // so the existing AiSettingsPage / CompactModelSelector pick it up.
-        void runPiGlobalSync('saveGlobalProvider')
+        // Sync providers/credentials (thin wrapper: reads ~/.pi/agent/, pi credentials live in auth.json).
+        void serializePiSettingsWrite(() => runPiGlobalSync('saveGlobalProvider'))
         return { success: true }
       } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }
@@ -433,9 +432,11 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     async (_ctx, key: string): Promise<{ success: boolean; error?: string }> => {
       const { deletePiGlobalProvider } = await import('@craft-agent/shared/config')
       try {
-        deletePiGlobalProvider(key)
+        await serializePiSettingsWrite(async () => {
+          await deletePiGlobalProvider(key)
+          await runPiGlobalSync('deleteGlobalProvider')
+        })
         pushTyped(server, RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
-        void runPiGlobalSync('deleteGlobalProvider')
         return { success: true }
       } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }
@@ -451,9 +452,11 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     ): Promise<{ success: boolean; error?: string }> => {
       const { setPiGlobalDefault } = await import('@craft-agent/shared/config')
       try {
-        setPiGlobalDefault(args.provider, args.model, args.thinkingLevel)
+        await serializePiSettingsWrite(async () => {
+          await setPiGlobalDefault(args.provider, args.model, args.thinkingLevel)
+          await runPiGlobalSync('setGlobalDefault')
+        })
         pushTyped(server, RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
-        void runPiGlobalSync('setGlobalDefault')
         return { success: true }
       } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }
@@ -482,14 +485,26 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // ============================================================
   //
   // ~/.pi/agent/ is the single source of truth for "pure Pi + custom provider"
-  // mode. On startup we mirror it into ~/.craft-agent/config.json +
-  // credentials.enc so the existing AiSettingsPage / CompactModelSelector /
-  // PiAgent subprocess flow keep working unchanged. The same sync runs after
-  // every pi:saveGlobalProvider / deleteGlobalProvider / setGlobalDefault
-  // handler and broadcasts llmConnections.CHANGED so the UI refreshes.
+  // mode. The sync is a thin wrapper that reads ~/.pi/agent/ (pi credentials
+  // live in auth.json). It runs on
+  // startup and after every pi:saveGlobalProvider / deleteGlobalProvider /
+  // setGlobalDefault handler, broadcasting llmConnections.CHANGED so the UI refreshes.
   const broadcastLlmConnectionsChanged = () => {
     pushTyped(server, RPC_CHANNELS.llmConnections.CHANGED, { to: 'all' })
   }
+
+  // Serialize operations that write ~/.pi/agent/settings.json. Both
+  // runPiGlobalSync (auto-fix path) and writeBackToPiGlobal call
+  // setPiGlobalDefault which does a read-modify-write on settings.json;
+  // without serialization, rapid RPCs (e.g. set-default then save-provider)
+  // can interleave and lose updates.
+  let piSettingsWriteChain: Promise<unknown> = Promise.resolve()
+  const serializePiSettingsWrite = <T>(fn: () => Promise<T>): Promise<T> => {
+    const result = piSettingsWriteChain.then(fn)
+    piSettingsWriteChain = result.catch(() => {})
+    return result
+  }
+
   const runPiGlobalSync = async (reason: string): Promise<void> => {
     try {
       const result = await syncPiGlobalToLlmConnections()
@@ -498,10 +513,12 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         return
       }
       deps.platform.logger?.info(
-        `[pi-global-sync] ${reason}: synced=${result.synced} removed=${result.removed} changed=${result.changed}`,
+        `[pi-global-sync] ${reason}: changed=${result.changed}`,
       )
+      // Always broadcast so UIs watching llmConnections.CHANGED refresh after
+      // a pi provider/default change (not only when auto-fix ran).
+      broadcastLlmConnectionsChanged()
       if (result.changed) {
-        broadcastLlmConnectionsChanged()
         // Reinitialize auth so env vars / summarization model match the new default
         try {
           await sessionManager.reinitializeAuth()
@@ -514,7 +531,8 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   }
   // Fire-and-forget on startup — handlers are already registered when this runs.
-  void runPiGlobalSync('startup')
+  // Serialized to avoid racing with concurrent writeBackToPiGlobal calls.
+  void serializePiSettingsWrite(() => runPiGlobalSync('startup'))
 
   /**
    * Write-back helper: when the user switches the default provider/model or
@@ -539,7 +557,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         deps.platform.logger?.warn(`[pi-global-writeback] no model to persist for "${providerKey}"`)
         return
       }
-      setPiGlobalDefault(providerKey, model, settings.defaultThinkingLevel)
+      await setPiGlobalDefault(providerKey, model, settings.defaultThinkingLevel)
       pushTyped(server, RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
       deps.platform.logger?.info(`[pi-global-writeback] ~/.pi/agent/settings.json updated: provider=${providerKey}, model=${model}`)
     } catch (err) {
@@ -631,7 +649,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       // Write-back: if this is a pi-* connection, mirror defaultModel into
       // ~/.pi/agent/settings.json so the Pi CLI / PiProvidersSettingsPage stay
       // in sync with the AiSettingsPage edit.
-      void writeBackToPiGlobal(connection.slug, connection.defaultModel)
+      void serializePiSettingsWrite(() => writeBackToPiGlobal(connection.slug, connection.defaultModel))
       return { success: true }
     } catch (error) {
       deps.platform.logger?.error('Failed to save LLM connection:', error)
@@ -703,7 +721,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         await sessionManager.reinitializeAuth()
         // Write-back: if switching to a pi-* connection, update ~/.pi/agent/settings.json
         // so the Pi CLI / PiProvidersSettingsPage reflect the same default provider.
-        void writeBackToPiGlobal(slug)
+        void serializePiSettingsWrite(() => writeBackToPiGlobal(slug))
       }
       return { success, error: success ? undefined : 'Connection not found' }
     } catch (error) {

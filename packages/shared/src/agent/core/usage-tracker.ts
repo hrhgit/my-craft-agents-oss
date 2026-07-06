@@ -288,10 +288,3 @@ export class UsageTracker {
     this.config.onDebug?.(`[UsageTracker] ${message}`);
   }
 }
-
-/**
- * Create a new UsageTracker.
- */
-export function createUsageTracker(config?: UsageTrackerConfig): UsageTracker {
-  return new UsageTracker(config);
-}

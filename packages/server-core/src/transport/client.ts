@@ -13,8 +13,8 @@ import {
   PROTOCOL_VERSION,
   REQUEST_TIMEOUT_MS,
   SEQUENCE_ACK_INTERVAL_MS,
-  isErrorCode,
-  type ErrorCode,
+  isTransportErrorCode,
+  type TransportErrorCode,
   type MessageEnvelope,
 } from '@craft-agent/shared/protocol'
 import type { RpcClient } from './types'
@@ -677,7 +677,7 @@ export class WsRpcClient implements RpcClient {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const rawCode = (err as { code?: unknown } | null)?.code
-      const code: ErrorCode = isErrorCode(rawCode) ? rawCode : 'HANDLER_ERROR'
+      const code: TransportErrorCode = isTransportErrorCode(rawCode) ? rawCode : 'HANDLER_ERROR'
       const response: MessageEnvelope = {
         id: envelope.id,
         type: 'response',

@@ -12,7 +12,7 @@
  * - ambiguityDictionary（pi 原生歧义词典）
  *
  * 保留字段均为 craft GUI 专属概念，pi settings.json 无对应项：
- * - `enabled`：全局 pi 扩展加载总开关（控制 agentDir 解析）
+ * - `enabled`：控制 pi 扩展相关 UI 组件的可见性（不影响子进程扩展加载）
  * - `delegatePromptAutomation`：automation 委托开关
  * - `managedAgentDir`：测试覆盖用的 agentDir
  * - `subagent.reviewEnabled` / `subagent.reviewModel`：craft 专属 review 流
@@ -185,7 +185,7 @@ export const PI_EXTENSION_MANIFEST: PiExtensionManifestEntry[] = [
  * 见文件顶部说明。
  */
 export interface PiExtensionSettings {
-  /** 全局 pi 扩展加载总开关。为 false 时回退到隔离模式。 */
+  /** 全局 pi 扩展 UI 可见性总开关。不影响子进程扩展加载（子进程始终加载全局 pi 扩展）。 */
   enabled: boolean;
   /** 是否将 automation 的 prompt 触发执行委托给 pi prompt-automation 扩展。 */
   delegatePromptAutomation: boolean;

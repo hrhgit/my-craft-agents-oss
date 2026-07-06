@@ -6,11 +6,11 @@
  *
  * 事件流：
  *   pi 扩展 ctx.ui.notify(message, level)
- *   → pi-agent-server 子进程 createBridgeUIContext().notify()
- *   → JSONL extension_notify → PiAgent.handleLine → onExtensionEvent
- *   → pi-extension-bridge 桥接层 → eventSink
- *   → RPC_CHANNELS.extensions.EVENT → renderer 的 onExtensionEvent 监听器
- *   → 此 hook 调用 toast 显示通知
+ *     Pi RpcClient createBridgeUIContext().notify()
+ *     JSONL extension_notify   PiAgent.handleLine   onExtensionEvent
+ *     pi-extension-bridge 桥接层   eventSink
+ *     RPC_CHANNELS.extensions.EVENT   renderer 的 onExtensionEvent 监听器
+ *     此 hook 调用 toast 显示通知
  *
  * 说明：
  * - widget 渲染由 ExtensionWidgetZone 组件通过 `extension_widget` 事件渲染，
@@ -25,7 +25,7 @@ import { toast } from 'sonner'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
 
 /**
- * notificationType → sonner toast 方法映射。
+ * notificationType   sonner toast 方法映射。
  * 缺省（undefined）按 info 处理。
  */
 function showToast(message: string, level: 'info' | 'warning' | 'error' | undefined): void {

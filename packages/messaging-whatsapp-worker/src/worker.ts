@@ -25,6 +25,10 @@ import {
 import { bareJid, rememberSentId } from './filter'
 import { processUpsertMessage } from './upsert'
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 /**
  * Build-time constants injected by `scripts/build-wa-worker.ts`
  * via esbuild `--define`. At dev-time (no bundle) they fall back to the
@@ -196,7 +200,7 @@ async function loadBaileys(): Promise<BaileysModule | null> {
     const mod = (await import('@whiskeysockets/baileys')) as unknown as BaileysModule
     return mod
   } catch (err) {
-    log('baileys load failed:', err instanceof Error ? err.message : String(err))
+    log('baileys load failed:', errorMessage(err))
     return null
   }
 }
@@ -233,7 +237,7 @@ async function startSession(
     emit({
       type: 'unavailable',
       reason: 'auth_state_error',
-      message: `Cannot create auth state dir: ${err instanceof Error ? err.message : String(err)}`,
+      message: `Cannot create auth state dir: ${errorMessage(err)}`,
     })
     process.exit(0)
   }
@@ -337,7 +341,7 @@ async function startSession(
         try {
           session.sock = bootSock()
         } catch (err) {
-          log('bootSock threw during reconnect:', err instanceof Error ? err.message : String(err))
+          log('bootSock threw during reconnect:', errorMessage(err))
           // Let the next close event drive the backoff — or if the
           // throw is synchronous and terminal, the attempts cap will
           // stop the loop.
@@ -379,7 +383,7 @@ async function startSession(
               log,
             )
           } catch (err) {
-            log(`upsert error: ${err instanceof Error ? err.message : String(err)}`)
+            log(`upsert error: ${errorMessage(err)}`)
           }
         }
       })()
@@ -417,7 +421,7 @@ async function handleCommand(cmd: WorkerCommand): Promise<void> {
         cmd.selfChatMode ?? false,
         cmd.responsePrefix ?? DEFAULT_RESPONSE_PREFIX,
       ).catch((err) => {
-        emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+        emit({ type: 'error', message: errorMessage(err) })
       })
       return
     }
@@ -430,7 +434,7 @@ async function handleCommand(cmd: WorkerCommand): Promise<void> {
         const code = await session.sock.requestPairingCode(cmd.phoneNumber)
         emit({ type: 'pairing_code', code })
       } catch (err) {
-        emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+        emit({ type: 'error', message: errorMessage(err) })
       }
       return
     }
@@ -449,7 +453,7 @@ async function handleCommand(cmd: WorkerCommand): Promise<void> {
           type: 'send_result',
           id: cmd.id,
           ok: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         })
       }
       return
@@ -477,7 +481,7 @@ async function handleCommand(cmd: WorkerCommand): Promise<void> {
           type: 'send_result',
           id: cmd.id,
           ok: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         })
       }
       return

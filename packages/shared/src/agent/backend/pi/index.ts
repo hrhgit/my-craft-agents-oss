@@ -1,8 +1,8 @@
 /**
  * Pi Agent Module
  *
- * Exports the PiAgent subprocess client and related adapters/constants.
- * The PiAgent communicates with a pi-agent-server subprocess via JSONL.
+ * Exports the PiAgent RpcClient adapter and related adapters/constants.
+ * The PiAgent communicates with Pi through its public RpcClient.
  *
  * Note: The main PiAgent class is at ../pi-agent.ts. This index re-exports
  * it alongside the event adapter / constants for convenience.

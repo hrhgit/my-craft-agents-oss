@@ -8,6 +8,7 @@ import type { BackgroundTask } from '../ActiveTasksBar'
 import { ActiveOptionBadges } from '../ActiveOptionBadges'
 import { InputContainer } from './InputContainer'
 import { InputErrorBoundary } from './InputErrorBoundary'
+import { isPiReadOnlySessionId } from '../../../../shared/pi-session-route'
 
 interface ChatInputZoneProps {
   compactMode?: boolean
@@ -51,7 +52,7 @@ export function ChatInputZone({
   const [autoOpenLabelId, setAutoOpenLabelId] = React.useState<string | null>(null)
   const shouldShowOptionBadges = showOptionBadges ?? !compactMode
   const inputResetKey = `${sessionId}::${inputProps.structuredInput?.type ?? 'freeform'}`
-  const isPiReadOnlySession = sessionId.startsWith('pi-')
+  const isPiReadOnlySession = isPiReadOnlySessionId(sessionId)
 
   const handleClearDraft = React.useCallback(() => {
     inputProps.onInputChange?.('')

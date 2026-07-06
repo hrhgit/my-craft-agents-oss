@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { classifyExternalUrl, formatBlockedUrlError } from '@craft-agent/shared/utils/url-safety'
 import { RPC_CHANNELS, type WindowCloseRequestSource } from '../shared/types'
+import { toPiReadOnlySessionRoute } from '../shared/pi-session-route'
 import type { SavedWindow } from './window-state'
 
 // Vite dev server URL for hot reload
@@ -40,6 +41,8 @@ function getWindowsBackgroundMaterial(): 'mica' | 'acrylic' | undefined {
 interface ManagedWindow {
   window: BrowserWindow
   workspaceId: string
+  /** If set, this window's title is pinned to this string (e.g. child session name) */
+  customTitle?: string
 }
 
 export interface CreateWindowOptions {
@@ -51,12 +54,35 @@ export interface CreateWindowOptions {
   initialDeepLink?: string
   /** Full URL to restore from saved state (preserves route/query params) */
   restoreUrl?: string
+  /** Custom window width (overrides focused/default size) */
+  width?: number
+  /** Custom window height (overrides focused/default size) */
+  height?: number
+  /** Custom window title — overrides the workspace-name title policy */
+  customTitle?: string
+}
+
+/** Options for creating a child session window (pi session tree branch) */
+export interface CreateChildSessionWindowOptions {
+  /** Workspace ID to associate with the window (defaults to calling window's workspace) */
+  workspaceId?: string
+  /** Window title (defaults to the sessionId) */
+  title?: string
+  /** Window width (default 800) */
+  width?: number
+  /** Window height (default 600) */
+  height?: number
+  /** webContents.id of the parent window, so the child can be closed when the parent closes */
+  parentWebContentsId?: number
 }
 
 export class WindowManager {
   private windows: Map<number, ManagedWindow> = new Map()  // webContents.id → ManagedWindow
   private focusedModeWindows: Set<number> = new Set()  // webContents.id of windows in focused mode
   private pendingCloseTimeouts: Map<number, NodeJS.Timeout> = new Map()  // Fallback timeouts for window close
+  // F11: parent webContents.id → set of child window webContents.ids, so that
+  // closing a parent window cascades to its child session windows.
+  private childWindowsByParent: Map<number, Set<number>> = new Map()
   private eventSink: ((channel: string, target: import('@craft-agent/shared/protocol').PushTarget, ...args: any[]) => void) | null = null
   private clientResolver: ((wcId: number) => string | undefined) | null = null
   private keyboardCloseIntents: Set<number> = new Set()  // webContents.id flagged by Cmd/Ctrl+W before close
@@ -173,10 +199,13 @@ export class WindowManager {
   private refreshWindowTitles(): void {
     const defaultTitle = app.getName()
     const showWorkspaceName = this.windows.size > 1
-    for (const { window, workspaceId } of this.windows.values()) {
+    for (const { window, workspaceId, customTitle } of this.windows.values()) {
       if (window.isDestroyed()) continue
       let title = defaultTitle
-      if (showWorkspaceName && workspaceId) {
+      if (customTitle) {
+        // Child session windows always show their pinned title
+        title = customTitle
+      } else if (showWorkspaceName && workspaceId) {
         try {
           const ws = getWorkspaceByNameOrId(workspaceId)
           if (ws?.name) title = ws.name
@@ -193,7 +222,7 @@ export class WindowManager {
    * @param options - Window creation options
    */
   createWindow(options: CreateWindowOptions): BrowserWindow {
-    const { workspaceId, focused = false, initialDeepLink, restoreUrl } = options
+    const { workspaceId, focused = false, initialDeepLink, restoreUrl, customTitle } = options
 
     // Load platform-specific app icon
     // In packaged app, resources are at dist/resources/ (same level as __dirname)
@@ -216,8 +245,8 @@ export class WindowManager {
     }
 
     // Use smaller window size for focused mode (single session view)
-    const windowWidth = focused ? 900 : 1400
-    const windowHeight = focused ? 700 : 900
+    const windowWidth = options.width ?? (focused ? 900 : 1400)
+    const windowHeight = options.height ?? (focused ? 700 : 900)
 
     // Platform-specific window options
     const isMac = process.platform === 'darwin'
@@ -310,7 +339,7 @@ export class WindowManager {
     // Store the window mapping BEFORE loadURL — bootstrap preload uses
     // __get-workspace-id (via sendSync) which reads this map during eval.
     const webContentsId = window.webContents.id
-    this.windows.set(webContentsId, { window, workspaceId })
+    this.windows.set(webContentsId, { window, workspaceId, customTitle })
 
     // Apply window-title policy now that the map size reflects this window —
     // covers both the new window and any existing windows that should switch
@@ -509,10 +538,97 @@ export class WindowManager {
       // name back to app name when the count drops from 2 → 1.
       this.refreshWindowTitles()
       windowLog.info(`Window closed for workspace ${workspaceId}`)
+
+      // F11: Cascade close — when a parent window closes, close all of its
+      // child session windows so they don't keep rendering a (now-stale)
+      // parent session's data. Child windows closing on their own do not
+      // affect the parent (handled by the child's own 'closed' listener).
+      const childIds = this.childWindowsByParent.get(webContentsId)
+      if (childIds && childIds.size > 0) {
+        for (const childId of childIds) {
+          const managed = this.windows.get(childId)
+          if (managed && !managed.window.isDestroyed()) {
+            managed.window.close()
+          }
+        }
+        this.childWindowsByParent.delete(webContentsId)
+      }
     })
 
     windowLog.info(`Created window for workspace ${workspaceId} (focused: ${focused})`)
     return window
+  }
+
+  /**
+   * Create a new window for a pi session tree child session.
+   *
+   * Child session windows are independent BrowserWindows that load the same
+   * renderer as the main window but navigate directly to the child session's
+   * ChatPage via a deep link. They reuse the existing preload, webPreferences,
+   * and all lifecycle handling (close interception, theme sync, URL safety)
+   * from `createWindow` — only the defaults differ:
+   *
+   * - Smaller default size (800×600)
+   * - Title bar shows the child session name (pinned, not workspace name)
+   * - Focused mode (no sidebars)
+   *
+   * Multiple child session windows can coexist. Closing one does not affect
+   * the main window or other child session windows.
+   *
+   * @param sessionId - The pi child session ID to display, with or without the `pi-` read-only route prefix
+   * @param options   - Optional window configuration
+   */
+  createChildSessionWindow(sessionId: string, options?: CreateChildSessionWindowOptions): BrowserWindow {
+    const {
+      workspaceId = '',
+      title,
+      width = 800,
+      height = 600,
+      parentWebContentsId,
+    } = options ?? {}
+
+    // Navigate through the Pi read-only route. Pi child sessions are not
+    // registered as Craft sessions in sessionMetaMap.
+    const deepLink = `craftagents://${toPiReadOnlySessionRoute(sessionId)}`
+
+    const childWindow = this.createWindow({
+      workspaceId,
+      focused: true,
+      initialDeepLink: deepLink,
+      width,
+      height,
+      customTitle: title || sessionId,
+    })
+
+    // F11: Auto-close the child window when its renderer process crashes,
+    // otherwise a crashed renderer leaves a dead window pointing at a
+    // (possibly already-destroyed) parent session's data.
+    childWindow.webContents.on('render-process-gone', () => {
+      if (!childWindow.isDestroyed()) childWindow.close()
+    })
+
+    // F11: Track parent ↔ child relationship so closing the parent window
+    // cascades to its child session windows. Closing a child does not affect
+    // the parent.
+    if (parentWebContentsId != null) {
+      const childId = childWindow.webContents.id
+      let siblings = this.childWindowsByParent.get(parentWebContentsId)
+      if (!siblings) {
+        siblings = new Set()
+        this.childWindowsByParent.set(parentWebContentsId, siblings)
+      }
+      siblings.add(childId)
+
+      childWindow.on('closed', () => {
+        const set = this.childWindowsByParent.get(parentWebContentsId)
+        if (set) {
+          set.delete(childId)
+          if (set.size === 0) this.childWindowsByParent.delete(parentWebContentsId)
+        }
+      })
+    }
+
+    return childWindow
   }
 
   /**

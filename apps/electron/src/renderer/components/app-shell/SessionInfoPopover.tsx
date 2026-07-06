@@ -5,6 +5,7 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from 
 import { Input } from '@/components/ui/input'
 import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { cn } from '@/lib/utils'
+import { isPiReadOnlySessionId } from '../../../shared/pi-session-route'
 import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
 
 interface SessionInfoPopoverProps {
@@ -103,6 +104,7 @@ function SessionInfoPopoverContent({ sessionId, sessionFolderPath }: { sessionId
   const { onRenameSession } = useAppShellContext()
   const [name, setName] = React.useState('')
   const renameTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isReadOnlyTitle = isPiReadOnlySessionId(sessionId)
 
   React.useEffect(() => {
     setName(session?.name || '')
@@ -117,6 +119,8 @@ function SessionInfoPopoverContent({ sessionId, sessionFolderPath }: { sessionId
   }, [])
 
   const handleNameChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isReadOnlyTitle) return
+
     const newName = e.target.value
     setName(newName)
 
@@ -130,7 +134,7 @@ function SessionInfoPopoverContent({ sessionId, sessionFolderPath }: { sessionId
         onRenameSession(sessionId, trimmed)
       }
     }, 500)
-  }, [onRenameSession, sessionId])
+  }, [isReadOnlyTitle, onRenameSession, sessionId])
 
   return (
     <div className="h-full min-h-0 flex flex-col">
@@ -143,6 +147,8 @@ function SessionInfoPopoverContent({ sessionId, sessionFolderPath }: { sessionId
             value={name}
             onChange={handleNameChange}
             placeholder={t("chat.titlePlaceholder")}
+            readOnly={isReadOnlyTitle}
+            disabled={isReadOnlyTitle}
             className="h-9 py-2 text-sm border-0 shadow-none bg-transparent focus-visible:ring-0"
           />
         </div>

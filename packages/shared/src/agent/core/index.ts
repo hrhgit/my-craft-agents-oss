@@ -11,7 +11,6 @@
  * - PathProcessor: Path expansion and normalization
  * - ConfigValidator: Pre-write configuration validation
  * - ConfigWatcherManager: Hot-reload config file watching
- * - SessionLifecycleManager: Session state and abort handling
  * - UsageTracker: Token usage and context window tracking
  * - PrerequisiteManager: Prerequisite reading enforcement (guide.md before source tools)
  */
@@ -49,7 +48,6 @@ export type {
 // Session Lifecycle types
 export type {
   SessionState,
-  SessionLifecycleConfig,
 } from './session-lifecycle.ts';
 export { AbortReason } from './session-lifecycle.ts';
 
@@ -93,19 +91,11 @@ export { ConfigValidator } from './config-validator.ts';
 // Config Watcher Manager
 export {
   ConfigWatcherManager,
-  createConfigWatcherManager,
 } from './config-watcher-manager.ts';
-
-// Session Lifecycle
-export {
-  SessionLifecycleManager,
-  createSessionLifecycleManager,
-} from './session-lifecycle.ts';
 
 // Usage Tracker
 export {
   UsageTracker,
-  createUsageTracker,
 } from './usage-tracker.ts';
 
 // PreToolUse Utilities
@@ -129,7 +119,6 @@ export {
   expandToolPaths,
   qualifySkillName,
   stripToolMetadata,
-  stripMcpMetadata, // deprecated alias for backwards compatibility
   validateConfigWrite,
   // Centralized pipeline
   runPreToolUseChecks,

@@ -19,9 +19,8 @@
  * the registry making a policy decision).
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
 import type { MessagingLogger } from './types'
+import { JsonFileStore, NOOP_LOGGER } from './json-file-store'
 
 export interface AutomationTopicEntry {
   /** User-specified topic name (case-sensitive). The cache key together with workspaceId. */
@@ -40,28 +39,16 @@ interface RegistryFileShape {
   entries: AutomationTopicEntry[]
 }
 
-const NOOP_LOGGER: MessagingLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => NOOP_LOGGER,
-}
-
 const FILE_NAME = 'topic-registry.json'
 
-export class TopicRegistry {
-  private readonly filePath: string
-  private readonly dirPath: string
-  private readonly log: MessagingLogger
+export class TopicRegistry extends JsonFileStore<RegistryFileShape> {
   /** Cache: keyed by `topicName`. One workspace per registry instance. */
   private byName = new Map<string, AutomationTopicEntry>()
   /** In-flight find-or-create promises per topic name, used as a mutex. */
   private inflight = new Map<string, Promise<AutomationTopicEntry>>()
 
   constructor(storageDir: string, logger: MessagingLogger = NOOP_LOGGER) {
-    this.dirPath = storageDir
-    this.filePath = join(storageDir, FILE_NAME)
-    this.log = logger
+    super(storageDir, FILE_NAME, logger)
     this.load()
   }
 
@@ -160,47 +147,28 @@ export class TopicRegistry {
   // -------------------------------------------------------------------------
 
   private load(): void {
-    if (!existsSync(this.filePath)) return
-    try {
-      const raw = readFileSync(this.filePath, 'utf8')
-      const parsed = JSON.parse(raw) as RegistryFileShape
-      if (!parsed?.entries || !Array.isArray(parsed.entries)) return
-      for (const entry of parsed.entries) {
-        if (typeof entry?.topicName !== 'string') continue
-        if (typeof entry.threadId !== 'number') continue
-        if (typeof entry.chatId !== 'string') continue
-        this.byName.set(entry.topicName, {
-          topicName: entry.topicName,
-          platform: 'telegram',
-          chatId: entry.chatId,
-          threadId: entry.threadId,
-          createdAt: entry.createdAt ?? Date.now(),
-          lastUsedAt: entry.lastUsedAt ?? entry.createdAt ?? Date.now(),
-        })
-      }
-    } catch (err) {
-      this.log.error('failed to load topic registry; ignoring file', {
-        event: 'topic_registry_load_failed',
-        path: this.filePath,
-        error: err instanceof Error ? err.message : String(err),
+    const parsed = this.loadFile()
+    if (!parsed?.entries || !Array.isArray(parsed.entries)) return
+    for (const entry of parsed.entries) {
+      if (typeof entry?.topicName !== 'string') continue
+      if (typeof entry.threadId !== 'number') continue
+      if (typeof entry.chatId !== 'string') continue
+      this.byName.set(entry.topicName, {
+        topicName: entry.topicName,
+        platform: 'telegram',
+        chatId: entry.chatId,
+        threadId: entry.threadId,
+        createdAt: entry.createdAt ?? Date.now(),
+        lastUsedAt: entry.lastUsedAt ?? entry.createdAt ?? Date.now(),
       })
     }
   }
 
   private save(): void {
-    try {
-      mkdirSync(this.dirPath, { recursive: true })
-      const payload: RegistryFileShape = {
-        version: 1,
-        entries: Array.from(this.byName.values()),
-      }
-      writeFileSync(this.filePath, JSON.stringify(payload, null, 2), 'utf8')
-    } catch (err) {
-      this.log.error('failed to save topic registry', {
-        event: 'topic_registry_save_failed',
-        path: this.filePath,
-        error: err instanceof Error ? err.message : String(err),
-      })
+    const payload: RegistryFileShape = {
+      version: 1,
+      entries: Array.from(this.byName.values()),
     }
+    this.saveFile(payload)
   }
 }

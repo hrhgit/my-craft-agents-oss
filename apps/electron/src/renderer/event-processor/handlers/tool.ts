@@ -7,13 +7,21 @@
 
 import type { SessionState, ToolStartEvent, ToolResultEvent, TaskBackgroundedEvent, ShellBackgroundedEvent, TaskProgressEvent, TaskCompletedEvent } from '../types'
 import type { Message } from '../../../shared/types'
-import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
+import { inferToolResultError, isParentTaskOrTaskOutputTool } from '@craft-agent/shared/utils/toolNames'
 import {
   findToolMessage,
   updateMessageAt,
   appendMessage,
   generateMessageId
 } from '../helpers'
+
+/**
+ * SDK marks oversized results as error, but the payload was actually persisted to
+ * disk. Detect that case so we can clear the error flag and tag it as response_too_large.
+ */
+function isPersistedOutputResult(result: string | undefined): boolean {
+  return !!result && (result.includes('Output has been saved to') || result.includes('Full output saved to'))
+}
 
 /**
  * Handle tool_start - create or update tool message
@@ -80,14 +88,11 @@ export function handleToolResult(
 
   const toolIndex = findToolMessage(session.messages, event.toolUseId)
 
-  const inferredError = event.isError === true || /^\s*(\[ERROR\]|Error:|error:)/.test(event.result || '')
+  const inferredError = inferToolResultError(event.result || '', event.isError)
 
   if (toolIndex !== -1) {
     // Detect "persisted output" - SDK marks as error but data was actually saved successfully
-    const isPersistedOutput = inferredError && (
-      event.result?.includes('Output has been saved to') ||
-      event.result?.includes('Full output saved to')
-    )
+    const isPersistedOutput = inferredError && isPersistedOutputResult(event.result)
 
     const effectiveIsError = isPersistedOutput ? false : inferredError
 
@@ -108,7 +113,7 @@ export function handleToolResult(
     // Safety net: when a parent Task completes, auto-complete any still-pending child tools.
     // This handles the case where child tool_result events never arrive.
     const completedTool = updatedSession.messages[toolIndex]
-    if (completedTool && (isParentTaskTool(completedTool.toolName || '') || completedTool.toolName === 'TaskOutput')) {
+    if (completedTool && isParentTaskOrTaskOutputTool(completedTool.toolName || '')) {
       const hasOrphanedChildren = updatedSession.messages.some(
         m => m.parentToolUseId === event.toolUseId
           && m.toolStatus !== 'completed'
@@ -138,10 +143,7 @@ export function handleToolResult(
   // locate this message by toolUseId and update it with input/intent/displayMeta.
 
   // Detect "persisted output" - SDK marks as error but data was actually saved successfully
-  const isPersistedOutput = inferredError && (
-    event.result?.includes('Output has been saved to') ||
-    event.result?.includes('Full output saved to')
-  )
+  const isPersistedOutput = inferredError && isPersistedOutputResult(event.result)
 
   const effectiveIsError = isPersistedOutput ? false : inferredError
 

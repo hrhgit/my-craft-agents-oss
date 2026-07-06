@@ -14,7 +14,7 @@
  * -->
  */
 
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
 // ============================================================
@@ -99,6 +99,14 @@ export function parseTemplateHeader(content: string): TemplateMeta | null {
  * @returns The loaded template, or null if not found
  */
 export function loadTemplate(sourcePath: string, templateId: string): LoadedTemplate | null {
+  // Security: templateId is concatenated into a filesystem path. A template ID
+  // is a bare filename (e.g., "issue-detail"), never a path. If it contains
+  // separators (basename mismatch), treat as not found to prevent traversal
+  // outside templatesDir (e.g., "../../etc/passwd").
+  if (basename(templateId) !== templateId) {
+    return null;
+  }
+
   const templatesDir = join(sourcePath, 'templates');
 
   // Try exact filename match: {templateId}.html

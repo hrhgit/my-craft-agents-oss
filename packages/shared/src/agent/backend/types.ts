@@ -20,14 +20,15 @@ import type { LoadedSource } from '../../sources/types.ts';
 import type { AuthRequest } from '../session-scoped-tools.ts';
 import type { McpClientPool } from '../../mcp/mcp-pool.ts';
 import type { Workspace } from '../../config/storage.ts';
-import type { SessionConfig as Session } from '../../sessions/storage.ts';
+import type { SessionHeader as Session } from '../../sessions/types.ts';
 import type { SourceManager } from '../core/source-manager.ts';
 
 // Import AbortReason and RecoveryMessage from core module (single source of truth)
 import { AbortReason, type RecoveryMessage } from '../core/index.ts';
 export { AbortReason, type RecoveryMessage };
 
-import type { ModelProvider } from '../../config/models.ts';
+/** Runtime backend provider. Craft shells Pi; provider brands live in Pi config. */
+export type ModelProvider = 'pi';
 
 // Import LLM connection types for auth
 import type { LlmAuthType, LlmProviderType } from '../../config/llm-connections.ts';
@@ -47,20 +48,13 @@ export interface BackendRuntimeUpdate {
 }
 import type { AutomationSystem } from '../../automations/index.ts';
 
-/**
- * Provider identifier for AI backends.
- * @deprecated Use ModelProvider from config/models.ts instead
- */
-export type AgentProvider = ModelProvider;
-
-
 // ============================================================
 // Callback Types
 // ============================================================
 
 /**
- * 扩展事件桥接类型：从 pi-agent-server 子进程转发到主进程的扩展事件联合类型。
- * 对应 pi-agent-server 中的 OutboundExtension* 消息。
+ * 扩展事件桥接类型：从 Pi RpcClient 转发到主进程的扩展事件联合类型。
+ * 对应 Pi RpcClient 扩展 UI 事件。
  */
 export type ExtensionBridgeEvent =
   | { type: 'extension_notify'; message: string; notificationType?: 'info' | 'warning' | 'error'; source?: string }
@@ -297,7 +291,7 @@ export interface CoreBackendConfig {
   onImageResize?: (filePath: string, maxSizeBytes: number) => Promise<string | null>;
 
   /**
-   * 扩展事件桥接回调：当 pi-agent-server 子进程转发扩展事件（remoteui:request、
+   * 扩展事件桥接回调：当 Pi RpcClient 转发扩展事件（remoteui:request、
    * extension_notify、extension_widget、extension_command_registered 等）时调用。
    * 由 SessionManager 通过 eventSink 广播到渲染进程。
    */
@@ -527,6 +521,26 @@ export interface AgentBackend {
   /** Whether this backend supports session branching */
   readonly supportsBranching: boolean;
 
+  /**
+   * Spawn a child session in the backend's session tree (pi session tree for
+   * PiAgent). When absent, the session manager falls back to creating an
+   * independent craft session. Present on PiAgent; the spawn_session tool path
+   * delegates here so craft no longer reimplements session creation.
+   */
+  spawnChildSession?(
+    parentSessionId: string,
+    options: import('../pi-agent.ts').PiSpawnChildSessionOptions,
+  ): Promise<import('../pi-agent.ts').PiSpawnChildSessionResult>;
+
+  /**
+   * List child sessions spawned from the given parent session ID (filtered by
+   * the backend's session tree `spawnedFrom` field). Used by the SubagentPanel
+   * to render the active branch set. Present on PiAgent.
+   */
+  listChildSessions?(
+    parentSessionId: string,
+  ): Promise<import('../pi-agent.ts').PiChildSessionInfo[]>;
+
   // ============================================================
   // Source Management
   // ============================================================
@@ -637,7 +651,7 @@ export interface AgentBackend {
    * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端可不实现。
    * args 为 JSON 字符串。
    */
-  sendExtensionCommandInvoke?(commandId: string, args?: string): void;
+  sendExtensionCommandInvoke?(commandId: string, args?: string): Promise<boolean>;
 
   // ============================================================
   // Callbacks (set by facade after construction)
@@ -682,10 +696,9 @@ export interface BackendConfig extends CoreBackendConfig {
   /**
    * Provider route to use for this backend.
    * Determines which agent class is instantiated:
-   * - 'anthropic' → PiAgent legacy alias for Anthropic-compatible connections
    * - 'pi' → PiAgent (Pi via @earendil-works/pi-coding-agent)
    */
-  provider: AgentProvider;
+  provider: ModelProvider;
 
   /**
    * Full provider type from LLM connection.
@@ -699,11 +712,6 @@ export interface BackendConfig extends CoreBackendConfig {
    * Determines how credentials are retrieved and passed to the backend.
    */
   authType?: LlmAuthType;
-
-  /**
-   * @deprecated Use authType instead. Kept for backwards compatibility.
-   */
-  legacyAuthType?: 'api_key' | 'oauth_token';
 
   /** MCP token override (for testing) */
   mcpToken?: string;
@@ -724,3 +732,5 @@ export interface BackendConfig extends CoreBackendConfig {
    */
   runtime?: Record<string, unknown>;
 }
+
+/* Pi-only backend provider standard. */

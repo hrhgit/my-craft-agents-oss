@@ -56,10 +56,7 @@ export type {
 
 // Response helpers
 export {
-  successResponse,
   errorResponse,
-  textContent,
-  multiBlockResponse,
 } from './response.ts';
 
 // Source helpers
@@ -73,9 +70,6 @@ export {
   listSourceSlugs,
   getSkillPath,
   getSkillMdPath,
-  skillExists,
-  skillMdExists,
-  listSkillSlugs,
   generateRequestId,
   // Multi-header credential helpers
   detectCredentialMode,
@@ -137,38 +131,7 @@ export type {
 export { createNodeFileSystem } from './context.ts';
 
 // Handlers
-export {
-  // SubmitPlan
-  handleSubmitPlan,
-  // Config Validate
-  handleConfigValidate,
-  // Skill Validate
-  handleSkillValidate,
-  // Mermaid Validate
-  handleMermaidValidate,
-  // Source Test
-  handleSourceTest,
-  // OAuth Triggers
-  handleSourceOAuthTrigger,
-  handleGoogleOAuthTrigger,
-  handleSlackOAuthTrigger,
-  handleMicrosoftOAuthTrigger,
-  // Credential Prompt
-  handleCredentialPrompt,
-  // Update Preferences
-  handleUpdatePreferences,
-  // Transform Data
-  handleTransformData,
-  // Script Sandbox
-  handleScriptSandbox,
-  // Render Template
-  handleRenderTemplate,
-  // Send Developer Feedback
-  handleSendDeveloperFeedback,
-} from './handlers/index.ts';
-
 export type {
-  SubmitPlanArgs,
   ConfigValidateArgs,
   SkillValidateArgs,
   MermaidValidateArgs,
@@ -188,7 +151,6 @@ export type {
 // Tool definitions — single source of truth
 export {
   // Individual Zod schemas
-  SubmitPlanSchema,
   ConfigValidateSchema,
   SkillValidateSchema,
   MermaidValidateSchema,
@@ -199,8 +161,6 @@ export {
   TransformDataSchema,
   ScriptSandboxSchema,
   RenderTemplateSchema,
-  // Browser tool schema
-  BrowserToolSchema,
   // Developer feedback schema
   SendDeveloperFeedbackSchema,
   // Descriptions
@@ -215,24 +175,13 @@ export {
   SESSION_TOOL_REGISTRY,
   // Filtered helper views
   getSessionToolDefs,
-  getSessionToolNames,
   getSessionBackendToolNames,
-  getSessionRegistryToolNames,
   getSessionToolRegistry,
   getSessionSafeAllowedToolNames,
-  getSessionSafeBlockedToolNames,
   // JSON Schema converter
   getToolDefsAsJsonSchema,
 } from './tool-defs.ts';
 
 export type {
-  SessionToolExecutionMode,
-  SessionToolSafeMode,
-  SessionToolDef,
-  RegistrySessionToolDef,
-  BackendSessionToolDef,
-  SessionToolHandler,
   JsonSchemaToolDef,
-  SessionToolFilterOptions,
-  SessionToolNameOptions,
 } from './tool-defs.ts';

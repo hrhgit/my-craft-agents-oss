@@ -29,6 +29,7 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.window.GET_MODE,
   RPC_CHANNELS.window.OPEN_WORKSPACE,
   RPC_CHANNELS.window.OPEN_SESSION_IN_NEW_WINDOW,
+  RPC_CHANNELS.window.OPEN_CHILD_SESSION_WINDOW,
   RPC_CHANNELS.window.SWITCH_WORKSPACE,
   RPC_CHANNELS.window.CLOSE,
   RPC_CHANNELS.window.CLOSE_REQUESTED,
@@ -50,8 +51,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.dialog.OPEN_FOLDER,
 
   // auth — local auth state + native dialogs
-  RPC_CHANNELS.auth.LOGOUT,
-  RPC_CHANNELS.auth.SHOW_LOGOUT_CONFIRMATION,
   RPC_CHANNELS.auth.SHOW_DELETE_SESSION_CONFIRMATION,
 
   // shell — local OS shell (openFile/showInFolder guarded for remote)
@@ -167,8 +166,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
 
   // piExtensions — 本地 app 级 pi 扩展集成开关（不随 workspace 走）
-  RPC_CHANNELS.piExtensions.GET_ENABLED,
-  RPC_CHANNELS.piExtensions.SET_ENABLED,
   RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION,
   RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION,
   RPC_CHANNELS.piExtensions.GET_SETTINGS,
@@ -209,7 +206,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
 
   // onboarding — local auth setup flow
   RPC_CHANNELS.onboarding.GET_AUTH_STATE,
-  RPC_CHANNELS.onboarding.VALIDATE_MCP,
   RPC_CHANNELS.onboarding.START_MCP_OAUTH,
   RPC_CHANNELS.onboarding.DEFER_SETUP,
   RPC_CHANNELS.settings.GET_NETWORK_PROXY,
@@ -229,11 +225,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   // server — server-level operations (no workspace context needed)
   RPC_CHANNELS.server.GET_WORKSPACES,
   RPC_CHANNELS.server.CREATE_WORKSPACE,
-  RPC_CHANNELS.server.GET_STATUS,
-  RPC_CHANNELS.server.GET_HEALTH,
-  RPC_CHANNELS.server.GET_ACTIVE_SESSIONS,
   RPC_CHANNELS.server.SHUTTING_DOWN,
-  RPC_CHANNELS.server.STATUS_CHANGED,
   RPC_CHANNELS.server.HOME_DIR,
 
   // sessions — core session runtime
@@ -266,6 +258,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.IMPORT,
   RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER,
   RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER,
+  RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS,
 
   // transfer — chunked large-payload import (sessions, resources)
   RPC_CHANNELS.transfer.START,
@@ -451,9 +444,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
 
   // extensions — pi 扩展事件桥接（workspace 范围广播 + 会话级回复）
   RPC_CHANNELS.extensions.EVENT,
-  RPC_CHANNELS.extensions.REMOTEUI_REQUEST,
   RPC_CHANNELS.extensions.REMOTEUI_RESPONSE,
-  RPC_CHANNELS.extensions.COMMAND_REGISTERED,
   RPC_CHANNELS.extensions.COMMAND_INVOKE,
 ])
 

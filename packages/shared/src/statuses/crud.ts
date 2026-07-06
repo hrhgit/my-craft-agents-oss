@@ -166,7 +166,7 @@ export function resetToDefaults(workspaceRootPath: string): void {
 
   for (const session of sessions) {
     if (session.sessionStatus && !validIds.has(session.sessionStatus)) {
-      updateSessionMetadata(workspaceRootPath, session.id, { sessionStatus: 'todo' });
+      updateSessionMetadata(workspaceRootPath, session.craftId, { sessionStatus: 'todo' });
     }
   }
 }
@@ -187,7 +187,7 @@ function migrateSessionsFromDeletedStatus(
 
   for (const session of sessions) {
     if (session.sessionStatus === deletedStatusId) {
-      updateSessionMetadata(workspaceRootPath, session.id, { sessionStatus: 'todo' });
+      updateSessionMetadata(workspaceRootPath, session.craftId, { sessionStatus: 'todo' });
       migratedCount++;
     }
   }

@@ -23,12 +23,12 @@ function makeConnection(providerType: LlmProviderType, models: string[], piAuthP
 describe('getMiniModel()', () => {
   // --- Anthropic providers ---
 
-  it('finds haiku for anthropic provider', () => {
-    const conn = makeConnection('anthropic', [
+  it('finds haiku for Pi Anthropic auth provider', () => {
+    const conn = makeConnection('pi', [
       'claude-opus-4-7',
       'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
-    ]);
+    ], 'anthropic');
     expect(getMiniModel(conn)).toBe('claude-haiku-4-5-20251001');
   });
 
@@ -101,20 +101,20 @@ describe('getMiniModel()', () => {
   // --- Edge cases ---
 
   it('returns undefined for empty model list', () => {
-    const conn = makeConnection('anthropic', []);
+    const conn = makeConnection('pi', [], 'anthropic');
     expect(getMiniModel(conn)).toBeUndefined();
   });
 
   it('returns undefined for undefined models', () => {
-    const conn = { providerType: 'anthropic' as LlmProviderType, models: undefined };
+    const conn = { providerType: 'pi' as LlmProviderType, piAuthProvider: 'anthropic', models: undefined };
     expect(getMiniModel(conn)).toBeUndefined();
   });
 
   it('falls back to last model when no keyword match', () => {
-    const conn = makeConnection('anthropic', [
+    const conn = makeConnection('pi', [
       'claude-opus-4-7',
       'claude-sonnet-4-6',
-    ]);
+    ], 'anthropic');
     // No haiku in list — falls back to last model
     expect(getMiniModel(conn)).toBe('claude-sonnet-4-6');
   });
@@ -190,7 +190,7 @@ describe('getMiniModel() — auth-flavor awareness', () => {
 
 // ============================================================
 // isDeniedMiniModelId — re-exported from this module so getMiniModel and
-// the pi-agent-server queryLlm guard share one source of truth.
+// the Pi RpcClient queryLlm guard share one source of truth.
 // ============================================================
 
 describe('isDeniedMiniModelId()', () => {

@@ -1,22 +1,19 @@
-import { writeFile, rename, unlink } from 'fs/promises'
-import { dirname } from 'path'
 import type { StoredSession, SessionHeader } from './types.js'
 import {
-  ensureSharedPiTreeSessionFile,
-  getSessionFilePath,
-  getSharedPiSessionStorageEnabled,
+  ensureSharedPiTreeSessionFileAsync,
   ensureSessionsDir,
   ensureSessionDir,
 } from './storage.js'
 import { toPortablePath } from '../utils/paths.js'
-import { createSessionHeader, makeSessionPathPortable, readSessionHeader } from './jsonl.js'
-import { looksLikeTreeSessionJsonl, writeTreeSessionCraftMetadata } from './tree-jsonl.js'
+import { readSessionHeader } from './jsonl.js'
 import { debug } from '../utils/debug.js'
 
 interface PendingWrite {
   data: StoredSession
   timer: ReturnType<typeof setTimeout>
 }
+
+type LegacyStoredSession = StoredSession & { id?: unknown }
 
 interface HeaderMetadataSignature {
   name?: string
@@ -41,19 +38,6 @@ function getHeaderMetadataSignature(header: SessionHeader): string {
   return JSON.stringify(signature)
 }
 
-function mergeHeaderWithExternalMetadata(localHeader: SessionHeader, diskHeader: SessionHeader): SessionHeader {
-  return {
-    ...localHeader,
-    name: diskHeader.name,
-    labels: diskHeader.labels,
-    isFlagged: diskHeader.isFlagged,
-    sessionStatus: diskHeader.sessionStatus,
-    permissionMode: diskHeader.permissionMode,
-    hasUnread: diskHeader.hasUnread,
-    lastReadMessageId: diskHeader.lastReadMessageId,
-  }
-}
-
 /**
  * Debounced async session persistence queue.
  * Prevents main thread blocking by using async writes and coalescing
@@ -64,9 +48,14 @@ function mergeHeaderWithExternalMetadata(localHeader: SessionHeader, diskHeader:
  * would otherwise write to the same .tmp file concurrently.
  */
 class SessionPersistenceQueue {
+  private static readonly CANCELLED_TOMBSTONE_TTL_MS = 5 * 60 * 1000
+
   private pending = new Map<string, PendingWrite>()
   private writeInProgress = new Map<string, Promise<void>>()
   private lastWrittenHeaderSignature = new Map<string, string>()
+  private failedWrites = new Set<string>()
+  private cancelling = new Set<string>()
+  private cancelled = new Map<string, number>()
   private debounceMs: number
 
   constructor(debounceMs = 500) {
@@ -78,21 +67,102 @@ class SessionPersistenceQueue {
    * session, it will be replaced with the new data and the timer reset.
    */
   enqueue(session: StoredSession): void {
-    const existing = this.pending.get(session.id)
+    const sessionId = this.getSessionId(session)
+    if (!sessionId) {
+      console.error('[PersistenceQueue] Refusing to enqueue session without craftId or legacy id')
+      return
+    }
+
+    if (this.isCancelled(sessionId, session) || this.cancelling.has(sessionId)) {
+      debug(`[PersistenceQueue] Ignoring enqueue for cancelled session ${sessionId}`)
+      return
+    }
+
+    const normalizedSession: StoredSession = {
+      ...session,
+      craftId: sessionId,
+    }
+
+    const existing = this.pending.get(sessionId)
     if (existing) {
       clearTimeout(existing.timer)
     }
 
     const timer = setTimeout(() => {
-      void this.write(session.id)
+      this.trackWrite(sessionId)
     }, this.debounceMs)
 
-    this.pending.set(session.id, { data: session, timer })
+    this.pending.set(sessionId, { data: normalizedSession, timer })
+  }
+
+  private getSessionId(session: StoredSession): string | undefined {
+    const legacyId = (session as LegacyStoredSession).id
+    return session.craftId || (typeof legacyId === 'string' && legacyId.length > 0 ? legacyId : undefined)
+  }
+
+  private pruneCancelled(now = Date.now()): void {
+    for (const [sessionId, cancelledAt] of this.cancelled) {
+      if (now - cancelledAt > SessionPersistenceQueue.CANCELLED_TOMBSTONE_TTL_MS) {
+        this.cancelled.delete(sessionId)
+      }
+    }
+  }
+
+  private isCancelled(sessionId: string, session: StoredSession): boolean {
+    this.pruneCancelled()
+    const cancelledAt = this.cancelled.get(sessionId)
+    if (cancelledAt === undefined) return false
+
+    // A newly created session that reuses the deleted ID must be persistable;
+    // stale writes from the deleted session carry the older createdAt value.
+    if (typeof session.createdAt === 'number' && session.createdAt > cancelledAt) {
+      this.cancelled.delete(sessionId)
+      return false
+    }
+
+    return true
+  }
+
+  private trackWrite(sessionId: string): Promise<void> {
+    const previousWrite = this.writeInProgress.get(sessionId)
+    const writePromise = (async () => {
+      if (previousWrite) {
+        await previousWrite
+      }
+      await this.write(sessionId)
+    })()
+
+    this.writeInProgress.set(sessionId, writePromise)
+    void writePromise.then(
+      () => {
+        if (this.writeInProgress.get(sessionId) === writePromise) {
+          this.writeInProgress.delete(sessionId)
+        }
+      },
+      () => {
+        if (this.writeInProgress.get(sessionId) === writePromise) {
+          this.writeInProgress.delete(sessionId)
+        }
+      },
+    )
+    return writePromise
   }
 
   /**
-   * Write a session to disk immediately in JSONL format.
-   * Uses atomic write (write-to-temp-then-rename) to prevent corruption on crash.
+   * Write a session to disk immediately in Pi tree JSONL v3 format.
+   *
+   * The write path is now UNCONDITIONALLY the Pi tree JSONL v3
+   * path. The legacy Craft JSONL format (SessionHeader + StoredMessage lines)
+   * is no longer written — it is only read by the migration tool and by the
+   * resilient reader in jsonl.ts for backward compatibility.
+   *
+   * Pi tree format:
+   *   Line 1:  {type:"session", version:3, id, timestamp, cwd, craft?: {...}}
+   *   Line 2+: tree entries (message, compaction, branch_summary, etc.)
+   *
+   * Craft-specific metadata is merged into the header's `craft` field via
+   * writeTreeSessionCraftMetadata(). The Pi entry body is owned by the Pi
+   * runtime and is not rewritten by Craft.
    */
   private async write(sessionId: string): Promise<void> {
     const entry = this.pending.get(sessionId)
@@ -105,90 +175,41 @@ class SessionPersistenceQueue {
       ensureSessionsDir(data.workspaceRootPath, data.workingDirectory)
       ensureSessionDir(data.workspaceRootPath, sessionId, data.workingDirectory)
 
-      const filePath = getSessionFilePath(data.workspaceRootPath, sessionId, data.workingDirectory)
-
       // Prepare session with portable paths for cross-machine compatibility
       const storageSession: StoredSession = {
         ...data,
         workspaceRootPath: toPortablePath(data.workspaceRootPath),
-        workingDirectory: data.workingDirectory ? toPortablePath(data.workingDirectory) : undefined,
-        sdkCwd: data.sdkCwd ? toPortablePath(data.sdkCwd) : undefined,
-        lastUsedAt: Date.now(),
+        workingDirectory: toPortablePath(data.workspaceRootPath),
+        sdkCwd: data.sdkCwd ? toPortablePath(data.sdkCwd) : toPortablePath(data.workspaceRootPath),
+        lastUsedAt: data.lastUsedAt ?? Date.now(),
       }
 
-      if (getSharedPiSessionStorageEnabled()) {
-        const treeFilePath = ensureSharedPiTreeSessionFile(storageSession)
-        if (treeFilePath) {
-          const header = readSessionHeader(treeFilePath)
-          if (header) {
-            this.lastWrittenHeaderSignature.set(sessionId, getHeaderMetadataSignature(header))
-          }
-          debug(`[PersistenceQueue] Updated shared Pi session metadata ${sessionId}`)
-          return
-        }
+      // Always create/update the Pi tree JSONL file and merge Craft metadata
+      // into its header. This replaces the legacy Craft JSONL write path.
+      const intendedHeaderSignature = getHeaderMetadataSignature(storageSession as SessionHeader)
+      const treeFilePath = await ensureSharedPiTreeSessionFileAsync(storageSession, {
+        lastWrittenHeaderSignature: this.lastWrittenHeaderSignature.get(sessionId),
+      })
+      const header = readSessionHeader(treeFilePath)
+      if (header) {
+        const persistedHeaderSignature = getHeaderMetadataSignature(header)
+        this.lastWrittenHeaderSignature.set(
+          sessionId,
+          persistedHeaderSignature === intendedHeaderSignature
+            ? persistedHeaderSignature
+            : intendedHeaderSignature,
+        )
       }
+      debug(`[PersistenceQueue] Updated Pi tree session metadata ${sessionId} -> ${treeFilePath}`)
 
-      if (looksLikeTreeSessionJsonl(filePath) && writeTreeSessionCraftMetadata(filePath, storageSession)) {
-        const header = readSessionHeader(filePath)
-        if (header) {
-          this.lastWrittenHeaderSignature.set(sessionId, getHeaderMetadataSignature(header))
-        }
-        debug(`[PersistenceQueue] Updated tree session metadata ${sessionId}`)
-        return
-      }
-
-      // Create JSONL content: header + messages (one per line)
-      // Filter out intermediate messages - they're transient streaming status updates
-      const localHeader = createSessionHeader(storageSession)
-      const localSig = getHeaderMetadataSignature(localHeader)
-      const diskHeader = readSessionHeader(filePath)
-      const previousSig = this.lastWrittenHeaderSignature.get(sessionId)
-      const diskSig = diskHeader ? getHeaderMetadataSignature(diskHeader) : undefined
-
-      // Queue writes should never clobber session metadata changed externally
-      // (watcher edits, direct header edits, other instances), but they must
-      // still persist local metadata updates (e.g. generated title).
-      //
-      // Preserve disk metadata only when disk diverged from our last written
-      // signature, which indicates an external mutation.
-      const hasMetadataMismatch = !!diskHeader && !!diskSig && diskSig !== localSig
-      const hasExternalMetadataChange = !!diskHeader && !!diskSig && !!previousSig && diskSig !== previousSig
-      const header = hasExternalMetadataChange && diskHeader
-        ? mergeHeaderWithExternalMetadata(localHeader, diskHeader)
-        : localHeader
-
-      if (hasMetadataMismatch) {
-        const baseline = previousSig ? `, previousSig=${previousSig.slice(0, 12)}` : ', previousSig=<none>'
-        const mode = hasExternalMetadataChange ? 'disk preserved' : 'local preserved'
-        debug(`[PersistenceQueue] Session ${sessionId} metadata mismatch detected (${mode}${baseline})`)
-      }
-
-      const persistableMessages = storageSession.messages
-      // Use original absolute sessionDir (before toPortablePath) for path replacement
-      const sessionDir = dirname(filePath)
-      const lines = [
-        makeSessionPathPortable(JSON.stringify(header), sessionDir),
-        ...persistableMessages.map(m => makeSessionPathPortable(JSON.stringify(m), sessionDir)),
-      ]
-
-      // Atomic write: write to .tmp then rename over the real file.
-      // If the process crashes mid-write, only the .tmp is corrupted —
-      // the original session.jsonl remains intact.
-      //
-      // Update signature BEFORE the write so that fs.watch events fired
-      // during unlink/rename are correctly identified as self-writes.
-      // Without this, onSessionMetadataChange sees the stale signature
-      // and reverts in-memory metadata on idle sessions.
-      const finalSignature = getHeaderMetadataSignature(header)
-      this.lastWrittenHeaderSignature.set(sessionId, finalSignature)
-
-      const tmpFile = filePath + '.tmp'
-      await writeFile(tmpFile, lines.join('\n') + '\n', 'utf-8')
-      // On Windows, rename fails if target exists. Delete first for cross-platform compatibility.
-      try { await unlink(filePath) } catch { /* ignore if doesn't exist */ }
-      await rename(tmpFile, filePath)
-      debug(`[PersistenceQueue] Wrote session ${sessionId}`)
+      // Write succeeded — clear any previous failure flag for this session.
+      this.failedWrites.delete(sessionId)
     } catch (error) {
+      // Record the failure so callers/monitoring can detect data loss.
+      // We intentionally do NOT re-throw: existing flush() callers do not
+      // handle rejection, and re-throwing would surface as unhandled
+      // rejections up the call stack. Use hasFailedWrite() to inspect.
+      this.failedWrites.add(sessionId)
       console.error(`[PersistenceQueue] Failed to write session ${sessionId}:`, error)
     }
   }
@@ -203,43 +224,68 @@ class SessionPersistenceQueue {
     if (entry) {
       clearTimeout(entry.timer)
 
-      // Wait for any in-progress write to complete first
-      const inProgress = this.writeInProgress.get(sessionId)
-      if (inProgress) {
-        await inProgress
-      }
-
       // Start new write and track it
-      const writePromise = this.write(sessionId)
-      this.writeInProgress.set(sessionId, writePromise)
+      await this.trackWrite(sessionId)
+    }
 
-      try {
-        await writePromise
-      } finally {
-        this.writeInProgress.delete(sessionId)
-      }
+    const inProgress = this.writeInProgress.get(sessionId)
+    if (inProgress) {
+      await inProgress
     }
   }
 
   /**
    * Cancel a pending write for a session (e.g., when deleting the session).
+   *
+   * In addition to clearing the pending debounced timer, this also awaits any
+   * in-progress write so the caller can safely delete the on-disk files
+   * without the in-progress write resurrecting them (or their craft metadata
+   * sidecar) after this returns. Idempotent: multiple calls for the same
+   * sessionId are safe.
    */
-  cancel(sessionId: string): void {
-    const entry = this.pending.get(sessionId)
-    if (entry) {
-      clearTimeout(entry.timer)
-      this.pending.delete(sessionId)
-      debug(`[PersistenceQueue] Cancelled pending write for session ${sessionId}`)
+  async cancel(sessionId: string, options: { preventFutureEnqueue?: boolean } = {}): Promise<void> {
+    this.pruneCancelled()
+    if (options.preventFutureEnqueue) {
+      this.cancelled.set(sessionId, Date.now())
     }
-    this.lastWrittenHeaderSignature.delete(sessionId)
+    this.cancelling.add(sessionId)
+    try {
+      const entry = this.pending.get(sessionId)
+      if (entry) {
+        clearTimeout(entry.timer)
+      }
+
+      // Wait for any in-progress write to complete so it cannot resurrect
+      // files deleted by the caller (e.g. deleteSession) after this returns.
+      const inProgress = this.writeInProgress.get(sessionId)
+      if (inProgress) {
+        await inProgress
+      }
+
+      // Delete after awaiting in-progress writes. Any enqueue that sneaks in
+      // while cancel() is waiting is cleared here instead of firing later.
+      const latestEntry = this.pending.get(sessionId)
+      if (latestEntry) {
+        clearTimeout(latestEntry.timer)
+        this.pending.delete(sessionId)
+        debug(`[PersistenceQueue] Cancelled pending write for session ${sessionId}`)
+      }
+      this.lastWrittenHeaderSignature.delete(sessionId)
+      this.failedWrites.delete(sessionId)
+    } finally {
+      this.cancelling.delete(sessionId)
+    }
   }
 
   /**
    * Flush all pending sessions. Call this on app quit.
    */
   async flushAll(): Promise<void> {
-    const sessionIds = [...this.pending.keys()]
-    await Promise.all(sessionIds.map(id => this.flush(id)))
+    const sessionIds = new Set([
+      ...this.pending.keys(),
+      ...this.writeInProgress.keys(),
+    ])
+    await Promise.all(Array.from(sessionIds, id => this.flush(id)))
   }
 
   /**
@@ -247,6 +293,16 @@ class SessionPersistenceQueue {
    */
   hasPending(sessionId: string): boolean {
     return this.pending.has(sessionId)
+  }
+
+  /**
+   * Check if the most recent write for a session failed. Callers/monitoring
+   * can poll this to detect silent data loss (the queue does not re-throw on
+   * write failure to preserve existing flush() semantics). The flag is
+   * cleared on the next successful write or cancel().
+   */
+  hasFailedWrite(sessionId: string): boolean {
+    return this.failedWrites.has(sessionId)
   }
 
   /**
@@ -269,4 +325,4 @@ class SessionPersistenceQueue {
 export const sessionPersistenceQueue = new SessionPersistenceQueue()
 
 // Named exports for testing/customization
-export { SessionPersistenceQueue, getHeaderMetadataSignature, mergeHeaderWithExternalMetadata }
+export { SessionPersistenceQueue, getHeaderMetadataSignature }

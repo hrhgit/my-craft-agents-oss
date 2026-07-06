@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import type { LlmConnection } from '../storage.ts'
 import {
   clearClaudeBedrockRoutingEnvVars,
-  resolveAuthEnvVars,
   resetManagedAnthropicAuthEnvVars,
 } from '../llm-connections.ts'
 
@@ -32,47 +30,7 @@ afterEach(() => {
   restoreEnv()
 })
 
-function createBedrockConnection(
-  overrides: Partial<LlmConnection> = {},
-): LlmConnection {
-  return {
-    slug: 'bedrock-test',
-    name: 'Bedrock Test',
-    providerType: 'bedrock',
-    authType: 'bearer_token',
-    awsRegion: 'us-east-1',
-    createdAt: Date.now(),
-    ...overrides,
-  } as LlmConnection
-}
-
 describe('Bedrock auth env handling', () => {
-  it('resolveAuthEnvVars does not enable Claude Bedrock routing for bedrock connections', async () => {
-    // Per packages/shared/CLAUDE.md: "Pi Bedrock uses its own AWS env path
-    // instead." resolveAuthEnvVars is Anthropic-compat-only and short-circuits
-    // for non-Anthropic providers (including bedrock); the Pi backend wires
-    // AWS credentials in its own postInit() path. The contract this test
-    // protects is that none of the Claude-specific Bedrock routing env vars
-    // leak into the Pi backend path.
-    const connection = createBedrockConnection()
-    const credentialManager = {
-      getLlmApiKey: async () => 'bedrock-bearer-token',
-      getLlmIamCredentials: async () => null,
-    }
-
-    const result = await resolveAuthEnvVars(
-      connection,
-      connection.slug,
-      credentialManager as any,
-      async () => ({}),
-    )
-
-    expect(result.success).toBe(true)
-    expect(result.envVars.CLAUDE_CODE_USE_BEDROCK).toBeUndefined()
-    expect(result.envVars.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined()
-    expect(result.envVars.ANTHROPIC_BEDROCK_BASE_URL).toBeUndefined()
-  })
-
   it('clearClaudeBedrockRoutingEnvVars removes only Claude-specific Bedrock routing vars', () => {
     const env: Record<string, string | undefined> = {
       CLAUDE_CODE_USE_BEDROCK: '1',

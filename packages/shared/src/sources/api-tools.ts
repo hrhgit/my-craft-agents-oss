@@ -17,6 +17,7 @@ import {
   createMcpTool,
   type InProcessMcpServer,
 } from '../mcp/server-factory.ts';
+import { mcpErrorResponse } from '../agent/tool-result.ts';
 
 // Re-export for convenience
 export type { ApiCredential, BasicAuthCredential } from './credential-manager.ts';
@@ -155,10 +156,26 @@ function buildUrl(
   auth: ApiConfig['auth'],
   credential: ApiCredential
 ): string {
+  // SSRF protection: reject absolute URLs and protocol-relative URLs in path.
+  // path = '//evil.com/' would make new URL() treat evil.com as the host.
+  if (path.startsWith('//') || /^https?:\/\//i.test(path)) {
+    throw new Error('Absolute URLs not allowed in API path');
+  }
+
   // Normalize: remove trailing slash from baseUrl and ensure path starts with /
   const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   let url = `${normalizedBase}${normalizedPath}`;
+
+  // SSRF protection: verify the final URL host matches the base URL host.
+  // This catches any path trick that escapes the intended API host.
+  const parsedUrl = new URL(url);
+  const parsedBase = new URL(baseUrl);
+  if (parsedUrl.host !== parsedBase.host) {
+    throw new Error(
+      `Request path escapes base URL host: ${parsedUrl.host} !== ${parsedBase.host}`,
+    );
+  }
 
   // Handle query param auth (only for string credentials)
   const apiKey = typeof credential === 'string' ? credential : '';
@@ -292,20 +309,22 @@ export function createApiTool(
 
         debug(`[api-tools] ${config.name}: headers=${JSON.stringify(fetchOptions.headers)}, bodyLength=${fetchOptions.body ? String(fetchOptions.body).length : 0}`);
 
-        const response = await fetch(url, fetchOptions);
+        // SSRF protection: don't auto-follow redirects to arbitrary hosts.
+        // API calls should hit the configured endpoint directly.
+        const response = await fetch(url, {
+          ...fetchOptions,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(30_000),
+        });
 
         // OOM safety: reject before loading into memory
         const contentLength = response.headers.get('content-length');
         if (contentLength) {
           const size = parseInt(contentLength, 10);
           if (!isNaN(size) && size > MAX_DOWNLOAD_SIZE) {
-            return {
-              content: [{
-                type: 'text' as const,
-                text: `Response too large: ${formatBytes(size)} exceeds ${formatBytes(MAX_DOWNLOAD_SIZE)} limit. Use a streaming download tool for large files.`,
-              }],
-              isError: true,
-            };
+            return mcpErrorResponse(
+              `Response too large: ${formatBytes(size)} exceeds ${formatBytes(MAX_DOWNLOAD_SIZE)} limit. Use a streaming download tool for large files.`,
+            );
           }
         }
 
@@ -316,13 +335,7 @@ export function createApiTool(
         if (!response.ok) {
           const text = buffer.toString('utf-8');
           debug(`[api-tools] ${config.name} error ${response.status}: ${text.substring(0, 200)}`);
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `API Error ${response.status}: ${text}`,
-            }],
-            isError: true,
-          };
+          return mcpErrorResponse(`API Error ${response.status}: ${text}`);
         }
 
         // Centralized binary detection + large response handling
@@ -343,10 +356,7 @@ export function createApiTool(
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         debug(`[api-tools] ${config.name} request failed: ${message}`);
-        return {
-          content: [{ type: 'text' as const, text: `Request failed: ${message}` }],
-          isError: true,
-        };
+        return mcpErrorResponse(`Request failed: ${message}`);
       }
     }
   );

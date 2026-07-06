@@ -1,15 +1,21 @@
-import { readFile, writeFile, unlink, mkdir, readdir, stat } from 'fs/promises'
-import { isAbsolute, join, resolve, dirname, parse as parsePath } from 'path'
+import { readFile, writeFile, unlink, mkdir, readdir, stat, realpath } from 'fs/promises'
+import { isAbsolute, join, dirname, parse as parsePath } from 'path'
 import { homedir } from 'os'
 import { validatePathFormat } from '../../utils/path-validation'
 import { randomUUID } from 'crypto'
 import { RPC_CHANNELS, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
-import { readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
+import {
+  ATTACHMENT_SINGLE_FILE_LIMIT_BYTES,
+  ATTACHMENT_TEXT_INLINE_LIMIT_BYTES,
+  readFileAttachment,
+  validateImageForClaudeAPI,
+  IMAGE_LIMITS,
+} from '@craft-agent/shared/utils'
 import { getSessionAttachmentsPath, validateSessionId } from '@craft-agent/shared/sessions'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { getWorkspaceOrThrow } from '../utils'
 import { resizeImageForAPI, inspectImageBuffer } from '@craft-agent/server-core/services'
-import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
+import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs, isSensitivePath } from '@craft-agent/server-core/handlers'
 import { MarkItDown } from 'markitdown-js'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
@@ -29,12 +35,33 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.fs.LIST_DIRECTORY,
 ] as const
 
+function isTrustedLocalUserPathRequest(
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+  deps: HandlerDeps,
+  workspaceId?: string | null,
+): boolean {
+  if (ctx.webContentsId == null || !deps.windowManager) return false
+  const windowWorkspaceId = deps.windowManager.getWorkspaceForWindow(ctx.webContentsId)
+  if (!windowWorkspaceId) return false
+  return !workspaceId || workspaceId === windowWorkspaceId
+}
+
+function getFilePathValidationOptions(
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+  deps: HandlerDeps,
+  workspaceId?: string | null,
+) {
+  return {
+    allowHome: isTrustedLocalUserPathRequest(ctx, deps, workspaceId),
+  }
+}
+
 export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): void {
   // Read a file (with path validation to prevent traversal attacks)
   server.handle(RPC_CHANNELS.file.READ, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       const content = await readFile(safePath, 'utf-8')
       return content
     } catch (error) {
@@ -54,7 +81,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_DATA_URL, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       const buffer = await readFile(safePath)
       const ext = safePath.split('.').pop()?.toLowerCase() ?? ''
 
@@ -86,7 +113,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_PREVIEW_DATA_URL, async (ctx, path: string, maxSize = 64) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       const size = Number.isFinite(maxSize) ? Math.max(16, Math.min(256, Math.floor(maxSize))) : 64
       const preview = await deps.platform.imageProcessor.process(safePath, {
         resize: { width: size, height: size },
@@ -106,7 +133,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_BINARY, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       const buffer = await readFile(safePath)
       // Return as Uint8Array (serializes to ArrayBuffer over IPC)
       return new Uint8Array(buffer)
@@ -136,7 +163,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_ATTACHMENT, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       // Use shared utility that handles file type detection, encoding, etc.
       const attachment = await readFileAttachment(safePath)
       if (!attachment) return null
@@ -167,20 +194,37 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   // previous user-initiated OS-picker / Finder-drag attach, so the path implies consent.
   // NOT exposed to agent code — no equivalent MCP tool. Kept separate from readFileAttachment
   // on purpose to preserve the agent-facing read's narrow trust boundary.
-  const USER_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
-  server.handle(RPC_CHANNELS.file.READ_USER_ATTACHMENT, async (_ctx, path: string) => {
+  //
+  // SECURITY: container validation is intentionally bypassed (renderer may attach files
+  // from anywhere the user picked), but sensitive-file patterns (SSH keys, .env, .pem,
+  // credentials.json, etc.) are still blocked to prevent trivial secret exfiltration.
+  server.handle(RPC_CHANNELS.file.READ_USER_ATTACHMENT, async (ctx, path: string) => {
     try {
       if (!path || typeof path !== 'string' || !isAbsolute(path)) return null
-      const info = await stat(path).catch(() => null)
-      if (!info || !info.isFile()) return null
-      if (info.size > USER_ATTACHMENT_MAX_BYTES) {
-        deps.platform.logger.warn(`[readUserAttachment] file exceeds ${USER_ATTACHMENT_MAX_BYTES} bytes, skipping: ${path}`)
+      const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+      if (!isTrustedLocalUserPathRequest(ctx, deps, workspaceId)) {
+        deps.platform.logger.warn('[readUserAttachment] rejected non-local user path request')
         return null
       }
-      const attachment = readFileAttachment(path)
+      const realPath = await realpath(path).catch(() => null)
+      if (!realPath) return null
+
+      // Block sensitive files even though we bypass workspace-container checks.
+      // Check the real target so symlink aliases cannot hide ~/.ssh, .env, etc.
+      if (isSensitivePath(realPath)) {
+        deps.platform.logger.warn(`[readUserAttachment] blocked sensitive path: ${realPath}`)
+        return null
+      }
+      const info = await stat(realPath).catch(() => null)
+      if (!info || !info.isFile()) return null
+      if (info.size > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES) {
+        deps.platform.logger.warn(`[readUserAttachment] file exceeds ${ATTACHMENT_SINGLE_FILE_LIMIT_BYTES} bytes, skipping: ${realPath}`)
+        return null
+      }
+      const attachment = readFileAttachment(realPath)
       if (!attachment) return null
       try {
-        const thumbBuffer = await deps.platform.imageProcessor.process(path, {
+        const thumbBuffer = await deps.platform.imageProcessor.process(realPath, {
           resize: { width: 200, height: 200 },
           format: 'png',
         })
@@ -221,16 +265,25 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       if (attachment.size === 0) {
         throw new Error('Cannot attach empty file')
       }
+      if (attachment.size > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES) {
+        throw new Error(`Attachment exceeds the ${Math.round(ATTACHMENT_SINGLE_FILE_LIMIT_BYTES / 1024 / 1024)} MiB single-file limit`)
+      }
+      if (!attachment.name || typeof attachment.name !== 'string') {
+        throw new Error('Attachment name is required')
+      }
+      if (!attachment.mimeType || typeof attachment.mimeType !== 'string') {
+        throw new Error('Attachment MIME type is required')
+      }
+      if (!['image', 'text', 'pdf', 'office', 'audio', 'unknown'].includes(attachment.type)) {
+        throw new Error(`Unsupported attachment type: ${String(attachment.type)}`)
+      }
 
       // Get workspace slug from the calling window
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
       if (!workspaceId) {
         throw new Error('Cannot determine workspace for attachment storage')
       }
-      const workspace = getWorkspaceByNameOrId(workspaceId)
-      if (!workspace) {
-        throw new Error(`Workspace not found: ${workspaceId}`)
-      }
+      const workspace = getWorkspaceOrThrow(workspaceId)
       const workspaceRootPath = workspace.rootPath
 
       // SECURITY: Validate sessionId to prevent path traversal attacks
@@ -253,9 +306,114 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       let resizedBase64: string | undefined
 
       // 1. Save the file (with image validation and resizing)
-      if (attachment.base64) {
+      if (!attachment.base64 && !attachment.text && attachment.path && isAbsolute(attachment.path)) {
+        if (!isTrustedLocalUserPathRequest(ctx, deps, workspaceId)) {
+          throw new Error('Path-only attachments are only accepted from the local Electron window. Upload file contents instead.')
+        }
+        const realAttachmentPath = await realpath(attachment.path).catch(() => null)
+        if (!realAttachmentPath) {
+          throw new Error('Attachment path does not exist')
+        }
+        if (isSensitivePath(realAttachmentPath)) {
+          throw new Error('Attachment path is blocked because it appears to contain credentials or secrets')
+        }
+        const info = await stat(realAttachmentPath)
+        if (!info.isFile()) {
+          throw new Error('Attachment path is not a file')
+        }
+        if (info.size !== attachment.size) {
+          throw new Error(`Attachment size changed before upload (expected ${attachment.size}, got ${info.size})`)
+        }
+        if (info.size > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES) {
+          throw new Error(`Attachment exceeds the ${Math.round(ATTACHMENT_SINGLE_FILE_LIMIT_BYTES / 1024 / 1024)} MiB single-file limit`)
+        }
+        attachment.base64 = undefined
+        attachment.text = undefined
+        let decoded: Buffer = await readFile(realAttachmentPath)
+
+        // Reuse the same binary validation/resizing path as base64 uploads.
+        if (attachment.type === 'image') {
+          const imageInspection = await inspectImageBuffer(decoded, deps.platform.imageProcessor)
+          const imageSize = imageInspection.status === 'ok'
+            ? { width: imageInspection.width, height: imageInspection.height }
+            : null
+
+          let shouldResize = false
+          let targetSize: { width: number; height: number } | undefined
+
+          if (imageInspection.status === 'processor_unavailable') {
+            deps.platform.logger.warn('Image processing unavailable while validating attachment:', imageInspection.error?.message ?? 'unknown error')
+            if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
+              throw new Error('Image processing is unavailable, so oversized images cannot be validated or resized automatically. Please attach a smaller image.')
+            }
+          } else if (imageInspection.status === 'invalid_image') {
+            throw new Error(imageInspection.error?.message || 'Invalid or unsupported image file')
+          } else {
+            const validation = validateImageForClaudeAPI(decoded.length, imageSize!.width, imageSize!.height)
+            shouldResize = validation.needsResize ?? false
+            targetSize = validation.suggestedSize
+
+            if (!validation.valid && validation.errorCode === 'dimension_exceeded') {
+              const maxDim = IMAGE_LIMITS.MAX_DIMENSION
+              const scale = Math.min(maxDim / imageSize!.width, maxDim / imageSize!.height)
+              targetSize = {
+                width: Math.floor(imageSize!.width * scale),
+                height: Math.floor(imageSize!.height * scale),
+              }
+              shouldResize = true
+              deps.platform.logger.info(`Image exceeds ${maxDim}px limit (${imageSize!.width}x${imageSize!.height}), will resize to ${targetSize.width}x${targetSize.height}`)
+            } else if (!validation.valid && validation.errorCode === 'size_exceeded') {
+              shouldResize = true
+              deps.platform.logger.info(`Image exceeds 5MB (${(decoded.length / 1024 / 1024).toFixed(1)}MB), will attempt resize`)
+            } else if (!validation.valid) {
+              throw new Error(validation.error)
+            }
+          }
+
+          if (shouldResize) {
+            const isPhoto = attachment.mimeType === 'image/jpeg'
+            if (targetSize) {
+              try {
+                decoded = await deps.platform.imageProcessor.process(decoded, {
+                  resize: { width: targetSize.width, height: targetSize.height },
+                  format: isPhoto ? 'jpeg' : 'png',
+                  quality: isPhoto ? IMAGE_LIMITS.JPEG_QUALITY_HIGH : undefined,
+                })
+                wasResized = true
+                finalSize = decoded.length
+                if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
+                  decoded = await deps.platform.imageProcessor.process(decoded, { format: 'jpeg', quality: IMAGE_LIMITS.JPEG_QUALITY_FALLBACK })
+                  finalSize = decoded.length
+                  if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
+                    throw new Error(`Image still too large after resize (${(decoded.length / 1024 / 1024).toFixed(1)}MB). Please use a smaller image.`)
+                  }
+                }
+              } catch (resizeError) {
+                const reason = resizeError instanceof Error ? resizeError.message : String(resizeError)
+                throw new Error(`Image too large and automatic resize failed: ${reason}. Please manually resize it before attaching.`)
+              }
+            } else {
+              const result = await resizeImageForAPI(decoded, { isPhoto })
+              if (!result) {
+                throw new Error(`Image too large (${(decoded.length / 1024 / 1024).toFixed(1)}MB) and could not be compressed enough. Please use a smaller image.`)
+              }
+              decoded = result.buffer
+              wasResized = true
+              finalSize = decoded.length
+            }
+            resizedBase64 = decoded.toString('base64')
+          }
+        }
+
+        await writeFile(storedPath, decoded)
+        finalSize = decoded.length
+        filesToCleanup.push(storedPath)
+      } else if (attachment.base64) {
         // Images, PDFs, Office files - decode from base64
         let decoded: Buffer = Buffer.from(attachment.base64, 'base64')
+        if (decoded.length > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES) {
+          throw new Error(`Attachment exceeds the ${Math.round(ATTACHMENT_SINGLE_FILE_LIMIT_BYTES / 1024 / 1024)} MiB single-file limit`)
+        }
         // Validate decoded size matches expected (allow small variance for encoding overhead)
         if (Math.abs(decoded.length - attachment.size) > 100) {
           throw new Error(`Attachment corrupted: size mismatch (expected ${attachment.size}, got ${decoded.length})`)
@@ -357,7 +515,15 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         filesToCleanup.push(storedPath)
       } else if (attachment.text) {
         // Text files - save as UTF-8
+        const textBytes = Buffer.byteLength(attachment.text, 'utf-8')
+        if (textBytes > ATTACHMENT_TEXT_INLINE_LIMIT_BYTES) {
+          throw new Error(`Text attachment exceeds the ${Math.round(ATTACHMENT_TEXT_INLINE_LIMIT_BYTES / 1024 / 1024)} MiB inline text limit`)
+        }
+        if (Math.abs(textBytes - attachment.size) > 100) {
+          throw new Error(`Attachment corrupted: size mismatch (expected ${attachment.size}, got ${textBytes})`)
+        }
         await writeFile(storedPath, attachment.text, 'utf-8')
+        finalSize = textBytes
         filesToCleanup.push(storedPath)
       } else {
         throw new Error('Attachment has no content (neither base64 nor text)')
@@ -441,9 +607,15 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   // Parallel BFS walk that skips ignored directories BEFORE entering them,
   // avoiding reading node_modules/etc. contents entirely. Uses withFileTypes
   // to get entry types without separate stat calls.
-  server.handle(RPC_CHANNELS.fs.SEARCH, async (_ctx, basePath: string, query: string) => {
+  server.handle(RPC_CHANNELS.fs.SEARCH, async (ctx, basePath: string, query: string) => {
     deps.platform.logger.info('[FS_SEARCH] called:', basePath, query)
     const MAX_RESULTS = 50
+
+    // SECURITY: Validate basePath itself against the same realpath-aware boundary
+    // used by file.READ. Directory symlinks are not enqueued by this Dirent-based
+    // walk; keep any future stat-based recursion realpath-aware before entering.
+    const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+    const safeBase = await validateFilePath(basePath, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
 
     // Directories to never recurse into
     const SKIP_DIRS = new Set([
@@ -465,7 +637,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
         const dirResults = await Promise.all(
           queue.map(async (relDir) => {
-            const absDir = relDir ? join(basePath, relDir) : basePath
+            const absDir = relDir ? join(safeBase, relDir) : safeBase
             try {
               return { relDir, entries: await readdir(absDir, { withFileTypes: true }) }
             } catch {
@@ -499,7 +671,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             if (lowerName.includes(lowerQuery) || lowerRelative.includes(lowerQuery)) {
               results.push({
                 name,
-                path: join(basePath, relativePath),
+                path: join(safeBase, relativePath),
                 type: isDir ? 'directory' : 'file',
                 relativePath,
               })
@@ -526,7 +698,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
   // List directories in a given path (for remote directory browsing).
   // Returns only directories (not files) — this is a folder picker.
-  server.handle(RPC_CHANNELS.fs.LIST_DIRECTORY, async (_ctx, dirPath: string) => {
+  server.handle(RPC_CHANNELS.fs.LIST_DIRECTORY, async (ctx, dirPath: string) => {
     // Resolve ~ to server's home directory (thin clients don't know the server's home)
     if (dirPath === '~' || dirPath.startsWith('~/')) {
       dirPath = dirPath === '~' ? homedir() : join(homedir(), dirPath.slice(2))
@@ -538,15 +710,19 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       throw new Error(pathCheck.reason!)
     }
 
-    // Normalize (collapses .. segments, trailing slashes, etc.)
-    const resolved = resolve(dirPath)
+    // SECURITY: Validate the path is within allowed directories (workspace root,
+    // home, tmp) to prevent listing arbitrary server paths. validateFilePath
+    // resolves symlinks and checks container membership. Done after ~ expansion
+    // so the legitimate home-dir browsing feature keeps working.
+    const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+    const safePath = await validateFilePath(dirPath, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
 
     // Read entries, filter to directories
-    const raw = await readdir(resolved, { withFileTypes: true })
+    const raw = await readdir(safePath, { withFileTypes: true })
 
     const entries: Array<{ name: string; path: string; isSymlink: boolean }> = []
     for (const entry of raw) {
-      const fullPath = join(resolved, entry.name)
+      const fullPath = join(safePath, entry.name)
       const isSymlink = entry.isSymbolicLink()
 
       if (entry.isDirectory()) {
@@ -571,11 +747,11 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     if (truncated) entries.length = 500
 
     // Compute parent path
-    const parentPath = resolved === parsePath(resolved).root ? null : dirname(resolved)
+    const parentPath = safePath === parsePath(safePath).root ? null : dirname(safePath)
 
     // Compute breadcrumbs server-side
     const breadcrumbs: Array<{ name: string; path: string }> = []
-    let current = resolved
+    let current = safePath
     while (true) {
       const parsed = parsePath(current)
       const name = parsed.base || parsed.root
@@ -585,7 +761,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
 
     return {
-      currentPath: resolved,
+      currentPath: safePath,
       parentPath,
       breadcrumbs,
       platform: process.platform as DirectoryListingResult['platform'],

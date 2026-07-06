@@ -1,7 +1,12 @@
 export * from './conversation-summary.ts';
 
+// Canonical ToolResult type and helpers (shared across session-tools-core, spawn-session-tool, browser-tools)
+export type { TextContent, ImageContent, ToolResult } from './tool-result.ts';
+export { errorResponse, successResponse, mcpErrorResponse, getResultText } from './tool-result.ts';
+
 // Export PiAgent for direct use
 export { PiAgent, PiBackend } from './pi-agent.ts';
+export type { PiSpawnChildSessionOptions, PiSpawnChildSessionResult, PiChildSessionInfo } from './pi-agent.ts';
 export * from './errors.ts';
 
 // Export session-scoped-tools - tools scoped to a specific session
@@ -124,14 +129,11 @@ export {
 
 // Export backend abstraction - unified interface for AI agents
 export {
-  // Factory (createAgent is the preferred name, createBackend is kept for backward compat)
+  // Factory
   createBackend,
-  createAgent,
-  detectProvider,
-  getAvailableProviders,
   // Types
   type AgentBackend,
-  type AgentProvider,
+  type ModelProvider,
   type BackendConfig,
   type PermissionCallback,
   type PlanCallback,

@@ -98,7 +98,7 @@ import { setSearchPlatform, setImageProcessor } from '@craft-agent/server-core/s
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
 import { loadWindowState, saveWindowState } from './window-state'
-import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig } from '@craft-agent/shared/config'
+import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig, CONFIG_DIR } from '@craft-agent/shared/config'
 import { getDefaultWorkspacesDir } from '@craft-agent/shared/workspaces'
 import { initializeDocs } from '@craft-agent/shared/docs'
 import { initializeReleaseNotes } from '@craft-agent/shared/release-notes'
@@ -119,6 +119,7 @@ import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeC
 import { checkForUpdatesOnLaunch, setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './auto-update'
 import type { EventSink } from '@craft-agent/server-core/transport'
 import { validateGitBashPath, checkVCRedistInstalled } from '@craft-agent/server-core/services'
+import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
 
 // Initialize electron-log for renderer process support
 log.initialize()
@@ -500,7 +501,7 @@ app.whenReady().then(async () => {
 
     // Transport diagnostics bridge — preload reports remote WS connection state changes
     // so failures are visible in terminal/main.log (not only renderer console).
-    ipcMain.on('__transport:status', (_event, payload: unknown) => {
+    ipcMain.on(PRELOAD_LOCAL_CHANNELS.TRANSPORT_STATUS, (_event, payload: unknown) => {
       if (!payload || typeof payload !== 'object') return
       const p = payload as {
         level?: 'info' | 'warn' | 'error'
@@ -535,7 +536,7 @@ app.whenReady().then(async () => {
 
     // Dialog bridge — preload capability handlers use ipcRenderer.invoke to
     // call main-process-only dialog APIs (dialog, BrowserWindow).
-    ipcMain.handle('__dialog:showMessageBox', async (event, spec) => {
+    ipcMain.handle(PRELOAD_LOCAL_CHANNELS.DIALOG_SHOW_MESSAGE_BOX, async (event, spec) => {
       const win = BrowserWindow.fromWebContents(event.sender)
         || BrowserWindow.getFocusedWindow()
         || BrowserWindow.getAllWindows()[0]
@@ -632,6 +633,17 @@ app.whenReady().then(async () => {
         bundledAssetsRoot: __dirname,
         serverId: 'local',
         serverVersion: app.getVersion(),
+        authorizeWorkspace: ({ workspaceId, webContentsId, phase }) => {
+          if (!workspaceId) return true
+          if (!getWorkspaceByNameOrId(workspaceId)) return false
+
+          if ((phase === 'handshake' || phase === 'reconnect') && webContentsId != null && windowManager) {
+            const windowWorkspaceId = windowManager.getWorkspaceForWindow(webContentsId)
+            return !windowWorkspaceId || windowWorkspaceId === workspaceId
+          }
+
+          return true
+        },
         platformFactory: () => platform,
         applyPlatformToSubsystems: (p) => {
           setFetcherPlatform(p)
@@ -666,7 +678,7 @@ app.whenReady().then(async () => {
             sessionManager: sm,
             credentialManager: getCredentialManager(),
             getMessagingDir: (wsId: string) =>
-              join(homedir(), '.craft-agent', 'workspaces', wsId, 'messaging'),
+              join(process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent'), 'workspaces', wsId, 'messaging'),
             getLegacyMessagingDir: (wsId: string) => {
               const ws = getWorkspaces().find((w) => w.id === wsId)
               return ws ? join(ws.rootPath, 'messaging') : undefined
@@ -766,13 +778,13 @@ app.whenReady().then(async () => {
       // IPC handlers — preload uses sendSync to get WS connection details
 
       // Remove workspace from config (cleanup stale entries)
-      ipcMain.handle('workspace:remove', async (_event, workspaceId: string) => {
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.WORKSPACE_REMOVE, async (_event, workspaceId: string) => {
         const { removeWorkspace: remove } = await import('@craft-agent/shared/config')
         return remove(workspaceId)
       })
 
       // Cross-server RPC — invoke a channel on an arbitrary remote server
-      ipcMain.handle('server:invokeOnServer', async (_event, url: string, token: string, channel: string, ...args: unknown[]) => {
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.SERVER_INVOKE_ON_SERVER, async (_event, url: string, token: string, channel: string, ...args: unknown[]) => {
         const { connectToRemote } = await import('./handlers/workspace')
         const { client, error } = await connectToRemote(url, token)
         if (!client) throw new Error(error ?? 'Connection failed')
@@ -785,7 +797,7 @@ app.whenReady().then(async () => {
 
       // Transfer session to another workspace — orchestrated in main process
       // so large bundles can be moved directly between owning servers.
-      ipcMain.handle('session:transferToRemoteWorkspace', async (_event, sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number) => {
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.SESSION_TRANSFER_TO_REMOTE_WORKSPACE, async (_event, sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number) => {
         const idx = sessionIndex ?? 0
         const count = sessionCount ?? 1
         const { getWorkspaceByNameOrId } = await import('@craft-agent/shared/config')
@@ -855,7 +867,7 @@ app.whenReady().then(async () => {
         console.log('[Transfer] Connected to target remote server')
 
         try {
-          const preparedBundle = prepareChunkedPayload(bundle)
+          const preparedBundle = await prepareChunkedPayload(bundle)
           const payloadSize = preparedBundle.bytes.length
           const payloadMB = (payloadSize / (1024 * 1024)).toFixed(1)
 
@@ -887,7 +899,7 @@ app.whenReady().then(async () => {
       })
 
       // App relaunch (for server config changes — NOT an update install)
-      ipcMain.handle('app:relaunch', () => {
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.APP_RELAUNCH, () => {
         app.relaunch()
         app.exit(0)
       })
@@ -895,7 +907,7 @@ app.whenReady().then(async () => {
       // Language change: sync from renderer to main process, persist, and rebuild native menu.
       // Persistence here is what lets the next app launch hydrate main's i18n correctly —
       // see the `getPersistedUiLanguage()` block at the top of this file.
-      ipcMain.handle('i18n:changeLanguage', async (_event, lang: unknown) => {
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.I18N_CHANGE_LANGUAGE, async (_event, lang: unknown) => {
         const previousResolved = i18n.resolvedLanguage ?? null
         if (typeof lang !== 'string' || !SUPPORTED_LANGUAGE_CODES.includes(lang as LanguageCode)) {
           // Defense-in-depth: renderer guarantees a supported code, but if a renegade
@@ -918,7 +930,7 @@ app.whenReady().then(async () => {
         await rebuildMenu()
       })
 
-      ipcMain.on('__get-ws-port', (e) => {
+      ipcMain.on(PRELOAD_LOCAL_CHANNELS.GET_WS_PORT, (e) => {
         e.returnValue = instance.port
       })
       ipcMain.on('__get-ws-token', (e) => {
@@ -1028,8 +1040,13 @@ app.whenReady().then(async () => {
 
       // Headless: print connection details
       if (isHeadless) {
+        // Write token to a file with 0600 permissions instead of stdout,
+        // because container/logging systems often persist stdout and would leak the token.
+        const tokenFilePath = join(CONFIG_DIR, '.server-token')
+        const { writeOwnerOnlyFileSync } = await import('./secure-files')
+        writeOwnerOnlyFileSync(tokenFilePath, instance.token)
         console.log(`CRAFT_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
-        console.log(`CRAFT_SERVER_TOKEN=${instance.token}`)
+        console.log(`CRAFT_SERVER_TOKEN_FILE=${tokenFilePath}`)
       }
     }
 

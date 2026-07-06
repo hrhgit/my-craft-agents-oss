@@ -24,6 +24,7 @@ import {
   type WorkerCommand,
   type WorkerEvent,
 } from '@craft-agent/messaging-whatsapp-worker'
+import { errorMessage } from '@craft-agent/shared/utils'
 import type {
   PlatformAdapter,
   PlatformConfig,
@@ -379,7 +380,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
           commandType: cmd.type,
           error: err,
         })
-        resolve({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        resolve({ ok: false, error: errorMessage(err) })
       }
     })
   }

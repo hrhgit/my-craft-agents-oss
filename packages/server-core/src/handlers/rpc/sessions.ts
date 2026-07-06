@@ -1,18 +1,21 @@
+import { existsSync } from 'fs'
 import { readFile, writeFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { RPC_CHANNELS, type FileAttachment, type SendMessageOptions, type SessionEvent, type Session } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { storedToMessage } from '@craft-agent/core/types'
 import { getWorkspaceByNameOrId, getPiShellFullPassthrough } from '@craft-agent/shared/config'
-import { PI_SESSIONS_DIR } from '@craft-agent/shared/config/paths'
-import { findPiSessionFile, loadPiSessionMessages, readPiSessionFile } from '@craft-agent/shared/sessions'
+import { loadPiSessionMessages, validateSessionId } from '@craft-agent/shared/sessions'
 import { perf } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
+import type { ISessionManager } from '../session-manager-interface'
+import { getWorkspaceOrNull, resolveWorkspaceId } from '../utils'
 import { setTransferableHandler } from './transfer'
+import { collectSessionSearchRoots, resolvePiReadOnlySession } from './session-route-helpers'
 
 interface ClientSessionWatchState {
   watcher: import('fs').FSWatcher
@@ -41,6 +44,46 @@ function sessionWorkspaceDistribution(sessions: Array<{ workspaceId?: string }>)
     distribution[key] = (distribution[key] ?? 0) + 1
   }
   return distribution
+}
+
+/**
+ * Enforce that `sessionId` belongs to the calling client's authenticated
+ * workspace.
+ *
+ * - If `ctxWorkspaceId` is set: throws when the session belongs to a
+ *   different workspace.
+ * - If `ctxWorkspaceId` is null/undefined (headless/CLI caller): allows
+ *   access only to sessions that ALSO have no workspaceId. Workspace-scoped
+ *   sessions are rejected — a caller without workspace context must not
+ *   read workspace-owned data.
+ *
+ * Pi read-only sessions are not held in the in-memory session map, so they are
+ * allowed to proceed only when the caller already has a workspace context; the
+ * downstream resolver then looks them up inside that workspace's Pi bucket.
+ */
+async function assertSessionWorkspace(
+  sessionManager: ISessionManager,
+  ctxWorkspaceId: string | null | undefined,
+  sessionId: string,
+): Promise<void> {
+  validateSessionId(sessionId)
+
+  const session = await sessionManager.getSession(sessionId)
+  if (!session) {
+    if (sessionId.startsWith('pi-') && getPiShellFullPassthrough()) {
+      if (!ctxWorkspaceId) {
+        throw new Error(`No workspace context for Pi session: ${sessionId}`)
+      }
+      return
+    }
+    throw new Error(`Session not found: ${sessionId}`)
+  }
+
+  if (!session.workspaceId || session.workspaceId !== ctxWorkspaceId) {
+    throw new Error(
+      `Session workspace mismatch: session ${sessionId} belongs to workspace ${session.workspaceId}, but caller is ${ctxWorkspaceId ? `authenticated to ${ctxWorkspaceId}` : 'not workspace-scoped'}`,
+    )
+  }
 }
 
 /**
@@ -104,6 +147,42 @@ async function scanSessionDirectory(dirPath: string): Promise<import('@craft-age
   })
 }
 
+function resolveWorkspaceRootPath(
+  deps: HandlerDeps,
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+): string {
+  const windowWorkspaceId = ctx.webContentsId != null
+    ? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId)
+    : undefined
+  const workspaceId = ctx.workspaceId ?? windowWorkspaceId ?? ''
+  const workspace = workspaceId ? getWorkspaceByNameOrId(workspaceId) : undefined
+  return workspace?.rootPath ?? ''
+}
+
+function resolveSessionDirectory(
+  sessionManager: ISessionManager,
+  sessionId: string,
+  workspaceRootPath: string,
+): string | null {
+  if (getPiShellFullPassthrough()) {
+    const piSession = resolvePiReadOnlySession(sessionId, workspaceRootPath)
+    if (piSession) return piSession.sessionDir
+  }
+  return sessionManager.getSessionPath(sessionId)
+}
+
+function resolveSessionDisplayPath(
+  sessionManager: ISessionManager,
+  sessionId: string,
+  workspaceRootPath: string,
+): string | null {
+  if (getPiShellFullPassthrough()) {
+    const piSession = resolvePiReadOnlySession(sessionId, workspaceRootPath)
+    if (piSession) return piSession.sessionFolderPath
+  }
+  return sessionManager.getSessionPath(sessionId)
+}
+
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.GET,
   RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY,
@@ -122,6 +201,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.COMMAND,
   RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION,
   RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE,
+  RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS,
   RPC_CHANNELS.sessions.SEARCH_CONTENT,
   RPC_CHANNELS.sessions.GET_FILES,
   RPC_CHANNELS.sessions.GET_NOTES,
@@ -179,42 +259,42 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.getUnreadSummary()
   })
 
-  server.handle(RPC_CHANNELS.sessions.MARK_ALL_READ, async (_ctx, workspaceId: string) => {
-    return sessionManager.markAllSessionsRead(workspaceId)
+  server.handle(RPC_CHANNELS.sessions.MARK_ALL_READ, async (ctx, workspaceId: string) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    return sessionManager.markAllSessionsRead(wid)
   })
 
   // Get a single session with messages (for lazy loading)
   server.handle(RPC_CHANNELS.sessions.GET_MESSAGES, async (ctx, sessionId: string) => {
     const end = perf.start('rpc.getSessionMessages')
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
 
     // Pi 会话（只读）：从 ~/.pi/agent/sessions/ 加载并转换为 Craft Message[]
     // 渲染层通过 sessionId 以 'pi-' 前缀判断只读，禁用输入框
     if (sessionId.startsWith('pi-') && getPiShellFullPassthrough()) {
-      const piSessionId = sessionId.slice(3)
-      const filePath = findPiSessionFile(PI_SESSIONS_DIR, piSessionId)
-      if (filePath) {
-        const windowWorkspaceId = ctx.webContentsId != null
-          ? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId)
-          : undefined
-        const workspaceId = ctx.workspaceId ?? windowWorkspaceId ?? ''
-        const workspace = workspaceId ? getWorkspaceByNameOrId(workspaceId) : undefined
-        const workspaceRoot = workspace?.rootPath ?? ''
-        const metadata = readPiSessionFile(filePath, workspaceRoot)
-        const storedMessages = loadPiSessionMessages(filePath)
+      const windowWorkspaceId = ctx.webContentsId != null
+        ? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId)
+        : undefined
+      const workspaceId = ctx.workspaceId ?? windowWorkspaceId ?? ''
+      const workspace = workspaceId ? getWorkspaceByNameOrId(workspaceId) : undefined
+      const workspaceRoot = workspace?.rootPath ?? ''
+      const readonlyPiSession = resolvePiReadOnlySession(sessionId, workspaceRoot)
+      if (readonlyPiSession) {
+        const storedMessages = loadPiSessionMessages(readonlyPiSession.filePath)
         const messages = storedMessages.map(storedToMessage)
         const piSession: Session = {
           id: sessionId,
           workspaceId,
           workspaceName: workspace?.name ?? 'Pi',
-          name: metadata?.name,
-          preview: metadata?.preview,
-          lastMessageAt: metadata?.lastUsedAt ?? Date.now(),
-          createdAt: metadata?.createdAt,
+          name: readonlyPiSession.metadata?.name,
+          preview: readonlyPiSession.metadata?.preview,
+          lastMessageAt: readonlyPiSession.metadata?.lastUsedAt ?? Date.now(),
+          createdAt: readonlyPiSession.metadata?.createdAt,
           messages,
           isProcessing: false,
           messageCount: messages.length,
-          workingDirectory: metadata?.workingDirectory,
-          sessionFolderPath: filePath,
+          workingDirectory: readonlyPiSession.metadata?.workingDirectory,
+          sessionFolderPath: readonlyPiSession.sessionFolderPath,
         }
         end()
         return piSession
@@ -229,15 +309,17 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Create a new session
-  server.handle(RPC_CHANNELS.sessions.CREATE, async (_ctx, workspaceId: string, options?: import('@craft-agent/shared/protocol').CreateSessionOptions) => {
-    const end = perf.start('rpc.createSession', { workspaceId })
-    const session = await sessionManager.createSession(workspaceId, options)
+  server.handle(RPC_CHANNELS.sessions.CREATE, async (ctx, workspaceId: string, options?: import('@craft-agent/shared/protocol').CreateSessionOptions) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    const end = perf.start('rpc.createSession', { workspaceId: wid })
+    const session = await sessionManager.createSession(wid, options)
     end()
     return session
   })
 
   // Delete a session
-  server.handle(RPC_CHANNELS.sessions.DELETE, async (_ctx, sessionId: string) => {
+  server.handle(RPC_CHANNELS.sessions.DELETE, async (ctx, sessionId: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.deleteSession(sessionId)
   })
 
@@ -255,6 +337,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   //     event stream as today.
   // attachments: FileAttachment[] for Claude (has content), storedAttachments: StoredAttachment[] for persistence (has thumbnailBase64)
   server.handle(RPC_CHANNELS.sessions.SEND_MESSAGE, async (ctx, sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachment[], options?: SendMessageOptions) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+
     // Capture the caller's clientId for error routing
     const callerClientId = ctx.clientId
 
@@ -301,12 +385,14 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Cancel processing
-  server.handle(RPC_CHANNELS.sessions.CANCEL, async (_ctx, sessionId: string, silent?: boolean) => {
+  server.handle(RPC_CHANNELS.sessions.CANCEL, async (ctx, sessionId: string, silent?: boolean) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.cancelProcessing(sessionId, silent)
   })
 
   // Kill background shell
-  server.handle(RPC_CHANNELS.sessions.KILL_SHELL, async (_ctx, sessionId: string, shellId: string) => {
+  server.handle(RPC_CHANNELS.sessions.KILL_SHELL, async (ctx, sessionId: string, shellId: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.killShell(sessionId, shellId)
   })
 
@@ -323,29 +409,40 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Respond to a permission request (bash command approval)
   // Returns true if the response was delivered, false if agent/session is gone
-  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION, async (_ctx, sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean) => {
+  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION, async (ctx, sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.respondToPermission(sessionId, requestId, allowed, alwaysAllow)
   })
 
   // Respond to a credential request (secure auth input)
   // Returns true if the response was delivered, false if agent/session is gone
-  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL, async (_ctx, sessionId: string, requestId: string, response: import('@craft-agent/shared/protocol').CredentialResponse) => {
+  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL, async (ctx, sessionId: string, requestId: string, response: import('@craft-agent/shared/protocol').CredentialResponse) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.respondToCredential(sessionId, requestId, response)
   })
 
   // 回复 pi 扩展发起的 remoteui:request（payload=null 表示用户取消）
   // 由渲染进程 RemoteUIModal 调用，转发到对应会话的 PiAgent.sendRemoteUIResponse
-  server.handle(RPC_CHANNELS.extensions.REMOTEUI_RESPONSE, async (_ctx, sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected') => {
+  server.handle(RPC_CHANNELS.extensions.REMOTEUI_RESPONSE, async (ctx, sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected') => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.sendRemoteUIResponse(sessionId, requestId, payload, reason)
   })
 
   // 调用 pi 扩展注册的命令（extension_command_invoke）
   // 由 automation 委托路径触发，转发到对应会话的 PiAgent.sendExtensionCommandInvoke
-  server.handle(RPC_CHANNELS.extensions.COMMAND_INVOKE, async (_ctx, sessionId: string, commandId: string, args?: string | Record<string, unknown>) => {
+  server.handle(RPC_CHANNELS.extensions.COMMAND_INVOKE, async (ctx, sessionId: string, commandId: string, args?: string | Record<string, unknown>) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     const serializedArgs = typeof args === 'string' || args === undefined
       ? args
       : JSON.stringify(args)
     return sessionManager.invokeExtensionCommand(sessionId, commandId, serializedArgs)
+  })
+
+  // List child sessions in pi's session tree spawned from the given parent session.
+  // Used by SubagentPanel to render active branches (spawnedFrom filter).
+  server.handle(RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS, async (ctx, sessionId: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    return sessionManager.listChildSessions(sessionId)
   })
 
   // ==========================================================================
@@ -354,10 +451,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Session commands - consolidated handler for session operations
   server.handle(RPC_CHANNELS.sessions.COMMAND, async (
-    _ctx,
+    ctx,
     sessionId: string,
     command: import('@craft-agent/shared/protocol').SessionCommand
   ) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     switch (command.type) {
       case 'flag':
         return sessionManager.flagSession(sessionId)
@@ -393,7 +491,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       case 'setLabels':
         return sessionManager.setSessionLabels(sessionId, command.labels)
       case 'showInFinder': {
-        const sessionPath = sessionManager.getSessionPath(sessionId)
+        const sessionPath = resolveSessionDisplayPath(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
         if (sessionPath) {
           deps.platform.showItemInFolder?.(sessionPath)
         }
@@ -401,7 +499,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       }
       case 'copyPath': {
         // Return the session folder path for copying to clipboard
-        const sessionPath = sessionManager.getSessionPath(sessionId)
+        const sessionPath = resolveSessionDisplayPath(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
         return sessionPath ? { success: true, path: sessionPath } : { success: false }
       }
       case 'shareToViewer':
@@ -441,17 +539,19 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Get pending plan execution state (for reload recovery)
   server.handle(RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION, async (
-    _ctx,
+    ctx,
     sessionId: string
   ) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.getPendingPlanExecution(sessionId)
   })
 
   // Get authoritative permission mode diagnostics for renderer reconciliation
   server.handle(RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE, async (
-    _ctx,
+    ctx,
     sessionId: string
   ) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.getSessionPermissionModeState(sessionId)
   })
 
@@ -460,23 +560,27 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Search session content using ripgrep
-  server.handle(RPC_CHANNELS.sessions.SEARCH_CONTENT, async (_ctx, workspaceId: string, query: string, searchId?: string) => {
+  server.handle(RPC_CHANNELS.sessions.SEARCH_CONTENT, async (ctx, workspaceId: string, query: string, searchId?: string) => {
     const id = searchId || Date.now().toString(36)
     log.info('[search]','ipc:request', { searchId: id, query })
 
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) {
-      log.warn('SEARCH_SESSIONS: Workspace not found:', workspaceId)
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
+    if (!wid) return []
+    const workspace = getWorkspaceOrNull(wid, log, 'SEARCH_SESSIONS')
+    if (!workspace) return []
+
+    const { searchSessions } = await import('@craft-agent/server-core/services')
+    const workspaceSessions = sessionManager.getSessions(wid)
+    const searchRoots = collectSessionSearchRoots(workspace.rootPath, workspaceSessions)
+      .filter((root) => existsSync(root))
+    if (searchRoots.length === 0) {
+      log.debug(`SEARCH_SESSIONS: No session roots found for workspace ${wid}`)
       return []
     }
 
-    const { searchSessions } = await import('@craft-agent/server-core/services')
-    const { getWorkspaceSessionsPath } = await import('@craft-agent/shared/workspaces')
+    log.debug(`SEARCH_SESSIONS: Searching "${query}" in ${searchRoots.length} session root(s)`)
 
-    const sessionsDir = getWorkspaceSessionsPath(workspace.rootPath)
-    log.debug(`SEARCH_SESSIONS: Searching "${query}" in ${sessionsDir}`)
-
-    const results = await searchSessions(query, sessionsDir, {
+    const results = await searchSessions(query, searchRoots, {
       timeout: 5000,
       maxMatchesPerSession: 3,
       maxSessions: 50,
@@ -484,11 +588,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     })
 
     // Filter out hidden sessions (e.g., mini edit sessions)
-    const allSessions = await sessionManager.getSessions()
+    const workspaceSessionIds = new Set(workspaceSessions.map(s => s.id))
     const hiddenSessionIds = new Set(
-      allSessions.filter(s => s.hidden).map(s => s.id)
+      workspaceSessions.filter(s => s.hidden).map(s => s.id)
     )
-    const filteredResults = results.filter(r => !hiddenSessionIds.has(r.sessionId))
+    const filteredResults = results.filter(r => workspaceSessionIds.has(r.sessionId) && !hiddenSessionIds.has(r.sessionId))
 
     log.info('[search]','ipc:response', { searchId: id, resultCount: filteredResults.length, totalFound: results.length })
     return filteredResults
@@ -499,8 +603,9 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Get files in session directory (recursive tree structure)
-  server.handle(RPC_CHANNELS.sessions.GET_FILES, async (_ctx, sessionId: string) => {
-    const sessionPath = sessionManager.getSessionPath(sessionId)
+  server.handle(RPC_CHANNELS.sessions.GET_FILES, async (ctx, sessionId: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    const sessionPath = resolveSessionDirectory(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
     if (!sessionPath) return []
 
     try {
@@ -513,10 +618,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Start watching a session directory for file changes (per client)
   server.handle(RPC_CHANNELS.sessions.WATCH_FILES, async (ctx, sessionId: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     const clientId = ctx.clientId
     cleanupSessionFileWatchForClient(clientId)
 
-    const sessionPath = sessionManager.getSessionPath(sessionId)
+    const sessionPath = resolveSessionDirectory(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
     if (!sessionPath) return
 
     try {
@@ -556,8 +662,9 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Get session notes (reads notes.md from session directory)
-  server.handle(RPC_CHANNELS.sessions.GET_NOTES, async (_ctx, sessionId: string) => {
-    const sessionPath = sessionManager.getSessionPath(sessionId)
+  server.handle(RPC_CHANNELS.sessions.GET_NOTES, async (ctx, sessionId: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    const sessionPath = resolveSessionDirectory(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
     if (!sessionPath) return ''
 
     try {
@@ -571,8 +678,13 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Set session notes (writes to notes.md in session directory)
-  server.handle(RPC_CHANNELS.sessions.SET_NOTES, async (_ctx, sessionId: string, content: string) => {
-    const sessionPath = sessionManager.getSessionPath(sessionId)
+  server.handle(RPC_CHANNELS.sessions.SET_NOTES, async (ctx, sessionId: string, content: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    if (sessionId.startsWith('pi-') && getPiShellFullPassthrough()) {
+      throw new Error(`Session is read-only: ${sessionId}`)
+    }
+
+    const sessionPath = resolveSessionDirectory(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
     if (!sessionPath) {
       throw new Error(`Session not found: ${sessionId}`)
     }

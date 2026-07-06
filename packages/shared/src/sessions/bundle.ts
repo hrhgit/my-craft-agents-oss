@@ -7,11 +7,12 @@
  * This is the foundation for session dispatch (move/fork), backup, and sharing.
  */
 
-import { existsSync, readFileSync } from 'fs'
-import type { SessionHeader, StoredMessage, SessionConfig } from './types.ts'
+import { existsSync } from 'fs'
+import type { SessionHeader, StoredMessage } from './types.ts'
 import type { StoredSession } from './types.ts'
-import { readSessionJsonl } from './jsonl.ts'
+import { readSessionJsonl, readSessionHeader } from './jsonl.ts'
 import { getSessionPath, getSessionFilePath } from './storage.ts'
+import { isValidSessionId } from './validation.ts'
 import { debug } from '../utils/debug.ts'
 import {
   type BundleFile,
@@ -115,16 +116,13 @@ export function serializeSession(
     return null
   }
 
-  // Build header from stored session (re-use the header creation from JSONL)
-  // We read the raw header from the JSONL to preserve pre-computed fields
-  const rawContent = readFileSync(sessionFile, 'utf-8')
-  const firstLine = rawContent.split('\n')[0]
-  if (!firstLine) return null
-
-  // Strip server-internal fields that shouldn't travel with the bundle
-  const header: SessionHeader = {
-    ...JSON.parse(firstLine) as SessionHeader,
-    // workspaceRootPath will be set by the importing server
+  // Read the session header via readSessionHeader, which correctly handles
+  // both Pi tree JSONL v3 format (extracts the `craft` extension from the Pi
+  // header) and the legacy Craft JSONL format (reads the first line directly).
+  const header = readSessionHeader(sessionFile)
+  if (!header) {
+    debug('[bundle] Failed to read session header:', sessionFile)
+    return null
   }
 
   return {
@@ -153,7 +151,10 @@ export function validateBundle(bundle: unknown): bundle is SessionBundle {
   if (!Array.isArray(session.messages)) return false
 
   const header = session.header as Record<string, unknown>
-  if (typeof header.id !== 'string') return false
+  // 接受 craftId（新格式）或 id（旧 bundle 格式）
+  if (typeof header.craftId !== 'string' && typeof header.id !== 'string') return false
+  if (typeof header.craftId === 'string' && !isValidSessionId(header.craftId)) return false
+  if (typeof header.id === 'string' && !isValidSessionId(header.id)) return false
   if (typeof header.createdAt !== 'number') return false
 
   if (!Array.isArray(b.files)) return false

@@ -322,25 +322,22 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     return connection?.defaultModel ?? ''
   }, [session?.id, session?.model, session?.llmConnection, workspaceDefaultLlmConnection, llmConnections, connectionUnavailable])
 
-  // Working directory for this session
+  // Compatibility DTO field; complete-unification keeps it equal to the
+  // workspace root, which is the authoritative base for relative paths.
   const workingDirectory = session?.workingDirectory
   const activeWorkspace = React.useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) || null,
     [workspaces, activeWorkspaceId]
   )
-  const handleWorkingDirectoryChange = React.useCallback(async (path: string) => {
-    if (!session) return
-    await window.electronAPI.sessionCommand(session.id, { type: 'updateWorkingDirectory', dir: path })
-  }, [session])
 
   const handleOpenFile = React.useCallback(
     async (path: string) => {
-      // Resolve bare relative paths against session working directory,
-      // or workspace root as a fallback when workingDirectory is not set.
+      // Resolve bare relative paths against the workspace root. workingDirectory
+      // is retained only for old DTO compatibility and should match the root.
       const resolved = (() => {
         if (path.startsWith('/') || path.startsWith('~/')) return path
 
-        const baseDir = workingDirectory || activeWorkspace?.rootPath
+        const baseDir = activeWorkspace?.rootPath || workingDirectory
         if (!baseDir) return path
 
         const cleanedBase = baseDir.replace(/\/+$/, '')
@@ -378,7 +375,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
       onOpenFile(resolved)
     },
-    [onOpenFile, workingDirectory, activeWorkspace?.rootPath]
+    [onOpenFile, activeWorkspace?.rootPath, workingDirectory]
   )
 
   const handleOpenUrl = React.useCallback(
@@ -646,7 +643,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const compactTitleMenu = React.useMemo(() => (sessionMeta && isCompactMode) ? (
     <CompactSessionMenu
       title={displayTitle}
-      isRegeneratingTitle={isAsyncOperationOngoing}
+      isTitleBusy={isAsyncOperationOngoing}
       item={sessionMeta}
       sessionStatuses={sessionStatuses ?? []}
       labels={labels ?? []}
@@ -701,7 +698,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       return (
         <>
           <div className="h-full flex flex-col">
-            <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+            <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isTitleBusy={isAsyncOperationOngoing} />
             <div className="flex-1 flex flex-col min-h-0">
               <ChatDisplay
                 ref={chatDisplayRef}
@@ -732,7 +729,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 workspaceId={activeWorkspaceId || undefined}
                 onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
                 workingDirectory={sessionMeta.workingDirectory}
-                onWorkingDirectoryChange={handleWorkingDirectoryChange}
                 messagesLoading={messageLoadState.messagesLoading || (messagesRetrying && !messageLoadState.messagesReady)}
                 messagesLoadError={messageLoadState.error}
                 messagesRetrying={messagesRetrying}
@@ -774,7 +770,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   return (
     <>
       <div className="h-full flex flex-col">
-        <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+        <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isTitleBusy={isAsyncOperationOngoing} />
         <div className="flex-1 flex flex-col min-h-0">
           <ChatDisplay
             ref={chatDisplayRef}
@@ -811,7 +807,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             workspaceId={activeWorkspaceId || undefined}
             onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
             workingDirectory={workingDirectory}
-            onWorkingDirectoryChange={handleWorkingDirectoryChange}
             sessionFolderPath={session?.sessionFolderPath}
             messagesLoading={messageLoadState.messagesLoading || (messagesRetrying && !messageLoadState.messagesReady)}
             messagesLoadError={messageLoadState.error}

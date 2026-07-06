@@ -1,14 +1,14 @@
 /**
  * Credential Manager
  *
- * Main interface for credential storage. Uses encrypted file storage
- * for cross-platform compatibility without OS keychain prompts.
+ * Main interface for credential storage. Uses pi auth.json thin wrapper
+ * for credential storage (cross-platform, no OS keychain prompts).
  */
 
 import type { CredentialBackend } from './backends/types.ts';
 import type { CredentialId, CredentialType, StoredCredential, CredentialHealthStatus, CredentialHealthIssue } from './types.ts';
 import type { LlmAuthType, LlmProviderType } from '../config/llm-connections.ts';
-import { SecureStorageBackend } from './backends/secure-storage.ts';
+import { PiCredentialStore } from './backends/secure-storage.ts';
 import { debug } from '../utils/debug.ts';
 
 export class CredentialManager {
@@ -52,10 +52,10 @@ export class CredentialManager {
       return;
     }
 
-    // SecureStorageBackend is always available and is currently the only
+    // PiCredentialStore is always available and is currently the only
     // credential backend. This sync path exists for sync callers such as
     // saveSourceConfig(), where fire-and-forget cleanup can race immediate reloads.
-    const backend = new SecureStorageBackend();
+    const backend = new PiCredentialStore();
     this.backends = [backend];
     this.writeBackend = backend;
     this.initialized = true;
@@ -66,7 +66,7 @@ export class CredentialManager {
 
   private async _doInitialize(): Promise<void> {
     const potentialBackends: CredentialBackend[] = [
-      new SecureStorageBackend(),
+      new PiCredentialStore(),
     ];
     const availableBackends: CredentialBackend[] = [];
 
@@ -149,6 +149,7 @@ export class CredentialManager {
     await this.ensureInitialized();
 
     let deleted = false;
+    let firstError: unknown;
     for (const backend of this.backends) {
       try {
         if (await backend.delete(id)) {
@@ -156,8 +157,13 @@ export class CredentialManager {
           debug(`[CredentialManager] Deleted ${id.type} from ${backend.name}`);
         }
       } catch (err) {
+        firstError ??= err;
         debug(`[CredentialManager] Error deleting from ${backend.name}:`, err);
       }
+    }
+
+    if (firstError) {
+      throw firstError;
     }
 
     return deleted;
@@ -167,6 +173,7 @@ export class CredentialManager {
     this.ensureInitializedSync();
 
     let deleted = false;
+    let firstError: unknown;
     for (const backend of this.backends) {
       if (!backend.deleteSync) {
         debug(`[CredentialManager] Backend ${backend.name} does not support synchronous delete`);
@@ -179,12 +186,18 @@ export class CredentialManager {
           debug(`[CredentialManager] Deleted ${id.type} from ${backend.name}`);
         }
       } catch (err) {
+        firstError ??= err;
         debug(`[CredentialManager] Error deleting from ${backend.name}:`, err);
       }
     }
 
+    if (firstError) {
+      throw firstError;
+    }
+
     return deleted;
   }
+
 
   /**
    * List credentials matching a filter.
@@ -217,63 +230,6 @@ export class CredentialManager {
   // ============================================================
   // Convenience Methods
   // ============================================================
-
-  /** Get Anthropic API key */
-  async getApiKey(): Promise<string | null> {
-    const cred = await this.get({ type: 'anthropic_api_key' });
-    return cred?.value || null;
-  }
-
-  /** Set Anthropic API key */
-  async setApiKey(key: string): Promise<void> {
-    await this.set({ type: 'anthropic_api_key' }, { value: key });
-  }
-
-  /** Get Claude OAuth token */
-  async getClaudeOAuth(): Promise<string | null> {
-    const cred = await this.get({ type: 'claude_oauth' });
-    return cred?.value || null;
-  }
-
-  /** Set Claude OAuth token */
-  async setClaudeOAuth(token: string): Promise<void> {
-    await this.set({ type: 'claude_oauth' }, { value: token });
-  }
-
-  /** Get Claude OAuth credentials (with refresh token, expiry, and source) */
-  async getClaudeOAuthCredentials(): Promise<{
-    accessToken: string;
-    refreshToken?: string;
-    expiresAt?: number;
-    /** Where the token came from: 'native' (our OAuth), 'cli' (Claude CLI import), or undefined (unknown) */
-    source?: 'native' | 'cli';
-  } | null> {
-    const cred = await this.get({ type: 'claude_oauth' });
-    if (!cred) return null;
-
-    return {
-      accessToken: cred.value,
-      refreshToken: cred.refreshToken,
-      expiresAt: cred.expiresAt,
-      source: cred.source as 'native' | 'cli' | undefined,
-    };
-  }
-
-  /** Set Claude OAuth credentials (with refresh token, expiry, and source) */
-  async setClaudeOAuthCredentials(credentials: {
-    accessToken: string;
-    refreshToken?: string;
-    expiresAt?: number;
-    /** Where the token came from: 'native' (our OAuth), 'cli' (Claude CLI import) */
-    source?: 'native' | 'cli';
-  }): Promise<void> {
-    await this.set({ type: 'claude_oauth' }, {
-      value: credentials.accessToken,
-      refreshToken: credentials.refreshToken,
-      expiresAt: credentials.expiresAt,
-      source: credentials.source,
-    });
-  }
 
   /** Get workspace MCP OAuth credentials */
   async getWorkspaceOAuth(workspaceId: string): Promise<{
@@ -619,8 +575,13 @@ export class CredentialManager {
    * Check the health of the credential store.
    *
    * This validates:
-   * 1. The credential file can be read and decrypted (if it exists)
+   * 1. The credential file (pi auth.json) can be read and parsed (if it exists)
    * 2. The default LLM connection has valid credentials
+   *
+   * Note: credentials are stored as plaintext JSON in ~/.pi/agent/auth.json
+   * (0600 permissions). There is no decryption step; the former
+   * `decryption_failed` branch (machine migration detection) is no longer
+   * reachable and has been removed.
    *
    * Use this on app startup to detect issues before users hit cryptic errors.
    *
@@ -632,22 +593,19 @@ export class CredentialManager {
     try {
       await this.ensureInitialized();
 
-      // 1. Try to list credentials - this triggers decryption
-      // If file is corrupted or can't be decrypted, this will throw
+      // 1. Try to list credentials - this triggers parsing of pi auth.json.
+      // If the file is corrupted or can't be parsed, this will throw.
       await this.list({});
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       const lowerMsg = errorMsg.toLowerCase();
 
-      // Detect decryption failures (usually means machine migration)
-      if (lowerMsg.includes('decrypt') || lowerMsg.includes('cipher') || lowerMsg.includes('authentication tag')) {
-        issues.push({
-          type: 'decryption_failed',
-          message: 'Credentials from another machine detected. Please re-authenticate.',
-          error: errorMsg,
-        });
-      } else if (lowerMsg.includes('json') || lowerMsg.includes('parse') || lowerMsg.includes('unexpected')) {
+      // Credentials are now plaintext JSON (no encryption), so only parse/read
+      // failures are possible. The former `decryption_failed` branch checked for
+      // 'decrypt'/'cipher'/'authentication tag' keywords which can no longer
+      // occur after the migration to pi auth.json.
+      if (lowerMsg.includes('json') || lowerMsg.includes('parse') || lowerMsg.includes('unexpected')) {
         issues.push({
           type: 'file_corrupted',
           message: 'Credential file is corrupted. Please re-authenticate.',

@@ -7,7 +7,6 @@ import { getAuthState, getSetupNeeds } from '@craft-agent/shared/auth'
 import { isSetupDeferred, setSetupDeferred } from '@craft-agent/shared/config/storage'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { prepareMcpOAuth } from '@craft-agent/shared/auth'
-import { validateMcpConnection } from '@craft-agent/shared/mcp'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from './handlers/handler-deps'
@@ -18,7 +17,6 @@ import type { HandlerDeps } from './handlers/handler-deps'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.onboarding.GET_AUTH_STATE,
-  RPC_CHANNELS.onboarding.VALIDATE_MCP,
   RPC_CHANNELS.onboarding.START_MCP_OAUTH,
   RPC_CHANNELS.onboarding.DEFER_SETUP,
 ] as const
@@ -37,24 +35,10 @@ export function registerOnboardingHandlers(server: RpcServer, deps: HandlerDeps)
         billing: {
           ...authState.billing,
           apiKey: authState.billing.apiKey ? '••••' : null,
-          claudeOAuthToken: authState.billing.claudeOAuthToken ? '••••' : null,
+          oauthToken: authState.billing.oauthToken ? '••••' : null,
         },
       },
       setupNeeds,
-    }
-  })
-
-  // Validate MCP connection
-  server.handle(RPC_CHANNELS.onboarding.VALIDATE_MCP, async (_ctx, mcpUrl: string, accessToken?: string) => {
-    try {
-      const result = await validateMcpConnection({
-        mcpUrl,
-        mcpAccessToken: accessToken,
-      })
-      return result
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      return { success: false, error: message }
     }
   })
 

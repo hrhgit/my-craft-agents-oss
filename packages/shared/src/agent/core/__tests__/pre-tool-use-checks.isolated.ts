@@ -55,8 +55,9 @@ mock.module('../../../utils/paths.ts', () => ({
 }));
 
 // Mock filesystem for config validation and skill qualification
+let mockExistsSync = mock((_path: string) => false);
 mock.module('node:fs', () => ({
-  existsSync: (_path: string) => false,
+  existsSync: (path: string) => mockExistsSync(path),
   readFileSync: (_path: string) => '',
 }));
 
@@ -78,8 +79,16 @@ mock.module('../../../skills/types.ts', () => ({
 }));
 
 mock.module('../../../skills/storage.ts', () => ({
-  GLOBAL_AGENT_SKILLS_DIR: '/Users/test/.agents/skills',
-  PROJECT_AGENT_SKILLS_DIR: '.agents/skills',
+  validateSkillSlug: (slug: unknown) => {
+    if (!slug || typeof slug !== 'string') return null;
+    if (slug.includes('/') || slug.includes('\\')) return null;
+    return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) ? slug : null;
+  },
+}));
+
+mock.module('../../../config/paths.ts', () => ({
+  PI_SKILLS_DIR: '/Users/test/.pi/agent/skills',
+  PI_PROJECT_SKILLS_DIR: '.pi/skills',
 }));
 
 let mockCraftAgentsCliFlag = false;
@@ -91,7 +100,6 @@ mock.module('../../../feature-flags.ts', () => ({
     get developerFeedback() {
       return false;
     },
-    fastMode: false,
   },
 }));
 
@@ -165,6 +173,8 @@ describe('runPreToolUseChecks', () => {
     mockDetectAppConfigFileType.mockImplementation(() => null);
     mockValidateConfigFileContent.mockReset();
     mockValidateConfigFileContent.mockImplementation(() => null);
+    mockExistsSync.mockReset();
+    mockExistsSync.mockImplementation(() => false);
     mockReadOnlyBashPatterns = [];
     mockCraftAgentsCliFlag = false;
   });
@@ -400,7 +410,7 @@ describe('runPreToolUseChecks', () => {
 
     it('does not intercept other session tools', () => {
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__SubmitPlan',
+        toolName: 'mcp__session__config_validate',
         input: {},
       }));
 
@@ -465,6 +475,17 @@ describe('runPreToolUseChecks', () => {
         expect(result.input.file_path).toBe('/Users/test/test.ts');
         expect(result.input._intent).toBeUndefined();
       }
+    });
+
+    it('does not probe skill paths for unsafe skill slugs', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Skill',
+        input: { skill: '../../../../tmp/evil' },
+        workingDirectory: '/repo',
+      }));
+
+      expect(result.type).toBe('allow');
+      expect(mockExistsSync).not.toHaveBeenCalled();
     });
 
     it('blocks direct label folder reads and suggests craft-agent label help when feature is enabled', () => {

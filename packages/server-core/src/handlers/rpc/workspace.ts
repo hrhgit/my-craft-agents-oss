@@ -1,12 +1,12 @@
-import { existsSync } from 'node:fs'
+import { existsSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, updateWorkspaceRemoteServer } from '@craft-agent/shared/config'
+import { CONFIG_DIR, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, updateWorkspaceRemoteServer } from '@craft-agent/shared/config'
 import { perf } from '@craft-agent/shared/utils'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { isValidWorkspaceRootPath } from '../../utils/path-validation'
+import { getWorkspaceOrThrow } from '../utils'
 
 export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.GET,
@@ -60,7 +60,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
 
   // Check if a workspace slug already exists (for validation before creation)
   server.handle(RPC_CHANNELS.workspaces.CHECK_SLUG, async (_ctx, slug: string) => {
-    const defaultWorkspacesDir = join(homedir(), '.craft-agent', 'workspaces')
+    const defaultWorkspacesDir = join(CONFIG_DIR, 'workspaces')
     const workspacePath = join(defaultWorkspacesDir, slug)
     const exists = existsSync(workspacePath)
     return { exists, path: workspacePath }
@@ -94,9 +94,10 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   // Switch workspace in current window (in-window switching)
   server.handle(RPC_CHANNELS.window.SWITCH_WORKSPACE, async (ctx, workspaceId: string) => {
     const end = perf.start('ipc.switchWorkspace', { workspaceId })
+    const workspace = getWorkspaceOrThrow(workspaceId)
 
     // Keep WS push routing in sync (works for both GUI and headless)
-    server.updateClientWorkspace?.(ctx.clientId, workspaceId)
+    await server.updateClientWorkspace?.(ctx.clientId, workspaceId)
 
     if (windowManager) {
       const wcId = ctx.webContentsId!
@@ -128,10 +129,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     }
 
     // Set up ConfigWatcher for the new workspace
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (workspace) {
-      sessionManager.setupConfigWatcher(workspace.rootPath, workspaceId)
-    }
+    sessionManager.setupConfigWatcher(workspace.rootPath, workspaceId)
     end()
 
     // Return connection details so the preload RoutedClient can decide
@@ -148,8 +146,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
 
   // Generic workspace image loading (for source icons, status icons, etc.)
   server.handle(RPC_CHANNELS.workspace.READ_IMAGE, async (_ctx, workspaceId: string, relativePath: string) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+    const workspace = getWorkspaceOrThrow(workspaceId)
 
     const { readFileSync, existsSync } = await import('fs')
     const { join, normalize } = await import('path')
@@ -204,8 +201,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   // Generic workspace image writing (for workspace icon, etc.)
   // Resizes images to max 256x256 to keep file sizes small
   server.handle(RPC_CHANNELS.workspace.WRITE_IMAGE, async (_ctx, workspaceId: string, relativePath: string, base64: string, mimeType: string) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+    const workspace = getWorkspaceOrThrow(workspaceId)
 
     const { writeFileSync, existsSync, unlinkSync, readdirSync } = await import('fs')
     const { join, normalize, basename } = await import('path')
@@ -349,8 +345,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
 
   // List views for a workspace (dynamic expression-based filters stored in views.json)
   server.handle(RPC_CHANNELS.views.LIST, async (_ctx, workspaceId: string) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+    const workspace = getWorkspaceOrThrow(workspaceId)
 
     const { listViews } = await import('@craft-agent/shared/views/storage')
     return listViews(workspace.rootPath)
@@ -358,8 +353,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
 
   // Save views (replaces full array)
   server.handle(RPC_CHANNELS.views.SAVE, async (_ctx, workspaceId: string, views: import('@craft-agent/shared/views').ViewConfig[]) => {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
+    const workspace = getWorkspaceOrThrow(workspaceId)
 
     const { saveViews } = await import('@craft-agent/shared/views/storage')
     saveViews(workspace.rootPath, views)

@@ -6,7 +6,7 @@ import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-c
 import { createExtensionEventForwarder } from '../handlers/pi-extension-bridge'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
 import { basename, dirname, join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readdirSync } from 'fs'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
@@ -17,7 +17,6 @@ import {
   resolveBackendContext,
   createBackendFromResolvedContext,
   cleanupSourceRuntimeArtifacts,
-  providerTypeToAgentProvider,
   type AgentBackend,
   type BackendHostRuntimeContext,
   type PostInitResult,
@@ -29,19 +28,19 @@ import { InitGate } from '@craft-agent/server-core/domain'
 import { i18n } from '@craft-agent/shared/i18n'
 import {
   getWorkspaces,
+  addWorkspace,
   getWorkspaceByNameOrId,
   loadConfigDefaults,
   loadPreferences,
-  migrateLegacyCredentials,
   migrateLegacyLlmConnectionsConfig,
   migrateOrphanedDefaultConnections,
-  getPiShellFullPassthrough,
+  runUnifiedMigrationIfNeeded,
   MODEL_REGISTRY,
   type Workspace,
   type WorkspaceInfo,
 } from '@craft-agent/shared/config'
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@craft-agent/core/types'
-import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
+import { getWorkspacePiSessionsDir, loadWorkspaceConfig, saveWorkspaceConfig } from '@craft-agent/shared/workspaces'
 import {
   // Session persistence functions
   listSessions as listStoredSessions,
@@ -50,7 +49,6 @@ import {
   createSession as createStoredSession,
   deleteSession as deleteStoredSession,
   updateSessionMetadata,
-  canUpdateSdkCwd,
   setPendingPlanExecution as setStoredPendingPlanExecution,
   markCompactionComplete as markStoredCompactionComplete,
   markPendingPlanExecutionDispatched as markStoredPendingPlanExecutionDispatched,
@@ -60,37 +58,34 @@ import {
   getSessionPath as getSessionStoragePath,
   ensureSessionDir,
   getSessionFilePath,
-  getSharedPiSessionStorageEnabled,
   generateSessionId,
   sessionPersistenceQueue,
   getHeaderMetadataSignature,
-  setSharedPiSessionStorageEnabled,
-  writeSessionJsonl,
+  readSessionJsonl,
+  writeTreeSessionCraftMetadata,
+  appendStoredMessagesViaPiSessionManager,
+  writeCraftSessionOverlay,
   serializeSession,
   validateBundle,
   type SessionBundle,
   type DispatchMode,
   type StoredSession,
   type StoredMessage,
-  type SessionMetadata,
   type SessionStatus,
   type SessionHeader,
-  pickSessionFields,
+  pickCraftSessionMetadata,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/config'
-import { getValidClaudeOAuthToken } from '@craft-agent/shared/auth'
-import { resolveAuthEnvVars } from '@craft-agent/shared/config'
 import { toolMetadataStore, getLastApiError } from '@craft-agent/shared/interceptor'
-import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
+import { inferToolResultError, isParentTaskOrTaskOutputTool } from '@craft-agent/shared/utils/toolNames'
 import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
 import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
-import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath } from '@craft-agent/shared/utils'
-import { loadAllSkills, loadSkillBySlug, invalidateSkillsCache, type LoadedSkill } from '@craft-agent/shared/skills'
-import { invalidateContextFileCache } from '@craft-agent/shared/prompts/system'
+import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, normalizePathForComparison } from '@craft-agent/shared/utils'
+import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
 import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
 import { getDefaultSummarizationModel } from '@craft-agent/shared/config/models'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
@@ -602,7 +597,6 @@ async function resolveToolDisplayMeta(
       // Internal MCP server tools (session, docs)
       const internalMcpServers: Record<string, Record<string, string>> = {
         'session': {
-          'SubmitPlan': 'Submit Plan',
           'config_validate': 'Validate Config',
           'skill_validate': 'Validate Skill',
           'mermaid_validate': 'Validate Mermaid',
@@ -824,7 +818,8 @@ interface ManagedSession {
   enabledSourceSlugs?: string[]
   // Labels applied to this session (additive tags, many-per-session)
   labels?: string[]
-  // Working directory for this session (used by agent for bash commands)
+  // Compatibility DTO field. Under complete-unification semantics this always
+  // equals workspace.rootPath; callers must not use it for ownership/bucket routing.
   workingDirectory?: string
   // SDK cwd for session storage - set once at creation, never changes.
   // Ensures SDK can find session transcripts regardless of workingDirectory changes.
@@ -993,12 +988,12 @@ export function claimAutoRetryPending(
 }
 
 /**
- * Create a ManagedSession from any session-like source (SessionMetadata, SessionConfig, StoredSession).
+ * Create a ManagedSession from any session-like source (SessionHeader, StoredSession).
  * Spreads all matching fields from the source so new persistent fields automatically propagate.
  * Runtime-only fields get sensible defaults.
  */
 export function createManagedSession(
-  source: { id: string } & Partial<ManagedSession>,
+  source: { craftId: string } & Partial<ManagedSession>,
   workspace: Workspace,
   overrides?: Partial<ManagedSession>,
 ): ManagedSession {
@@ -1019,9 +1014,11 @@ export function createManagedSession(
   }
 
   const managed = {
-    // Spread all session-like fields from source (id, name, permissionMode, labels, model, etc.)
+    // Spread all session-like fields from source (name, permissionMode, labels, model, etc.)
     // This ensures new persistent fields automatically flow through without manual copying.
     ...sourceFields,
+    // Map craftId → id (ManagedSession 内部用 id 字段，值等于 SessionHeader.craftId)
+    id: source.craftId,
     // Runtime-only defaults (not persisted)
     workspace,
     agent: null,
@@ -1053,6 +1050,9 @@ export function createManagedSession(
     managed.branchSeedApplied = !!managed.sdkSessionId
   }
 
+  managed.workingDirectory = workspace.rootPath
+  managed.sdkCwd = managed.sdkCwd ?? workspace.rootPath
+
   return managed
 }
 
@@ -1076,11 +1076,15 @@ const DEFAULT_TOKEN_USAGE = {
 
 /**
  * Convert a ManagedSession to a renderer-side Session object.
- * Uses pickSessionFields() for persistent fields so new fields propagate automatically.
+ * Uses pickCraftSessionMetadata() for Craft-owned persistent fields so new
+ * fields propagate automatically.
  */
 function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Session {
   return {
-    ...pickSessionFields(m),
+    ...pickCraftSessionMetadata(m),
+    // Craft metadata uses craftId, while ManagedSession runtime state uses id.
+    // Renderer Session DTO still exposes id, so map it explicitly here.
+    id: m.id,
     // Pre-computed fields from header (not in SESSION_PERSISTENT_FIELDS)
     preview: m.preview,
     lastMessageRole: m.lastMessageRole,
@@ -1385,7 +1389,7 @@ export class SessionManager implements ISessionManager {
    * Apply external session header metadata to in-memory state and emit UI events.
    * Returns true if any in-memory metadata field changed.
    */
-  private applyExternalSessionMetadata(managed: ManagedSession, header: SessionHeader): boolean {
+  private async applyExternalSessionMetadata(managed: ManagedSession, header: SessionHeader): Promise<boolean> {
     const sessionId = managed.id
     let changed = false
 
@@ -1426,7 +1430,7 @@ export class SessionManager implements ISessionManager {
       sessionLog.info(`External metadata change detected for session ${sessionId}`)
 
       // Prevent stale pending writes from reverting externally-updated metadata.
-      sessionPersistenceQueue.cancel(sessionId)
+      await sessionPersistenceQueue.cancel(sessionId)
       this.persistSession(managed)
     }
 
@@ -1557,13 +1561,15 @@ export class SessionManager implements ISessionManager {
               sessionLog.info(`Deferred external metadata update for session ${sessionId} (processing active)`)
             }
           } else {
-            this.applyExternalSessionMetadata(managed, header)
+            void this.applyExternalSessionMetadata(managed, header).catch((error) => {
+              sessionLog.error(`Failed to apply external metadata for session ${sessionId}:`, error)
+            })
           }
         }
 
         // Always notify automation system — it does its own diffing and needs
         // to see both self-writes and external changes for event matching.
-        const automationSystem = this.automationSystems.get(managed.workspace.rootPath)
+        const automationSystem = this.automationSystems.get(workspaceRootPath)
         if (automationSystem) {
           automationSystem.updateSessionMetadata(sessionId, {
             permissionMode: header.permissionMode,
@@ -1593,15 +1599,24 @@ export class SessionManager implements ISessionManager {
         onDelegatePrompts: async (prompts) => {
           sessionLog.info(`[Automations] Delegating ${prompts.length} prompt(s) to pi prompt-automation extension`)
           const delegateSession = this.findActivePiSessionForWorkspace(workspaceRootPath)
-          // 搭桥已就绪（invokeExtensionCommand → PiAgent.sendExtensionCommandInvoke），
-          // 但 subprocess 侧 extension_command_invoke 尚为 no-op（待 Pi prompt-automation
-          // 扩展落地）。当前保底走 Craft 原生 executePromptAutomation，确保不丢失执行。
           if (delegateSession) {
-            sessionLog.info(`[Automations] Candidate delegate session ${delegateSession} found, but subprocess side is no-op — using native fallback`)
+            try {
+              const accepted = await this.invokeExtensionCommand(
+                delegateSession,
+                'prompt-automation',
+                JSON.stringify(prompts),
+              )
+              if (accepted) {
+                sessionLog.info(`[Automations] Delegated prompt batch to Pi session ${delegateSession}`)
+                return
+              }
+              sessionLog.warn(`[Automations] Pi prompt-automation command was not accepted by session ${delegateSession}, using native fallback`)
+            } catch (error) {
+              sessionLog.warn(`[Automations] Pi prompt-automation delegate failed, using native fallback: ${error instanceof Error ? error.message : String(error)}`)
+            }
           } else {
             sessionLog.warn(`[Automations] No active Pi session for workspace ${workspaceRootPath}, using native fallback`)
           }
-          // TODO(pi-extensions): subprocess 侧实现后，改为 invokeExtensionCommand + 失败回退。
           await this.executePromptsNative(workspaceId, workspaceRootPath, prompts)
         },
         onPromptsReady: async (prompts) => {
@@ -1778,8 +1793,6 @@ export class SessionManager implements ISessionManager {
    */
   async reinitializeAuth(connectionSlug?: string): Promise<void> {
     try {
-      const manager = getCredentialManager()
-
       // Get the connection to use (explicit parameter or default)
       const slug = connectionSlug || getDefaultLlmConnection()
       if (!slug) {
@@ -1792,36 +1805,92 @@ export class SessionManager implements ISessionManager {
 
       if (!connection) {
         sessionLog.error(`No LLM connection found for slug: ${slug}`)
-        resetSummarizationClient()
         return
       }
 
       sessionLog.info(`Reinitializing auth for connection: ${slug} (${connection.authType})`)
 
-      // Resolve auth env vars via shared utility (provider-agnostic)
-      const result = await resolveAuthEnvVars(connection, slug!, manager, getValidClaudeOAuthToken)
+      // Pi is the only runtime provider. Credential routing is handled natively
+      // by PiAgent via ~/.pi/agent/auth.json — no env-var injection needed here.
+      // This method now only clears stale Claude-specific env vars (above).
 
-      if (!result.success) {
-        sessionLog.error(`Auth resolution failed for ${slug}: ${result.warning}`)
-      } else {
-        // Apply resolved env vars to process.env
-        for (const [key, value] of Object.entries(result.envVars)) {
-          process.env[key] = value
-        }
-        sessionLog.info(`Auth env vars set for connection: ${slug}`)
-      }
-
-      // Reset cached summarization client so it picks up new credentials/base URL
-      resetSummarizationClient()
     } catch (error) {
       sessionLog.error('Failed to reinitialize auth:', error)
       throw error
     }
   }
 
+  private migrateWorkspaceCwdUnification(): void {
+    const workspaces = getWorkspaces()
+    const knownRoots = new Set(workspaces.map(workspace => normalizePathForComparison(workspace.rootPath)))
+
+    for (const workspace of workspaces) {
+      const config = loadWorkspaceConfig(workspace.rootPath)
+      const legacyCwd = config?.defaults?.workingDirectory
+      if (!legacyCwd || normalizePathForComparison(legacyCwd) === normalizePathForComparison(workspace.rootPath)) continue
+
+      if (!existsSync(legacyCwd)) {
+        sessionLog.warn(`Legacy workspace cwd does not exist; leaving sessions as orphaned until user creates a workspace: ${legacyCwd}`)
+        continue
+      }
+
+      if (!knownRoots.has(normalizePathForComparison(legacyCwd))) {
+        try {
+          const created = addWorkspace({
+            name: basename(legacyCwd),
+            rootPath: legacyCwd,
+            lastAccessedAt: Date.now(),
+          })
+          knownRoots.add(normalizePathForComparison(created.rootPath))
+          sessionLog.info(`Created workspace for legacy cwd ${legacyCwd}`)
+        } catch (error) {
+          sessionLog.warn(`Failed to create workspace for legacy cwd ${legacyCwd}:`, error)
+          continue
+        }
+      }
+
+      const bucket = getWorkspacePiSessionsDir(legacyCwd)
+      if (existsSync(bucket)) {
+        try {
+          for (const entry of readdirSync(bucket, { withFileTypes: true })) {
+            const candidate = entry.isFile() && entry.name.endsWith('.jsonl')
+              ? join(bucket, entry.name)
+              : entry.isDirectory()
+                ? join(bucket, entry.name, 'session.jsonl')
+                : null
+            if (!candidate || !existsSync(candidate)) continue
+
+            const stored = readSessionJsonl(candidate)
+            if (!stored) continue
+            const oldOwnerMatches = normalizePathForComparison(stored.workspaceRootPath) === normalizePathForComparison(workspace.rootPath)
+              || (!!stored.workingDirectory && normalizePathForComparison(stored.workingDirectory) === normalizePathForComparison(legacyCwd))
+            if (!oldOwnerMatches) continue
+
+            writeTreeSessionCraftMetadata(candidate, {
+              ...stored,
+              workspaceRootPath: legacyCwd,
+              workingDirectory: legacyCwd,
+              sdkCwd: legacyCwd,
+            })
+          }
+        } catch (error) {
+          sessionLog.warn(`Failed to migrate legacy cwd bucket ${bucket}:`, error)
+        }
+      }
+
+      if (config?.defaults) {
+        delete config.defaults.workingDirectory
+        saveWorkspaceConfig(workspace.rootPath, config)
+      }
+    }
+  }
+
   async initialize(): Promise<void> {
     try {
-      setSharedPiSessionStorageEnabled(getPiShellFullPassthrough())
+      // 强制升级迁移（spec: unify-pi-craft-one-body）
+      // 必须先于其他 migrateLegacy* 执行：批量改写旧格式文件到新规范
+      // 失败则回滚并阻止启动（已备份到 ~/.craft-agent/.pre-upgrade-backup-{timestamp}/）
+      await runUnifiedMigrationIfNeeded()
 
       // Backfill missing `models` arrays on existing LLM connections
       migrateLegacyLlmConnectionsConfig()
@@ -1829,9 +1898,7 @@ export class SessionManager implements ISessionManager {
       // Fix defaultLlmConnection if it points to a non-existent connection
       migrateOrphanedDefaultConnections()
 
-      // Migrate legacy credentials to LLM connection format (one-time migration)
-      // This ensures credentials saved before LLM connections are available via the new system
-      await migrateLegacyCredentials()
+      this.migrateWorkspaceCwdUnification()
 
       // Set up authentication environment variables (critical for SDK to work)
       await this.reinitializeAuth()
@@ -1866,9 +1933,7 @@ export class SessionManager implements ISessionManager {
       for (const workspace of workspaces) {
         const workspaceRootPath = workspace.rootPath
         const sessionMetadata = listStoredSessions(workspaceRootPath)
-        // Load workspace config once per workspace for default working directory
-        const wsConfig = loadWorkspaceConfig(workspaceRootPath)
-        const wsDefaultWorkingDir = wsConfig?.defaults?.workingDirectory
+        const automationSystem = this.automationSystems.get(workspaceRootPath)
 
         for (const meta of sessionMetadata) {
           // Create managed session from metadata only (messages lazy-loaded on demand)
@@ -1876,14 +1941,14 @@ export class SessionManager implements ISessionManager {
           // when getSession() is called for a specific session
           const managed = createManagedSession(meta, workspace, {
             enabledSourceSlugs: undefined,  // Loaded with messages
-            workingDirectory: meta.workingDirectory ?? wsDefaultWorkingDir,
+            workingDirectory: workspaceRootPath,
           })
 
           // Migration: clear orphaned llmConnection references (e.g., after connection was deleted)
           if (managed.llmConnection) {
             const conn = resolveSessionConnection(managed.llmConnection, undefined)
             if (!conn) {
-              sessionLog.warn(`Session ${meta.id} has orphaned llmConnection "${managed.llmConnection}", clearing`)
+              sessionLog.warn(`Session ${meta.craftId} has orphaned llmConnection "${managed.llmConnection}", clearing`)
               managed.llmConnection = undefined
               managed.connectionLocked = false
             }
@@ -1891,17 +1956,16 @@ export class SessionManager implements ISessionManager {
 
           // Initialize mode-manager state for restored sessions even before agent creation.
           // This keeps diagnostics/effective mode aligned with persisted session metadata.
-          setPermissionMode(meta.id, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
+          setPermissionMode(meta.craftId, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
           if (managed.previousPermissionMode) {
-            hydratePreviousPermissionMode(meta.id, managed.previousPermissionMode)
+            hydratePreviousPermissionMode(meta.craftId, managed.previousPermissionMode)
           }
 
-          this.sessions.set(meta.id, managed)
+          this.sessions.set(meta.craftId, managed)
 
           // Initialize session metadata in AutomationSystem for diffing
-          const automationSystem = this.automationSystems.get(workspaceRootPath)
           if (automationSystem) {
-            automationSystem.setInitialSessionMetadata(meta.id, {
+            automationSystem.setInitialSessionMetadata(meta.craftId, {
               permissionMode: meta.permissionMode,
               labels: meta.labels,
               isFlagged: meta.isFlagged,
@@ -2004,7 +2068,8 @@ export class SessionManager implements ISessionManager {
       )
 
       const storedSession: StoredSession = {
-        ...pickSessionFields(managed),
+        ...pickCraftSessionMetadata(managed),
+        craftId: managed.id,
         workspaceRootPath: managed.workspace.rootPath,
         createdAt: managed.createdAt ?? Date.now(),
         lastUsedAt: Date.now(),
@@ -2484,8 +2549,6 @@ export class SessionManager implements ISessionManager {
   }
 
   async createSession(workspaceId: string, options?: import('@craft-agent/shared/protocol').CreateSessionOptions): Promise<Session> {
-    setSharedPiSessionStorageEnabled(getPiShellFullPassthrough())
-
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       throw new Error(`Workspace ${workspaceId} not found`)
@@ -2502,7 +2565,6 @@ export class SessionManager implements ISessionManager {
       ?? wsConfig?.defaults?.permissionMode
       ?? globalDefaults.workspaceDefaults.permissionMode
 
-    const userDefaultWorkingDir = wsConfig?.defaults?.workingDirectory || undefined
     // Resolve thinking level with caller-first precedence, matching permissionMode above:
     //   caller override → workspace default → global default.
     // normalizeThinkingLevel() tolerates undefined/unknown inputs.
@@ -2540,21 +2602,10 @@ export class SessionManager implements ISessionManager {
       managedModel: resolvedModelOption,
     })
     const targetProviderType = targetBackendContext.connection?.providerType
-      ?? (targetBackendContext.provider === 'pi' ? 'pi' : 'anthropic')
+      ?? 'pi'
     const targetPiAuthProvider = targetBackendContext.connection?.piAuthProvider
 
-    // Resolve working directory from options:
-    // - 'user_default' or undefined: Use workspace's configured default
-    // - 'none': No working directory (empty string means session folder only)
-    // - Absolute path: Use as-is
-    let resolvedWorkingDir: string | undefined
-    if (options?.workingDirectory === 'none') {
-      resolvedWorkingDir = undefined  // No working directory
-    } else if (options?.workingDirectory === 'user_default' || options?.workingDirectory === undefined) {
-      resolvedWorkingDir = userDefaultWorkingDir
-    } else {
-      resolvedWorkingDir = options.workingDirectory
-    }
+    const resolvedWorkingDir = workspaceRootPath
 
     // Validate branch request up-front so branch metadata is only set for valid branches.
     // This prevents creating sessions that claim to be branched but don't have copied history.
@@ -2569,7 +2620,7 @@ export class SessionManager implements ISessionManager {
       branchFromPiSessionFile?: string
       branchFromSdkCwd?: string
       branchFromSdkTurnId?: string
-      sourceProvider?: 'anthropic' | 'pi'
+      sourceProvider?: 'pi'
     } | undefined
 
     if (options?.branchFromSessionId || options?.branchFromMessageId) {
@@ -2614,7 +2665,7 @@ export class SessionManager implements ISessionManager {
         managedModel: sourceManaged?.model || sourceSession.model,
       })
       const sourceProviderType = sourceBackendContext.connection?.providerType
-        ?? (sourceBackendContext.provider === 'pi' ? 'pi' : 'anthropic')
+        ?? 'pi'
       const sourcePiAuthProvider = sourceBackendContext.connection?.piAuthProvider
 
       const providerMismatch = sourceBackendContext.provider !== targetBackendContext.provider
@@ -2656,11 +2707,11 @@ export class SessionManager implements ISessionManager {
       const branchFromSessionPath = branchContextStrategy === 'sdk-fork'
         ? getSessionStoragePath(workspaceRootPath, options.branchFromSessionId)
         : undefined
-      const branchFromPiSessionFile = branchContextStrategy === 'sdk-fork' && sourceBackendContext.provider === 'pi' && getSharedPiSessionStorageEnabled()
+      const branchFromPiSessionFile = branchContextStrategy === 'sdk-fork' && sourceBackendContext.provider === 'pi'
         ? getSessionFilePath(
             workspaceRootPath,
             options.branchFromSessionId,
-            sourceSession.workingDirectory,
+            workspaceRootPath,
             sourceSession.createdAt,
           )
         : undefined
@@ -2688,36 +2739,6 @@ export class SessionManager implements ISessionManager {
               })
             }
           }
-        } else if (sourceBackendContext.provider === 'anthropic') {
-          if (branchFromSessionPath && branchFromSdkSessionId) {
-            const anchor = await getClaudeTurnAnchor(branchFromSessionPath, options.branchFromMessageId)
-            if (!anchor) {
-              sessionLog.warn('Claude branch anchor missing: falling back to full-history fork for this branch', {
-                workspaceId,
-                branchFromSessionId: options.branchFromSessionId,
-                branchFromMessageId: options.branchFromMessageId,
-              })
-            } else if (!anchor.sdkMessageUuid || !isClaudeMessageUuid(anchor.sdkMessageUuid)) {
-              sessionLog.warn('Claude branch anchor malformed: falling back to full-history fork for this branch', {
-                workspaceId,
-                branchFromSessionId: options.branchFromSessionId,
-                branchFromMessageId: options.branchFromMessageId,
-                anchorSdkSessionId: anchor.sdkSessionId,
-              })
-            } else if (anchor.sdkSessionId !== branchFromSdkSessionId) {
-              sessionLog.warn('Claude branch anchor lineage mismatch: falling back to full-history fork for this branch', {
-                workspaceId,
-                branchFromSessionId: options.branchFromSessionId,
-                branchFromMessageId: options.branchFromMessageId,
-                anchorSdkSessionId: anchor.sdkSessionId,
-                parentSdkSessionId: branchFromSdkSessionId,
-              })
-            } else {
-              branchFromSdkTurnId = anchor.sdkMessageUuid
-            }
-          }
-        } else {
-          branchFromSdkTurnId = branchMessage?.turnId
         }
       }
 
@@ -2768,9 +2789,9 @@ export class SessionManager implements ISessionManager {
 
     // Branch: copy messages from source session up to and including the branch point
     if (validatedBranch) {
-      const branchedStored = loadStoredSession(workspaceRootPath, storedSession.id)
+      const branchedStored = loadStoredSession(workspaceRootPath, storedSession.craftId)
       if (!branchedStored) {
-        throw new Error(`Failed to load newly created session ${storedSession.id} for branch copy`)
+        throw new Error(`Failed to load newly created session ${storedSession.craftId} for branch copy`)
       }
 
       const sourceMessages = validatedBranch.sourceSession.messages.slice(0, validatedBranch.branchIdx + 1)
@@ -2780,7 +2801,7 @@ export class SessionManager implements ISessionManager {
       // branch session, makeSessionPathPortable uses the *branch* dir — which won't match.
       // Fix: replace source dir paths with branch dir paths so tokenization works on save.
       const sourceDir = normalizePath(getSessionStoragePath(workspaceRootPath, validatedBranch.sourceSessionId))
-      const branchDir = normalizePath(getSessionStoragePath(workspaceRootPath, storedSession.id))
+      const branchDir = normalizePath(getSessionStoragePath(workspaceRootPath, storedSession.craftId))
       if (sourceDir !== branchDir) {
         branchedStored.messages = sourceMessages.map(m => {
           const json = JSON.stringify(m)
@@ -2825,7 +2846,7 @@ export class SessionManager implements ISessionManager {
           sessionLog.warn('Failed to copy Pi turn-anchors sidecar to branch', {
             err,
             sourceSessionId: validatedBranch.sourceSessionId,
-            branchSessionId: storedSession.id,
+            branchSessionId: storedSession.craftId,
           })
         }
       }
@@ -2878,7 +2899,7 @@ export class SessionManager implements ISessionManager {
         } catch (error) {
           sessionLog.warn('Branch creation failed during backend preflight handshake', {
             workspaceId,
-            sessionId: storedSession.id,
+            sessionId: storedSession.craftId,
             branchFromSessionId: validatedBranch?.sourceSessionId,
             branchFromMessageId: validatedBranch?.sourceMessageId,
             branchContextStrategy: managed.branchContextStrategy,
@@ -2888,7 +2909,7 @@ export class SessionManager implements ISessionManager {
           await rollbackFailedBranchCreation({
             managed,
             workspaceRootPath,
-            sessionId: storedSession.id,
+            sessionId: storedSession.craftId,
             deleteFromRuntimeSessions: (id) => {
               const m = this.sessions.get(id)
               if (m?.autoRetryTimer) {
@@ -2910,17 +2931,17 @@ export class SessionManager implements ISessionManager {
 
     // Initialize mode-manager state immediately to avoid UI/enforcement races
     // before the agent instance is lazily created.
-    setPermissionMode(storedSession.id, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
+    setPermissionMode(storedSession.craftId, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
     if (managed.previousPermissionMode) {
-      hydratePreviousPermissionMode(storedSession.id, managed.previousPermissionMode)
+      hydratePreviousPermissionMode(storedSession.craftId, managed.previousPermissionMode)
     }
 
-    this.sessions.set(storedSession.id, managed)
+    this.sessions.set(storedSession.craftId, managed)
 
     // Initialize session metadata in AutomationSystem for diffing
     const automationSystem = this.automationSystems.get(workspaceRootPath)
     if (automationSystem) {
-      automationSystem.setInitialSessionMetadata(storedSession.id, {
+      automationSystem.setInitialSessionMetadata(storedSession.craftId, {
         permissionMode: storedSession.permissionMode,
         labels: storedSession.labels,
         isFlagged: storedSession.isFlagged,
@@ -3247,7 +3268,7 @@ export class SessionManager implements ISessionManager {
       // ============================================================
 
       const sessionConfig = {
-        id: managed.id,
+        craftId: managed.id,
         workspaceRootPath: managed.workspace.rootPath,
         sdkSessionId: managed.sdkSessionId,
         branchFromSdkSessionId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkSessionId : undefined,
@@ -3258,8 +3279,8 @@ export class SessionManager implements ISessionManager {
         branchFromMessageId: managed.branchFromMessageId,
         createdAt: managed.lastMessageAt,
         lastUsedAt: managed.lastMessageAt,
-        workingDirectory: managed.workingDirectory,
-        sdkCwd: managed.sdkCwd,
+        workingDirectory: managed.workspace.rootPath,
+        sdkCwd: managed.sdkCwd ?? managed.workspace.rootPath,
         model: managed.model,
         llmConnection: managed.llmConnection,
         permissionMode: managed.permissionMode,
@@ -3279,14 +3300,18 @@ export class SessionManager implements ISessionManager {
           sessionLog.info(`SDK session ID captured for ${managed.id}: ${sdkSessionId}`)
         }
         this.persistSession(managed)
-        sessionPersistenceQueue.flush(managed.id)
+        void sessionPersistenceQueue.flush(managed.id).catch(error => {
+          sessionLog.error(`Failed to flush session ${managed.id} after SDK session ID update:`, error)
+        })
       }
 
       const onSdkSessionIdCleared = () => {
         managed.sdkSessionId = undefined
         sessionLog.info(`SDK session ID cleared for ${managed.id} (resume recovery)`)
         this.persistSession(managed)
-        sessionPersistenceQueue.flush(managed.id)
+        void sessionPersistenceQueue.flush(managed.id).catch(error => {
+          sessionLog.error(`Failed to flush session ${managed.id} after SDK session ID clear:`, error)
+        })
       }
 
       const onBranchForkInvalidated = () => {
@@ -3297,10 +3322,12 @@ export class SessionManager implements ISessionManager {
         managed.branchFromSdkTurnId = undefined
         sessionLog.info(`Branch fork invalidated for ${managed.id}: cleared all fork metadata`)
         this.persistSession(managed)
-        sessionPersistenceQueue.flush(managed.id)
+        void sessionPersistenceQueue.flush(managed.id).catch(error => {
+          sessionLog.error(`Failed to flush session ${managed.id} after branch fork invalidation:`, error)
+        })
       }
 
-      // 扩展事件桥接：将 pi-agent-server 子进程的扩展事件转发到渲染进程
+      // 扩展事件桥接：将 Pi RpcClient的扩展事件转发到渲染进程
       const onExtensionEvent = createExtensionEventForwarder(this.eventSink, managed.workspace.id, managed.id)
 
       const getRecoveryMessages = () => {
@@ -3423,7 +3450,7 @@ export class SessionManager implements ISessionManager {
           apiServers,
           enabledSlugs,
         },
-        // 扩展事件桥接回调：将 pi-agent-server 子进程的扩展事件转发到渲染进程
+        // 扩展事件桥接回调：将 Pi RpcClient的扩展事件转发到渲染进程
         onExtensionEvent,
         },
       }) as AgentInstance
@@ -3924,16 +3951,6 @@ export class SessionManager implements ISessionManager {
           // Read the plan file content
           const planContent = await readFile(planPath, 'utf-8')
 
-          // Mark the SubmitPlan tool message as completed (it won't get a tool_result due to forceAbort)
-          const submitPlanMsg = managed.messages.find(
-            m => m.toolName?.includes('SubmitPlan') && m.toolStatus === 'executing'
-          )
-          if (submitPlanMsg) {
-            submitPlanMsg.toolStatus = 'completed'
-            submitPlanMsg.content = 'Plan submitted for review'
-            submitPlanMsg.toolResult = 'Plan submitted for review'
-          }
-
           // Create a plan message
           const planMessage = {
             id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -4016,7 +4033,7 @@ export class SessionManager implements ISessionManager {
         managed.pendingAuthRequestId = request.requestId
         managed.pendingAuthRequest = request
 
-        // Interrupt execution (like SubmitPlan)
+        // Interrupt execution
         if (managed.isProcessing && managed.agent) {
           sessionLog.info(`Interrupting for auth request in session ${managed.id}`)
           managed.agent.interruptForHandoff(AbortReason.AuthRequest)
@@ -4047,61 +4064,50 @@ export class SessionManager implements ISessionManager {
         // The UI calls window.electronAPI.performOAuth() when user clicks "Sign in".
       }
 
-      // Wire up onSpawnSession to create independent sessions from agent tool calls
+      // Wire up onSpawnSession. When the backend exposes spawnChildSession
+      // (PiAgent), delegate to pi's session tree as a thin wrapper — pi creates
+      // the child session file (header + spawnedFrom + spawnConfig + optional
+      // initial prompt/name) and craft no longer instantiates its own
+      // SessionManager or writes session files. The SubagentPanel lists these
+      // children via listChildSessions(spawnedFrom filter).
+      // Backends without spawnChildSession are unsupported — onSpawnSession throws.
       managed.agent.onSpawnSession = async (request) => {
         sessionLog.info(`Spawn session request from session ${managed.id}:`, request.name || '(unnamed)')
 
-        const session = await this.createSession(managed.workspace.id, {
-          name: request.name,
-          llmConnection: request.llmConnection ?? managed.llmConnection,
-          model: request.model ?? managed.model,
-          enabledSourceSlugs: request.enabledSourceSlugs ?? managed.enabledSourceSlugs,
-          permissionMode: request.permissionMode ?? managed.permissionMode,
-          thinkingLevel: request.thinkingLevel ?? managed.thinkingLevel,
-          labels: request.labels ?? managed.labels,
-          workingDirectory: request.workingDirectory,
-        })
-
-        // Build FileAttachment[] from paths (if any)
-        let fileAttachments: FileAttachment[] | undefined
-        if (request.attachments?.length) {
-          const attachments: FileAttachment[] = []
-          for (const a of request.attachments) {
-            try {
-              const extraDirs = getWorkspaceAllowedDirs(managed.workspace.id)
-              if (request.workingDirectory) extraDirs.push(request.workingDirectory)
-              const safePath = await validateFilePath(a.path, extraDirs)
-              const attachment = readFileAttachment(safePath)
-              if (attachment) {
-                if (a.name) attachment.name = a.name
-                attachments.push(attachment)
-              } else {
-                sessionLog.warn(`Spawn session: attachment not found: ${a.path}`)
-              }
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error)
-              sessionLog.warn(`Spawn session: blocked attachment path ${a.path}: ${message}`)
-            }
-          }
-          if (attachments.length > 0) fileAttachments = attachments
+        // Thin-wrapper path: delegate to pi's session tree.
+        const agent = managed.agent
+        if (!agent || !agent.spawnChildSession) {
+          throw new Error('spawnChildSession not supported by current agent backend')
         }
 
-        // Notify renderer to hydrate full session metadata (including name)
-        // before streaming events arrive. Without this, the renderer creates
-        // a synthetic empty session and shows "New Chat" in the sidebar.
-        this.sendEvent({ type: 'session_created', sessionId: session.id }, managed.workspace.id)
+        const parentSessionId = agent.getSessionId()
+        if (!parentSessionId) {
+          throw new Error('Cannot spawn child session: parent pi session ID is not available yet')
+        }
 
-        // Fire and forget — send the message but don't await completion
-        this.sendMessage(session.id, request.prompt, fileAttachments).catch(err => {
-          sessionLog.error(`Failed to send message to spawned session ${session.id}:`, err)
+        const result = await agent.spawnChildSession(parentSessionId, {
+          prompt: request.prompt,
+          connection: request.llmConnection,
+          model: request.model,
+          enabledSources: request.enabledSourceSlugs,
+          permissionMode: request.permissionMode,
+          thinkingLevel: request.thinkingLevel,
+          labels: request.labels,
+          name: request.name,
+          workingDirectory: managed.workspace.rootPath,
+          attachments: request.attachments,
         })
 
+        sessionLog.info(
+          `Spawned child session in pi tree: parent=${parentSessionId} child=${result.sessionId} path=${result.sessionPath}`,
+        )
+
         return {
-          sessionId: session.id,
-          name: session.name || request.name || session.id,
+          sessionId: result.sessionId,
+          name: request.name || result.sessionId,
           status: 'started' as const,
-          connection: session.llmConnection,
-          model: session.model,
+          connection: request.llmConnection ?? managed.llmConnection,
+          model: request.model ?? managed.model,
         }
       }
 
@@ -4233,7 +4239,7 @@ export class SessionManager implements ISessionManager {
           }
           // The current turn must end before new tools are visible:
           // Pi picks up new proxy tool defs on the next handlePrompt
-          // (`toolsChanged` flag in pi-agent-server).
+          // (`toolsChanged` flag in Pi RpcClient).
           // Mark a pending restart on the agent — PiAgent consumes it after
           // the next tool_result, yield source_activated, and forceAbort. The
           // `source_activated` handler in this class then schedules a server-side
@@ -5021,7 +5027,7 @@ export class SessionManager implements ISessionManager {
           workspace: managed.workspace,
           miniModel: resolvedMiniModel,
           session: {
-            id: `title-${managed.id}`,
+            craftId: `title-${managed.id}`,
             workspaceRootPath: managed.workspace.rootPath,
             llmConnection: managed.llmConnection,
             createdAt: Date.now(),
@@ -5049,8 +5055,6 @@ export class SessionManager implements ISessionManager {
     // Notify renderer that title regeneration has started (for shimmer effect)
     managed.isAsyncOperationOngoing = true
     this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
-    // Keep legacy event for backward compatibility
-    this.sendEvent({ type: 'title_regenerating', sessionId, isRegenerating: true }, managed.workspace.id)
 
     try {
       const title = await agent.regenerateTitle(userMessages, assistantResponse, titleOptions)
@@ -5058,17 +5062,12 @@ export class SessionManager implements ISessionManager {
       if (title) {
         managed.name = title
         this.persistSession(managed)
-        // title_generated will also clear isRegeneratingTitle via the event handler
         this.sendEvent({ type: 'title_generated', sessionId, title }, managed.workspace.id)
         sessionLog.info(`Refreshed title for session ${sessionId}: "${title}"`)
         return { success: true, title }
       }
-      // Failed to generate - clear regenerating state
-      this.sendEvent({ type: 'title_regenerating', sessionId, isRegenerating: false }, managed.workspace.id)
       return { success: false, error: 'Failed to generate title' }
     } catch (error) {
-      // Error occurred - clear regenerating state
-      this.sendEvent({ type: 'title_regenerating', sessionId, isRegenerating: false }, managed.workspace.id)
       const message = error instanceof Error ? error.message : 'Unknown error'
       sessionLog.error(`Failed to refresh title for session ${sessionId}:`, error)
       return { success: false, error: message }
@@ -5084,16 +5083,21 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Update the working directory for a session.
+   * Compatibility handler for the legacy "change working directory" command.
    *
-   * If no messages have been sent yet (no SDK interaction), also updates sdkCwd
-   * so the SDK will use the new path for transcript storage. This prevents the
-   * confusing "bash shell runs from a different directory" warning when the user
-   * changes the working directory before their first message.
+   * cwd is now workspace identity. To work from another folder, the caller must
+   * switch to or create a workspace rooted at that folder.
    */
   updateWorkingDirectory(sessionId: string, path: string): void {
     const managed = this.sessions.get(sessionId)
     if (managed) {
+      if (path === managed.workspace.rootPath) {
+        managed.workingDirectory = managed.workspace.rootPath
+        managed.sdkCwd = managed.sdkCwd ?? managed.workspace.rootPath
+        this.sendEvent({ type: 'working_directory_changed', sessionId, workingDirectory: managed.workspace.rootPath }, managed.workspace.id)
+        return
+      }
+
       const validation = isValidWorkingDirectory(path)
       if (!validation.valid) {
         sessionLog.warn(`Session ${sessionId}: rejected working directory "${path}" — ${validation.reason}`)
@@ -5105,37 +5109,12 @@ export class SessionManager implements ISessionManager {
         return
       }
 
-      managed.workingDirectory = path
-
-      // Invalidate filesystem caches that depend on working directory
-      invalidateContextFileCache(path)
-      invalidateSkillsCache()
-
-      // Check if we can also update sdkCwd (safe if no SDK interaction yet)
-      // Conditions: no messages sent AND no agent created yet (no SDK session)
-      const shouldUpdateSdkCwd =
-        managed.messages.length === 0 &&
-        !managed.sdkSessionId &&
-        !managed.agent
-
-      if (shouldUpdateSdkCwd) {
-        managed.sdkCwd = path
-        sessionLog.info(`Session ${sessionId}: sdkCwd updated to ${path} (no prior interaction)`)
-      }
-
-      // Also update the agent's session config if agent exists
-      if (managed.agent) {
-        managed.agent.updateWorkingDirectory(path)
-        // If agent exists but conditions still allow sdkCwd update (edge case),
-        // update the agent's sdkCwd as well
-        if (shouldUpdateSdkCwd) {
-          managed.agent.updateSdkCwd(path)
-        }
-      }
-
-      this.persistSession(managed)
-      // Notify renderer of the working directory change
-      this.sendEvent({ type: 'working_directory_changed', sessionId, workingDirectory: path }, managed.workspace.id)
+      sessionLog.warn(`Session ${sessionId}: rejected working directory change to "${path}" because cwd is workspace identity`)
+      this.sendEvent({
+        type: 'working_directory_error',
+        sessionId,
+        error: 'Working directory is the workspace root. Create or switch to a workspace rooted at this folder instead.',
+      }, managed.workspace.id)
     }
   }
 
@@ -5413,8 +5392,9 @@ export class SessionManager implements ISessionManager {
     this.clearAdminRememberApprovalsForSession(sessionId)
     this.clearPendingPermissionRequestsForSession(sessionId)
 
-    // Cancel any pending persistence write (session is being deleted, no need to save)
-    sessionPersistenceQueue.cancel(sessionId)
+    // Cancel pending/in-flight persistence before deleting files so a late
+    // metadata write cannot recreate the session after deletion.
+    await sessionPersistenceQueue.cancel(sessionId, { preventFutureEnqueue: true })
 
     // Clean up session-scoped tool callbacks to prevent memory accumulation
     unregisterSessionScopedToolCallbacks(sessionId)
@@ -5456,7 +5436,7 @@ export class SessionManager implements ISessionManager {
     }
 
     // Delete from disk too
-    deleteStoredSession(workspaceRootPath, sessionId)
+    await deleteStoredSession(workspaceRootPath, sessionId)
 
     // Notify all windows for this workspace that the session was deleted
     this.sendEvent({ type: 'session_deleted', sessionId }, managed.workspace.id)
@@ -5494,6 +5474,19 @@ export class SessionManager implements ISessionManager {
     if (!managed) {
       throw new Error(`Session ${sessionId} not found`)
     }
+
+    const attachmentSizes = storedAttachments?.length
+      ? storedAttachments.map(attachment => ({ name: attachment.name, size: attachment.originalSize ?? attachment.size }))
+      : attachments?.map(attachment => ({ name: attachment.name, size: attachment.size })) ?? []
+    const oversizedAttachment = attachmentSizes.find(attachment => attachment.size > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES)
+    if (oversizedAttachment) {
+      throw new Error(`Attachment "${oversizedAttachment.name}" exceeds the ${Math.round(ATTACHMENT_SINGLE_FILE_LIMIT_BYTES / 1024 / 1024)} MiB single-file limit`)
+    }
+    const totalAttachmentBytes = attachmentSizes.reduce((sum, attachment) => sum + attachment.size, 0)
+    if (totalAttachmentBytes > ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES) {
+      throw new Error(`Attachments exceed the ${Math.round(ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES / 1024 / 1024)} MiB per-message limit`)
+    }
+
     this.setLastMessageClientId(sessionId, rpcContext?.callerClientId)
 
     // Source-activation auto-retry dedup (craft-agents-oss#804). When the server
@@ -5731,7 +5724,7 @@ export class SessionManager implements ISessionManager {
 
         const requiredSources = new Set<string>()
         for (const slug of options.skillSlugs) {
-          const skill = loadSkillBySlug(workspaceRoot, slug, managed.workingDirectory)
+          const skill = loadSkillBySlug(workspaceRoot, slug, workspaceRoot)
           if (skill?.metadata.requiredSources) {
             for (const src of skill.metadata.requiredSources) {
               requiredSources.add(src)
@@ -5931,7 +5924,9 @@ export class SessionManager implements ISessionManager {
             sessionLog.info(`Captured SDK session ID via fallback: ${sdkId}`)
             // Also flush here since we're in fallback mode
             this.persistSession(managed)
-            sessionPersistenceQueue.flush(managed.id)
+            void sessionPersistenceQueue.flush(managed.id).catch(error => {
+              sessionLog.error(`Failed to flush session ${managed.id} after fallback SDK session ID capture:`, error)
+            })
           }
         }
 
@@ -6200,15 +6195,11 @@ export class SessionManager implements ISessionManager {
 
     setImmediate(async () => {
       try {
-        // 1. Reset summarization client so it picks up fresh credentials
-        sessionLog.info(`[auth-retry] Resetting summarization client for session ${sessionId}`)
-        resetSummarizationClient()
-
-        // 2. Destroy the agent — the new agent's postInit() will refresh auth
+        // 1. Destroy the agent — the new agent's postInit() will refresh auth
         sessionLog.info(`[auth-retry] Destroying agent for session ${sessionId}`)
         managed.agent = null
 
-        // 3. Retry the message
+        // 2. Retry the message
         const retryMessage = managed.lastSentMessage
         const retryAttachments = managed.lastSentAttachments
         const retryStoredAttachments = managed.lastSentStoredAttachments
@@ -6332,7 +6323,7 @@ export class SessionManager implements ISessionManager {
       const pendingHeader = managed.pendingExternalMetadata
       managed.pendingExternalMetadata = undefined
       sessionLog.info(`Applying deferred external metadata for session ${sessionId} after processing stop`)
-      this.applyExternalSessionMetadata(managed, pendingHeader)
+      await this.applyExternalSessionMetadata(managed, pendingHeader)
     }
 
     // 5. Check queue and process or complete
@@ -6613,18 +6604,56 @@ export class SessionManager implements ISessionManager {
    * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端返回 false。
    * 返回 false 时调用方应回退到原生路径。
    */
-  invokeExtensionCommand(sessionId: string, commandId: string, args?: string): boolean {
+  async invokeExtensionCommand(sessionId: string, commandId: string, args?: string): Promise<boolean> {
     const managed = this.sessions.get(sessionId)
     if (managed?.agent) {
       if (typeof managed.agent.sendExtensionCommandInvoke !== 'function') {
         sessionLog.warn(`[ExtensionBridge] Agent does not support sendExtensionCommandInvoke (session: ${sessionId})`)
         return false
       }
-      managed.agent.sendExtensionCommandInvoke(commandId, args)
-      return true
+      try {
+        return await managed.agent.sendExtensionCommandInvoke(commandId, args)
+      } catch (error) {
+        sessionLog.warn(`[ExtensionBridge] Extension command ${commandId} failed for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+        return false
+      }
     }
     sessionLog.warn(`[ExtensionBridge] No active agent for session ${sessionId}`)
     return false
+  }
+
+  /**
+   * List child sessions in pi's session tree spawned from the given craft session.
+   *
+   * Delegates to the backend's listChildSessions (PiAgent) which queries pi's
+   * SessionManager.list(cwd) and filters by header.spawnedFrom === piSessionId.
+   * Used by the SubagentPanel to render the active branch set instead of the
+   * legacy subagent-supervisor active-sessions.json.
+   *
+   * Returns an empty array when the backend doesn't support listChildSessions
+   * or the pi session ID isn't available yet.
+   */
+  async listChildSessions(sessionId: string): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed?.agent) {
+      sessionLog.warn(`[listChildSessions] No active agent for session ${sessionId}`)
+      return []
+    }
+    if (typeof managed.agent.listChildSessions !== 'function') {
+      return []
+    }
+    const parentSessionId = managed.agent.getSessionId()
+    if (!parentSessionId) {
+      sessionLog.warn(`[listChildSessions] No pi session ID for session ${sessionId}`)
+      return []
+    }
+    try {
+      return await managed.agent.listChildSessions(parentSessionId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      sessionLog.warn(`[listChildSessions] Failed for session ${sessionId}: ${message}`)
+      return []
+    }
   }
 
   /**
@@ -6898,7 +6927,7 @@ export class SessionManager implements ISessionManager {
           workspace: managed.workspace,
           miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
           session: {
-            id: `title-${managed.id}`,
+            craftId: `title-${managed.id}`,
             workspaceRootPath: managed.workspace.rootPath,
             llmConnection: managed.llmConnection,
             createdAt: Date.now(),
@@ -7197,7 +7226,7 @@ export class SessionManager implements ISessionManager {
           : rawFormattedResult
 
         // Some backends omit explicit isError but still prefix with [ERROR].
-        const inferredError = event.isError === true || /^\s*(\[ERROR\]|Error:|error:)/.test(formattedResult)
+        const inferredError = inferToolResultError(formattedResult, event.isError)
 
         // Update existing tool message (created on tool_start) instead of creating new one
         const existingToolMsg = managed.messages.find(m => m.toolUseId === event.toolUseId)
@@ -7266,7 +7295,7 @@ export class SessionManager implements ISessionManager {
         // Safety net: when a parent Task completes, mark all its still-pending child tools as completed.
         // This handles the case where child tool_result events never arrive (e.g., subagent internal tools
         // whose results aren't surfaced through the parent stream).
-        if (isParentTaskTool(toolName) || toolName === 'TaskOutput') {
+        if (isParentTaskOrTaskOutputTool(toolName)) {
           const pendingChildren = managed.messages.filter(
             m => m.parentToolUseId === event.toolUseId
               && m.toolStatus !== 'completed'
@@ -7860,12 +7889,12 @@ export class SessionManager implements ISessionManager {
       coreConfig: {
         workspace: managed.workspace,
         session: {
-          id: `${managed.id}-remote-transfer-summary`,
+          craftId: `${managed.id}-remote-transfer-summary`,
           workspaceRootPath,
           createdAt: Date.now(),
           lastUsedAt: Date.now(),
-          workingDirectory: managed.workingDirectory,
-          sdkCwd: managed.sdkCwd,
+          workingDirectory: workspaceRootPath,
+          sdkCwd: managed.sdkCwd ?? workspaceRootPath,
           model: managed.model,
           llmConnection: managed.llmConnection,
           permissionMode: managed.permissionMode,
@@ -8004,7 +8033,7 @@ export class SessionManager implements ISessionManager {
     bundle: SessionBundle,
     mode: DispatchMode,
   ): Promise<{ sessionId: string; warnings?: string[] }> {
-    sessionLog.info(`[import] Starting import: workspaceId=${workspaceId}, mode=${mode}, bundleSessionId=${bundle?.session?.header?.id ?? 'unknown'}, files=${bundle?.files?.length ?? 0}`)
+    sessionLog.info(`[import] Starting import: workspaceId=${workspaceId}, mode=${mode}, bundleSessionId=${bundle?.session?.header?.craftId ?? 'unknown'}, files=${bundle?.files?.length ?? 0}`)
 
     if (!validateBundle(bundle)) {
       throw new Error('Invalid session bundle')
@@ -8021,8 +8050,12 @@ export class SessionManager implements ISessionManager {
     const workspaceRootPath = workspace.rootPath
 
     // Determine session ID
+    // 兼容旧 bundle：重构前 header 只有 id（无 craftId），validateBundle 接受两者。
+    // move 模式优先使用 craftId，缺失时回退到 id（旧 bundle，类型上不存在，用 cast 访问）。
+    const header = bundle.session.header
+    const legacyId = (header as { id?: string }).id
     const sessionId = mode === 'move'
-      ? bundle.session.header.id
+      ? (header.craftId ?? legacyId)
       : generateSessionId(workspaceRootPath)
 
     // Check for ID collision on move
@@ -8033,37 +8066,30 @@ export class SessionManager implements ISessionManager {
     // Create session directory with all subdirectories
     const sessionDir = ensureSessionDir(workspaceRootPath, sessionId)
 
-    // Build the stored session from bundle data
-    const header = bundle.session.header
-    const storedSession: StoredSession = {
-      id: sessionId,
+    // Build the stored session from bundle data.
+    // 用 pickCraftSessionMetadata(header) 作为基底，让 Craft metadata 字段自动透传
+    //（避免新增字段时手工同步遗漏，如 isArchived/hasUnread/pendingPlanExecution）。
+    // 然后显式覆盖需要重写的字段。
+    const storedSession = {
+      ...(pickCraftSessionMetadata(header) as Partial<SessionHeader>),
+      // 显式覆盖：目标工作区的身份与路径
+      craftId: sessionId,
       workspaceRootPath,
-      sdkSessionId: header.sdkSessionId, // Preserved initially; fork logic below may clear it
+      workingDirectory: workspaceRootPath,
       // Always regenerate sdkCwd for the target workspace.
-      // The source sdkCwd points to a path on the originating server
-      // which doesn't exist here (cross-server transfer).
-      sdkCwd: getSessionStoragePath(workspaceRootPath, sessionId),
-      name: header.name,
-      createdAt: header.createdAt,
+      // sdkCwd is the working directory the SDK runs in (where it stores
+      // transcript files under ~/.claude/projects/{cwd-hash}/ etc.), NOT the
+      // sidecar storage path. Using the sidecar path here would cause the SDK
+      // to store transcripts inside the sidecar dir and break session resume.
+      sdkCwd: workspaceRootPath,
+      // 刷新访问时间
       lastUsedAt: Date.now(),
-      lastMessageAt: header.lastMessageAt,
-      isFlagged: header.isFlagged,
-      permissionMode: header.permissionMode,
-      previousPermissionMode: header.previousPermissionMode,
-      sessionStatus: header.sessionStatus,
-      labels: header.labels,
-      enabledSourceSlugs: header.enabledSourceSlugs,
-      workingDirectory: header.workingDirectory,
-      model: header.model,
-      llmConnection: header.llmConnection,
-      connectionLocked: header.connectionLocked,
-      thinkingLevel: header.thinkingLevel,
-      hidden: header.hidden,
-      transferredSessionSummary: header.transferredSessionSummary,
-      transferredSessionSummaryApplied: header.transferredSessionSummaryApplied,
+      // 保留 sdkSessionId（fork 逻辑下方可能清空）
+      sdkSessionId: header.sdkSessionId,
+      // 非 SESSION_PERSISTENT_FIELDS 字段
       messages: bundle.session.messages,
       tokenUsage: header.tokenUsage ?? DEFAULT_TOKEN_USAGE,
-    }
+    } as StoredSession
 
     // Fork-specific: set up SDK branching if branchInfo provided
     if (mode === 'fork' && bundle.branchInfo) {
@@ -8103,9 +8129,7 @@ export class SessionManager implements ISessionManager {
       }
       // Clear thinking level so the session inherits the workspace default
       storedSession.thinkingLevel = undefined
-      // Clear working directory — the source path won't exist on a different server.
-      // The user can set a new cwd after the session is transferred.
-      storedSession.workingDirectory = undefined
+      storedSession.workingDirectory = workspaceRootPath
     }
 
     // Check source compatibility (before writing JSONL so fixes are persisted)
@@ -8135,21 +8159,41 @@ export class SessionManager implements ISessionManager {
       sessionLog.info('[import] No LLM connection in bundle — will use default')
     }
 
-    // Write JSONL file (after compatibility checks so remapped values are persisted)
-    const sessionFile = getSessionFilePath(workspaceRootPath, sessionId)
-    sessionLog.info(`[import] Writing JSONL: ${sessionFile} (llmConnection=${storedSession.llmConnection ?? 'default'}, messages=${storedSession.messages.length})`)
-    writeSessionJsonl(sessionFile, storedSession)
+    storedSession.workingDirectory = workspaceRootPath
+    storedSession.sdkCwd = storedSession.sdkCwd ?? workspaceRootPath
+
+    // Create/update the Pi session header + Craft metadata first, then import
+    // canonical transcript entries through Pi's public SessionManager API.
+    const sessionFile = getSessionFilePath(workspaceRootPath, sessionId, workspaceRootPath, storedSession.createdAt)
+    sessionLog.info(`[import] Creating Pi canonical session: ${sessionFile} (llmConnection=${storedSession.llmConnection ?? 'default'}, messages=${storedSession.messages.length})`)
+    await saveStoredSession(storedSession)
+    const importedIdMap = appendStoredMessagesViaPiSessionManager(
+      sessionFile,
+      dirname(sessionFile),
+      workspaceRootPath,
+      storedSession.messages,
+    )
+
+    const overlaySession: StoredSession = {
+      ...storedSession,
+      messages: storedSession.messages.map((message) => {
+        const importedId = importedIdMap.get(message.id)
+        return importedId ? { ...message, id: importedId } : message
+      }),
+    }
 
     // Write all bundle files (attachments, plans, data, downloads, etc.)
     // Uses restoreFiles() for path traversal, size, and base64 validation.
     restoreFiles(sessionDir, bundle.files)
+    writeCraftSessionOverlay(sessionFile, overlaySession)
 
     // Register in-memory — pass session metadata without messages to avoid
     // StoredMessage[] vs Message[] type mismatch, then convert messages separately
-    const { messages: bundleMessages, ...sessionMeta } = storedSession
+    const reloadedStoredSession = loadStoredSession(workspaceRootPath, sessionId) ?? overlaySession
+    const { messages: bundleMessages, ...sessionMeta } = reloadedStoredSession
     const managed = createManagedSession(sessionMeta, workspace, {
       messagesLoaded: true,
-      workingDirectory: storedSession.workingDirectory,
+      workingDirectory: workspaceRootPath,
     })
     managed.messages = bundleMessages.map(storedToMessage)
 
