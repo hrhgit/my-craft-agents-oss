@@ -800,6 +800,7 @@ export class AgentSession {
 				toolCallId: event.toolCallId,
 				toolName: event.toolName,
 				args: event.args,
+				...(event.toolMetadata ? { toolMetadata: event.toolMetadata } : {}),
 			};
 			await this._extensionRunner.emit(extensionEvent);
 		} else if (event.type === "tool_execution_update") {

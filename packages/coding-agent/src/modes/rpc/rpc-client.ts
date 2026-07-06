@@ -12,10 +12,17 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
+	RpcCapabilities,
+	RpcChildSessionInfo,
 	RpcCommand,
+	RpcCommandType,
+	RpcExtensionCommandResult,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcHostToolDefinition,
+	RpcHostToolResult,
+	RpcLLMQueryRequest,
+	RpcLLMQueryResult,
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
@@ -24,6 +31,7 @@ import type {
 	RpcToolPermissionRequest,
 	RpcToolPermissionResponse,
 } from "./rpc-types.ts";
+import { PI_HOST_HOOKS_MODULE_ENV, PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV } from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -46,6 +54,17 @@ export interface RpcClientOptions {
 	cwd?: string;
 	/** Environment variables */
 	env?: Record<string, string>;
+	/**
+	 * Optional host hooks module loaded inside the RPC subprocess.
+	 *
+	 * The module may export `fetchInterceptor`/`createFetchInterceptor` and/or
+	 * `toolMetadataResolver`/`createToolMetadataResolver`.
+	 */
+	hostHooksModule?: string;
+	/**
+	 * @deprecated Use `hostHooksModule`. Kept as an alias for older embedders.
+	 */
+	fetchInterceptorModule?: string;
 	/** Provider to use */
 	provider?: string;
 	/** Model ID to use */
@@ -87,7 +106,13 @@ export type RpcToolPermissionHandler = (
 >;
 
 /** Host-side executor invoked for every tool_execute_request (host proxy tools). */
-export type RpcToolExecutor = (request: RpcToolExecuteRequest) => Promise<{ content: string; isError?: boolean }>;
+export type RpcToolExecutor = (request: RpcToolExecuteRequest) => Promise<RpcHostToolResult>;
+
+export type LLMQueryRequest = RpcLLMQueryRequest;
+export type LLMQueryResult = RpcLLMQueryResult;
+export type PiChildSessionInfo = RpcChildSessionInfo;
+
+const SECONDARY_LLM_TIMEOUT_MS = 120000;
 
 // ============================================================================
 // RPC Client
@@ -136,9 +161,21 @@ export class RpcClient {
 			args.push(...this.options.args);
 		}
 
+		const hostHooksModule = this.options.hostHooksModule ?? this.options.fetchInterceptorModule;
+		const env = {
+			...process.env,
+			...this.options.env,
+			...(hostHooksModule
+				? {
+						[PI_HOST_HOOKS_MODULE_ENV]: hostHooksModule,
+						[PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV]: hostHooksModule,
+					}
+				: {}),
+		};
+
 		const childProcess = spawn(command, [...commandArgs, cliPath, ...args], {
 			cwd: this.options.cwd,
-			env: { ...process.env, ...this.options.env },
+			env,
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		this.process = childProcess;
@@ -251,6 +288,22 @@ export class RpcClient {
 	// =========================================================================
 
 	/**
+	 * Get the RPC protocol and feature capabilities exposed by the subprocess.
+	 */
+	async getCapabilities(): Promise<RpcCapabilities> {
+		const response = await this.send({ type: "get_capabilities" });
+		return this.getData<RpcCapabilities>(response);
+	}
+
+	/**
+	 * Convenience helper for embedders that want to gate optional commands.
+	 */
+	async supportsCommand(command: RpcCommandType): Promise<boolean> {
+		const capabilities = await this.getCapabilities();
+		return capabilities.commands.includes(command);
+	}
+
+	/**
 	 * Send a prompt to the agent.
 	 * Returns immediately after sending; use onEvent() to receive streaming events.
 	 * Use waitForIdle() to wait for completion.
@@ -327,6 +380,24 @@ export class RpcClient {
 	async newSession(parentSession?: string): Promise<{ cancelled: boolean }> {
 		const response = await this.send({ type: "new_session", parentSession });
 		return this.getData(response);
+	}
+
+	/**
+	 * Run a small secondary completion using the current Pi model/auth.
+	 * Does not append to the active session transcript.
+	 */
+	async runMiniCompletion(prompt: string): Promise<string | null> {
+		const response = await this.send({ type: "run_mini_completion", prompt }, SECONDARY_LLM_TIMEOUT_MS);
+		return this.getData<{ text: string | null }>(response).text;
+	}
+
+	/**
+	 * Run a secondary LLM query using Pi provider runtime.
+	 * Does not append to the active session transcript.
+	 */
+	async queryLlm(request: RpcLLMQueryRequest): Promise<RpcLLMQueryResult> {
+		const response = await this.send({ type: "query_llm", request }, SECONDARY_LLM_TIMEOUT_MS);
+		return this.getData<RpcLLMQueryResult>(response);
 	}
 
 	/**
@@ -505,6 +576,14 @@ export class RpcClient {
 	}
 
 	/**
+	 * List child sessions whose Pi session header has spawnedFrom=parentSessionId.
+	 */
+	async listChildSessions(parentSessionId: string): Promise<RpcChildSessionInfo[]> {
+		const response = await this.send({ type: "list_child_sessions", parentSessionId });
+		return this.getData<{ sessions: RpcChildSessionInfo[] }>(response).sessions;
+	}
+
+	/**
 	 * Get all messages in the session.
 	 */
 	async getMessages(): Promise<AgentMessage[]> {
@@ -518,6 +597,21 @@ export class RpcClient {
 	async getCommands(): Promise<RpcSlashCommand[]> {
 		const response = await this.send({ type: "get_commands" });
 		return this.getData<{ commands: RpcSlashCommand[] }>(response).commands;
+	}
+
+	/**
+	 * Invoke a Pi extension command directly, without encoding it as a slash prompt.
+	 */
+	async invokeExtensionCommandResult(commandId: string, args?: string): Promise<RpcExtensionCommandResult> {
+		const response = await this.send({ type: "invoke_extension_command", commandId, args });
+		return this.getData<RpcExtensionCommandResult>(response);
+	}
+
+	/**
+	 * Invoke a Pi extension command and return only the legacy boolean ack.
+	 */
+	async invokeExtensionCommand(commandId: string, args?: string): Promise<boolean> {
+		return (await this.invokeExtensionCommandResult(commandId, args)).invoked;
 	}
 
 	// =========================================================================
@@ -676,7 +770,9 @@ export class RpcClient {
 					type: "tool_execute_response",
 					id: request.id,
 					content: result.content,
+					details: result.details,
 					isError: result.isError,
+					terminate: result.terminate,
 				});
 			})
 			.catch((err: unknown) => {
@@ -700,7 +796,7 @@ export class RpcClient {
 		this.pendingRequests.clear();
 	}
 
-	private async send(command: RpcCommandBody): Promise<RpcResponse> {
+	private async send(command: RpcCommandBody, timeoutMs = 30000): Promise<RpcResponse> {
 		const childProcess = this.process;
 		const stdin = childProcess?.stdin;
 		if (!childProcess || !stdin) {
@@ -727,7 +823,7 @@ export class RpcClient {
 			const timeout = setTimeout(() => {
 				this.pendingRequests.delete(id);
 				reject(new Error(`Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`));
-			}, 30000);
+			}, timeoutMs);
 
 			this.pendingRequests.set(id, {
 				resolve: (response) => {

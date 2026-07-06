@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai";
@@ -9,6 +9,7 @@ import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { loadHostHooks } from "../src/main.ts";
 
 describe("createAgentSession fetchInterceptor", () => {
 	let tempDir: string;
@@ -24,6 +25,26 @@ describe("createAgentSession fetchInterceptor", () => {
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
+	});
+
+	it("loads createFetchInterceptor host-hook factories", async () => {
+		const hookPath = join(tempDir, "host-hooks.mjs");
+		writeFileSync(
+			hookPath,
+			`
+export function createFetchInterceptor() {
+	return () => async () => new Response("factory");
+}
+`,
+		);
+
+		const hooks = await loadHostHooks(hookPath, tempDir);
+		expect(hooks.fetchInterceptor).toBeDefined();
+		const baseFetch: typeof fetch = async () => new Response("base");
+		const wrappedFetch = hooks.fetchInterceptor!(baseFetch);
+		const response = await wrappedFetch("https://example.invalid");
+
+		await expect(response.text()).resolves.toBe("factory");
 	});
 
 	it("routes provider model traffic through the interceptor-wrapped fetch", async () => {

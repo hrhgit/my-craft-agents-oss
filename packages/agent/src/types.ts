@@ -46,6 +46,13 @@ export type QueueMode = "all" | "one-at-a-time";
 /** A single tool call content block emitted by an assistant message. */
 export type AgentToolCall = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
 
+/** Optional host-provided metadata attached to a tool execution event. */
+export interface ToolExecutionMetadata {
+	intent?: string;
+	displayName?: string;
+	[key: string]: unknown;
+}
+
 /**
  * Result returned from `beforeToolCall`.
  *
@@ -184,6 +191,16 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * ```
 	 */
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+
+	/**
+	 * Optional resolver for host-side metadata attached to tool execution events.
+	 *
+	 * This is event metadata only: it does not affect argument validation,
+	 * permission checks, or tool execution.
+	 */
+	toolMetadataResolver?: (
+		toolCall: AgentToolCall,
+	) => ToolExecutionMetadata | undefined | Promise<ToolExecutionMetadata | undefined>;
 
 	/**
 	 * Resolves an API key dynamically for each LLM call.
@@ -413,6 +430,12 @@ export type AgentEvent =
 	| { type: "message_update"; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }
 	| { type: "message_end"; message: AgentMessage }
 	// Tool execution lifecycle
-	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
+	| {
+			type: "tool_execution_start";
+			toolCallId: string;
+			toolName: string;
+			args: any;
+			toolMetadata?: ToolExecutionMetadata;
+	  }
 	| { type: "tool_execution_update"; toolCallId: string; toolName: string; args: any; partialResult: any }
 	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: any; isError: boolean };

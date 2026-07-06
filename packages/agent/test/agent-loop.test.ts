@@ -264,6 +264,7 @@ describe("agentLoop with AgentMessage", () => {
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: identityConverter,
+			toolMetadataResolver: () => ({ intent: "Echo a value", displayName: "Echo Value" }),
 		};
 
 		let callIndex = 0;
@@ -302,6 +303,9 @@ describe("agentLoop with AgentMessage", () => {
 		const toolEnd = events.find((e) => e.type === "tool_execution_end");
 		expect(toolStart).toBeDefined();
 		expect(toolEnd).toBeDefined();
+		if (toolStart?.type === "tool_execution_start") {
+			expect(toolStart.toolMetadata).toEqual({ intent: "Echo a value", displayName: "Echo Value" });
+		}
 		if (toolEnd?.type === "tool_execution_end") {
 			expect(toolEnd.isError).toBe(false);
 		}

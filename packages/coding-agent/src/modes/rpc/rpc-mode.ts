@@ -12,7 +12,12 @@
  */
 
 import * as crypto from "node:crypto";
+import { completeSimple, streamSimple } from "@earendil-works/pi-ai/stream";
+import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions } from "@earendil-works/pi-ai/types";
+import { VERSION } from "../../config.ts";
+import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { formatNoApiKeyFoundMessage } from "../../core/auth-guidance.ts";
 import type {
 	ExtensionError,
 	ExtensionUIContext,
@@ -26,14 +31,19 @@ import {
 	waitForRawStdoutBackpressure,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
+import { SessionManager } from "../../core/session-manager.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
+	RpcCapabilities,
+	RpcChildSessionInfo,
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcHostToolDefinition,
+	RpcLLMQueryRequest,
+	RpcLLMQueryResult,
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
@@ -41,21 +51,209 @@ import type {
 	RpcToolExecuteResponse,
 	RpcToolPermissionRequest,
 	RpcToolPermissionResponse,
+	RpcToolResultContent,
+} from "./rpc-types.ts";
+import {
+	PI_HOST_HOOKS_MODULE_ENV,
+	PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV,
+	PI_RPC_COMMANDS,
+	PI_RPC_PROTOCOL_VERSION,
 } from "./rpc-types.ts";
 
 // Re-export types for consumers
 export type {
+	RpcCapabilities,
+	RpcChildSessionInfo,
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcHostToolDefinition,
+	RpcLLMQueryRequest,
+	RpcLLMQueryResult,
 	RpcResponse,
 	RpcSessionState,
 	RpcToolExecuteRequest,
 	RpcToolExecuteResponse,
 	RpcToolPermissionRequest,
 	RpcToolPermissionResponse,
+	RpcToolResultContent,
 } from "./rpc-types.ts";
+
+function extractAssistantText(message: AssistantMessage): string {
+	return message.content
+		.filter((content): content is { type: "text"; text: string } => content.type === "text")
+		.map((content) => content.text)
+		.join("\n");
+}
+
+function appendOutputSchemaInstruction(prompt: string, outputSchema: unknown): string {
+	if (outputSchema === undefined) return prompt;
+
+	let schemaText: string;
+	try {
+		schemaText = JSON.stringify(outputSchema, null, 2);
+	} catch {
+		schemaText = String(outputSchema);
+	}
+
+	return `${prompt}\n\nRespond using this output schema. Return only content that satisfies the schema:\n${schemaText}`;
+}
+
+function resolveRequestedModel(session: AgentSession, requestedModel?: string): Model<any> {
+	if (!requestedModel) {
+		if (!session.model) {
+			throw new Error("No model selected");
+		}
+		return session.model;
+	}
+
+	const slashIndex = requestedModel.indexOf("/");
+	if (slashIndex > 0) {
+		const provider = requestedModel.slice(0, slashIndex);
+		const modelId = requestedModel.slice(slashIndex + 1);
+		const model = session.modelRegistry.find(provider, modelId);
+		if (model) return model;
+	}
+
+	const allModels = session.modelRegistry.getAll();
+	const model = allModels.find((candidate) => candidate.id === requestedModel);
+	if (!model) {
+		throw new Error(`Model not found: ${requestedModel}`);
+	}
+	return model;
+}
+
+async function getRequestAuth(
+	session: AgentSession,
+	model: Model<any>,
+): Promise<{ apiKey?: string; headers?: Record<string, string> }> {
+	const result = await session.modelRegistry.getApiKeyAndHeaders(model);
+	if (!result.ok) {
+		if (result.error.startsWith("No API key found")) {
+			throw new Error(formatNoApiKeyFoundMessage(model.provider));
+		}
+		throw new Error(result.error);
+	}
+	return { apiKey: result.apiKey, headers: result.headers };
+}
+
+async function completeWithoutTranscript(
+	session: AgentSession,
+	request: RpcLLMQueryRequest,
+): Promise<RpcLLMQueryResult> {
+	const model = resolveRequestedModel(session, request.model);
+	const auth = await getRequestAuth(session, model);
+	const prompt = appendOutputSchemaInstruction(request.prompt, request.outputSchema);
+	const messages: Message[] = [
+		{
+			role: "user",
+			content: [{ type: "text", text: prompt }],
+			timestamp: Date.now(),
+		},
+	];
+	const context: Context = {
+		systemPrompt: request.systemPrompt,
+		messages,
+	};
+	const options: SimpleStreamOptions = {
+		apiKey: auth.apiKey,
+		headers: auth.headers,
+		maxTokens: request.maxTokens,
+		temperature: request.temperature,
+	};
+	if (model.reasoning && session.thinkingLevel !== "off") {
+		options.reasoning = session.thinkingLevel;
+	}
+
+	const response =
+		session.agent.streamFn === streamSimple
+			? await completeSimple(model, context, options)
+			: await (await session.agent.streamFn(model, context, options)).result();
+
+	if (response.stopReason === "error") {
+		throw new Error(response.errorMessage || "LLM query failed");
+	}
+	if (response.stopReason === "aborted") {
+		throw new Error("LLM query aborted");
+	}
+
+	return {
+		text: extractAssistantText(response),
+		model: response.model,
+		provider: response.provider,
+		usage: response.usage,
+		stopReason: response.stopReason,
+	};
+}
+
+function toRpcChildSessionInfo(
+	session: Awaited<ReturnType<typeof SessionManager.listChildrenBySpawnedFrom>>[number],
+): RpcChildSessionInfo {
+	return {
+		id: session.id,
+		path: session.path,
+		cwd: session.cwd,
+		name: session.name,
+		parentSessionPath: session.parentSessionPath,
+		spawnedFrom: session.spawnedFrom,
+		spawnConfig: session.spawnConfig,
+		created: session.created.toISOString(),
+		modified: session.modified.toISOString(),
+		messageCount: session.messageCount,
+		firstMessage: session.firstMessage,
+	};
+}
+
+function createRpcCapabilities(): RpcCapabilities {
+	return {
+		protocolVersion: PI_RPC_PROTOCOL_VERSION,
+		packageVersion: VERSION,
+		commands: [...PI_RPC_COMMANDS],
+		features: {
+			hostHooksModule: true,
+			legacyFetchInterceptorModule: true,
+			toolExecutionMetadata: true,
+			hostToolResults: "content",
+			extensionCommandResult: true,
+			secondaryLlmQuery: true,
+			childSessionListing: true,
+		},
+		hostHooks: {
+			moduleEnv: PI_HOST_HOOKS_MODULE_ENV,
+			legacyModuleEnv: PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV,
+			exports: [
+				"fetchInterceptor",
+				"createFetchInterceptor",
+				"createCraftFetchInterceptor",
+				"toolMetadataResolver",
+				"resolveToolMetadata",
+				"resolveCraftToolMetadata",
+				"createToolMetadataResolver",
+				"createCraftToolMetadataResolver",
+			],
+		},
+	};
+}
+
+function normalizeHostToolResult(response: RpcToolExecuteResponse) {
+	const content =
+		typeof response.content === "string"
+			? ([{ type: "text", text: response.content }] satisfies RpcToolResultContent[])
+			: response.content;
+	return {
+		content,
+		details: response.details ?? (response.isError ? { isError: true } : {}),
+		terminate: response.terminate,
+	};
+}
+
+function getHostToolErrorMessage(response: RpcToolExecuteResponse): string {
+	if (typeof response.content === "string") return response.content;
+	const firstText = response.content.find((item): item is Extract<RpcToolResultContent, { type: "text" }> => {
+		return item.type === "text";
+	});
+	return firstText?.text || `Host tool execution failed: ${response.id}`;
+}
 
 /**
  * Run in RPC mode.
@@ -161,11 +359,15 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					toolCallId,
 					input: (params ?? {}) as Record<string, unknown>,
 				});
-				return {
-					content: [{ type: "text" as const, text: result.content }],
-					details: result.isError ? { isError: true } : {},
-					isError: result.isError === true,
-				};
+				const normalized = normalizeHostToolResult(result);
+				if (result.isError) {
+					const error = new Error(getHostToolErrorMessage(result)) as Error & {
+						toolResult?: typeof normalized;
+					};
+					error.toolResult = normalized;
+					throw error;
+				}
+				return normalized;
 			},
 		}));
 
@@ -536,9 +738,26 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "new_session", result);
 			}
 
+			case "run_mini_completion": {
+				const result = await completeWithoutTranscript(session, {
+					prompt: command.prompt,
+					maxTokens: 1024,
+				});
+				return success(id, "run_mini_completion", { text: result.text || null });
+			}
+
+			case "query_llm": {
+				const result = await completeWithoutTranscript(session, command.request);
+				return success(id, "query_llm", result);
+			}
+
 			// =================================================================
 			// State
 			// =================================================================
+
+			case "get_capabilities": {
+				return success(id, "get_capabilities", createRpcCapabilities());
+			}
 
 			case "get_state": {
 				const state: RpcSessionState = {
@@ -721,6 +940,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "set_session_name");
 			}
 
+			case "list_child_sessions": {
+				const children = await SessionManager.listChildrenBySpawnedFrom(command.parentSessionId);
+				return success(id, "list_child_sessions", { sessions: children.map(toRpcChildSessionInfo) });
+			}
+
 			// =================================================================
 			// Messages
 			// =================================================================
@@ -764,6 +988,26 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				}
 
 				return success(id, "get_commands", { commands });
+			}
+
+			case "invoke_extension_command": {
+				const extensionCommand = session.extensionRunner.getCommand(command.commandId);
+				if (!extensionCommand) {
+					return success(id, "invoke_extension_command", {
+						invoked: false,
+						error: `Extension command not found: ${command.commandId}`,
+					});
+				}
+
+				try {
+					await extensionCommand.handler(command.args ?? "", session.extensionRunner.createCommandContext());
+					return success(id, "invoke_extension_command", { invoked: true });
+				} catch (commandError: unknown) {
+					return success(id, "invoke_extension_command", {
+						invoked: false,
+						error: commandError instanceof Error ? commandError.message : String(commandError),
+					});
+				}
 			}
 
 			case "enable_tool_permissions": {

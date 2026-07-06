@@ -10,6 +10,7 @@ import { modelsAreEqual } from "@earendil-works/pi-ai/model-utils";
 import type { ImageContent } from "@earendil-works/pi-ai/types";
 import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
 import chalk from "chalk";
+import { createJiti } from "jiti/static";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
@@ -45,9 +46,84 @@ import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
+import { PI_HOST_HOOKS_MODULE_ENV, PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV } from "./modes/rpc/rpc-types.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
+
+type FetchInterceptor = NonNullable<CreateAgentSessionOptions["fetchInterceptor"]>;
+type ToolMetadataResolver = NonNullable<CreateAgentSessionOptions["toolMetadataResolver"]>;
+type UnknownFunction = (...args: unknown[]) => unknown;
+type FunctionExport = { name: string; fn: UnknownFunction };
+
+export interface HostHooks {
+	fetchInterceptor?: CreateAgentSessionOptions["fetchInterceptor"];
+	toolMetadataResolver?: CreateAgentSessionOptions["toolMetadataResolver"];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getFunctionExport(moduleValue: Record<string, unknown>, names: string[]): FunctionExport | undefined {
+	for (const name of names) {
+		const value = moduleValue[name];
+		if (typeof value === "function") return { name, fn: value as UnknownFunction };
+	}
+	const defaultExport = moduleValue.default;
+	if (isRecord(defaultExport)) {
+		for (const name of names) {
+			const value = defaultExport[name];
+			if (typeof value === "function") return { name: `default.${name}`, fn: value as UnknownFunction };
+		}
+	}
+	return undefined;
+}
+
+function callHookFactory(factory: FunctionExport | undefined, resolvedPath: string): UnknownFunction | undefined {
+	if (!factory) return undefined;
+	const value = factory.fn();
+	if (typeof value !== "function") {
+		throw new Error(`Host hooks module "${resolvedPath}" export "${factory.name}" did not return a function`);
+	}
+	return value as UnknownFunction;
+}
+
+export async function loadHostHooks(modulePath: string | undefined, cwd: string): Promise<HostHooks> {
+	if (!modulePath) return {};
+
+	const resolvedPath = resolvePath(modulePath, cwd);
+	const hostHookJiti = createJiti(import.meta.url, { moduleCache: false });
+	const loadedModule = await hostHookJiti.import(resolvedPath);
+	const moduleValue = isRecord(loadedModule) ? loadedModule : { default: loadedModule };
+	const defaultExport = moduleValue.default;
+
+	const fetchInterceptor =
+		getFunctionExport(moduleValue, ["fetchInterceptor"])?.fn ??
+		callHookFactory(
+			getFunctionExport(moduleValue, ["createFetchInterceptor", "createCraftFetchInterceptor"]),
+			resolvedPath,
+		) ??
+		(typeof defaultExport === "function" ? defaultExport : undefined);
+
+	const toolMetadataResolver =
+		callHookFactory(
+			getFunctionExport(moduleValue, ["createToolMetadataResolver", "createCraftToolMetadataResolver"]),
+			resolvedPath,
+		) ??
+		getFunctionExport(moduleValue, ["toolMetadataResolver", "resolveToolMetadata", "resolveCraftToolMetadata"])?.fn;
+
+	if (!fetchInterceptor && !toolMetadataResolver) {
+		throw new Error(
+			`Host hooks module "${resolvedPath}" does not export a supported interceptor or metadata resolver`,
+		);
+	}
+
+	return {
+		...(fetchInterceptor ? { fetchInterceptor: fetchInterceptor as FetchInterceptor } : {}),
+		...(toolMetadataResolver ? { toolMetadataResolver: toolMetadataResolver as ToolMetadataResolver } : {}),
+	};
+}
 
 /**
  * Read all content from piped stdin.
@@ -473,6 +549,11 @@ async function promptForMissingSessionCwd(
 
 export interface MainOptions {
 	extensionFactories?: ExtensionFactory[];
+	fetchInterceptor?: CreateAgentSessionOptions["fetchInterceptor"];
+	toolMetadataResolver?: CreateAgentSessionOptions["toolMetadataResolver"];
+	hostHooksModule?: string;
+	/** @deprecated Use hostHooksModule. */
+	fetchInterceptorModule?: string;
 }
 
 export async function main(args: string[], options?: MainOptions) {
@@ -587,6 +668,18 @@ export async function main(args: string[], options?: MainOptions) {
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
 	const authStorage = AuthStorage.create();
+	const moduleHooks = await loadHostHooks(
+		options?.hostHooksModule ??
+			process.env[PI_HOST_HOOKS_MODULE_ENV] ??
+			options?.fetchInterceptorModule ??
+			process.env[PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV],
+		sessionManager.getCwd(),
+	);
+	const hostHooks: HostHooks = {
+		...moduleHooks,
+		...(options?.fetchInterceptor ? { fetchInterceptor: options.fetchInterceptor } : {}),
+		...(options?.toolMetadataResolver ? { toolMetadataResolver: options.toolMetadataResolver } : {}),
+	};
 	const deferInitialWorkspaceLoad = appMode === "interactive" && !parsed.help && parsed.listModels === undefined;
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
@@ -665,6 +758,8 @@ export async function main(args: string[], options?: MainOptions) {
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
+			fetchInterceptor: hostHooks.fetchInterceptor,
+			toolMetadataResolver: hostHooks.toolMetadataResolver,
 			persistInitialState,
 			onRuntimeDiagnostics: (newDiagnostics) => {
 				diagnostics.push(...newDiagnostics);

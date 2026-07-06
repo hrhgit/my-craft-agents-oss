@@ -5,12 +5,12 @@
  * This ensures lockstep versioning across the monorepo.
  */
 
-import { readFileSync, writeFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 
 const packagesDir = join(process.cwd(), 'packages');
 const packageDirs = readdirSync(packagesDir, { withFileTypes: true })
-	.filter(dirent => dirent.isDirectory())
+	.filter(dirent => dirent.isDirectory() && existsSync(join(packagesDir, dirent.name, 'package.json')))
 	.map(dirent => dirent.name);
 
 // Read all package.json files and build version map
@@ -19,13 +19,9 @@ const versionMap = {};
 
 for (const dir of packageDirs) {
 	const pkgPath = join(packagesDir, dir, 'package.json');
-	try {
-		const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-		packages[dir] = { path: pkgPath, data: pkg };
-		versionMap[pkg.name] = pkg.version;
-	} catch (e) {
-		console.error(`Failed to read ${pkgPath}:`, e.message);
-	}
+	const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+	packages[dir] = { path: pkgPath, data: pkg };
+	versionMap[pkg.name] = pkg.version;
 }
 
 console.log('Current versions:');
@@ -55,7 +51,7 @@ for (const [dir, pkg] of Object.entries(packages)) {
 	if (pkg.data.dependencies) {
 		for (const [depName, currentVersion] of Object.entries(pkg.data.dependencies)) {
 			if (versionMap[depName]) {
-				const newVersion = `^${versionMap[depName]}`;
+				const newVersion = versionMap[depName];
 				if (currentVersion !== newVersion) {
 					console.log(`\n${pkg.data.name}:`);
 					console.log(`  ${depName}: ${currentVersion} → ${newVersion}`);
@@ -71,7 +67,7 @@ for (const [dir, pkg] of Object.entries(packages)) {
 	if (pkg.data.devDependencies) {
 		for (const [depName, currentVersion] of Object.entries(pkg.data.devDependencies)) {
 			if (versionMap[depName]) {
-				const newVersion = `^${versionMap[depName]}`;
+				const newVersion = versionMap[depName];
 				if (currentVersion !== newVersion) {
 					console.log(`\n${pkg.data.name}:`);
 					console.log(`  ${depName}: ${currentVersion} → ${newVersion} (devDependencies)`);

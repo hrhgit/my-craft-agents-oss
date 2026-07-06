@@ -60,6 +60,8 @@ export interface CreateAgentSessionFromServicesOptions {
 	excludeTools?: CreateAgentSessionOptions["excludeTools"];
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
+	fetchInterceptor?: CreateAgentSessionOptions["fetchInterceptor"];
+	toolMetadataResolver?: CreateAgentSessionOptions["toolMetadataResolver"];
 	persistInitialState?: boolean;
 	onRuntimeDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
 }
@@ -176,6 +178,8 @@ export async function createAgentSessionFromServices(
 		excludeTools: options.excludeTools,
 		noTools: options.noTools,
 		customTools: options.customTools,
+		fetchInterceptor: options.fetchInterceptor,
+		toolMetadataResolver: options.toolMetadataResolver,
 		sessionStartEvent: options.sessionStartEvent,
 		persistInitialState: options.persistInitialState,
 		extensionFlagValues: options.services.extensionFlagValues,

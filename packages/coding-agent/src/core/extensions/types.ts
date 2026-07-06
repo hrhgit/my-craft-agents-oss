@@ -707,6 +707,7 @@ export interface ToolExecutionStartEvent {
 	toolCallId: string;
 	toolName: string;
 	args: any;
+	toolMetadata?: Record<string, unknown>;
 }
 
 /** Fired during tool execution with partial/streaming output */

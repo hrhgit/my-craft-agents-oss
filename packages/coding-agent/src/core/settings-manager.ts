@@ -89,6 +89,24 @@ export interface ExtensionNamespaceSettings {
 	concurrency?: number;
 }
 
+/**
+ * Per-namespace GUI preferences for craft shell, stored under
+ * `shellGui.<name>` in settings.json (the `shell.gui.<name>.*` namespace).
+ *
+ * This namespace carries craft shell GUI switches such as
+ * `shellGui.repoMemory.showStatusBadge` or `shellGui.planMode.enabled`. Each
+ * `<name>` is opaque to pi: craft shell defines the fields it stores under
+ * each name, so the interface is intentionally a loose string-keyed map.
+ *
+ * Pi CLI running standalone SHALL ignore this field entirely (no side
+ * effects); only craft shell reads and writes these values via the
+ * getter/setter methods below (getShellGuiEntry / setShellGuiEntry /
+ * setShellGuiSetting / deleteShellGuiEntry).
+ */
+export interface ShellGuiNamespaceSettings {
+	[key: string]: unknown;
+}
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -111,6 +129,7 @@ export interface Settings {
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	extensions?: ExtensionPathSource[]; // Array of local extension file paths/directories, optionally with activation
 	extensionConfig?: Record<string, ExtensionNamespaceSettings>; // Per-extension namespace config (model/enabled/concurrency), keyed by extension name
+	shellGui?: Record<string, ShellGuiNamespaceSettings>; // craft shell GUI preferences (shell.gui.<name>.*); ignored by pi CLI standalone
 	skills?: string[]; // Array of local skill file paths or directories
 	prompts?: string[]; // Array of local prompt template paths or directories
 	themes?: string[]; // Array of local theme file paths or directories
@@ -1005,6 +1024,69 @@ export class SettingsManager {
 			return entry.concurrency;
 		}
 		return fallback;
+	}
+
+	/**
+	 * Read the full GUI preferences entry for a given shell.gui namespace name.
+	 *
+	 * Returns an empty object (never `undefined`) so callers can destructure
+	 * safely. Reads from the merged effective settings.
+	 */
+	getShellGuiEntry(name: string): ShellGuiNamespaceSettings {
+		return this.settings.shellGui?.[name] ?? {};
+	}
+
+	/**
+	 * Read a single field from a shell.gui namespace entry. Returns
+	 * `defaultValue` when the entry or the field is absent.
+	 */
+	getShellGuiSetting(name: string, key: string, defaultValue: unknown): unknown {
+		const entry = this.settings.shellGui?.[name];
+		if (entry && key in entry) {
+			return entry[key];
+		}
+		return defaultValue;
+	}
+
+	/**
+	 * Replace the entire shell.gui namespace entry for `name`. Existing keys
+	 * under `name` are overwritten; other names are preserved.
+	 */
+	setShellGuiEntry(name: string, value: ShellGuiNamespaceSettings): void {
+		if (!this.globalSettings.shellGui) {
+			this.globalSettings.shellGui = {};
+		}
+		this.globalSettings.shellGui[name] = { ...value };
+		this.markModified("shellGui", name);
+		this.save();
+	}
+
+	/**
+	 * Write a single field under `shell.gui.<name>`, preserving the other
+	 * fields already stored for the same name.
+	 */
+	setShellGuiSetting(name: string, key: string, value: unknown): void {
+		if (!this.globalSettings.shellGui) {
+			this.globalSettings.shellGui = {};
+		}
+		const existing = this.globalSettings.shellGui[name] ?? {};
+		existing[key] = value;
+		this.globalSettings.shellGui[name] = existing;
+		this.markModified("shellGui", name);
+		this.save();
+	}
+
+	/**
+	 * Remove the entire shell.gui namespace entry for `name`. No-op when the
+	 * entry does not exist.
+	 */
+	deleteShellGuiEntry(name: string): void {
+		if (!this.globalSettings.shellGui || !(name in this.globalSettings.shellGui)) {
+			return;
+		}
+		delete this.globalSettings.shellGui[name];
+		this.markModified("shellGui", name);
+		this.save();
 	}
 
 	getSkillPaths(): string[] {

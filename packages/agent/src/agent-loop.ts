@@ -20,6 +20,7 @@ import type {
 	AgentToolCall,
 	AgentToolResult,
 	StreamFn,
+	ToolExecutionMetadata,
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
@@ -392,6 +393,22 @@ type ExecutedToolCallBatch = {
 	terminate: boolean;
 };
 
+async function resolveToolExecutionMetadata(
+	config: AgentLoopConfig,
+	toolCall: AgentToolCall,
+): Promise<ToolExecutionMetadata | undefined> {
+	if (!config.toolMetadataResolver) return undefined;
+	try {
+		const metadata = await config.toolMetadataResolver(toolCall);
+		if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+		return metadata;
+	} catch {
+		// Metadata is observational. Never interrupt tool execution because a
+		// host resolver failed.
+		return undefined;
+	}
+}
+
 async function executeToolCallsSequential(
 	currentContext: AgentContext,
 	assistantMessage: AssistantMessage,
@@ -404,11 +421,13 @@ async function executeToolCallsSequential(
 	const messages: ToolResultMessage[] = [];
 
 	for (const toolCall of toolCalls) {
+		const toolMetadata = await resolveToolExecutionMetadata(config, toolCall);
 		await emit({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
 			args: toolCall.arguments,
+			...(toolMetadata ? { toolMetadata } : {}),
 		});
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
@@ -459,11 +478,13 @@ async function executeToolCallsParallel(
 	const finalizedCalls: FinalizedToolCallEntry[] = [];
 
 	for (const toolCall of toolCalls) {
+		const toolMetadata = await resolveToolExecutionMetadata(config, toolCall);
 		await emit({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
 			args: toolCall.arguments,
+			...(toolMetadata ? { toolMetadata } : {}),
 		});
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
@@ -717,12 +738,13 @@ function createErrorToolResult(message: string, details: unknown = {}): AgentToo
 function createErrorToolResultFromUnknown(error: unknown): AgentToolResult<any> {
 	if (error instanceof Error) {
 		const maybeToolResult = error as Error & {
-			toolResult?: { content?: AgentToolResult<any>["content"]; details?: unknown };
+			toolResult?: { content?: AgentToolResult<any>["content"]; details?: unknown; terminate?: boolean };
 		};
 		if (maybeToolResult.toolResult) {
 			return {
 				content: maybeToolResult.toolResult.content ?? [{ type: "text", text: error.message }],
 				details: maybeToolResult.toolResult.details ?? {},
+				terminate: maybeToolResult.toolResult.terminate,
 			};
 		}
 		return createErrorToolResult(error.message);

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentMessage, type AgentOptions, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { clampThinkingLevel } from "@earendil-works/pi-ai/model-utils";
 import { streamSimple } from "@earendil-works/pi-ai/stream";
 import type { Message, Model } from "@earendil-works/pi-ai/types";
@@ -99,6 +99,12 @@ export interface CreateAgentSessionOptions {
 	 * `globalThis.fetch`.
 	 */
 	fetchInterceptor?: (baseFetch: typeof fetch) => typeof fetch;
+	/**
+	 * Optional resolver for metadata attached to tool execution events.
+	 *
+	 * Event metadata only. It does not modify tool arguments or execution.
+	 */
+	toolMetadataResolver?: AgentOptions["toolMetadataResolver"];
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
 	/** Persist initial model/thinking entries for a new session. Default: true. */
@@ -373,6 +379,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
+		toolMetadataResolver: options.toolMetadataResolver,
 		streamFn: async (model, context, streamOptions) => {
 			const auth = await modelRegistry.getApiKeyAndHeaders(model);
 			if (!auth.ok) {

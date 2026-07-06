@@ -25,7 +25,47 @@ export type OAuthCredential = {
 	type: "oauth";
 } & OAuthCredentials;
 
-export type AuthCredential = ApiKeyCredential | OAuthCredential;
+/**
+ * Craft source credentials for non-pi providers (e.g. external APIs, data
+ * sources, upstream services). These are stored under the "craft.<slug>"
+ * namespace in auth.json and are opaque to pi's own auth flow.
+ */
+export type BearerCredential = {
+	type: "bearer";
+	token: string;
+};
+
+export type BasicCredential = {
+	type: "basic";
+	username: string;
+	password: string;
+};
+
+export type HeaderCredential = {
+	type: "header";
+	name: string;
+	value: string;
+};
+
+export type MultiHeaderCredential = {
+	type: "multi_header";
+	headers: Record<string, string>;
+};
+
+export type QueryCredential = {
+	type: "query";
+	name: string;
+	value: string;
+};
+
+export type SourceCredential =
+	| BearerCredential
+	| BasicCredential
+	| HeaderCredential
+	| MultiHeaderCredential
+	| QueryCredential;
+
+export type AuthCredential = ApiKeyCredential | OAuthCredential | SourceCredential;
 
 export type AuthStorageData = Record<string, AuthCredential>;
 
@@ -187,6 +227,16 @@ export class InMemoryAuthStorageBackend implements AuthStorageBackend {
 
 /**
  * Credential storage backed by a JSON file.
+ *
+ * Namespace convention:
+ * - `craft.<slug>` keys store non-pi credentials written by the craft shell
+ *   (LLM API keys, OAuth tokens, source credentials, etc.) so that pi's
+ *   auth.json is the single source of truth.
+ * - When pi CLI runs standalone, it never reads from or writes to the
+ *   `craft.*` namespace; these entries are opaque to pi's own auth flow.
+ * - The craft shell's CredentialManager reads/writes craft credentials
+ *   exclusively through the `*CraftCredential*` helper methods below, which
+ *   keep the namespace prefix consistent and prevent slug collisions.
  */
 export class AuthStorage {
 	private data: AuthStorageData = {};
@@ -317,6 +367,77 @@ export class AuthStorage {
 	 */
 	list(): string[] {
 		return Object.keys(this.data);
+	}
+
+	/**
+	 * Set a craft-namespaced credential.
+	 * Craft shell stores non-pi credentials under "craft.<slug>" in pi's auth.json.
+	 * The slug must not contain a dot to prevent namespace pollution.
+	 */
+	setCraftCredential(slug: string, credential: AuthCredential): void {
+		if (slug.includes(".")) {
+			throw new Error(`Invalid craft credential slug: "${slug}" (must not contain '.')`);
+		}
+		this.set(`craft.${slug}`, credential);
+	}
+
+	/**
+	 * Get a craft-namespaced credential.
+	 */
+	getCraftCredential(slug: string): AuthCredential | undefined {
+		return this.get(`craft.${slug}`);
+	}
+
+	/**
+	 * Remove a craft-namespaced credential.
+	 */
+	deleteCraftCredential(slug: string): void {
+		this.remove(`craft.${slug}`);
+	}
+
+	/**
+	 * List all craft credential slugs (without the "craft." prefix).
+	 */
+	listCraftSlugs(): string[] {
+		const prefix = "craft.";
+		return this.list()
+			.filter((key) => key.startsWith(prefix))
+			.map((key) => key.slice(prefix.length));
+	}
+
+	/**
+	 * Remove all craft-namespaced credentials in a single batch write.
+	 * Used during craft logout to clear non-pi credentials while preserving
+	 * pi's own auth entries.
+	 *
+	 * Unlike iterating `deleteCraftCredential` (which triggers a full
+	 * read-modify-write per entry — O(n) file I/O for n credentials), this
+	 * method collects all craft.* keys and removes them in one atomic
+	 * `withLock` round-trip.
+	 */
+	deleteAllCraftCredentials(): void {
+		const prefix = "craft.";
+		const keys = this.list().filter((key) => key.startsWith(prefix));
+		if (keys.length === 0) return;
+
+		// Update in-memory data first
+		for (const key of keys) {
+			delete this.data[key];
+		}
+
+		// Single batched write: read current file, strip all craft.* keys, write back
+		if (this.loadError) return;
+		try {
+			this.storage.withLock((current) => {
+				const currentData = this.parseStorageData(current);
+				for (const key of keys) {
+					delete currentData[key];
+				}
+				return { result: undefined, next: JSON.stringify(currentData, null, 2) };
+			});
+		} catch (error) {
+			this.recordError(error);
+		}
 	}
 
 	/**

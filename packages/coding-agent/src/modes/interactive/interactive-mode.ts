@@ -5344,8 +5344,12 @@ export class InteractiveMode {
 		const options: AuthSelectorProvider[] = [];
 
 		for (const providerId of authStorage.list()) {
+			// Skip craft-namespaced credentials; pi CLI doesn't manage them.
+			if (providerId.startsWith("craft.")) {
+				continue;
+			}
 			const credential = authStorage.get(providerId);
-			if (!credential) {
+			if (!credential || (credential.type !== "api_key" && credential.type !== "oauth")) {
 				continue;
 			}
 			options.push({

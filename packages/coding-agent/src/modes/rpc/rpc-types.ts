@@ -6,11 +6,55 @@
  */
 
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model } from "@earendil-works/pi-ai/types";
+import type { ImageContent, Model, StopReason, Usage } from "@earendil-works/pi-ai/types";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { SessionHeader } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+
+export const PI_RPC_PROTOCOL_VERSION = 2;
+export const PI_HOST_HOOKS_MODULE_ENV = "PI_HOST_HOOKS_MODULE";
+export const PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV = "PI_FETCH_INTERCEPTOR_MODULE";
+
+export const PI_RPC_COMMANDS = [
+	"prompt",
+	"steer",
+	"follow_up",
+	"abort",
+	"new_session",
+	"run_mini_completion",
+	"query_llm",
+	"get_capabilities",
+	"get_state",
+	"set_model",
+	"cycle_model",
+	"get_available_models",
+	"set_thinking_level",
+	"cycle_thinking_level",
+	"set_steering_mode",
+	"set_follow_up_mode",
+	"compact",
+	"set_auto_compaction",
+	"set_auto_retry",
+	"abort_retry",
+	"bash",
+	"abort_bash",
+	"get_session_stats",
+	"export_html",
+	"switch_session",
+	"fork",
+	"clone",
+	"get_fork_messages",
+	"get_last_assistant_text",
+	"set_session_name",
+	"list_child_sessions",
+	"get_messages",
+	"enable_tool_permissions",
+	"register_tools",
+	"get_commands",
+	"invoke_extension_command",
+] as const;
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -31,8 +75,11 @@ export type RpcCommand =
 	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "abort" }
 	| { id?: string; type: "new_session"; parentSession?: string }
+	| { id?: string; type: "run_mini_completion"; prompt: string }
+	| { id?: string; type: "query_llm"; request: RpcLLMQueryRequest }
 
 	// State
+	| { id?: string; type: "get_capabilities" }
 	| { id?: string; type: "get_state" }
 
 	// Model
@@ -69,6 +116,7 @@ export type RpcCommand =
 	| { id?: string; type: "get_fork_messages" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
+	| { id?: string; type: "list_child_sessions"; parentSessionId: string }
 
 	// Messages
 	| { id?: string; type: "get_messages" }
@@ -80,7 +128,59 @@ export type RpcCommand =
 	| { id?: string; type: "register_tools"; tools: RpcHostToolDefinition[] }
 
 	// Commands (available for invocation via prompt)
-	| { id?: string; type: "get_commands" };
+	| { id?: string; type: "get_commands" }
+	| { id?: string; type: "invoke_extension_command"; commandId: string; args?: string };
+
+export interface RpcLLMQueryRequest {
+	prompt: string;
+	systemPrompt?: string;
+	model?: string;
+	maxTokens?: number;
+	temperature?: number;
+	outputSchema?: unknown;
+}
+
+export interface RpcLLMQueryResult {
+	text: string;
+	model?: string;
+	provider?: string;
+	usage?: Usage;
+	stopReason?: StopReason;
+}
+
+export interface RpcChildSessionInfo {
+	id: string;
+	path: string;
+	cwd: string;
+	name?: string;
+	parentSessionPath?: string;
+	spawnedFrom: string;
+	spawnConfig?: SessionHeader["spawnConfig"];
+	created: string;
+	modified: string;
+	messageCount: number;
+	firstMessage: string;
+}
+
+export interface RpcCapabilities {
+	protocolVersion: number;
+	packageVersion: string;
+	commands: RpcCommandType[];
+	features: {
+		hostHooksModule: boolean;
+		legacyFetchInterceptorModule: boolean;
+		toolExecutionMetadata: boolean;
+		hostToolResults: "text" | "content";
+		extensionCommandResult: boolean;
+		secondaryLlmQuery: boolean;
+		childSessionListing: boolean;
+	};
+	hostHooks: {
+		moduleEnv: typeof PI_HOST_HOOKS_MODULE_ENV;
+		legacyModuleEnv: typeof PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV;
+		exports: string[];
+	};
+}
 
 /**
  * Host-provided tool definition for the `register_tools` command.
@@ -97,6 +197,22 @@ export interface RpcHostToolDefinition {
 	label?: string;
 	/** One-line snippet for the system prompt's Available tools section. Defaults to a truncated description. */
 	promptSnippet?: string;
+}
+
+export type RpcToolResultContent =
+	| { type: "text"; text: string; textSignature?: string }
+	| { type: "image"; data: string; mimeType: string };
+
+export interface RpcHostToolResult {
+	content: string | RpcToolResultContent[];
+	details?: unknown;
+	isError?: boolean;
+	terminate?: boolean;
+}
+
+export interface RpcExtensionCommandResult {
+	invoked: boolean;
+	error?: string;
 }
 
 // ============================================================================
@@ -146,8 +262,11 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "follow_up"; success: true }
 	| { id?: string; type: "response"; command: "abort"; success: true }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
+	| { id?: string; type: "response"; command: "run_mini_completion"; success: true; data: { text: string | null } }
+	| { id?: string; type: "response"; command: "query_llm"; success: true; data: RpcLLMQueryResult }
 
 	// State
+	| { id?: string; type: "response"; command: "get_capabilities"; success: true; data: RpcCapabilities }
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
 
 	// Model
@@ -220,6 +339,13 @@ export type RpcResponse =
 			data: { text: string | null };
 	  }
 	| { id?: string; type: "response"; command: "set_session_name"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "list_child_sessions";
+			success: true;
+			data: { sessions: RpcChildSessionInfo[] };
+	  }
 
 	// Messages
 	| { id?: string; type: "response"; command: "get_messages"; success: true; data: { messages: AgentMessage[] } }
@@ -237,6 +363,13 @@ export type RpcResponse =
 			command: "get_commands";
 			success: true;
 			data: { commands: RpcSlashCommand[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "invoke_extension_command";
+			success: true;
+			data: RpcExtensionCommandResult;
 	  }
 
 	// Error response (any command can fail)
@@ -339,9 +472,11 @@ export interface RpcToolExecuteRequest {
 export interface RpcToolExecuteResponse {
 	type: "tool_execute_response";
 	id: string;
-	/** Tool result content (plain text). */
-	content: string;
+	/** Tool result content. String is accepted as shorthand for one text block. */
+	content: string | RpcToolResultContent[];
+	details?: unknown;
 	isError?: boolean;
+	terminate?: boolean;
 }
 
 // ============================================================================
