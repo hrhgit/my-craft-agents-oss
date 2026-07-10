@@ -85,10 +85,19 @@ describe('settings default thinking RPC handlers', () => {
     const setHandler = handlers.get(RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL)
     expect(setHandler).toBeTruthy()
 
+    const result = await setHandler!({ clientId: 'client-1' }, 'xhigh')
+    expect(result).toEqual({ success: true })
+    expect(setDefaultThinkingLevelMock).toHaveBeenCalledWith('xhigh')
+    expect(setDefaultThinkingLevelMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('normalizes legacy max before persistence', async () => {
+    const setHandler = handlers.get(RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL)
+    expect(setHandler).toBeTruthy()
+
     const result = await setHandler!({ clientId: 'client-1' }, 'max')
     expect(result).toEqual({ success: true })
-    expect(setDefaultThinkingLevelMock).toHaveBeenCalledWith('max')
-    expect(setDefaultThinkingLevelMock).toHaveBeenCalledTimes(1)
+    expect(setDefaultThinkingLevelMock).toHaveBeenCalledWith('xhigh')
   })
 
   it('rejects invalid thinking level values before persistence', async () => {

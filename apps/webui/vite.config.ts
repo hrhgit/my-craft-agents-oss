@@ -54,8 +54,6 @@ export default defineConfig({
       'ws': resolve(__dirname, 'src/shims/ws.ts'),
       // Node.js builtins → browser-safe shims (shared code imports these
       // but the codepaths aren't reached in browser — web API adapter intercepts)
-      // Node.js builtins → browser-safe shims (shared code imports these
-      // but the codepaths aren't reached in browser — web API adapter intercepts)
       ...Object.fromEntries([
         'fs', 'node:fs', 'path', 'node:path', 'child_process', 'node:child_process',
         'os', 'node:os', 'node:crypto', 'node:util', 'node:process', 'node:buffer',

@@ -30,6 +30,8 @@ import {
   handlePermissionRequest,
   handleCredentialRequest,
   handlePlanSubmitted,
+  handlePlanArtifactChanged,
+  handlePlanModeStateChanged,
   handleStatus,
   handleInfo,
   handleInterrupted,
@@ -178,6 +180,12 @@ export function processEvent(
 
     case 'plan_submitted':
       return handlePlanSubmitted(state, event)
+
+    case 'plan_artifact_changed':
+      return handlePlanArtifactChanged(state, event)
+
+    case 'plan_mode_state_changed':
+      return handlePlanModeStateChanged(state, event)
 
     case 'user_message':
       return handleUserMessage(state, event)

@@ -1,10 +1,9 @@
 /**
  * Unified fetch interceptor for all AI API requests (Anthropic + OpenAI format).
  *
- * Loaded as a Pi fetchInterceptor module and passed to
- * createAgentSession({ fetchInterceptor }) via PI_HOST_HOOKS_MODULE_ENV.
- * Legacy preload/require auto-install (globalThis.fetch assignment) has been
- * removed — host must register the interceptor through Pi's public API.
+ * This module is no longer injected into Pi's runtime. Keep it as an
+ * opt-in fetch pipeline for hosts that explicitly register it, plus as the
+ * home for request/stream repair helpers that still have direct unit coverage.
  *
  * Features:
  * - Adds _intent and _displayName metadata to all tool schemas (request)
@@ -2098,11 +2097,25 @@ function isCraftInterceptedFetch(fn: unknown): boolean {
   return typeof fn === 'function' && (fn as unknown as Record<symbol, unknown>)[CRAFT_FETCH_MARKER] === true;
 }
 
+function extractFetchUrl(input: unknown): string | undefined {
+  if (typeof input === 'string') return input || undefined;
+  if (input instanceof URL) return input.toString();
+  if (typeof Request !== 'undefined' && input instanceof Request) {
+    return input.url || undefined;
+  }
+  if (input && typeof input === 'object') {
+    const url = (input as { url?: unknown }).url;
+    if (typeof url === 'string') return url || undefined;
+    if (url instanceof URL) return url.toString();
+  }
+  return undefined;
+}
+
 /**
  * Create an intercepting fetch that wraps `baseFetch` with the full craft
  * request/response pipeline (metadata injection, validation, SSE processing,
- * proxying). This is the typed entry point loaded by Pi's host hooks module
- * (see pi `loadHostHooks`) and forwarded to `createAgentSession({ fetchInterceptor })`.
+ * proxying). Hosts that need this behavior must opt in explicitly; Pi sessions
+ * run without Craft network hooks.
  *
  * Idempotent: returns `baseFetch` unchanged when it is already
  * craft-intercepted. This makes it safe to pass unconditionally — it never
@@ -2164,14 +2177,13 @@ async function interceptedFetchWith(
   input: string | URL | Request,
   init?: RequestInit
 ): Promise<Response> {
-  const url =
-    typeof input === 'string'
-      ? input
-      : input instanceof URL
-        ? input.toString()
-        : input.url;
-
   const startTime = Date.now();
+  const url = extractFetchUrl(input);
+
+  if (!url) {
+    debugLog('[fetch] Skipping Craft interception for request without a URL');
+    return baseFetch(input, init);
+  }
 
   if (DEBUG) {
     debugLog('\n' + '='.repeat(80));

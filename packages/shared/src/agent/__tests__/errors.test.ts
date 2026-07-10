@@ -69,3 +69,33 @@ describe('parseError tool-support classification', () => {
     }
   })
 })
+
+describe('parseError structured Pi metadata', () => {
+  it('prefers structured errorKind over message substring matching', () => {
+    const error = Object.assign(new Error('No endpoints found that support tool use for this model'), {
+      errorKind: 'invalid_input',
+      recoverable: false,
+      rawError: { reason: 'bad extension payload' },
+    })
+
+    const parsed = parseError(error)
+
+    expect(parsed.code).toBe('invalid_request')
+    expect(parsed.canRetry).toBe(false)
+    expect(parsed.originalError).toBe('{"reason":"bad extension payload"}')
+  })
+
+  it('maps Pi host facade resource errors to provider_error', () => {
+    const error = Object.assign(new Error('401 Unauthorized'), {
+      errorKind: 'resource',
+      recoverable: true,
+      rawError: 'Pi resource unavailable',
+    })
+
+    const parsed = parseError(error)
+
+    expect(parsed.code).toBe('provider_error')
+    expect(parsed.canRetry).toBe(true)
+    expect(parsed.originalError).toBe('Pi resource unavailable')
+  })
+})

@@ -34,7 +34,6 @@ import type {
   StoredSession,
   SessionTokenUsage,
   SessionHeader,
-  StoredMessage,
 } from './types.ts';
 import type { Plan } from '../agent/plan-types.ts';
 import { validateSessionStatus } from '../statuses/validation.ts';
@@ -42,7 +41,11 @@ import { debug } from '../utils/debug.ts';
 import { readSessionHeader, readSessionJsonl } from './jsonl.ts';
 import { sessionPersistenceQueue } from './persistence-queue.ts';
 import { PI_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
-import { readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionJsonl, readTreeSessionMetadata, writeTreeSessionCraftMetadata, writeTreeSessionCraftMetadataAsync, acquireTreeSessionFileLock } from './tree-jsonl.ts';
+import { readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionMetadata, writeTreeSessionCraftMetadata, writeTreeSessionCraftMetadataAsync } from './tree-jsonl.ts';
+import {
+  createSessionProjection as createPiSessionProjection,
+  findSessionProjectionById as findPiHostSessionProjectionById,
+} from '@earendil-works/pi-coding-agent';
 
 let sharedPiSessionsDirOverride: string | undefined;
 
@@ -307,11 +310,10 @@ export function getPiNativeSessionDir(workspaceRootPath: string, _workingDirecto
 }
 
 /**
- * Ensure the Pi tree JSONL session file exists and has the latest Craft metadata.
+ * Ensure Pi has a tree JSONL session projection and attach latest Craft metadata.
  *
- * Always creates/updates the Pi tree JSONL v3 file. Returns the
- * file path (never null). The Craft metadata is written into the `craft` field
- * of the Pi header via writeTreeSessionCraftMetadata().
+ * Pi creates the projection/header; Craft only sends the UI metadata overlay
+ * through the Pi facade and returns the projection path.
  */
 export function ensureSharedPiTreeSessionFile(session: StoredSession): string {
   const sessionFile = getSessionFilePath(
@@ -326,30 +328,18 @@ export function ensureSharedPiTreeSessionFile(session: StoredSession): string {
   }
 
   const cwd = resolve(expandPath(session.workspaceRootPath));
-  const timestamp = new Date(session.createdAt || Date.now()).toISOString();
-  const header = {
-    type: 'session',
-    version: 3,
-    id: session.sdkSessionId || session.craftId,
-    timestamp,
+  const projection = createPiSessionProjection({
     cwd,
-  };
-
-  mkdirSync(dirname(sessionFile), { recursive: true });
-  try {
-    writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, { encoding: 'utf-8', flag: 'wx' });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-      throw error;
-    }
-  }
-  writeTreeSessionCraftMetadata(sessionFile, session);
-  return sessionFile;
+    sessionDir: getPiNativeSessionDir(session.workspaceRootPath, session.workingDirectory),
+    id: session.sdkSessionId || session.craftId,
+  });
+  const createdSessionFile = projection.path ?? sessionFile;
+  writeTreeSessionCraftMetadata(createdSessionFile, session);
+  return createdSessionFile;
 }
 
 /**
- * Async 版本——使用 acquireTreeSessionFileLockAsync 避免阻塞事件循环。
- * 供持久化队列等 async 热路径使用。
+ * Async variant for persistence queue hot paths.
  */
 export async function ensureSharedPiTreeSessionFileAsync(
   session: StoredSession,
@@ -369,27 +359,16 @@ export async function ensureSharedPiTreeSessionFileAsync(
   }
 
   const cwd = resolve(expandPath(session.workspaceRootPath));
-  const timestamp = new Date(session.createdAt || Date.now()).toISOString();
-  const header = {
-    type: 'session',
-    version: 3,
-    id: session.sdkSessionId || session.craftId,
-    timestamp,
+  const projection = createPiSessionProjection({
     cwd,
-  };
-
-  mkdirSync(dirname(sessionFile), { recursive: true });
-  try {
-    writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, { encoding: 'utf-8', flag: 'wx' });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-      throw error;
-    }
-  }
-  await writeTreeSessionCraftMetadataAsync(sessionFile, session, {
+    sessionDir: getPiNativeSessionDir(session.workspaceRootPath, session.workingDirectory),
+    id: session.sdkSessionId || session.craftId,
+  });
+  const createdSessionFile = projection.path ?? sessionFile;
+  await writeTreeSessionCraftMetadataAsync(createdSessionFile, session, {
     lastWrittenHeaderSignature: options.lastWrittenHeaderSignature,
   });
-  return sessionFile;
+  return createdSessionFile;
 }
 
 /**
@@ -629,91 +608,15 @@ export function listSessions(workspaceRootPath: string): SessionHeader[] {
   return sorted;
 }
 
-// ============================================================
-// Pi CLI Sessions (shared in full-passthrough shell mode)
-// ============================================================
-
-/**
- * Read a Pi session JSONL file and extract metadata for listing.
- * Pi/Craft shared tree format: line 1 = {type:"session",...}, lines 2+ = typed tree entries.
- */
-export function readPiSessionFile(
-  filePath: string,
+export async function findPiSessionProjectionById(
   workspaceRootPath: string,
-): SessionHeader | null {
-  return readTreeSessionMetadata(filePath, workspaceRootPath, 'pi-');
-}
-
-/**
- * Find a Pi session JSONL file by Pi session ID or Craft session ID (craftId).
- *
- * 按两种 ID 查找，与内部 findSharedPiSessionFileInDir 保持一致：
- * - Pi session ID (header.id，对应文件名 {timestamp}_{piSessionId}.jsonl)
- * - Craft session ID (header.craft.id，craftId)
- *
- * 这样调用方无论传入 piSessionId 还是 craftId 都能正确找到文件，
- * 避免 craftId ≠ piSessionId 时查找失败。
- *
- * Searches subdirectories and flat layout in the sessions directory.
- */
-export function findPiSessionFile(
-  sessionsDir: string,
   sessionId: string,
-): string | null {
-  if (!existsSync(sessionsDir)) return null;
-  const target = `${sessionId}.jsonl`;
-  const timestampedSuffix = `_${sessionId}.jsonl`;
-  try {
-    const entries = readdirSync(sessionsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const subdir = join(sessionsDir, entry.name);
-        try {
-          const files = readdirSync(subdir, { withFileTypes: true });
-          for (const file of files) {
-            if (file.isFile() && file.name.endsWith('.jsonl')) {
-              const filePath = join(subdir, file.name);
-              if (file.name === target || file.name.endsWith(timestampedSuffix)) {
-                return filePath;
-              }
-              const parsed = readTreeSessionJsonl(filePath);
-              if (parsed?.header.id === sessionId || parsed?.header.craft?.id === sessionId) {
-                return filePath;
-              }
-            }
-          }
-        } catch {
-          // Ignore errors reading subdirectory
-        }
-      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        const filePath = join(sessionsDir, entry.name);
-        if (entry.name === target || entry.name.endsWith(timestampedSuffix)) {
-          return filePath;
-        }
-        const parsed = readTreeSessionJsonl(filePath);
-        if (parsed?.header.id === sessionId || parsed?.header.craft?.id === sessionId) {
-          return filePath;
-        }
-      }
-    }
-  } catch {
-    // Ignore errors reading sessions directory
-  }
-  return null;
-}
-
-export function findPiSessionFileInDefaultRoot(sessionId: string): string | null {
-  return findPiSessionFile(getPiSessionsRoot(), sessionId);
-}
-
-/**
- * Load Pi session messages (read-only) and convert to Craft StoredMessage[].
- *
- * Uses the same tree JSONL projection as shared Pi/Craft sessions so v3 Pi
- * entries ({type:"message", message:{...}}) and summary/tool entries stay aligned.
- */
-export function loadPiSessionMessages(filePath: string): StoredMessage[] {
-  return readTreeSessionAsStoredSession(filePath, { sessionIdPrefix: 'pi-' })?.messages ?? [];
+): Promise<Awaited<ReturnType<typeof findPiHostSessionProjectionById>> | null> {
+  return findPiHostSessionProjectionById({
+    cwd: resolve(expandPath(workspaceRootPath)),
+    sessionId,
+    sessionDir: getSessionStorageRootPath(workspaceRootPath),
+  });
 }
 
 /**
@@ -776,39 +679,6 @@ export async function deleteSession(workspaceRootPath: string, sessionId: string
     return true;
   } catch {
     return false;
-  }
-}
-
-/**
- * Clear all entries (lines after the header) from a Pi tree JSONL session file.
- * Preserves the header (first line) which contains session metadata.
- * No-op if the file does not exist.
- *
- * This is required because the persistence queue only updates the header's
- * `craft` metadata via {@link writeTreeSessionCraftMetadata} — the Pi entry
- * body is owned by the Pi runtime and is not rewritten by Craft. So to make
- * /clear actually clear the on-disk transcript, we must truncate the file
- * to just its header here.
- */
-function clearPiSessionFileEntries(workspaceRootPath: string, sessionId: string): void {
-  const sessionFile = getSessionFilePath(workspaceRootPath, sessionId);
-  if (!existsSync(sessionFile)) return;
-
-  const release = acquireTreeSessionFileLock(sessionFile);
-  try {
-    const content = readFileSync(sessionFile, 'utf-8');
-    const firstNewline = content.indexOf('\n');
-    const headerLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
-    if (!headerLine.trim()) return;
-
-    // Atomic write via tmp + rename so a crash mid-write cannot truncate the
-    // authoritative transcript. The file lock above serializes concurrent
-    // writers (e.g. the persistence queue updating the header's craft metadata).
-    atomicWriteFileSync(sessionFile, `${headerLine}\n`);
-  } catch {
-    // Ignore errors — the in-memory session is already cleared.
-  } finally {
-    release();
   }
 }
 
@@ -912,14 +782,18 @@ export async function updateSessionMetadata(
 export async function setPendingPlanExecution(
   workspaceRootPath: string,
   sessionId: string,
-  planPath: string,
+  target: string | { planPath?: string; artifactId?: string },
   draftInputSnapshot?: string,
 ): Promise<void> {
   const session = loadSession(workspaceRootPath, sessionId);
   if (!session) return;
 
+  const normalizedTarget = typeof target === 'string' ? { planPath: target } : target;
+  if (!normalizedTarget.planPath && !normalizedTarget.artifactId) {
+    throw new Error('Pending plan execution requires planPath or artifactId');
+  }
   session.pendingPlanExecution = {
-    planPath,
+    ...normalizedTarget,
     draftInputSnapshot,
     awaitingCompaction: true,
     executionDispatched: false,
@@ -982,7 +856,7 @@ export async function clearPendingPlanExecution(
 export function getPendingPlanExecution(
   workspaceRootPath: string,
   sessionId: string
-): { planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null {
+): { planPath?: string; artifactId?: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null {
   const session = loadSession(workspaceRootPath, sessionId);
   if (!session?.pendingPlanExecution) return null;
   return {

@@ -33,7 +33,7 @@ export interface ISessionManager {
 
   waitForInit(): Promise<void>
   initialize(): Promise<void>
-  cleanup(): void
+  cleanup(): Promise<void>
   setEventSink(sink: EventSink): void
   flushAllSessions(): Promise<void>
 
@@ -136,7 +136,13 @@ export interface ISessionManager {
     sessionId: string,
     commandId: string,
     args?: string,
-  ): Promise<boolean>
+  ): Promise<import('@craft-agent/core/types').ExtensionCommandResult>
+
+  /**
+   * 查询当前会话已注册的 Pi 扩展 slash commands。
+   * 非 Pi 后端或会话未就绪时返回空数组。
+   */
+  listExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent/backend/types').PiExtensionCommand[]>
 
   /**
    * List child sessions in pi's session tree spawned from the given session.
@@ -151,10 +157,10 @@ export interface ISessionManager {
   // Plans
   // ---------------------------------------------------------------------------
 
-  setPendingPlanExecution(sessionId: string, planPath: string, draftInputSnapshot?: string): Promise<void>
+  setPendingPlanExecution(sessionId: string, target: string | { planPath?: string; artifactId?: string }, draftInputSnapshot?: string): Promise<void>
   markPendingPlanExecutionDispatched(sessionId: string): Promise<void>
   clearPendingPlanExecution(sessionId: string): Promise<void>
-  getPendingPlanExecution(sessionId: string): { planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null
+  getPendingPlanExecution(sessionId: string): { planPath?: string; artifactId?: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null
   markCompactionComplete(sessionId: string): Promise<void>
 
   /**

@@ -15,7 +15,7 @@ import { getEntityIconSync } from './icon-cache'
 
 // Import and re-export parsing functions from shared (pure string operations, no renderer deps)
 import { parseMentions, resolveSkillMentions, resolveSourceMentions, WS_ID_CHARS, type ParsedMentions } from '@craft-agent/shared/mentions'
-import { escapeRegExp } from '@craft-agent/shared/utils/files'
+import { escapeRegExp } from '@craft-agent/shared/utils/text'
 export { parseMentions, resolveSkillMentions, resolveSourceMentions, type ParsedMentions }
 
 // ============================================================================

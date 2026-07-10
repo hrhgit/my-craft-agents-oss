@@ -6,6 +6,7 @@
  */
 
 import type { Session, Message, PermissionRequest, CredentialRequest, TypedError, PermissionMode, SessionStatus, AuthRequest, ToolDisplayMeta } from '../../shared/types'
+import type { PlanModeStateV1 } from '@craft-agent/core/types'
 
 /**
  * Streaming state for a session - replaces streamingTextRef
@@ -191,6 +192,19 @@ export interface PlanSubmittedEvent {
   type: 'plan_submitted'
   sessionId: string
   message: Message
+}
+
+export interface PlanArtifactChangedEvent {
+  type: 'plan_artifact_changed'
+  sessionId: string
+  message: Message
+  supersededArtifactIds?: string[]
+}
+
+export interface PlanModeStateChangedEvent {
+  type: 'plan_mode_state_changed'
+  sessionId: string
+  state: PlanModeStateV1
 }
 
 /**
@@ -480,6 +494,8 @@ export type AgentEvent =
   | SessionUnarchivedEvent
   | NameChangedEvent
   | PlanSubmittedEvent
+  | PlanArtifactChangedEvent
+  | PlanModeStateChangedEvent
   | StatusEvent
   | InfoEvent
   | InterruptedEvent

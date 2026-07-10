@@ -2,7 +2,7 @@ import * as React from 'react'
 import type { ComponentEntry } from './types'
 import { AttachmentPreview } from '@/components/app-shell/AttachmentPreview'
 import { SetupAuthBanner } from '@/components/app-shell/SetupAuthBanner'
-import { TurnCard, type ActivityItem } from '@craft-agent/ui'
+import { PlanArtifactCard, TurnCard, type ActivityItem } from '@craft-agent/ui'
 import type { BackgroundTask } from '@/components/app-shell/ActiveTasksBar'
 import { ActiveOptionBadges } from '@/components/app-shell/ActiveOptionBadges'
 import { ChatInputZone, InputContainer } from '@/components/app-shell/input'
@@ -961,6 +961,73 @@ const emptyStateHintVariants = Array.from({ length: getHintCount() }, (_, i) => 
 }))
 
 export const chatComponents: ComponentEntry[] = [
+  {
+    id: 'plan-artifact-card',
+    name: 'PlanArtifactCard',
+    category: 'Chat',
+    description: 'Versioned Pi plan artifact with review, checklist, lifecycle state, and execution actions',
+    component: PlanArtifactCard,
+    props: [],
+    variants: [
+      { name: 'Ready', props: {} },
+      {
+        name: 'Review warning',
+        props: {
+          artifact: {
+            schemaVersion: 1, kind: 'plan', artifactId: 'plan-warning', revision: 3, state: 'ready', createdAt: Date.now(),
+            review: { status: 'error', verdict: 'warning', error: 'Reviewer timed out before returning a verdict.' },
+            checklist: [{ id: 's1', title: 'Implement protocol adapter', status: 'pending' }],
+          },
+        },
+      },
+      {
+        name: 'Executing',
+        props: {
+          artifact: {
+            schemaVersion: 1, kind: 'plan', artifactId: 'plan-executing', revision: 2, state: 'executing', createdAt: Date.now(), executionStartedAt: Date.now(),
+            review: { status: 'passed', verdict: 'pass', body: 'The design is focused and ready to execute.' },
+            checklist: [
+              { id: 's1', title: 'Define the artifact schema', status: 'completed' },
+              { id: 's2', title: 'Connect real-time projection', status: 'in_progress' },
+              { id: 's3', title: 'Verify narrow-screen rendering', status: 'pending' },
+            ],
+          },
+        },
+      },
+    ],
+    mockData: () => ({
+      artifact: {
+        schemaVersion: 1,
+        kind: 'plan',
+        artifactId: 'plan-playground',
+        revision: 2,
+        state: 'ready',
+        createdAt: Date.now(),
+        finalizedAt: Date.now(),
+        review: {
+          status: 'passed',
+          verdict: 'warning',
+          body: '## Review conclusion\n\nThe protocol boundary is appropriate. Keep the legacy reader, but do not keep the old desktop widget path.',
+          model: 'stepfun/step-3.7-flash',
+        },
+        checklist: [
+          { id: 's1', title: 'Add versioned artifact and session state validation', status: 'completed' },
+          { id: 's2', title: 'Project Pi custom messages in real time and on reload', status: 'pending' },
+          { id: 's3', title: 'Render the unified responsive plan card', status: 'pending' },
+          { id: 's4', title: 'Run desktop and narrow-screen acceptance tests', status: 'pending' },
+        ],
+      },
+      content: '# Complete Plan\n\n## Summary\n\nKeep Plan Mode in Pi and render validated artifacts in Craft.\n\n## Implementation\n\n- Preserve custom message details.\n- Bind the artifact to the assistant response.\n- Restore the same card after reload.\n\n## Acceptance\n\nThe card remains readable and actions remain stable on desktop and narrow screens.',
+      messageId: 'plan-message-playground',
+      sessionId: 'playground-session',
+      onExecute: async () => ({ invoked: true }),
+      onExecuteWithCompact: async () => ({ invoked: true }),
+      onRefine: async () => ({ invoked: true }),
+      onBranch: () => {},
+    }),
+    layout: 'top',
+    previewOverflow: 'visible',
+  },
   {
     id: 'empty-state-hint',
     name: 'EmptyStateHint',

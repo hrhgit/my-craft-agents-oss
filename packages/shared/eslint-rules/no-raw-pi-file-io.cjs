@@ -20,25 +20,33 @@ const SENSITIVE_PI_PATH_EXPORTS = new Set([
   'PI_MODELS_FILE',
   'PI_SETTINGS_FILE',
   'PI_AUTH_FILE',
+  'PI_SKILLS_DIR',
   'PI_SESSIONS_DIR',
 ])
 
-// Repo-relative endings, normalized to forward slashes.
-const ALLOWED_FILE_ENDINGS = [
-  // Source of truth for the path constants themselves.
-  'src/config/paths.ts',
+const PRIVATE_PI_ENV_STRINGS = new Set([
+  'PI_HOST_HOOKS_MODULE',
+  'PI_FETCH_INTERCEPTOR_MODULE',
+  'AWS_BEDROCK_FORCE_HTTP1',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+])
 
-  // Sanctioned seams documented in red-line.md.
-  'src/config/pi-global-config.ts',
-  'src/credentials/backends/secure-storage.ts',
-  'src/sessions/storage.ts',
-  'src/sessions/tree-jsonl.ts',
-  'src/config/unified-migration.ts',
+const ALLOW_ALL_SENSITIVE_EXPORTS = Symbol('allow-all-sensitive-pi-paths')
 
-  // Read-only projections over Pi session buckets; see red-line.md.
-  'src/workspaces/storage.ts',
-  'src/pi/pi-session-store.ts',
-]
+// Repo-relative endings, normalized to forward slashes. Keep this per-export so
+// a seam cannot quietly grow from a watcher/helper into raw settings/auth I/O.
+const ALLOWED_PATH_EXPORTS_BY_FILE_ENDING = new Map([
+  ['src/config/paths.ts', ALLOW_ALL_SENSITIVE_EXPORTS],
+  ['src/config/pi-global-config.ts', new Set(['PI_AGENT_DIR'])],
+  ['src/sessions/storage.ts', new Set(['PI_SESSIONS_DIR'])],
+  ['src/config/unified-migration.ts', new Set([
+    'PI_MODELS_FILE',
+    'PI_SETTINGS_FILE',
+    'PI_SKILLS_DIR',
+    'PI_SESSIONS_DIR',
+  ])],
+  ['src/workspaces/storage.ts', new Set(['PI_SESSIONS_DIR'])],
+])
 
 function normalizeFilename(filename) {
   return filename.split(path.sep).join('/')
@@ -48,10 +56,12 @@ function isTestFile(filename) {
   return /(?:^|\/)(__tests__|tests)\//.test(filename) || /\.(?:test|spec)\.tsx?$/.test(filename)
 }
 
-function isAllowedFile(filename) {
+function allowedPathExportsForFile(filename) {
   const normalized = normalizeFilename(filename)
-  if (isTestFile(normalized)) return true
-  return ALLOWED_FILE_ENDINGS.some((ending) => normalized.endsWith(ending))
+  for (const [ending, allowedExports] of ALLOWED_PATH_EXPORTS_BY_FILE_ENDING) {
+    if (normalized.endsWith(ending)) return allowedExports
+  }
+  return null
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -69,15 +79,17 @@ module.exports = {
         'Do not import {{name}} outside the sanctioned Pi storage seams. Pi owns ~/.pi/agent storage; use Pi public APIs (SettingsManager/AuthStorage/SessionManager/RpcClient) or add a documented red-line allowlist entry.',
       noRawPiPathModule:
         'Do not load Pi storage path constants via {{kind}} outside the sanctioned Pi storage seams. Pi owns ~/.pi/agent storage; use Pi public APIs or documented helpers.',
+      noPrivatePiEnv:
+        'Do not reference Pi private env/hook string "{{name}}" from Craft shared code. Expose a typed Pi API/RPC capability instead.',
     },
     schema: [],
   },
 
   create(context) {
     const filename = context.filename || context.getFilename()
-    if (isAllowedFile(filename)) return {}
-
     const normalizedFilename = normalizeFilename(filename)
+    if (isTestFile(normalizedFilename)) return {}
+    const allowedPathExports = allowedPathExportsForFile(normalizedFilename)
 
     function isPathConstantsModule(source) {
       const normalizedSource = source.split('\\').join('/')
@@ -101,16 +113,41 @@ module.exports = {
     }
 
     function reportNamedSpecifier(specifier, importedName) {
-      if (SENSITIVE_PI_PATH_EXPORTS.has(importedName)) {
-        context.report({
-          node: specifier,
-          messageId: 'noRawPiPath',
-          data: { name: importedName },
-        })
+      if (!SENSITIVE_PI_PATH_EXPORTS.has(importedName)) return
+      if (
+        allowedPathExports === ALLOW_ALL_SENSITIVE_EXPORTS ||
+        allowedPathExports?.has(importedName)
+      ) {
+        return
       }
+      context.report({
+        node: specifier,
+        messageId: 'noRawPiPath',
+        data: { name: importedName },
+      })
+    }
+
+    function reportWholeModuleLoad(node, kind) {
+      if (allowedPathExports === ALLOW_ALL_SENSITIVE_EXPORTS) return
+      reportModuleLoad(node, kind)
+    }
+
+    function reportPrivatePiEnv(node, value) {
+      if (!PRIVATE_PI_ENV_STRINGS.has(value)) return
+      context.report({
+        node,
+        messageId: 'noPrivatePiEnv',
+        data: { name: value },
+      })
     }
 
     return {
+      Literal(node) {
+        if (typeof node.value === 'string') {
+          reportPrivatePiEnv(node, node.value)
+        }
+      },
+
       ImportDeclaration(node) {
         const source = node.source && node.source.value
         if (typeof source !== 'string') return
@@ -121,9 +158,9 @@ module.exports = {
             const importedName = specifier.imported && specifier.imported.name
             reportNamedSpecifier(specifier, importedName)
           } else if (specifier.type === 'ImportNamespaceSpecifier') {
-            reportModuleLoad(specifier, 'namespace import')
+            reportWholeModuleLoad(specifier, 'namespace import')
           } else if (specifier.type === 'ImportDefaultSpecifier') {
-            reportModuleLoad(specifier, 'default import')
+            reportWholeModuleLoad(specifier, 'default import')
           }
         }
       },
@@ -143,14 +180,14 @@ module.exports = {
         const source = node.source && node.source.value
         if (typeof source !== 'string') return
         if (!isPathConstantsModule(source)) return
-        reportModuleLoad(node, 're-export')
+        reportWholeModuleLoad(node, 're-export')
       },
 
       ImportExpression(node) {
         if (!isStringLiteral(node.source)) return
         if (!isPathConstantsModule(node.source.value)) return
 
-        reportModuleLoad(node, 'dynamic import()')
+        reportWholeModuleLoad(node, 'dynamic import()')
       },
 
       CallExpression(node) {
@@ -166,7 +203,7 @@ module.exports = {
         if (!isStringLiteral(source)) return
         if (!isPathConstantsModule(source.value)) return
 
-        reportModuleLoad(node, 'require()')
+        reportWholeModuleLoad(node, 'require()')
       },
     }
   },

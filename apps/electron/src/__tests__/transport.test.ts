@@ -673,6 +673,21 @@ describe('connection state', () => {
     expect(state.attempt).toBeGreaterThanOrEqual(1)
   })
 
+  test('invoke waits while a reconnect timer is pending', async () => {
+    const { server, client } = await createPair({}, { autoReconnect: true, maxReconnectDelay: 200 })
+    const port = server.port
+
+    server.close()
+    await waitForStatus(client, (s) => s === 'reconnecting')
+
+    const pending = client.invoke('ping')
+    const replacement = trackServer(new WsRpcServer({ host: '127.0.0.1', port }))
+    replacement.handle('ping', async () => 'pong')
+    await replacement.listen()
+
+    await expect(pending).resolves.toBe('pong')
+  })
+
   test('captures websocket close code and reason for handshake failures', async () => {
     const server = trackServer(new WsRpcServer({
       host: '127.0.0.1',
@@ -762,6 +777,23 @@ describe('edge cases', () => {
 
     const result = await client.invoke('nullable')
     expect(result).toBeNull()
+  })
+
+  test('client request timeout cancels the server handler', async () => {
+    const { server, client } = await createPair({}, { requestTimeout: 50 })
+    let aborted = false
+
+    server.handle('slow:cancel', async (ctx) => {
+      await new Promise((_resolve, reject) => {
+        ctx.signal?.addEventListener('abort', () => {
+          aborted = true
+          reject(ctx.signal?.reason ?? new Error('aborted'))
+        }, { once: true })
+      })
+    })
+
+    await expect(client.invoke('slow:cancel')).rejects.toThrow(/Request timeout/)
+    await waitUntil(() => aborted)
   })
 
   test('duplicate handler registration throws', async () => {

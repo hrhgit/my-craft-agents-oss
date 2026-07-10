@@ -7,7 +7,6 @@ import { fileURLToPath } from 'url'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { classifyExternalUrl, formatBlockedUrlError } from '@craft-agent/shared/utils/url-safety'
 import { RPC_CHANNELS, type WindowCloseRequestSource } from '../shared/types'
-import { toPiReadOnlySessionRoute } from '../shared/pi-session-route'
 import type { SavedWindow } from './window-state'
 
 // Vite dev server URL for hot reload
@@ -575,7 +574,7 @@ export class WindowManager {
    * Multiple child session windows can coexist. Closing one does not affect
    * the main window or other child session windows.
    *
-   * @param sessionId - The pi child session ID to display, with or without the `pi-` read-only route prefix
+   * @param sessionId - The Pi child session ID to display
    * @param options   - Optional window configuration
    */
   createChildSessionWindow(sessionId: string, options?: CreateChildSessionWindowOptions): BrowserWindow {
@@ -587,9 +586,7 @@ export class WindowManager {
       parentWebContentsId,
     } = options ?? {}
 
-    // Navigate through the Pi read-only route. Pi child sessions are not
-    // registered as Craft sessions in sessionMetaMap.
-    const deepLink = `craftagents://${toPiReadOnlySessionRoute(sessionId)}`
+    const deepLink = `craftagents://allSessions/session/${sessionId}`
 
     const childWindow = this.createWindow({
       workspaceId,

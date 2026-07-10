@@ -416,9 +416,11 @@ export async function installUpdate(): Promise<void> {
   }
 
   try {
-    // isSilent=false shows the installer UI on Windows if needed (fallback)
+    // Windows uses an assisted installer for first install so users can choose
+    // the directory. Updates should still apply silently in place.
+    const isSilent = process.platform === 'win32'
     // isForceRunAfter=true ensures the app relaunches after install
-    autoUpdater.quitAndInstall(false, true)
+    autoUpdater.quitAndInstall(isSilent, true)
   } catch (error) {
     __isUpdating = false
     autoUpdateLog.error('quitAndInstall failed', error)

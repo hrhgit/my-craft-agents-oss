@@ -13,15 +13,42 @@
 
 import type { AgentEvent } from '@craft-agent/core/types';
 
+const DEFAULT_MAX_QUEUE_SIZE = 10_000;
+
 export class EventQueue {
   private queue: AgentEvent[] = [];
   private resolvers: Array<(done: boolean) => void> = [];
   private done: boolean = false;
+  private droppedEvents = 0;
+  private overflowWarningQueued = false;
+  private overflowWarningEvent: Extract<AgentEvent, { type: 'queue_overflow' }> | null = null;
+
+  constructor(private readonly maxQueueSize = DEFAULT_MAX_QUEUE_SIZE) {}
 
   /**
    * Enqueue an event and wake any waiting consumers.
    */
   enqueue(event: AgentEvent): void {
+    if (this.queue.length >= this.maxQueueSize) {
+      this.droppedEvents++;
+      if (!this.overflowWarningQueued) {
+        this.overflowWarningQueued = true;
+        if (this.queue.length >= this.maxQueueSize) {
+          this.queue.shift();
+        }
+        this.overflowWarningEvent = {
+          type: 'queue_overflow',
+          droppedEvents: this.droppedEvents,
+          maxQueueSize: this.maxQueueSize,
+          message: `Agent event queue exceeded ${this.maxQueueSize.toLocaleString()} events; some events were dropped.`,
+        };
+        this.queue.push(this.overflowWarningEvent);
+        this.signal(false);
+      } else if (this.overflowWarningEvent) {
+        this.overflowWarningEvent.droppedEvents = this.droppedEvents;
+      }
+      return;
+    }
     this.queue.push(event);
     this.signal(false);
   }
@@ -43,6 +70,9 @@ export class EventQueue {
     this.queue = [];
     this.resolvers = [];
     this.done = false;
+    this.droppedEvents = 0;
+    this.overflowWarningQueued = false;
+    this.overflowWarningEvent = null;
   }
 
   /**

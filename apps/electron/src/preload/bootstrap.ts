@@ -99,6 +99,8 @@ if (isClientOnly) {
   const wsPort: number = ipcRenderer.sendSync(PRELOAD_LOCAL_CHANNELS.GET_WS_PORT)
   const wsToken: string = ipcRenderer.sendSync('__get-ws-token')
   const workspaceId: string = ipcRenderer.sendSync('__get-workspace-id')
+  const localWorkspaceServerUrl = process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL
+  const localWorkspaceServerToken = process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN ?? ''
 
   const localClient = new WsRpcClient(`ws://127.0.0.1:${wsPort}`, {
     token: wsToken,
@@ -111,6 +113,17 @@ if (isClientOnly) {
 
   // Check if the current workspace is remote (synchronous IPC during preload eval)
   const remoteConfig: RemoteServerConfig | null = ipcRenderer.sendSync('__get-workspace-remote-config')
+
+  const localWorkspaceClient = localWorkspaceServerUrl
+    ? new WsRpcClient(localWorkspaceServerUrl, {
+        token: localWorkspaceServerToken,
+        workspaceId,
+        webContentsId,
+        autoReconnect: true,
+        mode: 'remote',
+        clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
+      })
+    : undefined
 
   let initialWorkspaceClient: WsRpcClient
   if (remoteConfig && typeof remoteConfig.url === 'string') {
@@ -125,12 +138,19 @@ if (isClientOnly) {
       tlsRejectUnauthorized: false,
     })
     initialWorkspaceClient.connect()
+  } else if (localWorkspaceClient) {
+    // Workspace is local, but the heavy workspace runtime is isolated in a
+    // child-process server so Electron's main process remains responsive.
+    initialWorkspaceClient = localWorkspaceClient
+    initialWorkspaceClient.connect()
   } else {
     // Workspace is local — workspace client IS the local client
     initialWorkspaceClient = localClient
   }
 
-  const routedClient = new RoutedClient(localClient, initialWorkspaceClient)
+  const routedClient = new RoutedClient(localClient, initialWorkspaceClient, {
+    localWorkspaceClient,
+  })
 
   // Set workspace ID mapping if initial workspace is remote
   if (remoteConfig) {
@@ -151,6 +171,9 @@ if (isClientOnly) {
   })
 
   localClient.connect()
+  if (localWorkspaceClient && localWorkspaceClient !== initialWorkspaceClient) {
+    localWorkspaceClient.connect()
+  }
   client = routedClient
 }
 
@@ -346,6 +369,8 @@ client.onConnectionStateChanged((state) => {
 ;(api as ElectronAPI).getSystemWarnings = async () => ({
   vcredistMissing: process.env.CRAFT_VCREDIST_MISSING === '1',
   downloadUrl: process.env.CRAFT_VCREDIST_URL,
+  workspaceRuntimeDegraded: process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED === '1',
+  workspaceRuntimeDegradedReason: process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED_REASON,
 })
 
 // i18n: sync language changes to main process (for native menus/dialogs)

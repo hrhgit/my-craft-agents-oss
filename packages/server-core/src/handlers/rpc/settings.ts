@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'path'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getDefaultThinkingLevel, setDefaultThinkingLevel } from '@craft-agent/shared/config'
-import { isValidThinkingLevel, normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
+import { normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
 import * as configStorage from '@craft-agent/shared/config/storage'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
@@ -58,10 +58,11 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   server.handle(RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL, async (_ctx, level: string) => {
-    if (!isValidThinkingLevel(level)) {
+    const normalized = normalizeThinkingLevel(level)
+    if (!normalized) {
       throw new Error(`Invalid thinking level: ${level}. Valid values: ${VALID_THINKING_LEVELS_LIST}`)
     }
-    const success = await setDefaultThinkingLevel(level)
+    const success = await setDefaultThinkingLevel(normalized)
     if (!success) {
       throw new Error('Failed to persist default thinking level')
     }
@@ -375,13 +376,18 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     return await configStorage.updatePiExtensionSettings(patch)
   })
 
-  // 逐扩展启停：读写 ~/.pi/agent/settings.json 的 extensions.<name>.enabled
+  server.handle(RPC_CHANNELS.piExtensions.GET_CATALOG, async () => {
+    const { getPiExtensionCatalog } = await import('@craft-agent/shared/config/pi-global-config')
+    return await getPiExtensionCatalog()
+  })
+
+  // 逐扩展启停：读写 Pi settings.json 的 extensionConfig.<name>.enabled
   server.handle(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES, async () => {
-    const { readPiExtensionEnabled } = await import('@craft-agent/shared/config/pi-global-config')
-    const { PI_MIGRATED_EXTENSION_IDS } = await import('@craft-agent/shared/config/pi-extension-settings')
+    const { getPiExtensionCatalog } = await import('@craft-agent/shared/config/pi-global-config')
+    const extensions = await getPiExtensionCatalog()
     const states: Record<string, boolean> = {}
-    for (const id of PI_MIGRATED_EXTENSION_IDS) {
-      states[id] = readPiExtensionEnabled(id, true)
+    for (const extension of extensions) {
+      states[extension.id] = extension.enabled
     }
     return states
   })

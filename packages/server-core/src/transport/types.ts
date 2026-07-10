@@ -8,6 +8,7 @@ export interface RequestContext {
   clientId: string
   workspaceId: string | null
   webContentsId: number | null
+  signal?: AbortSignal
 }
 
 export type HandlerFn = (ctx: RequestContext, ...args: any[]) => Promise<any> | any
@@ -39,6 +40,7 @@ export interface RpcServer {
 
 export interface RpcClient {
   invoke(channel: string, ...args: any[]): Promise<any>
+  invokeWithOptions?(channel: string, args: any[], options?: { timeoutMs?: number }): Promise<any>
   on(channel: string, callback: (...args: any[]) => void): () => void
   handleCapability(channel: string, handler: (...args: any[]) => Promise<any> | any): void
 }

@@ -9,6 +9,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./transport": "./src/transport/index.ts",
+    "./transport/client": "./src/transport/client.ts",
     "./runtime": "./src/runtime/index.ts",
     "./handlers": "./src/handlers/index.ts",
     "./bootstrap": "./src/bootstrap/index.ts",
@@ -28,8 +29,7 @@
     "@craft-agent/shared": "workspace:*",
     "jose": "^6.0.0",
     "ws": "^8.19.0",
-    "sharp": "0.34.5",
-    "@earendil-works/pi-ai": "link:@earendil-works/pi-ai"
+    "sharp": "0.34.5"
   },
   "devDependencies": {
     "typescript": "^5.8.2",

@@ -84,6 +84,12 @@ function assertTransferOwner(ctx: RequestContext, transfer: TransferState): void
   }
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const reason = signal.reason
+  throw reason instanceof Error ? reason : new Error('Request cancelled')
+}
+
 export function setTransferableHandler(channel: string, handler: HandlerFn): void {
   transferableHandlers.set(channel, handler)
 }
@@ -105,6 +111,7 @@ export function registerTransferHandlers(server: RpcServer): void {
     largeArgIndex: number
     checksum?: string
   }) => {
+    throwIfAborted(ctx.signal)
     if (!opts || typeof opts.chunkCount !== 'number' || opts.chunkCount < 1) {
       throw new Error('Invalid chunkCount')
     }
@@ -155,6 +162,7 @@ export function registerTransferHandlers(server: RpcServer): void {
     index: number
     data: string
   }) => {
+    throwIfAborted(ctx.signal)
     const transfer = activeTransfers.get(opts.transferId)
     if (!transfer) {
       console.error(`[Transfer:server] Unknown transfer: ${opts.transferId}`)
@@ -184,6 +192,7 @@ export function registerTransferHandlers(server: RpcServer): void {
   server.handle(RPC_CHANNELS.transfer.COMMIT, async (ctx, opts: {
     transferId: string
   }) => {
+    throwIfAborted(ctx.signal)
     const transfer = activeTransfers.get(opts.transferId)
     if (!transfer) {
       console.error(`[Transfer:server] Commit failed — unknown transfer: ${opts.transferId}`)
@@ -203,11 +212,13 @@ export function registerTransferHandlers(server: RpcServer): void {
 
     const buffers: Buffer[] = []
     for (let i = 0; i < transfer.chunkCount; i++) {
+      throwIfAborted(ctx.signal)
       const chunkPath = join(transfer.dir, `chunk-${String(i).padStart(6, '0')}`)
       const encoded = await readFile(chunkPath, 'utf-8')
       buffers.push(Buffer.from(encoded, 'base64'))
     }
     const reassembled = Buffer.concat(buffers)
+    throwIfAborted(ctx.signal)
 
     if (reassembled.length !== transfer.totalBytes) {
       await cleanupTransfer(transfer.id)
@@ -245,6 +256,7 @@ export function registerTransferHandlers(server: RpcServer): void {
     args[transfer.largeArgIndex] = payload
 
     await cleanupTransfer(transfer.id)
+    throwIfAborted(ctx.signal)
 
     try {
       const result = await handler(ctx, ...args)
@@ -257,6 +269,7 @@ export function registerTransferHandlers(server: RpcServer): void {
   })
 
   server.handle(RPC_CHANNELS.transfer.ABORT, async (ctx, opts: { transferId: string }) => {
+    throwIfAborted(ctx.signal)
     const transfer = activeTransfers.get(opts.transferId)
     if (!transfer) {
       return { aborted: false }

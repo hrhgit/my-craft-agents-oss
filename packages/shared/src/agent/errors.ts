@@ -230,6 +230,61 @@ function extractErrorMessages(error: unknown): string {
   return messages.join(' ');
 }
 
+function stringifyUnknown(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function getStructuredPiError(error: unknown): {
+  errorKind?: string;
+  recoverable?: boolean;
+  rawError?: string;
+} | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as Record<string, unknown>;
+  const errorKind = typeof record.errorKind === 'string' ? record.errorKind : undefined;
+  const recoverable = typeof record.recoverable === 'boolean' ? record.recoverable : undefined;
+  const rawError = stringifyUnknown(record.rawError);
+  if (!errorKind && recoverable === undefined && rawError === undefined) return null;
+  return { errorKind, recoverable, rawError };
+}
+
+const STRUCTURED_ERROR_KIND_TO_CODE: Record<string, ErrorCode> = {
+  invalid_api_key: 'invalid_api_key',
+  expired_oauth_token: 'expired_oauth_token',
+  rate_limited: 'rate_limited',
+  service_error: 'service_error',
+  network_error: 'network_error',
+  proxy_error: 'proxy_error',
+  mcp_auth_required: 'mcp_auth_required',
+  billing_error: 'billing_error',
+  model_no_tool_support: 'model_no_tool_support',
+  invalid_model: 'invalid_model',
+  data_policy_error: 'data_policy_error',
+  invalid_request: 'invalid_request',
+  image_too_large: 'image_too_large',
+  provider_error: 'provider_error',
+  queued_message_replay_failed: 'queued_message_replay_failed',
+  unknown_error: 'unknown_error',
+  auth: 'invalid_api_key',
+  invalid_input: 'invalid_request',
+  config_parse: 'invalid_request',
+  config_write: 'invalid_request',
+  session: 'service_error',
+  resource: 'provider_error',
+};
+
+function mapStructuredErrorKind(errorKind: string | undefined): ErrorCode | null {
+  if (!errorKind) return null;
+  const normalized = errorKind.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return STRUCTURED_ERROR_KIND_TO_CODE[normalized] ?? null;
+}
+
 const HTML_DOC_HINTS = ['<html', '<!doctype html', '<head', '<body', '<title', '<h1'] as const;
 const HTML_PROXY_HINTS = [
   'cloudflare',
@@ -320,6 +375,28 @@ export function parseError(
   const fullErrorText = extractErrorMessages(error);
   const errorMessage = error instanceof Error ? error.message : String(error);
   const lowerMessage = fullErrorText.toLowerCase();
+  const structured = getStructuredPiError(error);
+
+  // Resolve provider info from context
+  const providerInfo = providerContext
+    ? getProviderMetadata(
+        providerContext.providerType ?? 'anthropic',
+        providerContext.piAuthProvider,
+      ) ?? undefined
+    : undefined;
+
+  const structuredCode = mapStructuredErrorKind(structured?.errorKind);
+  if (structuredCode && structuredCode !== 'unknown_error') {
+    const definition = ERROR_DEFINITIONS[structuredCode]!;
+    return {
+      code: structuredCode,
+      ...definition,
+      message: errorMessage || definition.message,
+      canRetry: structured?.recoverable ?? definition.canRetry,
+      originalError: structured?.rawError ?? errorMessage,
+      providerInfo,
+    };
+  }
 
   // Detect error type from message/status
   let code: ErrorCode = 'unknown_error';
@@ -396,21 +473,13 @@ export function parseError(
   // noUncheckedIndexedAccess compiler option after the cross-module import.
   const definition = ERROR_DEFINITIONS[code]!;
 
-  // Resolve provider info from context
-  const providerInfo = providerContext
-    ? getProviderMetadata(
-        providerContext.providerType ?? 'anthropic',
-        providerContext.piAuthProvider,
-      ) ?? undefined
-    : undefined;
-
   // For proxy_error, prefer safe user-facing text over raw HTML payloads.
   if (code === 'proxy_error') {
     return {
       code,
       ...definition,
       message: buildProxyErrorMessage(errorMessage, fullErrorText),
-      originalError: errorMessage,
+      originalError: structured?.rawError ?? errorMessage,
       providerInfo,
     };
   }
@@ -426,7 +495,7 @@ export function parseError(
         code,
         ...definition,
         message: `Model "${modelMatch[1]}" does not support tool/function calling, which is required for Craft Agent. Please choose a different model with tool support in Settings.`,
-        originalError: errorMessage,
+        originalError: structured?.rawError ?? errorMessage,
         providerInfo,
       };
     }
@@ -435,7 +504,8 @@ export function parseError(
   return {
     code,
     ...definition,
-    originalError: errorMessage,
+    canRetry: structured?.recoverable ?? definition.canRetry,
+    originalError: structured?.rawError ?? errorMessage,
     providerInfo,
   };
 }

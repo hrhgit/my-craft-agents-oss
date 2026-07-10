@@ -17,7 +17,7 @@
  * global skills by capturing a baseline count and validating relative to it.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -285,6 +285,30 @@ describe('loadAllSkills', () => {
       expect(skill).toBeDefined();
       expect(skill!.source).toBe('global');
     }
+  });
+
+  it('should load skills from linked directories', () => {
+    const baselineGlobal = getExistingGlobalSlugs();
+    const linkedSkillsRoot = join(tempDir, 'linked-skills-root');
+    const projDir = getProjectSkillsDir();
+    const targetSkillDir = createSkill(linkedSkillsRoot, `${TEST_PREFIX}linked`, {
+      name: 'Linked Skill',
+      description: 'Loaded through a directory link',
+    });
+    mkdirSync(projDir, { recursive: true });
+    symlinkSync(
+      targetSkillDir,
+      join(projDir, `${TEST_PREFIX}linked`),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    const skills = loadAllSkills(workspaceRoot, projectRoot);
+
+    expect(skills.length).toBe(baselineGlobal.size + 1);
+    const linked = skills.find(s => s.slug === `${TEST_PREFIX}linked`);
+    expect(linked).toBeDefined();
+    expect(linked!.metadata.name).toBe('Linked Skill');
+    expect(linked!.source).toBe('project');
   });
 
   it('should override global skills with project skills when slug matches', () => {

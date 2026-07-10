@@ -16,6 +16,7 @@
  *   - storage.ts (where isSourceUsable is defined)
  *   - credential-manager.ts (state-setting operations, inverse check)
  *   - server-builder.ts (documented exceptions for OAuth providers)
+ *   - source-status.ts (renderer-only status derivation mirror)
  *
  * Bad:
  *   source.config.isAuthenticated
@@ -49,10 +50,11 @@ module.exports = {
       'storage.ts', // isSourceUsable is defined here
       'credential-manager.ts', // State-setting and inverse check
       'server-builder.ts', // OAuth provider checks (documented)
+      'source-status.ts', // Renderer-only status derivation mirror
     ]
 
     const filename = context.filename || context.getFilename()
-    const basename = filename.split('/').pop() || ''
+    const basename = filename.split(/[\\/]/).pop() || ''
 
     // Allow in specific files
     if (allowedFiles.includes(basename)) {

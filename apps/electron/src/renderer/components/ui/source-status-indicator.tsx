@@ -18,6 +18,7 @@ import {
   TooltipTrigger,
 } from '@craft-agent/ui'
 import type { SourceConnectionStatus } from '../../../shared/types'
+export { deriveConnectionStatus } from './source-status'
 
 export interface SourceStatusIndicatorProps {
   /** Connection status */
@@ -128,54 +129,4 @@ export function SourceStatusIndicator({
       </TooltipContent>
     </Tooltip>
   )
-}
-
-/**
- * Derive connection status from source config
- * This is a convenience function to determine status from existing fields
- *
- * @param source - The source config
- * @param localMcpEnabled - Whether local MCP servers are enabled (default: true)
- */
-export function deriveConnectionStatus(source: {
-  config: {
-    isAuthenticated?: boolean
-    connectionStatus?: SourceConnectionStatus
-    type?: string
-    mcp?: { authType?: string; transport?: string }
-    api?: { authType?: string }
-  }
-}, localMcpEnabled = true): SourceConnectionStatus {
-  // Check if this is a stdio source and local MCP is disabled
-  const mcp = source.config.mcp
-  if (mcp?.transport === 'stdio' && !localMcpEnabled) {
-    return 'local_disabled'
-  }
-
-  // If explicit status is set, use it
-  if (source.config.connectionStatus) {
-    return source.config.connectionStatus
-  }
-
-  // Derive from auth state
-  const api = source.config.api
-  const authType = mcp?.authType ?? api?.authType
-  const isAuthenticated = authType === 'none' || authType === undefined
-    ? true
-    : source.config['isAuthenticated'] === true
-
-  if (!isAuthenticated) {
-    return 'needs_auth'
-  }
-
-  if (isAuthenticated) {
-    return 'connected'
-  }
-
-  // Local sources are always connected
-  if (source.config.type === 'local') {
-    return 'connected'
-  }
-
-  return 'untested'
 }

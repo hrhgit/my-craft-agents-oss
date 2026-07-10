@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from 'fs';
 import { join, basename } from 'path';
-import { CONFIG_DIR, PI_SKILLS_DIR } from '../config/paths.ts';
+import { CONFIG_DIR } from '../config/paths.ts';
 import type {
   SessionToolContext,
   SessionToolCallbacks,
@@ -219,7 +219,7 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
     get sourcesPath() { return join(workspacePath, 'sources'); },
     get workingDirectory() { return options.getWorkingDirectory?.() ?? options.workingDirectory; },
     get skillPaths() { return createPiSkillResolver(this.workingDirectory).getSkillPaths().map(e => e.dir); },
-    get skillsPath() { return this.skillPaths?.[0] ?? PI_SKILLS_DIR; },
+    get skillsPath() { return this.skillPaths?.[0] ?? ''; },
     plansFolderPath: getSessionPlansPath(workspacePath, sessionId),
     sessionPath: getSessionPath(workspacePath, sessionId),
     dataPath: getSessionDataPath(workspacePath, sessionId),

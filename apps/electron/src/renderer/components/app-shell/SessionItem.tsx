@@ -60,7 +60,7 @@ export function SessionItem({
   const { hotkey: nextHotkey } = useActionLabel('chat.nextSearchMatch')
   const { hotkey: prevHotkey } = useActionLabel('chat.prevSearchMatch')
   const title = getSessionTitle(item)
-  const isPiSession = item.id.startsWith('pi-')
+  const isPiSession = item.readOnly === true
   // For the active session, prefer logical match count over ripgrep count
   const activeMatch = ctx.activeChatMatchInfo
   const isActiveSession = isSelected && activeMatch?.sessionId === item.id

@@ -112,8 +112,9 @@ any of this):
    `{ type: 'extension_widget', key, content: string[], placement, source }`.
 4. The Craft main process relays the message to the renderer over IPC
    (`extensions:event` channel).
-5. The renderer (`ExtensionWidgetZone`, `PlanProgressWidget`, etc.) renders
-   each string as a line. **The Pi `theme` object never leaves the child
+5. The renderer's generic `ExtensionWidgetZone` surfaces render each string as
+   a line. Structured Craft features can define a separate versioned custom
+   message protocol instead. **The Pi `theme` object never leaves the child
    process.**
 
 ## Example

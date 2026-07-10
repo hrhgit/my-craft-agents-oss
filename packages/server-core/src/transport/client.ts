@@ -175,6 +175,14 @@ export class WsRpcClient implements RpcClient {
   // -------------------------------------------------------------------------
 
   async invoke(channel: string, ...args: any[]): Promise<any> {
+    return this.invokeWithOptions(channel, args)
+  }
+
+  async invokeWithOptions(
+    channel: string,
+    args: any[],
+    options?: { timeoutMs?: number },
+  ): Promise<any> {
     await this.ensureConnected(channel)
 
     return await new Promise((resolve, reject) => {
@@ -184,10 +192,12 @@ export class WsRpcClient implements RpcClient {
       }
 
       const id = crypto.randomUUID()
+      const timeoutMs = options?.timeoutMs ?? this.requestTimeout
       const timeout = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`Request timeout: ${channel} (${this.requestTimeout}ms)`))
-      }, this.requestTimeout)
+        this.sendRequestCancel(id)
+        reject(new Error(`Request timeout: ${channel} (${timeoutMs}ms)`))
+      }, timeoutMs)
 
       this.pending.set(id, { resolve, reject, timeout })
 
@@ -350,7 +360,7 @@ export class WsRpcClient implements RpcClient {
 
     this.connectStarted = true
     this.connectError = null
-    this.createReadyPromise()
+    if (!this.readyPromise) this.createReadyPromise()
 
     const isReconnectAttempt = this.reconnectAttempt > 0 || this.pendingReconnect !== null
     const status: TransportConnectionStatus = isReconnectAttempt ? 'reconnecting' : 'connecting'
@@ -450,6 +460,7 @@ export class WsRpcClient implements RpcClient {
 
   destroy(): void {
     this.destroyed = true
+    this.cancelPendingRequests('Client destroyed', true)
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -472,12 +483,6 @@ export class WsRpcClient implements RpcClient {
     this.pendingReconnect = null
     this.failReady(new Error('Client destroyed'))
 
-    // Reject all pending requests
-    for (const [id, req] of this.pending) {
-      clearTimeout(req.timeout)
-      req.reject(new Error('Client destroyed'))
-    }
-    this.pending.clear()
     this.anyEventListeners.clear()
 
     this.ws?.close()
@@ -746,11 +751,7 @@ export class WsRpcClient implements RpcClient {
 
     // Reject all pending requests
     if (wasConnected) {
-      for (const [id, req] of this.pending) {
-        clearTimeout(req.timeout)
-        req.reject(new Error('Connection lost'))
-      }
-      this.pending.clear()
+      this.cancelPendingRequests('Connection lost', false)
 
       this.setConnectionState({
         status: 'disconnected',
@@ -781,6 +782,7 @@ export class WsRpcClient implements RpcClient {
 
   private scheduleReconnect(): void {
     if (this.permanentlyClosed) return
+    if (!this.readyPromise) this.createReadyPromise()
 
     const delay = Math.min(
       1000 * Math.pow(2, this.reconnectAttempt),
@@ -821,6 +823,22 @@ export class WsRpcClient implements RpcClient {
     }
   }
 
+  private sendRequestCancel(requestId: string): void {
+    this.trySendEnvelope(this.ws, {
+      id: requestId,
+      type: 'request_cancel',
+    })
+  }
+
+  private cancelPendingRequests(message: string, notifyServer: boolean): void {
+    for (const [id, req] of this.pending) {
+      if (notifyServer) this.sendRequestCancel(id)
+      clearTimeout(req.timeout)
+      req.reject(new Error(message))
+      this.pending.delete(id)
+    }
+  }
+
   /** Periodically send sequence_ack so server can evict acknowledged events. */
   private startAckTimer(): void {
     if (this.ackTimer) clearInterval(this.ackTimer)
@@ -837,6 +855,8 @@ export class WsRpcClient implements RpcClient {
   }
 
   private createReadyPromise(): void {
+    if (this.readyPromise) return
+
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve
       this.rejectReady = reject
@@ -868,9 +888,12 @@ export class WsRpcClient implements RpcClient {
     if (this.readyPromise || this.reconnectTimer) {
       const ready = this.readyPromise
       if (!ready) {
-        // Reconnect timer is pending but no readyPromise yet — wait for the
-        // timer to fire and produce one. Throw so caller can retry.
-        throw this.connectError ?? new Error(`Not connected (channel: ${channel})`)
+        this.createReadyPromise()
+        await this.readyPromise
+        if (!this.connected || !this.ws) {
+          throw new Error(`Not connected (channel: ${channel})`)
+        }
+        return
       }
       try {
         await ready

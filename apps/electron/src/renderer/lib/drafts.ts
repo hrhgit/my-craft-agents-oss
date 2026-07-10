@@ -14,7 +14,7 @@
  */
 
 import type { FileAttachment } from '@craft-agent/shared/protocol'
-import { ATTACHMENT_SINGLE_FILE_LIMIT_BYTES } from '@craft-agent/shared/utils'
+import { ATTACHMENT_SINGLE_FILE_LIMIT_BYTES } from '@craft-agent/shared/utils/attachment-limits'
 import type { DraftAttachmentContent, DraftAttachmentRef } from '@craft-agent/shared/config'
 
 /** Per-attachment cap on inlined draft content. Huge pastes are dropped from the draft

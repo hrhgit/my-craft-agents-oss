@@ -8,12 +8,22 @@
 import { RPC_CHANNELS } from '../shared/types'
 import type { ChannelMap } from './build-api'
 
-function invoke(channel: string, transform?: (result: any) => any, largeArgIndex?: number) {
+const SEND_MESSAGE_RPC_TIMEOUT_MS = 300_000
+
+function invoke(
+  channel: string,
+  transform?: (result: any) => any,
+  largeArgIndex?: number,
+  timeoutMs?: number,
+  serializeByArgIndex?: number,
+) {
   return {
     type: 'invoke' as const,
     channel,
     ...(transform && { transform }),
     ...(largeArgIndex !== undefined && { largeArgIndex }),
+    ...(timeoutMs !== undefined && { timeoutMs }),
+    ...(serializeByArgIndex !== undefined && { serializeByArgIndex }),
   }
 }
 
@@ -29,7 +39,7 @@ export const CHANNEL_MAP = {
   getSessionMessages: invoke(RPC_CHANNELS.sessions.GET_MESSAGES),
   createSession: invoke(RPC_CHANNELS.sessions.CREATE),
   deleteSession: invoke(RPC_CHANNELS.sessions.DELETE),
-  sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE),
+  sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE, undefined, 2, SEND_MESSAGE_RPC_TIMEOUT_MS, 0),
   cancelProcessing: invoke(RPC_CHANNELS.sessions.CANCEL),
   killShell: invoke(RPC_CHANNELS.sessions.KILL_SHELL),
   getTaskOutput: invoke(RPC_CHANNELS.tasks.GET_OUTPUT),
@@ -157,6 +167,7 @@ export const CHANNEL_MAP = {
   getPiGlobalProviders: invoke(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDERS),
   getPiGlobalSettings: invoke(RPC_CHANNELS.pi.GET_GLOBAL_SETTINGS),
   getPiGlobalProvider: invoke(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER),
+  getPiGlobalProviderApiKey: invoke(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER_API_KEY),
   savePiGlobalProvider: invoke(RPC_CHANNELS.pi.SAVE_GLOBAL_PROVIDER),
   deletePiGlobalProvider: invoke(RPC_CHANNELS.pi.DELETE_GLOBAL_PROVIDER),
   setPiGlobalDefault: invoke(RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT),
@@ -305,6 +316,7 @@ export const CHANNEL_MAP = {
   getPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.GET_SETTINGS),
   setPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.SET_SETTINGS),
   updatePiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS),
+  getPiExtensionCatalog: invoke(RPC_CHANNELS.piExtensions.GET_CATALOG),
   getPiExtensionStates: invoke(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES),
   setPiExtensionEnabled: invoke(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED),
 
@@ -312,6 +324,7 @@ export const CHANNEL_MAP = {
   onExtensionEvent: listener(RPC_CHANNELS.extensions.EVENT),
   sendRemoteUIResponse: invoke(RPC_CHANNELS.extensions.REMOTEUI_RESPONSE),
   invokeExtensionCommand: invoke(RPC_CHANNELS.extensions.COMMAND_INVOKE),
+  getExtensionCommands: invoke(RPC_CHANNELS.extensions.GET_COMMANDS),
 
   // Pi session tree — list child sessions spawned via spawn_session tool
   listChildSessions: invoke(RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS),

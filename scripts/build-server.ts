@@ -56,6 +56,7 @@ import {
   downloadUv,
   buildMcpServers,
   getPlatformKey,
+  stagePiRuntime,
 } from './build/common';
 
 // ---------------------------------------------------------------------------
@@ -179,6 +180,16 @@ function assembleResources(config: ServerBuildConfig): void {
     mkdirSync(destSessionServer, { recursive: true });
     copyFileSync(sessionServerDist, join(destSessionServer, 'index.js'));
   }
+
+  stagePiRuntime({
+    platform,
+    arch,
+    upload: false,
+    uploadLatest: false,
+    uploadScript: false,
+    rootDir: config.rootDir,
+    electronDir: config.electronDir,
+  }, join(destResources, 'pi-runtime'));
 }
 
 // ---------------------------------------------------------------------------

@@ -21,14 +21,12 @@ export type {
   SessionComputedMetadata,
   CraftSessionMetadataField,
   SessionComputedMetadataField,
-  SessionPersistentField,
 } from './types.ts';
 
 // Field constants
 export {
   CRAFT_SESSION_METADATA_FIELDS,
   SESSION_COMPUTED_METADATA_FIELDS,
-  SESSION_PERSISTENT_FIELDS,
 } from './types.ts';
 
 // Storage functions
@@ -70,12 +68,9 @@ export {
   getHeaderMetadataSignature,
   // Shared Pi session storage mode
   setSharedPiSessionsDirForTests,
-  // Pi CLI sessions (shell mode — shared with Craft in full-passthrough mode)
-  readPiSessionFile,
-  findPiSessionFile,
-  findPiSessionFileInDefaultRoot,
+  // Pi-owned session projection facade
+  findPiSessionProjectionById,
   getSharedPiSidecarPathForFile,
-  loadPiSessionMessages,
 } from './storage.ts';
 
 // JSONL helpers (for direct access if needed)
@@ -91,10 +86,21 @@ export {
   getCraftIdFromTreeHeader,
   readTreeSessionJsonl,
   readTreeSessionMetadata,
+  projectTreeSessionProjectionAsStoredSession,
+  projectTreeSessionPlanData,
   writeTreeSessionCraftMetadata,
   writeCraftSessionOverlay,
   appendStoredMessagesViaPiSessionManager,
 } from './tree-jsonl.ts';
+export {
+  applyPlanCustomMessageToRuntime,
+  applyPlanCustomMessageToStored,
+  parsePlanCustomMessage,
+} from './plan-artifact-projection.ts';
+export type {
+  PlanCustomMessageInput,
+  PlanCustomMessageProjection,
+} from './plan-artifact-projection.ts';
 
 // Field utilities
 export { pickCraftSessionMetadata, pickSessionFields } from './utils.ts';

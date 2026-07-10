@@ -11,8 +11,13 @@ import {
   copyFileSync,
   cpSync,
   readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  chmodSync,
 } from 'fs';
-import { join, dirname } from 'path';
+import { builtinModules } from 'module';
+import { join, dirname, relative, resolve, sep } from 'path';
 import { createHash } from 'crypto';
 
 export type Platform = 'darwin' | 'win32' | 'linux';
@@ -336,57 +341,572 @@ export function copyRipgrep(config: BuildConfig): void {
   cpSync(rgSource, rgDest, { recursive: true, dereference: true });
 }
 
-/** Copy network interceptor source files used by Pi RpcClient's Node process. */
-export function copyInterceptor(config: BuildConfig): void {
-  const { rootDir, electronDir } = config;
+const PI_RUNTIME_PACKAGE = '@earendil-works/pi-coding-agent';
+const PI_RUNTIME_BUNDLE_ENTRY = join('dist', 'cli.bundle.js');
+const PI_RUNTIME_REQUIRED_DIST_FILES = [
+  'dist/cli.bundle.js',
+  'dist/cli.full.bundle.js',
+  'dist/cli.interactive.bundle.js',
+  'dist/index.js',
+  'dist/config.js',
+  'dist/core/output-guard.js',
+  'dist/core/package-manager.js',
+  'dist/utils/child-process.js',
+  'dist/utils/git.js',
+  'dist/utils/paths.js',
+  'dist/core/export-html',
+  'dist/modes/interactive/assets',
+  'dist/modes/interactive/theme',
+];
+const PI_RUNTIME_OPTIONAL_PACKAGE_PATHS = [
+  'docs',
+  'examples',
+];
+const PI_RUNTIME_METADATA_FILES = [
+  'package.json',
+  'README.md',
+  'CHANGELOG.md',
+  'LICENSE',
+  'LICENSE.md',
+  'npm-shrinkwrap.json',
+];
+const PI_RUNTIME_EXTERNAL_FALLBACKS = [
+  '@earendil-works/pi-ai',
+  '@silvia-odwyer/photon-node',
+  'cross-spawn',
+  'hosted-git-info',
+  'ignore',
+  'jiti',
+  'minimatch',
+  'proper-lockfile',
+  'undici',
+  'yaml',
+];
+const PI_RUNTIME_ADDITIONAL_EXTERNALS = [
+  // cli.full.bundle.js imports npm undici even though recent Node versions may
+  // list an internal undici module. Isolated runtime smoke tests need the npm
+  // package present.
+  'undici',
+  // The bundle dynamically loads dist/core/package-manager.js, whose package
+  // imports are not represented in the bundle metafile.
+  'ignore',
+  'minimatch',
+  // Extensions may import @earendil-works/pi-coding-agent. The staged runtime
+  // therefore ships the public dist/index.js surface, whose package imports are
+  // not represented in the CLI bundle metafile.
+  '@anthropic-ai/sdk',
+  '@google/genai',
+  '@mistralai/mistralai',
+  'chalk',
+  'diff',
+  'get-east-asian-width',
+  'openai',
+  'partial-json',
+  'typebox',
+];
 
-  const sharedSrcDir = join('packages', 'shared', 'src');
-  const sourceDir = join(rootDir, sharedSrcDir);
-  const destDir = join(electronDir, sharedSrcDir);
-
-  const interceptorSource = join(sourceDir, 'unified-network-interceptor.ts');
-  if (!existsSync(interceptorSource)) {
-    throw new Error(`Interceptor not found at ${interceptorSource}`);
-  }
-
-  console.log('Copying interceptor...');
-  mkdirSync(destDir, { recursive: true });
-  copyFileSync(interceptorSource, join(destDir, 'unified-network-interceptor.ts'));
-
-  // Also copy shared infrastructure (imported by unified-network-interceptor.ts at runtime)
-  const commonSource = join(sourceDir, 'interceptor-common.ts');
-  if (existsSync(commonSource)) {
-    copyFileSync(commonSource, join(destDir, 'interceptor-common.ts'));
-  }
-
-  // Copy request utilities (imported by unified-network-interceptor.ts)
-  const requestUtilsSource = join(sourceDir, 'interceptor-request-utils.ts');
-  if (existsSync(requestUtilsSource)) {
-    copyFileSync(requestUtilsSource, join(destDir, 'interceptor-request-utils.ts'));
-  }
-
-  // Copy feature flags (imported by unified-network-interceptor.ts for fast mode / source templates)
-  const featureFlagsSource = join(sourceDir, 'feature-flags.ts');
-  if (existsSync(featureFlagsSource)) {
-    copyFileSync(featureFlagsSource, join(destDir, 'feature-flags.ts'));
+const NODE_BUILTIN_MODULES = new Set<string>();
+for (const moduleName of builtinModules) {
+  NODE_BUILTIN_MODULES.add(moduleName);
+  if (!moduleName.startsWith('node:')) {
+    NODE_BUILTIN_MODULES.add(`node:${moduleName}`);
   }
 }
 
-/**
- * Verify the unified interceptor CJS bundle exists (runs under Node.js via --require)
- * Built by `bun run build:interceptor` into apps/electron/dist/
- */
-export function copyInterceptorBundle(config: BuildConfig): void {
-  const { electronDir } = config;
+function packagePathParts(packageName: string): string[] {
+  return packageName.split('/');
+}
 
-  const source = join(electronDir, 'dist', 'interceptor.cjs');
+function resolvePackageDir(packageName: string, fromDir: string): string | undefined {
+  const parts = packagePathParts(packageName);
+  const logical = resolve(fromDir);
+  const bases: string[] = [];
+  try {
+    bases.push(realpathSync(fromDir));
+  } catch { /* keep logical path only */ }
+  if (!bases.includes(logical)) bases.push(logical);
+
+  for (const base of bases) {
+    let current = base;
+    while (true) {
+      const candidate = join(current, 'node_modules', ...parts);
+      if (existsSync(join(candidate, 'package.json'))) {
+        return candidate;
+      }
+
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+
+  return undefined;
+}
+
+function packageDestDir(destModules: string, packageName: string): string {
+  return join(destModules, ...packagePathParts(packageName));
+}
+
+function packageSourceKey(packageDir: string): string {
+  try {
+    return realpathSync(packageDir);
+  } catch {
+    return resolve(packageDir);
+  }
+}
+
+function readPackageJson(packageDir: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf-8'));
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function removeDirectoryWithRetry(path: string, maxAttempts = 5): void {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      if (!existsSync(path)) return;
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < maxAttempts) {
+      sleepSync(250 * attempt);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`Failed to remove ${path}`);
+}
+
+function runtimeSourcePath(packageDir: string, relativePath: string): string {
+  return join(packageDir, ...relativePath.split('/'));
+}
+
+function copyPackageSurfacePath(packageDir: string, destRoot: string, relativePath: string, required: boolean): void {
+  const source = runtimeSourcePath(packageDir, relativePath);
+  const dest = runtimeSourcePath(destRoot, relativePath);
+
   if (!existsSync(source)) {
-    console.warn('Warning: Interceptor bundle not found at', source, '— tool metadata will be unavailable for Pi sessions');
+    if (required) {
+      throw new Error(`Pi runtime source is missing required path: ${source}`);
+    }
     return;
   }
 
-  // Already in dist/ which is included in the packaged app — just verify it exists
-  console.log('Interceptor bundle verified at:', source);
+  mkdirSync(dirname(dest), { recursive: true });
+  const stat = statSync(source);
+  if (stat.isDirectory()) {
+    cpSync(source, dest, { recursive: true, dereference: true, force: true });
+  } else {
+    copyFileSync(source, dest);
+  }
+}
+
+function shouldCopyPiRuntimeDistPath(sourcePath: string): boolean {
+  const stat = statSync(sourcePath);
+  if (stat.isDirectory()) return true;
+
+  const normalized = sourcePath.replace(/\\/g, '/').toLowerCase();
+  return !normalized.endsWith('.map') && !normalized.endsWith('.d.ts');
+}
+
+function copyPiRuntimeDist(packageDir: string, runtimeRoot: string): void {
+  const source = join(packageDir, 'dist');
+  const dest = join(runtimeRoot, 'dist');
+
+  if (!existsSync(source)) {
+    throw new Error(`Pi runtime source is missing required dist directory: ${source}`);
+  }
+
+  mkdirSync(dirname(dest), { recursive: true });
+  cpSync(source, dest, {
+    recursive: true,
+    dereference: true,
+    force: true,
+    filter: shouldCopyPiRuntimeDistPath,
+  });
+}
+
+function requireStagedPiRuntimePath(runtimeRoot: string, relativePath: string): void {
+  const path = runtimeSourcePath(runtimeRoot, relativePath);
+  if (!existsSync(path)) {
+    throw new Error(`Pi runtime staging missed required path: ${path}`);
+  }
+}
+
+function piSidecarTarget(platform: Platform, arch: Arch): string {
+  const sidecarPlatform = platform === 'win32' ? 'windows' : platform;
+  return `${sidecarPlatform}-${arch}`;
+}
+
+function piSidecarBinaryName(platform: Platform): string {
+  return platform === 'win32' ? 'pi-network-sidecar.exe' : 'pi-network-sidecar';
+}
+
+function copyPiRuntimePackageSurface(packageDir: string, runtimeRoot: string, config: BuildConfig): void {
+  for (const file of PI_RUNTIME_METADATA_FILES) {
+    copyPackageSurfacePath(packageDir, runtimeRoot, file, file === 'package.json');
+  }
+
+  copyPiRuntimeDist(packageDir, runtimeRoot);
+  for (const file of PI_RUNTIME_REQUIRED_DIST_FILES) {
+    requireStagedPiRuntimePath(runtimeRoot, file);
+  }
+
+  for (const assetPath of PI_RUNTIME_OPTIONAL_PACKAGE_PATHS) {
+    copyPackageSurfacePath(packageDir, runtimeRoot, assetPath, false);
+  }
+
+  const sidecarTarget = piSidecarTarget(config.platform, config.arch);
+  const sidecarRelativeDir = `sidecar/bin/${sidecarTarget}`;
+  copyPackageSurfacePath(packageDir, runtimeRoot, sidecarRelativeDir, true);
+
+  const sidecarBinary = join(
+    runtimeRoot,
+    'sidecar',
+    'bin',
+    sidecarTarget,
+    piSidecarBinaryName(config.platform),
+  );
+  if (!existsSync(sidecarBinary)) {
+    throw new Error(`Pi sidecar binary missing after runtime staging: ${sidecarBinary}`);
+  }
+  if (config.platform !== 'win32') {
+    chmodSync(sidecarBinary, 0o755);
+  }
+}
+
+interface EsbuildMetafile {
+  inputs?: Record<string, { imports?: Array<{ path?: string; external?: boolean }> }>;
+}
+
+function isNodeBuiltinSpecifier(specifier: string): boolean {
+  if (PI_RUNTIME_ADDITIONAL_EXTERNALS.includes(specifier)) {
+    return false;
+  }
+  const withoutPrefix = specifier.startsWith('node:') ? specifier.slice('node:'.length) : specifier;
+  return NODE_BUILTIN_MODULES.has(specifier) || NODE_BUILTIN_MODULES.has(withoutPrefix);
+}
+
+function packageNameFromImportSpecifier(specifier: string): string | undefined {
+  if (!specifier || specifier.startsWith('.') || specifier.startsWith('/') || isNodeBuiltinSpecifier(specifier)) {
+    return undefined;
+  }
+  if (specifier.startsWith('node:') || specifier.includes(':')) {
+    return undefined;
+  }
+
+  if (specifier.startsWith('@')) {
+    const [scope, name] = specifier.split('/');
+    return scope && name ? `${scope}/${name}` : undefined;
+  }
+
+  return specifier.split('/')[0];
+}
+
+function piRuntimeExternalPackages(packageDir: string): string[] {
+  const packages = new Set<string>(PI_RUNTIME_ADDITIONAL_EXTERNALS);
+  const metaPath = join(packageDir, 'dist', 'cli.bundle.meta.json');
+
+  if (!existsSync(metaPath)) {
+    for (const packageName of PI_RUNTIME_EXTERNAL_FALLBACKS) {
+      packages.add(packageName);
+    }
+    return [...packages].sort();
+  }
+
+  try {
+    const meta = JSON.parse(readFileSync(metaPath, 'utf-8')) as EsbuildMetafile;
+    for (const input of Object.values(meta.inputs ?? {})) {
+      for (const imp of input.imports ?? []) {
+        if (!imp.external || !imp.path) continue;
+        const packageName = packageNameFromImportSpecifier(imp.path);
+        if (packageName) {
+          packages.add(packageName);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(`Warning: unable to parse Pi runtime bundle metafile at ${metaPath}: ${(error as Error).message}`);
+    for (const packageName of PI_RUNTIME_EXTERNAL_FALLBACKS) {
+      packages.add(packageName);
+    }
+  }
+
+  return [...packages].sort();
+}
+
+function topLevelPackageFile(entry: string): string {
+  return entry
+    .replace(/\\/g, '/')
+    .replace(/\/\*\*.*$/, '')
+    .replace(/\/\*.*$/, '')
+    .split('/')[0]!;
+}
+
+function copyPiWorkspacePackage(packageDir: string, dest: string): void {
+  const pkg = readPackageJson(packageDir);
+  const files = Array.isArray(pkg.files) ? pkg.files.filter((entry): entry is string => typeof entry === 'string') : [];
+  const entries = new Set(files.map(topLevelPackageFile));
+
+  // Linked workspace packages are larger than the published npm package. Copy
+  // the publishable/runtime surface so release builds do not pull src/tests in.
+  entries.add('dist');
+  for (const file of ['package.json', 'README.md', 'CHANGELOG.md', 'LICENSE', 'npm-shrinkwrap.json']) {
+    const source = join(packageDir, file);
+    if (existsSync(source)) {
+      mkdirSync(dirname(join(dest, file)), { recursive: true });
+      copyFileSync(source, join(dest, file));
+    }
+  }
+
+  for (const entry of entries) {
+    if (!entry || entry === 'package.json') continue;
+    const source = join(packageDir, entry);
+    if (!existsSync(source)) continue;
+    cpSync(source, join(dest, entry), { recursive: true, dereference: true });
+  }
+}
+
+function copyNpmPackage(packageDir: string, dest: string, packageName: string): void {
+  mkdirSync(dirname(dest), { recursive: true });
+  if (existsSync(dest)) {
+    rmSync(dest, { recursive: true, force: true });
+  }
+  mkdirSync(dest, { recursive: true });
+
+  if (packageName.startsWith('@earendil-works/pi-')) {
+    copyPiWorkspacePackage(packageDir, dest);
+    return;
+  }
+
+  const skipNames = new Set([
+    '.git',
+    '.hg',
+    '.svn',
+    '.cache',
+    '.turbo',
+    'coverage',
+    'node_modules',
+  ]);
+
+  cpSync(packageDir, dest, {
+    recursive: true,
+    dereference: true,
+    filter: (source) => {
+      const rel = relative(packageDir, source);
+      if (!rel) return true;
+      return !rel.split(sep).some((part) => skipNames.has(part));
+    },
+  });
+}
+
+function dependencyNames(pkg: Record<string, unknown>): Array<{ name: string; required: boolean }> {
+  const result: Array<{ name: string; required: boolean }> = [];
+  const pushDeps = (value: unknown, required: boolean) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    for (const name of Object.keys(value)) {
+      result.push({ name, required });
+    }
+  };
+
+  pushDeps(pkg.dependencies, true);
+  pushDeps(pkg.optionalDependencies, false);
+  pushDeps(pkg.peerDependencies, false);
+  return result;
+}
+
+interface RuntimePackagePlacement {
+  name: string;
+  packageDir: string;
+  sourceKey: string;
+  dest: string;
+  modulesDir: string;
+}
+
+type RuntimePlacementIndex = Map<string, Map<string, RuntimePackagePlacement>>;
+type RuntimeModuleChains = Map<string, string[]>;
+
+function placementMapFor(index: RuntimePlacementIndex, modulesDir: string): Map<string, RuntimePackagePlacement> {
+  let map = index.get(modulesDir);
+  if (!map) {
+    map = new Map();
+    index.set(modulesDir, map);
+  }
+  return map;
+}
+
+function findVisiblePlacement(
+  index: RuntimePlacementIndex,
+  modulesChain: string[],
+  packageName: string,
+): RuntimePackagePlacement | undefined {
+  for (const modulesDir of modulesChain) {
+    const placement = index.get(modulesDir)?.get(packageName);
+    if (placement) return placement;
+  }
+  return undefined;
+}
+
+function copyPackageToRuntime(
+  packageName: string,
+  packageDir: string,
+  targetModules: string,
+  placements: RuntimePlacementIndex,
+  moduleChains: RuntimeModuleChains,
+): RuntimePackagePlacement {
+  const sourceKey = packageSourceKey(packageDir);
+  const map = placementMapFor(placements, targetModules);
+  const existing = map.get(packageName);
+  if (existing) {
+    if (existing.sourceKey !== sourceKey) {
+      throw new Error(
+        `Cannot place ${packageName} from ${packageDir}; ` +
+        `${targetModules} already contains ${existing.packageDir}`,
+      );
+    }
+    return existing;
+  }
+
+  const dest = packageDestDir(targetModules, packageName);
+  copyNpmPackage(packageDir, dest, packageName);
+
+  const placement: RuntimePackagePlacement = {
+    name: packageName,
+    packageDir,
+    sourceKey,
+    dest,
+    modulesDir: targetModules,
+  };
+  map.set(packageName, placement);
+
+  const childModules = join(dest, 'node_modules');
+  const parentChain = moduleChains.get(targetModules) ?? [targetModules];
+  moduleChains.set(childModules, [childModules, ...parentChain]);
+
+  return placement;
+}
+
+function processRuntimePackage(
+  placement: RuntimePackagePlacement,
+  rootModules: string,
+  placements: RuntimePlacementIndex,
+  moduleChains: RuntimeModuleChains,
+  processed: Set<string>,
+): void {
+  const processedKey = `${placement.sourceKey}\0${placement.dest}`;
+  if (processed.has(processedKey)) return;
+  processed.add(processedKey);
+
+  const pkg = readPackageJson(placement.packageDir);
+  const childModules = join(placement.dest, 'node_modules');
+  const modulesChain = moduleChains.get(childModules) ?? [childModules, placement.modulesDir];
+  const directDependencies: RuntimePackagePlacement[] = [];
+
+  for (const dep of dependencyNames(pkg)) {
+    const dependency = placeRuntimeDependency(
+      dep.name,
+      placement.packageDir,
+      rootModules,
+      modulesChain,
+      placements,
+      moduleChains,
+      dep.required,
+    );
+    if (dependency) {
+      directDependencies.push(dependency);
+    }
+  }
+
+  for (const dependency of directDependencies) {
+    processRuntimePackage(dependency, rootModules, placements, moduleChains, processed);
+  }
+}
+
+function placeRuntimeDependency(
+  packageName: string,
+  resolverDir: string,
+  rootModules: string,
+  requesterModulesChain: string[],
+  placements: RuntimePlacementIndex,
+  moduleChains: RuntimeModuleChains,
+  required: boolean,
+): RuntimePackagePlacement | undefined {
+  const packageDir = resolvePackageDir(packageName, resolverDir);
+  if (!packageDir) {
+    if (required) {
+      throw new Error(`Unable to resolve runtime dependency ${packageName} from ${resolverDir}`);
+    }
+    return undefined;
+  }
+
+  const sourceKey = packageSourceKey(packageDir);
+  const visible = findVisiblePlacement(placements, requesterModulesChain, packageName);
+  if (visible?.sourceKey === sourceKey) {
+    return visible;
+  }
+
+  const targetModules = visible ? requesterModulesChain[0] : rootModules;
+  return copyPackageToRuntime(packageName, packageDir, targetModules, placements, moduleChains);
+}
+
+function copyPackageDependencySet(packageNames: string[], resolverDir: string, destModules: string): number {
+  const placements: RuntimePlacementIndex = new Map();
+  const moduleChains: RuntimeModuleChains = new Map([[destModules, [destModules]]]);
+  const processed = new Set<string>();
+  const entries: RuntimePackagePlacement[] = [];
+
+  for (const packageName of packageNames) {
+    const packageDir = resolvePackageDir(packageName, resolverDir);
+    if (!packageDir) {
+      throw new Error(`Unable to resolve runtime dependency ${packageName} from ${resolverDir}`);
+    }
+    entries.push(copyPackageToRuntime(packageName, packageDir, destModules, placements, moduleChains));
+  }
+
+  for (const entry of entries) {
+    processRuntimePackage(entry, destModules, placements, moduleChains, processed);
+  }
+
+  return processed.size;
+}
+
+/**
+ * Assemble a private Pi CLI runtime into dist/resources. The Electron main
+ * bundle imports the Pi SDK directly, but PiAgent starts a separate Node/Bun
+ * process for RPC sessions; that subprocess needs the CLI package and its
+ * runtime dependencies available in the packaged app.
+ */
+export function stagePiRuntime(config: BuildConfig, runtimeRoot: string): void {
+  const destModules = join(runtimeRoot, 'node_modules');
+  const packageDir = resolvePackageDir(PI_RUNTIME_PACKAGE, config.rootDir);
+
+  if (!packageDir) {
+    throw new Error(`Unable to resolve ${PI_RUNTIME_PACKAGE} from ${config.rootDir}`);
+  }
+
+  console.log('Staging Pi CLI runtime...');
+  removeDirectoryWithRetry(runtimeRoot);
+  mkdirSync(destModules, { recursive: true });
+
+  copyPiRuntimePackageSurface(packageDir, runtimeRoot, config);
+
+  const externalPackages = piRuntimeExternalPackages(packageDir);
+  const copiedCount = copyPackageDependencySet(externalPackages, packageDir, destModules);
+
+  const cliPath = join(runtimeRoot, PI_RUNTIME_BUNDLE_ENTRY);
+  if (!existsSync(cliPath)) {
+    throw new Error(`Pi CLI runtime copy failed; entrypoint missing at ${cliPath}`);
+  }
+
+  console.log(`  Pi CLI runtime staged (${copiedCount} dependency packages, entry ${PI_RUNTIME_BUNDLE_ENTRY})`);
+}
+
+export function copyPiRuntime(config: BuildConfig): void {
+  stagePiRuntime(config, join(config.electronDir, 'dist', 'resources', 'pi-runtime'));
 }
 
 /**

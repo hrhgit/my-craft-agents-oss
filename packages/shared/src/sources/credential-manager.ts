@@ -60,7 +60,16 @@ import {
   refreshGenericOAuthToken,
 } from '../auth/generic-oauth.ts';
 import { debug } from '../utils/debug.ts';
-import { markSourceAuthenticated, loadSourceConfig, saveSourceConfig } from './storage.ts';
+import {
+  markSourceAuthenticated,
+  loadSourceConfig,
+  saveSourceConfig,
+} from './storage.ts';
+import {
+  isSourceConfigAuthenticated,
+  setSourceConfigAuthState,
+  sourceRequiresAuthentication,
+} from './auth-state.ts';
 
 /**
  * Result of authentication attempt
@@ -150,7 +159,7 @@ export class SourceCredentialManager {
 
     // For MCP sources, try both OAuth and bearer credentials
     // (stdio transport doesn't need credentials)
-    if (source.config.type === 'mcp' && source.config.mcp?.transport !== 'stdio' && source.config.mcp?.authType !== 'none') {
+    if (source.config.type === 'mcp' && sourceRequiresAuthentication(source)) {
       return this.loadMcpCredential(source);
     }
 
@@ -365,9 +374,7 @@ export class SourceCredentialManager {
     try {
       const config = loadSourceConfig(source.workspaceRootPath, source.config.slug);
       if (config) {
-        config.isAuthenticated = false;
-        config.connectionStatus = 'needs_auth';
-        config.connectionError = errorMessage;
+        setSourceConfigAuthState(config, false, 'needs_auth', errorMessage);
         saveSourceConfig(source.workspaceRootPath, config);
         debug(`[SourceCredentialManager] Marked ${source.config.slug} as needing re-auth: ${errorMessage}`);
       }
@@ -1327,30 +1334,7 @@ function substituteTokenInHeaders(
  * - API sources with bearer/basic/header/query auth → needs auth if not authenticated
  */
 export function sourceNeedsAuthentication(source: LoadedSource): boolean {
-  const mcp = source.config.mcp;
-  const api = source.config.api;
-
-  // MCP sources with oauth/bearer auth (stdio transport never needs auth)
-  if (source.config.type === 'mcp' && mcp) {
-    if (mcp.transport === 'stdio') {
-      // Stdio sources run locally and don't need authentication
-      return false;
-    }
-    // Only require auth if authType is explicitly set to 'oauth' or 'bearer'
-    // Undefined or 'none' means no authentication required
-    if (mcp.authType && mcp.authType !== 'none' && !source.config.isAuthenticated) {
-      return true;
-    }
-  }
-
-  // API sources with auth requirements
-  if (source.config.type === 'api' && api) {
-    if (api.authType !== 'none' && api.authType !== undefined && !source.config.isAuthenticated) {
-      return true;
-    }
-  }
-
-  return false;
+  return sourceRequiresAuthentication(source) && !isSourceConfigAuthenticated(source.config);
 }
 
 /**

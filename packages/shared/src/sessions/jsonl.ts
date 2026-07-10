@@ -16,28 +16,12 @@ import { safeJsonParse } from '../utils/files.ts';
 import { pickCraftSessionMetadata } from './utils.ts';
 import {
   looksLikeTreeSessionJsonl,
+  projectTreeSessionHeaderAsSessionHeader,
+  readTreeSessionHeader,
   readTreeSessionAsStoredSession,
-  readTreeSessionMetadata,
   writeTreeSessionCraftMetadata,
   createNewTreeSessionFile,
 } from './tree-jsonl.ts';
-
-function headerFromTreeSession(sessionFile: string): SessionHeader | null {
-  // readTreeSessionMetadata 已返回扁平 SessionHeader（含 Pi 字段 + Craft 字段）
-  const metadata = readTreeSessionMetadata(sessionFile);
-  if (!metadata) return null;
-  // 仅规范化 permissionMode，并提供 tokenUsage 默认值
-  return normalizeHeaderPermissionModes({
-    ...metadata,
-    tokenUsage: metadata.tokenUsage ?? {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      contextTokens: 0,
-      costUsd: 0,
-    },
-  });
-}
 
 /**
  * 将 legacy 文件第一行（含 id 字段）转换为扁平 SessionHeader。
@@ -97,8 +81,19 @@ function normalizeHeaderPermissionModes<T extends SessionHeader>(header: T): T {
  */
 export function readSessionHeader(sessionFile: string): SessionHeader | null {
   try {
-    if (looksLikeTreeSessionJsonl(sessionFile)) {
-      return headerFromTreeSession(sessionFile);
+    const treeHeader = readTreeSessionHeader(sessionFile);
+    if (treeHeader) {
+      const metadata = projectTreeSessionHeaderAsSessionHeader(treeHeader, sessionFile);
+      return normalizeHeaderPermissionModes({
+        ...metadata,
+        tokenUsage: metadata.tokenUsage ?? {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          contextTokens: 0,
+          costUsd: 0,
+        },
+      });
     }
 
     const fd = openSync(sessionFile, 'r');

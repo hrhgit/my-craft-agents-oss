@@ -22,6 +22,8 @@ export type {
   PermissionRequestEvent,
   SourcesChangedEvent,
   PlanSubmittedEvent,
+  PlanArtifactChangedEvent,
+  PlanModeStateChangedEvent,
   TaskBackgroundedEvent,
   ShellBackgroundedEvent,
   TaskProgressEvent,

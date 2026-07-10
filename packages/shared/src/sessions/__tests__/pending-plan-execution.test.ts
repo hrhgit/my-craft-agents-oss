@@ -68,4 +68,17 @@ describe('pending plan execution persistence', () => {
       executionDispatched: true,
     })
   })
+
+  it('persists artifactId for compact-then-execute recovery', async () => {
+    await setPendingPlanExecution(workspaceRoot, 'session-1', { artifactId: 'plan-123' })
+    expect(getPendingPlanExecution(workspaceRoot, 'session-1')).toEqual({
+      artifactId: 'plan-123',
+      awaitingCompaction: true,
+      executionDispatched: false,
+    })
+  })
+
+  it('rejects a pending execution without a plan target', async () => {
+    await expect(setPendingPlanExecution(workspaceRoot, 'session-1', {})).rejects.toThrow('requires planPath or artifactId')
+  })
 })

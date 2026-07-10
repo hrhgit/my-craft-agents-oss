@@ -22,6 +22,8 @@ import type {
   PermissionRequestEvent,
   CredentialRequestEvent,
   PlanSubmittedEvent,
+  PlanArtifactChangedEvent,
+  PlanModeStateChangedEvent,
   StatusEvent,
   InfoEvent,
   InterruptedEvent,
@@ -775,6 +777,52 @@ export function handlePlanSubmitted(
     state: {
       session: appendMessage(session, event.message),
       streaming,
+    },
+    effects: [],
+  }
+}
+
+/** Apply the authoritative plan card snapshot emitted by SessionManager. */
+export function handlePlanArtifactChanged(
+  state: SessionState,
+  event: PlanArtifactChangedEvent
+): ProcessResult {
+  const superseded = new Set(event.supersededArtifactIds ?? [])
+  let found = false
+  const messages = state.session.messages.map(message => {
+    if (message.id === event.message.id) {
+      found = true
+      return event.message
+    }
+    if (message.artifact && superseded.has(message.artifact.artifactId)) {
+      return { ...message, artifact: { ...message.artifact, state: 'superseded' as const } }
+    }
+    return message
+  })
+  if (!found) messages.push(event.message)
+
+  return {
+    state: {
+      session: {
+        ...state.session,
+        messages,
+        lastMessageRole: 'assistant',
+        lastFinalMessageId: event.message.id,
+      },
+      streaming: state.streaming,
+    },
+    effects: [],
+  }
+}
+
+export function handlePlanModeStateChanged(
+  state: SessionState,
+  event: PlanModeStateChangedEvent
+): ProcessResult {
+  return {
+    state: {
+      session: { ...state.session, planModeState: event.state },
+      streaming: state.streaming,
     },
     effects: [],
   }

@@ -27,7 +27,6 @@ import { Spinner } from '@craft-agent/ui'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger, AnimatedCollapsibleContent } from '@/components/ui/collapsible'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
 import type { PiChildSessionInfo } from '@craft-agent/shared/agent'
-import { toPiReadOnlySessionId } from '../../../shared/pi-session-route'
 
 /** 轮询间隔：每 5 秒刷新一次子会话列表 */
 const REFRESH_INTERVAL_MS = 5000
@@ -88,7 +87,7 @@ function SessionRow({ session }: SessionRowProps) {
   }, [session.sessionId, displayName])
 
   const handleOpenInCurrentPanel = React.useCallback(() => {
-    navigate(routes.view.allSessions(toPiReadOnlySessionId(session.sessionId)))
+    navigate(routes.view.allSessions(session.sessionId))
   }, [session.sessionId])
 
   return (

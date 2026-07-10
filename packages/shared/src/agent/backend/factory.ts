@@ -27,6 +27,7 @@ import {
   getDefaultLlmConnection,
   type LlmConnection,
 } from '../../config/storage.ts';
+import { hasPiGlobalAuthForConnection } from '../../config/pi-global-config.ts';
 import type { CustomEndpointConfig } from '../../config/llm-connections.ts';
 // Import validation helpers for provider-auth combinations
 import {
@@ -201,7 +202,7 @@ export function resolveSessionConnection(
   sessionConnection?: string,
   workspaceDefaultConnection?: string
 ): LlmConnection | null {
-  // 1. Session-level connection (locked after first message)
+  // 1. Session-level connection
   if (sessionConnection) {
     const connection = getLlmConnection(sessionConnection);
     if (connection) return connection;
@@ -337,11 +338,13 @@ export async function validateStoredBackendConnection(args: {
     }
 
     const credentialManager = getCredentialManager();
-    const hasCredentials = await credentialManager.hasLlmCredentials(
-      args.slug,
-      connection.authType,
-      connection.providerType,
-    );
+    const hasCredentials =
+      await credentialManager.hasLlmCredentials(
+        args.slug,
+        connection.authType,
+        connection.providerType,
+      )
+      || hasPiGlobalAuthForConnection(connection);
 
     if (!hasCredentials && connection.authType !== 'none') {
       return { success: false, error: 'No credentials configured' };

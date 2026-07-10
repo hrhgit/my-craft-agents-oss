@@ -21,11 +21,6 @@ files:
   - resources/session-mcp-server/**/*
   # Note: Bundled assets (docs, themes, permissions, tool-icons) are in resources/
   # and copied to dist/resources/ by build:copy. They're included via dist/**/* above.
-  # Include network interceptor for API error capture and MCP schema injection
-  - packages/shared/src/unified-network-interceptor.ts
-  - packages/shared/src/interceptor-common.ts
-  - packages/shared/src/feature-flags.ts
-  - packages/shared/src/interceptor-request-utils.ts
   # Include CLI tool Python scripts (platform-independent)
   - resources/scripts/**/*
   # Include CLI tool shell wrappers (platform-independent, both Unix and Windows)
@@ -92,6 +87,9 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extraResources:
+    # Pi RpcClient CLI subprocess runtime (private node_modules tree).
+    - from: dist/resources/pi-runtime
+      to: app/dist/resources/pi-runtime
     # ripgrep (used by packages/server-core/src/services/search.ts).
     - from: node_modules/@vscode/ripgrep
       to: app/node_modules/@vscode/ripgrep
@@ -150,6 +148,8 @@ win:
     - "!**/resources/bin/win32-x64/**"
   # Copy executables as extraResources to avoid EBUSY file locking (see comment above)
   extraResources:
+    - from: dist/resources/pi-runtime
+      to: app/dist/resources/pi-runtime
     - from: node_modules/@vscode/ripgrep
       to: app/node_modules/@vscode/ripgrep
     - from: vendor/bun/bun.exe
@@ -161,7 +161,10 @@ win:
       to: messaging-whatsapp-worker/worker.cjs
 
 nsis:
-  oneClick: true
+  # Assisted installer shows the directory picker; auto-updates still run
+  # silently from the app via autoUpdater.quitAndInstall(true, true).
+  oneClick: false
+  allowToChangeInstallationDirectory: true
   # Per-user install to %LOCALAPPDATA%\Programs\ (not Program Files).
   # Bun subprocess cannot read/write files in Program Files due to Windows permissions.
   perMachine: false
@@ -177,6 +180,8 @@ linux:
         - x64
   artifactName: "Craft-Agents-${arch}.${ext}"
   extraResources:
+    - from: dist/resources/pi-runtime
+      to: app/dist/resources/pi-runtime
     - from: node_modules/@vscode/ripgrep
       to: app/node_modules/@vscode/ripgrep
     # WhatsApp worker subprocess (self-contained; Baileys bundled in).

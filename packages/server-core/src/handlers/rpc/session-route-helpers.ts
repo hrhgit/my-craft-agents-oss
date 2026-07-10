@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
 import { dirname } from 'path';
-import { tryGetSessionFilePath, getSharedPiSidecarPathForFile, readPiSessionFile } from '@craft-agent/shared/sessions';
+import { tryGetSessionFilePath } from '@craft-agent/shared/sessions';
 
 export interface SessionSearchRootInput {
   id: string;
@@ -8,11 +8,17 @@ export interface SessionSearchRootInput {
   createdAt?: number;
 }
 
-export interface PiReadOnlySessionResolution {
-  filePath: string;
-  sessionDir: string | null;
-  sessionFolderPath: string;
-  metadata: ReturnType<typeof readPiSessionFile>;
+/**
+ * JSON transport encodes an omitted positional argument as null. Normalize it
+ * back to undefined before forwarding extension command text to Pi; otherwise
+ * commands such as /discuss receive the literal string "null" and may treat it
+ * as a user prompt.
+ */
+export function serializeExtensionCommandArgs(
+  args: string | Record<string, unknown> | null | undefined,
+): string | undefined {
+  if (args == null) return undefined;
+  return typeof args === 'string' ? args : JSON.stringify(args);
 }
 
 /**
@@ -44,35 +50,4 @@ export function collectSessionSearchRoots(
   }
 
   return Array.from(roots);
-}
-
-/**
- * Resolve a `pi-<id>` read-only session.
- *
- * Uses tryGetSessionFilePath (no mkdir side effect) so that probing for a
- * session's existence does not create its parent bucket directory.
- */
-export function resolvePiReadOnlySession(
-  sessionId: string,
-  workspaceRootPath: string,
-): PiReadOnlySessionResolution | null {
-  if (!sessionId.startsWith('pi-')) return null;
-
-  const rawSessionId = sessionId.slice(3);
-  const filePath = tryGetSessionFilePath(workspaceRootPath, rawSessionId);
-  if (!filePath || !existsSync(filePath)) return null;
-
-  const metadata = readPiSessionFile(filePath, workspaceRootPath);
-  const craftSessionId = metadata?.craftId && !metadata.craftId.startsWith('pi-')
-    ? metadata.craftId
-    : rawSessionId;
-  const sessionDirCandidate = getSharedPiSidecarPathForFile(filePath, craftSessionId);
-  const sessionDir = existsSync(sessionDirCandidate) ? sessionDirCandidate : null;
-
-  return {
-    filePath,
-    sessionDir,
-    sessionFolderPath: sessionDir ?? filePath,
-    metadata,
-  };
 }

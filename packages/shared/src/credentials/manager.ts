@@ -627,16 +627,19 @@ export class CredentialManager {
     // Import lazily to avoid circular dependency
     try {
       const { getDefaultLlmConnection, getLlmConnection } = await import('../config/storage.ts');
+      const { hasPiGlobalAuthForConnection } = await import('../config/pi-global-config.ts');
       const defaultSlug = getDefaultLlmConnection();
 
       if (defaultSlug) {
         const connection = getLlmConnection(defaultSlug);
         if (connection && connection.authType !== 'none' && connection.authType !== 'environment') {
-          const hasCredentials = await this.hasLlmCredentials(
-            defaultSlug,
-            connection.authType,
-            connection.providerType
-          );
+          const hasCredentials =
+            await this.hasLlmCredentials(
+              defaultSlug,
+              connection.authType,
+              connection.providerType
+            )
+            || hasPiGlobalAuthForConnection(connection);
           if (!hasCredentials) {
             issues.push({
               type: 'no_default_credentials',

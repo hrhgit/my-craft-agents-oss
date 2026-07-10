@@ -15,7 +15,7 @@
 
 import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
-import type { StoredMessage } from '@craft-agent/core/types';
+import type { PlanModeStateV1, StoredMessage } from '@craft-agent/core/types';
 
 /**
  * Craft session metadata fields that persist to disk (写入 Pi 文件 craft 子对象).
@@ -43,7 +43,7 @@ export const CRAFT_SESSION_METADATA_FIELDS = [
   // Sharing
   'sharedUrl', 'sharedId',
   // Plan execution
-  'pendingPlanExecution',
+  'pendingPlanExecution', 'planModeState',
   // Archive
   'isArchived', 'archivedAt',
   // Branching
@@ -61,13 +61,6 @@ export const CRAFT_SESSION_METADATA_FIELDS = [
 ] as const;
 
 export type CraftSessionMetadataField = typeof CRAFT_SESSION_METADATA_FIELDS[number];
-
-/**
- * Compatibility alias for older call sites/tests. This now means "Craft
- * persistent metadata fields", not Pi header fields or computed cache fields.
- */
-export const SESSION_PERSISTENT_FIELDS = CRAFT_SESSION_METADATA_FIELDS;
-export type SessionPersistentField = CraftSessionMetadataField;
 
 /**
  * Computed/list metadata cached in the craft sub-object for fast session lists.
@@ -245,7 +238,9 @@ export interface CraftSessionMetadata {
    */
   pendingPlanExecution?: {
     /** 要执行的 plan 文件路径 */
-    planPath: string;
+    planPath?: string;
+    /** Pi Plan Mode artifact identifier (new desktop path). */
+    artifactId?: string;
     /** accept 时捕获的 draft input 快照 */
     draftInputSnapshot?: string;
     /** 是否仍在等待 compaction 完成 */
@@ -253,6 +248,9 @@ export interface CraftSessionMetadata {
     /** 是否已从 UI 派发执行 */
     executionDispatched?: boolean;
   };
+
+  /** Session-authoritative Pi Plan Mode state. UI must not infer this from local preferences. */
+  planModeState?: PlanModeStateV1;
 
   // ============================================
   // Craft 归档

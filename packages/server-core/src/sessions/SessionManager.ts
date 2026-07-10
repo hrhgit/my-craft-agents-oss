@@ -10,7 +10,7 @@ import { existsSync, readdirSync } from 'fs'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
-import type { AgentEvent } from '@craft-agent/core/types'
+import type { AgentEvent, PlanModeStateV1 } from '@craft-agent/core/types'
 import {
   resolveSessionConnection,
   createBackendFromConnection,
@@ -74,17 +74,18 @@ import {
   type SessionStatus,
   type SessionHeader,
   pickCraftSessionMetadata,
+  applyPlanCustomMessageToRuntime,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/config'
-import { toolMetadataStore, getLastApiError } from '@craft-agent/shared/interceptor'
+import { getLastApiError } from '@craft-agent/shared/interceptor'
 import { inferToolResultError, isParentTaskOrTaskOutputTool } from '@craft-agent/shared/utils/toolNames'
 import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
 import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
-import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, normalizePathForComparison } from '@craft-agent/shared/utils'
+import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, normalizePathForComparison, writeRuntimeLog } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
 import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
 import { getDefaultSummarizationModel } from '@craft-agent/shared/config/models'
@@ -97,7 +98,7 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot, type PendingPrompt } from '@craft-agent/shared/automations'
 import { FEATURE_FLAGS } from '@craft-agent/shared/feature-flags'
-import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
+import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput, normalizeConnectionRuntimeBaseUrl } from './runtime-config'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -186,94 +187,6 @@ const METADATA_WRITE_GUARD_MS = 5000
 const PLAN_APPROVAL_MESSAGE = 'Plan approved, please execute.'
 
 // validateSpawnAttachmentPath removed — use shared validateFilePath from @craft-agent/server-core/handlers
-
-const PI_TURN_ANCHORS_VERSION = 1
-const PI_TURN_ANCHORS_FILE = 'pi-turn-anchors.json'
-
-interface PiTurnAnchorsIndex {
-  version: number
-  anchors: Record<string, string>
-}
-
-function getPiTurnAnchorsPath(sessionPath: string): string {
-  return join(sessionPath, 'meta', PI_TURN_ANCHORS_FILE)
-}
-
-export async function loadPiTurnAnchors(sessionPath: string): Promise<PiTurnAnchorsIndex> {
-  const filePath = getPiTurnAnchorsPath(sessionPath)
-  try {
-    const raw = await readFile(filePath, 'utf-8')
-    const parsed = JSON.parse(raw) as Partial<PiTurnAnchorsIndex>
-    const anchors = (parsed.anchors && typeof parsed.anchors === 'object') ? parsed.anchors : {}
-    const normalized: Record<string, string> = {}
-    for (const [messageId, anchor] of Object.entries(anchors)) {
-      if (typeof messageId === 'string' && typeof anchor === 'string' && messageId && anchor) {
-        normalized[messageId] = anchor
-      }
-    }
-    return {
-      version: PI_TURN_ANCHORS_VERSION,
-      anchors: normalized,
-    }
-  } catch {
-    return {
-      version: PI_TURN_ANCHORS_VERSION,
-      anchors: {},
-    }
-  }
-}
-
-async function getPiTurnAnchor(sessionPath: string, messageId: string): Promise<string | undefined> {
-  if (!messageId) return undefined
-  const index = await loadPiTurnAnchors(sessionPath)
-  return index.anchors[messageId]
-}
-
-export async function savePiTurnAnchor(sessionPath: string, messageId: string, anchorId: string): Promise<void> {
-  if (!messageId || !anchorId) return
-
-  const index = await loadPiTurnAnchors(sessionPath)
-  if (index.anchors[messageId] === anchorId) return
-
-  index.anchors[messageId] = anchorId
-
-  const filePath = getPiTurnAnchorsPath(sessionPath)
-  await mkdir(join(sessionPath, 'meta'), { recursive: true })
-  await writeFile(filePath, JSON.stringify(index), 'utf-8')
-}
-
-/**
- * Copy Pi turn anchors from the source session into the branch session,
- * filtered to the messages actually carried into the branch.
- *
- * Without this, branching a branch is silently lossy: the source branch's
- * sidecar contains no anchors for messages copied from its own parent, so a
- * downstream branch falls back to "full-history fork" — discarding the
- * branch cutoff and producing a session whose visible history doesn't match
- * what the LLM sees. See craft-agents-oss#782.
- */
-export async function copyPiTurnAnchorsForBranch(
-  sourceSessionPath: string,
-  branchSessionPath: string,
-  branchedMessageIds: Iterable<string>,
-): Promise<void> {
-  const index = await loadPiTurnAnchors(sourceSessionPath)
-  if (Object.keys(index.anchors).length === 0) return
-  const idSet = new Set(branchedMessageIds)
-  const filtered: Record<string, string> = {}
-  for (const [messageId, anchor] of Object.entries(index.anchors)) {
-    if (idSet.has(messageId)) {
-      filtered[messageId] = anchor
-    }
-  }
-  if (Object.keys(filtered).length === 0) return
-  await mkdir(join(branchSessionPath, 'meta'), { recursive: true })
-  await writeFile(
-    getPiTurnAnchorsPath(branchSessionPath),
-    JSON.stringify({ version: PI_TURN_ANCHORS_VERSION, anchors: filtered }),
-    'utf-8',
-  )
-}
 
 const CLAUDE_TURN_ANCHORS_VERSION = 1
 const CLAUDE_TURN_ANCHORS_FILE = 'claude-turn-anchors.json'
@@ -785,6 +698,8 @@ interface ManagedSession {
   permissionMode?: PermissionMode
   /** Previous permission mode (preserved across restarts for session_state modeTransition context) */
   previousPermissionMode?: PermissionMode
+  /** Session-authoritative state published by the Pi Plan Mode extension. */
+  planModeState?: PlanModeStateV1
   /** Centralized MCP client pool for this session's source connections */
   mcpPool?: McpClientPool
   /** HTTP MCP server exposing pool tools to external SDK subprocesses */
@@ -830,9 +745,9 @@ interface ManagedSession {
   sharedId?: string
   // Model to use for this session (overrides global config if set)
   model?: string
-  // LLM connection slug for this session (locked after first message)
+  // LLM connection slug selected for this session.
   llmConnection?: string
-  // Whether the connection is locked (cannot be changed after first agent creation)
+  // Legacy persisted field; provider switching no longer uses it.
   connectionLocked?: boolean
   // Thinking level for this session ('off', 'think', 'max')
   thinkingLevel?: ThinkingLevel
@@ -868,6 +783,8 @@ interface ManagedSession {
     messageId?: string  // Pre-generated ID for matching with UI
     optimisticMessageId?: string  // Frontend's ID for reliable event matching
   }>
+  // Runtime-only marker for the queued message currently being replayed.
+  replayingQueuedMessageId?: string
   // Map of shellId -> command for killing background shells
   backgroundShellCommands: Map<string, string>
   // Map of taskId -> output info for background task results
@@ -933,14 +850,6 @@ interface ManagedSession {
   // Whether the previous turn was interrupted (for context injection on next message).
   // Ephemeral — not persisted to disk. Cleared after one-shot injection.
   wasInterrupted?: boolean
-  /**
-   * Runtime-only: Pi SDK message id → Craft assistant message id.
-   * Populated when a `text_complete` arrives carrying `sdkMessageId`, and read
-   * when the follow-up `pi_turn_anchor` event arrives (deferred by one microtask
-   * so the SDK's session-manager has updated its leaf — see craft-agents-oss#782).
-   * Capped at PI_SDK_MESSAGE_ID_CACHE_LIMIT to bound memory in long sessions.
-   */
-  piSdkMessageToCraftMessage?: Map<string, string>
   // Source-activation auto-retry (craft-agents-oss#804). When a source activates
   // mid-turn, we re-send the original message with a "[<slug> activated]" suffix
   // after a short delay. The pending slot lets `sendMessage` dedup a duplicate
@@ -953,8 +862,6 @@ interface ManagedSession {
     committed: boolean
   }
 }
-
-const PI_SDK_MESSAGE_ID_CACHE_LIMIT = 256
 
 export interface AutoRetryPendingHost {
   autoRetryPending?: {
@@ -1085,7 +992,7 @@ function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Sess
     // Craft metadata uses craftId, while ManagedSession runtime state uses id.
     // Renderer Session DTO still exposes id, so map it explicitly here.
     id: m.id,
-    // Pre-computed fields from header (not in SESSION_PERSISTENT_FIELDS)
+    // Pre-computed fields from header (not in CRAFT_SESSION_METADATA_FIELDS)
     preview: m.preview,
     lastMessageRole: m.lastMessageRole,
     tokenUsage: m.tokenUsage,
@@ -1606,7 +1513,7 @@ export class SessionManager implements ISessionManager {
                 'prompt-automation',
                 JSON.stringify(prompts),
               )
-              if (accepted) {
+              if (accepted.invoked) {
                 sessionLog.info(`[Automations] Delegated prompt batch to Pi session ${delegateSession}`)
                 return
               }
@@ -2030,6 +1937,7 @@ export class SessionManager implements ISessionManager {
       if (managed.sharedId === undefined) managed.sharedId = stored.sharedId
       if (managed.transferredSessionSummary === undefined) managed.transferredSessionSummary = stored.transferredSessionSummary
       if (managed.transferredSessionSummaryApplied === undefined) managed.transferredSessionSummaryApplied = stored.transferredSessionSummaryApplied
+      if (managed.planModeState === undefined) managed.planModeState = stored.planModeState
 
       // Queue recovery: find orphaned queued messages from crash/restart and re-queue them.
       const orphanedQueued = managed.messages.filter(m =>
@@ -2722,25 +2630,9 @@ export class SessionManager implements ISessionManager {
         : undefined
 
       // Provider-native branch anchor at branch point.
-      // - Claude: assistant message UUID (resumeSessionAt), but only when anchor lineage
-      //   matches the parent SDK session being resumed.
-      // - Pi: session entry ID loaded from sidecar (pi-turn-anchors.json)
-      const branchMessage = sourceSession.messages[branchIdx]
+      // Pi no longer keeps a Craft-side turn-anchor sidecar; Pi branches use
+      // the parent JSONL file as the source and let Pi own fork semantics.
       let branchFromSdkTurnId: string | undefined
-      if (branchContextStrategy === 'sdk-fork') {
-        if (sourceBackendContext.provider === 'pi') {
-          if (branchFromSessionPath) {
-            branchFromSdkTurnId = await getPiTurnAnchor(branchFromSessionPath, options.branchFromMessageId)
-            if (!branchFromSdkTurnId) {
-              sessionLog.warn('Pi branch anchor missing: falling back to full-history fork for this branch', {
-                workspaceId,
-                branchFromSessionId: options.branchFromSessionId,
-                branchFromMessageId: options.branchFromMessageId,
-              })
-            }
-          }
-        }
-      }
 
       if (branchContextStrategy === 'sdk-fork' && !branchFromSdkSessionId) {
         sessionLog.warn('Branch validation failed: sdk-fork requires parent SDK session ID', {
@@ -2828,28 +2720,6 @@ export class SessionManager implements ISessionManager {
       }
       await saveStoredSession(branchedStored)
 
-      // Propagate the Pi turn-anchor sidecar into the branch so a downstream
-      // branch can still resolve anchors for messages copied here from the
-      // source. Without this step, branch-of-branch silently falls back to
-      // full-history fork — see craft-agents-oss#782.
-      if (
-        validatedBranch.branchContextStrategy === 'sdk-fork' &&
-        validatedBranch.sourceProvider === 'pi'
-      ) {
-        try {
-          await copyPiTurnAnchorsForBranch(
-            sourceDir,
-            branchDir,
-            branchedStored.messages.map((m) => m.id),
-          )
-        } catch (err) {
-          sessionLog.warn('Failed to copy Pi turn-anchors sidecar to branch', {
-            err,
-            sourceSessionId: validatedBranch.sourceSessionId,
-            branchSessionId: storedSession.craftId,
-          })
-        }
-      }
     }
 
     // Resolve connection/provider/auth/model using the provider-agnostic backend resolver.
@@ -3109,7 +2979,7 @@ export class SessionManager implements ISessionManager {
           providerType: connection?.providerType,
           authType: backendContext.authType,
           runtime: connection ? {
-            baseUrl: connection.baseUrl,
+            baseUrl: normalizeConnectionRuntimeBaseUrl(connection),
             piAuthProvider: connection.piAuthProvider,
             customEndpoint: connection.customEndpoint,
             customModels: connection.models?.map(model => {
@@ -3163,7 +3033,7 @@ export class SessionManager implements ISessionManager {
    * Creates the appropriate backend agent based on LLM connection.
    *
    * Provider resolution order:
-   * 1. session.llmConnection (locked after first message)
+   * 1. session.llmConnection (explicit per-session selection)
    * 2. workspace.defaults.defaultLlmConnection
    * 3. global defaultLlmConnection
    * 4. fallback: no connection configured
@@ -3193,12 +3063,13 @@ export class SessionManager implements ISessionManager {
     if (!managed.agent) {
       const end = perf.start('agent.create', { sessionId: managed.id })
 
-      // Lock the connection after first resolution
-      // This ensures the session always uses the same provider
-      if (connection && !managed.connectionLocked) {
+      // Persist the first resolved connection so the renderer and session
+      // metadata agree, while still allowing the user to switch providers
+      // later from the picker.
+      if (connection && !managed.llmConnection) {
         managed.llmConnection = connection.slug
-        managed.connectionLocked = true
-        sessionLog.info(`Locked session ${managed.id} to connection "${connection.slug}"`)
+        managed.connectionLocked = false
+        sessionLog.info(`Resolved session ${managed.id} to connection "${connection.slug}"`)
         this.persistSession(managed)
 
         // Keep renderer session capabilities in sync when auto-locking the connection.
@@ -3217,12 +3088,10 @@ export class SessionManager implements ISessionManager {
         sessionLog.warn(`No LLM connection found for session ${managed.id}, using default anthropic provider`)
       }
 
-      // Set session directory for tool metadata cross-process sharing.
-      // The SDK subprocess reads CRAFT_SESSION_DIR to write tool-metadata.json;
-      // the main process reads it via toolMetadataStore.setSessionDir().
-      const sessionDirForMetadata = getSessionStoragePath(managed.workspace.rootPath, managed.id)
-      process.env.CRAFT_SESSION_DIR = sessionDirForMetadata
-      toolMetadataStore.setSessionDir(sessionDirForMetadata)
+      // Keep SDK subprocess side-channel files, such as api-error.json,
+      // scoped to this session. Tool metadata now travels through typed Pi
+      // events and no longer uses tool-metadata.json.
+      process.env.CRAFT_SESSION_DIR = getSessionStoragePath(managed.workspace.rootPath, managed.id)
 
       // Set up agentReady promise so title generation can await agent creation
       managed.agentReady = new Promise<void>(r => { managed.agentReadyResolve = r })
@@ -3257,9 +3126,6 @@ export class SessionManager implements ISessionManager {
       const miniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
       const envOverrides: Record<string, string> = {
         CRAFT_WORKSPACE_PATH: managed.workspace.rootPath,
-        // Pass mini model to SDK subprocess so built-in tools like WebFetch
-        // use the correct model for summarization (instead of hardcoded Haiku)
-        ...(miniModel ? { ANTHROPIC_DEFAULT_HAIKU_MODEL: miniModel } : {}),
       }
       managed.envOverrides = envOverrides
 
@@ -4448,7 +4314,6 @@ export class SessionManager implements ISessionManager {
 
   /**
    * Set the LLM connection for a session.
-   * Can only be changed before the first message is sent (connection is locked after).
    * This determines which LLM provider/backend will be used for this session.
    */
   async setSessionConnection(sessionId: string, connectionSlug: string): Promise<void> {
@@ -4456,12 +4321,6 @@ export class SessionManager implements ISessionManager {
     if (!managed) {
       sessionLog.warn(`setSessionConnection: session ${sessionId} not found`)
       throw new Error(`Session ${sessionId} not found`)
-    }
-
-    // Only allow changing connection before first message (session hasn't started)
-    if (managed.messages && managed.messages.length > 0) {
-      sessionLog.warn(`setSessionConnection: cannot change connection after session has started (${sessionId})`)
-      throw new Error('Cannot change connection after session has started')
     }
 
     // Validate connection exists
@@ -4473,9 +4332,11 @@ export class SessionManager implements ISessionManager {
     }
 
     managed.llmConnection = connectionSlug
+    managed.connectionLocked = false
     // Persist in-memory state directly to avoid race with pending queue writes
     this.persistSession(managed)
     await this.flushSession(managed.id)
+    await this.tryRefreshAgentRuntime(managed, 'session connection changed')
     sessionLog.info(`Set LLM connection for session ${sessionId} to ${connectionSlug}`)
 
     // Notify UI that connection changed (triggers capabilities refresh)
@@ -4496,11 +4357,11 @@ export class SessionManager implements ISessionManager {
    * Called when user clicks "Accept & Compact" to persist the plan path
    * so execution can resume after compaction (even if page reloads).
    */
-  async setPendingPlanExecution(sessionId: string, planPath: string, draftInputSnapshot?: string): Promise<void> {
+  async setPendingPlanExecution(sessionId: string, target: string | { planPath?: string; artifactId?: string }, draftInputSnapshot?: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      await setStoredPendingPlanExecution(managed.workspace.rootPath, sessionId, planPath, draftInputSnapshot)
-      sessionLog.info(`Session ${sessionId}: set pending plan execution for ${planPath}`)
+      await setStoredPendingPlanExecution(managed.workspace.rootPath, sessionId, target, draftInputSnapshot)
+      sessionLog.info('Session pending plan execution set', { sessionId, target })
     }
   }
 
@@ -4547,7 +4408,7 @@ export class SessionManager implements ISessionManager {
    * Get pending plan execution state for a session.
    * Used on reload/init to check if we need to resume plan execution.
    */
-  getPendingPlanExecution(sessionId: string): { planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null {
+  getPendingPlanExecution(sessionId: string): { planPath?: string; artifactId?: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null {
     const managed = this.sessions.get(sessionId)
     if (!managed) return null
     return getStoredPendingPlanExecution(managed.workspace.rootPath, sessionId)
@@ -5121,31 +4982,50 @@ export class SessionManager implements ISessionManager {
   /**
    * Update the model for a session
    * Pass null to clear the session-specific model (will use global config)
-   * @param connection - Optional LLM connection slug (only applied if not already locked)
+   * @param connection - Optional LLM connection slug to apply with the model
    */
   async updateSessionModel(sessionId: string, workspaceId: string, model: string | null, connection?: string): Promise<void> {
     sessionLog.info(`[updateSessionModel] sessionId=${sessionId}, model=${model}, connection=${connection}`)
     const managed = this.sessions.get(sessionId)
     if (managed) {
+      if (connection && !getLlmConnection(connection)) {
+        sessionLog.warn(`[updateSessionModel] connection "${connection}" not found`)
+        throw new Error(`LLM connection "${connection}" not found`)
+      }
+
+      const previousConnection = managed.llmConnection
       managed.model = model ?? undefined
-      // Also update connection if provided and not already locked
-      if (connection && !managed.connectionLocked) {
+      // Also update connection if provided. Sessions no longer lock provider
+      // selection after the first message.
+      if (connection) {
         managed.llmConnection = connection
+        managed.connectionLocked = false
       }
       // Persist to disk (include connection if it was updated)
       const updates: { model?: string; llmConnection?: string } = { model: model ?? undefined }
-      if (connection && !managed.connectionLocked) {
+      if (connection) {
         updates.llmConnection = connection
       }
       await updateSessionMetadata(managed.workspace.rootPath, sessionId, updates)
+      if (connection && connection !== previousConnection) {
+        await this.tryRefreshAgentRuntime(managed, 'session model connection changed')
+        this.sendEvent({
+          type: 'connection_changed',
+          sessionId,
+          connectionSlug: connection,
+          supportsBranching: resolveSupportsBranching(managed),
+        }, managed.workspace.id)
+      }
       // Update agent model if it already exists (takes effect on next query)
       if (managed.agent) {
         // Fallback chain: session model > workspace default > connection default
         const wsConfig = loadWorkspaceConfig(managed.workspace.rootPath)
         const sessionConn = resolveSessionConnection(managed.llmConnection, wsConfig?.defaults?.defaultLlmConnection)
-        const effectiveModel = model ?? wsConfig?.defaults?.model ?? sessionConn?.defaultModel!
-        sessionLog.info(`[updateSessionModel] Calling agent.setModel(${effectiveModel}) [agent exists=${!!managed.agent}, connectionLocked=${managed.connectionLocked}]`)
-        managed.agent.setModel(effectiveModel)
+        const effectiveModel = model ?? wsConfig?.defaults?.model ?? sessionConn?.defaultModel
+        if (effectiveModel) {
+          sessionLog.info(`[updateSessionModel] Calling agent.setModel(${effectiveModel}) [agent exists=${!!managed.agent}]`)
+          managed.agent.setModel(effectiveModel)
+        }
       } else {
         sessionLog.info(`[updateSessionModel] No agent yet, model will apply on next agent creation`)
       }
@@ -5396,9 +5276,6 @@ export class SessionManager implements ISessionManager {
     // metadata write cannot recreate the session after deletion.
     await sessionPersistenceQueue.cancel(sessionId, { preventFutureEnqueue: true })
 
-    // Clean up session-scoped tool callbacks to prevent memory accumulation
-    unregisterSessionScopedToolCallbacks(sessionId)
-
     // Destroy browser instances bound to this session
     const sessionBpm = this.getBrowserPaneManagerForSession(sessionId)
     if (sessionBpm) {
@@ -5408,17 +5285,9 @@ export class SessionManager implements ISessionManager {
     this.remoteBpms.delete(sessionId)
     this.browserHostByCanvas.delete(sessionId)
 
-    // Dispose agent to clean up ConfigWatchers, event listeners, MCP connections
-    if (managed.agent) {
-      managed.agent.dispose()
-    }
-
-    // Stop pool server (HTTP MCP server for external SDK subprocesses)
-    if (managed.poolServer) {
-      managed.poolServer.stop().catch(err => {
-        sessionLog.warn(`Failed to stop pool server for ${sessionId}: ${err instanceof Error ? err.message : err}`)
-      })
-    }
+    // Dispose agent, pool server, MCP pool, and session-scoped callbacks via
+    // the same runtime teardown path used for config-driven restarts.
+    await this.disposeManagedAgentRuntime(managed, 'session deleted')
 
     // Cancel any pending source-activation auto-retry timer (craft-agents-oss#804).
     if (managed.autoRetryTimer) {
@@ -5469,6 +5338,11 @@ export class SessionManager implements ISessionManager {
      * directly (tests, intra-server flows) to leave the existing pin in place.
      */
     rpcContext?: { callerClientId?: string },
+    /**
+     * Internal queue replay guard. processNextQueuedMessage pre-claims
+     * isProcessing before scheduling replay so newer RPCs queue behind it.
+     */
+    isQueuedReplay = false,
   ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
@@ -5518,7 +5392,7 @@ export class SessionManager implements ISessionManager {
     // - 'queue': hold the message untouched; the current turn keeps running
     //   to natural completion; replay as a new turn afterwards. NO call to
     //   `agent.redirect()`, NO forceAbort, NO interruption.
-    if (managed.isProcessing) {
+    if (managed.isProcessing && !isQueuedReplay) {
       const connection = resolveSessionConnection(managed.llmConnection, undefined)
       // Fallback to 'steer' when no connection is resolvable — preserves
       // today's exact behavior (call redirect, take whatever it returns).
@@ -5576,13 +5450,25 @@ export class SessionManager implements ISessionManager {
       // enqueues with a 500ms debounce. (#616 reliability fix.)
       await this.flushSession(managed.id)
       onAck?.(userMessage.id)
+      writeRuntimeLog('info', {
+        scope: 'session',
+        event: 'send_message.accepted',
+        meta: {
+          sessionId,
+          workspaceId: managed.workspace.id,
+          messageId: userMessage.id,
+          optimisticMessageId: options?.optimisticMessageId,
+          status: steered ? 'accepted' : 'queued',
+          llmConnection: managed.llmConnection,
+          model: managed.model,
+        },
+      })
       return
     }
 
     // Add user message with stored attachments for persistence
     // Skip if existingMessageId is provided (message was already created when queued)
     let userMessage: Message
-    let ackOnPiPersist = false
     if (existingMessageId) {
       // Find existing message (already added when queued)
       userMessage = managed.messages.find(m => m.id === existingMessageId)!
@@ -5619,14 +5505,19 @@ export class SessionManager implements ISessionManager {
         optimisticMessageId: options?.optimisticMessageId
       }, managed.workspace.id)
 
-      ackOnPiPersist = resolveBackendContext({
-        sessionConnectionSlug: managed.llmConnection,
-        workspaceDefaultConnectionSlug: loadWorkspaceConfig(managed.workspace.rootPath)?.defaults?.defaultLlmConnection,
-        managedModel: managed.model,
-      }).provider === 'pi'
-      if (!ackOnPiPersist) {
-        onAck?.(userMessage.id)
-      }
+      onAck?.(userMessage.id)
+      writeRuntimeLog('info', {
+        scope: 'session',
+        event: 'send_message.accepted',
+        meta: {
+          sessionId,
+          workspaceId: managed.workspace.id,
+          messageId: userMessage.id,
+          optimisticMessageId: options?.optimisticMessageId,
+          llmConnection: managed.llmConnection,
+          model: managed.model,
+        },
+      })
 
       // If this is the first user message and no title exists, set one immediately
       // AI generation will enhance it later, but we always have a title from the start
@@ -5776,61 +5667,61 @@ export class SessionManager implements ISessionManager {
     // Start perf span for entire sendMessage flow
     const sendSpan = perf.span('session.sendMessage', { sessionId })
 
-    const workspaceRootPath = managed.workspace.rootPath
-    const enabledSlugs = managed.enabledSourceSlugs ?? []
-    const hasSources = enabledSlugs.length > 0
-
-    // Load enabled sources up-front so we can refresh tokens BEFORE getOrCreateAgent
-    // runs its internal cold-session build. Otherwise that build sees stale tokens
-    // and emits AUTH_REQUIRED, causing a brief "needs_auth" UI flicker before the
-    // post-build refresh restores state (#710).
-    const sources: LoadedSource[] = hasSources
-      ? getSourcesBySlugs(workspaceRootPath, enabledSlugs)
-      : []
-
-    if (hasSources && managed.tokenRefreshManager) {
-      const refreshResult = await refreshExpiredCredentials(sources, managed.tokenRefreshManager)
-      if (refreshResult.failedSources.length > 0) {
-        sessionLog.warn('[OAuth] Some sources failed token refresh:', refreshResult.failedSources.map(f => f.slug))
-      }
-      if (refreshResult.refreshedCount > 0) {
-        sendSpan.mark('oauth.refreshed')
-      }
-    }
-
-    // Get or create the agent (lazy loading). Its internal cold-session build at
-    // ~L2956 now sees fresh tokens (or correctly-needs_auth failed sources, since
-    // ensureFreshToken mirrors the disk write to source.config in-memory).
-    const agent = await this.getOrCreateAgent(managed)
-    sendSpan.mark('agent.ready')
-
-    // Always set all sources for context (even if none are enabled), including built-ins
-    const allSources = loadAllSources(workspaceRootPath)
-    agent.setAllSources(allSources)
-    sendSpan.mark('sources.loaded')
-
-    // Apply source servers if any are enabled
-    if (hasSources) {
-      const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
-      // Single fresh build — tokens already refreshed above.
-      const { mcpServers, apiServers, errors } = await buildServersFromSources(sources, sessionPath, managed.tokenRefreshManager, agent.getSummarizeCallback())
-      if (errors.length > 0) {
-        sessionLog.warn(`Source build errors:`, errors)
-      }
-
-      const mcpCount = Object.keys(mcpServers).length
-      const apiCount = Object.keys(apiServers).length
-      if (mcpCount > 0 || apiCount > 0 || enabledSlugs.length > 0) {
-        const usableSources = sources.filter(isSourceUsable)
-        const intendedSlugs = usableSources.map(s => s.config.slug)
-        await agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
-        await applyBridgeUpdates(agent, sessionPath, usableSources, mcpServers, sessionId, workspaceRootPath, 'send message', managed.poolServer?.url)
-        sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
-      }
-      sendSpan.mark('servers.applied')
-    }
-
     try {
+      const workspaceRootPath = managed.workspace.rootPath
+      const enabledSlugs = managed.enabledSourceSlugs ?? []
+      const hasSources = enabledSlugs.length > 0
+
+      // Load enabled sources up-front so we can refresh tokens BEFORE getOrCreateAgent
+      // runs its internal cold-session build. Otherwise that build sees stale tokens
+      // and emits AUTH_REQUIRED, causing a brief "needs_auth" UI flicker before the
+      // post-build refresh restores state (#710).
+      const sources: LoadedSource[] = hasSources
+        ? getSourcesBySlugs(workspaceRootPath, enabledSlugs)
+        : []
+
+      if (hasSources && managed.tokenRefreshManager) {
+        const refreshResult = await refreshExpiredCredentials(sources, managed.tokenRefreshManager)
+        if (refreshResult.failedSources.length > 0) {
+          sessionLog.warn('[OAuth] Some sources failed token refresh:', refreshResult.failedSources.map(f => f.slug))
+        }
+        if (refreshResult.refreshedCount > 0) {
+          sendSpan.mark('oauth.refreshed')
+        }
+      }
+
+      // Get or create the agent (lazy loading). Its internal cold-session build at
+      // ~L2956 now sees fresh tokens (or correctly-needs_auth failed sources, since
+      // ensureFreshToken mirrors the disk write to source.config in-memory).
+      const agent = await this.getOrCreateAgent(managed)
+      sendSpan.mark('agent.ready')
+
+      // Always set all sources for context (even if none are enabled), including built-ins
+      const allSources = loadAllSources(workspaceRootPath)
+      agent.setAllSources(allSources)
+      sendSpan.mark('sources.loaded')
+
+      // Apply source servers if any are enabled
+      if (hasSources) {
+        const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
+        // Single fresh build — tokens already refreshed above.
+        const { mcpServers, apiServers, errors } = await buildServersFromSources(sources, sessionPath, managed.tokenRefreshManager, agent.getSummarizeCallback())
+        if (errors.length > 0) {
+          sessionLog.warn(`Source build errors:`, errors)
+        }
+
+        const mcpCount = Object.keys(mcpServers).length
+        const apiCount = Object.keys(apiServers).length
+        if (mcpCount > 0 || apiCount > 0 || enabledSlugs.length > 0) {
+          const usableSources = sources.filter(isSourceUsable)
+          const intendedSlugs = usableSources.map(s => s.config.slug)
+          await agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
+          await applyBridgeUpdates(agent, sessionPath, usableSources, mcpServers, sessionId, workspaceRootPath, 'send message', managed.poolServer?.url)
+          sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
+        }
+        sendSpan.mark('servers.applied')
+      }
+
       sessionLog.info('Starting chat for session:', sessionId)
       sessionLog.info('Workspace:', JSON.stringify(managed.workspace, null, 2))
       sessionLog.info('Message:', message)
@@ -5847,11 +5738,6 @@ export class SessionManager implements ISessionManager {
       // The UI layer (extractBadges in mentions.ts) injects fully-qualified names
       // in the rawText, and canUseTool in craft-agent.ts provides a fallback
       // to qualify short names. No transformation needed here.
-
-      // Ensure main process reads tool metadata from the correct session directory.
-      // This must be set before each chat() call since multiple sessions share the process.
-      const chatSessionDir = getSessionStoragePath(workspaceRootPath, sessionId)
-      toolMetadataStore.setSessionDir(chatSessionDir)
 
       // Inject interruption context so the LLM knows the previous turn was cut short.
       // Uses <system-reminder> tags so the LLM treats it as transient system guidance
@@ -5887,12 +5773,6 @@ export class SessionManager implements ISessionManager {
       sendSpan.mark('chat.starting')
       const chatIterator = agent.chat(effectiveMessage, modelInputAttachments.attachments)
       sessionLog.info('Got chat iterator, starting iteration...')
-      let pendingPiAckMessageId = ackOnPiPersist ? userMessage.id : undefined
-      const ackPiMessageIfPending = () => {
-        if (!pendingPiAckMessageId) return
-        onAck?.(pendingPiAckMessageId)
-        pendingPiAckMessageId = undefined
-      }
 
       for await (const event of chatIterator) {
         // Log events (skip noisy text_delta)
@@ -5910,7 +5790,17 @@ export class SessionManager implements ISessionManager {
         await this.processEvent(managed, event)
 
         if (event.type === 'pi_user_message_persisted') {
-          ackPiMessageIfPending()
+          writeRuntimeLog('debug', {
+            scope: 'session',
+            event: 'send_message.pi_persisted',
+            meta: {
+              sessionId,
+              workspaceId: managed.workspace.id,
+              messageId: userMessage.id,
+              llmConnection: managed.llmConnection,
+              model: managed.model,
+            },
+          })
         }
 
         // Fallback: Capture SDK session ID if the onSdkSessionIdUpdate callback didn't fire.
@@ -5936,8 +5826,6 @@ export class SessionManager implements ISessionManager {
           // Defensive fallback: Pi should emit pi_user_message_persisted after
           // SessionManager.appendMessage(user), but never leave the caller
           // hanging if an older subprocess misses that bridge event.
-          ackPiMessageIfPending()
-
           // Skip normal completion handling if auth retry is in progress
           // The retry will handle its own completion
           if (managed.authRetryInProgress) {
@@ -6062,6 +5950,18 @@ export class SessionManager implements ISessionManager {
         sessionLog.error('Error in chat:', error)
         sessionLog.error('Error message:', error instanceof Error ? error.message : String(error))
         sessionLog.error('Error stack:', error instanceof Error ? error.stack : 'No stack')
+        writeRuntimeLog('error', {
+          scope: 'session',
+          event: 'chat.error',
+          meta: {
+            sessionId,
+            workspaceId: managed.workspace.id,
+            workspaceRootPath: managed.workspace.rootPath,
+            llmConnection: managed.llmConnection,
+            model: managed.model,
+            error,
+          },
+        })
 
         // Report chat/SDK errors via runtime hooks (Electron can forward to Sentry)
         sessionRuntimeHooks.captureException(error, { errorSource: 'chat', sessionId })
@@ -6274,6 +6174,7 @@ export class SessionManager implements ISessionManager {
 
     // 1. Cleanup state
     this.setProcessing(managed, false)
+    managed.replayingQueuedMessageId = undefined
     managed.stopRequested = false  // Reset for next turn
 
     const turnStartFinalMessageId = managed.turnStartFinalMessageId
@@ -6362,6 +6263,8 @@ export class SessionManager implements ISessionManager {
     if (!managed || managed.messageQueue.length === 0) return
 
     const next = managed.messageQueue.shift()!
+    managed.replayingQueuedMessageId = next.messageId
+    this.setProcessing(managed, true)
     sessionLog.info('replay queued', {
       sessionId,
       messageId: next.messageId,
@@ -6394,7 +6297,11 @@ export class SessionManager implements ISessionManager {
         next.attachments,
         next.storedAttachments,
         next.options,
-        next.messageId
+        next.messageId,
+        undefined,
+        undefined,
+        undefined,
+        true
       ).catch(err => {
         sessionLog.error('replay failed', {
           sessionId,
@@ -6604,22 +6511,69 @@ export class SessionManager implements ISessionManager {
    * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端返回 false。
    * 返回 false 时调用方应回退到原生路径。
    */
-  async invokeExtensionCommand(sessionId: string, commandId: string, args?: string): Promise<boolean> {
+  async invokeExtensionCommand(sessionId: string, commandId: string, args?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult> {
     const managed = this.sessions.get(sessionId)
-    if (managed?.agent) {
-      if (typeof managed.agent.sendExtensionCommandInvoke !== 'function') {
+    if (!managed) {
+      sessionLog.warn(`[ExtensionBridge] No session for command invocation: ${sessionId}`)
+      return { invoked: false, error: 'Session not found.' }
+    }
+    try {
+      const agent = managed.agent ?? await this.getOrCreateAgent(managed)
+      if (typeof agent.sendExtensionCommandInvoke !== 'function') {
         sessionLog.warn(`[ExtensionBridge] Agent does not support sendExtensionCommandInvoke (session: ${sessionId})`)
-        return false
+        return { invoked: false, error: 'The active backend does not support extension commands.' }
       }
+      const result = await agent.sendExtensionCommandInvoke(commandId, args)
+      for (const message of result.customMessages ?? []) {
+        await this.processEvent(managed, {
+          type: 'custom_message',
+          id: message.id,
+          customType: message.customType,
+          content: message.content,
+          display: message.display,
+          details: message.details,
+          timestamp: message.timestamp,
+        })
+      }
+      sessionLog.info('[ExtensionBridge] command result', { sessionId, commandId, invoked: result.invoked, error: result.error })
+      return result
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      sessionLog.warn(`[ExtensionBridge] Extension command ${commandId} failed for session ${sessionId}: ${message}`)
+      return { invoked: false, error: message }
+    }
+  }
+
+  /**
+   * 查询当前会话已注册的 Pi 扩展 slash commands。
+   */
+  async listExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent/backend/types').PiExtensionCommand[]> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      sessionLog.warn(`[ExtensionBridge] No session for command listing: ${sessionId}`)
+      return []
+    }
+
+    let agent = managed.agent
+    if (!agent) {
       try {
-        return await managed.agent.sendExtensionCommandInvoke(commandId, args)
+        agent = await this.getOrCreateAgent(managed)
       } catch (error) {
-        sessionLog.warn(`[ExtensionBridge] Extension command ${commandId} failed for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
-        return false
+        sessionLog.warn(`[ExtensionBridge] Failed to prepare command runtime for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+        return []
       }
     }
-    sessionLog.warn(`[ExtensionBridge] No active agent for session ${sessionId}`)
-    return false
+
+    if (typeof agent.listExtensionCommands !== 'function') {
+      sessionLog.warn(`[ExtensionBridge] Agent does not support listExtensionCommands (session: ${sessionId})`)
+      return []
+    }
+    try {
+      return await agent.listExtensionCommands()
+    } catch (error) {
+      sessionLog.warn(`[ExtensionBridge] Failed to list extension commands for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+      return []
+    }
   }
 
   /**
@@ -6635,20 +6589,29 @@ export class SessionManager implements ISessionManager {
    */
   async listChildSessions(sessionId: string): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]> {
     const managed = this.sessions.get(sessionId)
-    if (!managed?.agent) {
-      sessionLog.warn(`[listChildSessions] No active agent for session ${sessionId}`)
+    if (!managed) {
+      sessionLog.warn(`[listChildSessions] No session for ${sessionId}`)
       return []
     }
-    if (typeof managed.agent.listChildSessions !== 'function') {
+    let agent = managed.agent
+    if (!agent) {
+      try {
+        agent = await this.getOrCreateAgent(managed)
+      } catch (error) {
+        sessionLog.warn(`[listChildSessions] Failed to prepare runtime for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+        return []
+      }
+    }
+    if (typeof agent.listChildSessions !== 'function') {
       return []
     }
-    const parentSessionId = managed.agent.getSessionId()
+    const parentSessionId = agent.getSessionId()
     if (!parentSessionId) {
       sessionLog.warn(`[listChildSessions] No pi session ID for session ${sessionId}`)
       return []
     }
     try {
-      return await managed.agent.listChildSessions(parentSessionId)
+      return await agent.listChildSessions(parentSessionId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       sessionLog.warn(`[listChildSessions] Failed for session ${sessionId}: ${message}`)
@@ -7046,24 +7009,6 @@ export class SessionManager implements ISessionManager {
             }
           }
 
-          // Pi branch-cutoff support: remember the SDK message id → Craft
-          // assistant message id mapping. The actual anchor arrives as a
-          // separate `pi_turn_anchor` event one microtask later — the SDK
-          // updates its leaf only AFTER firing message_end (see #782).
-          if (event.sdkMessageId) {
-            let cache = managed.piSdkMessageToCraftMessage
-            if (!cache) {
-              cache = new Map()
-              managed.piSdkMessageToCraftMessage = cache
-            }
-            cache.set(event.sdkMessageId, assistantMessage.id)
-            // Prune oldest entries when over the cap. Map preserves insertion
-            // order, so the first key is the oldest.
-            if (cache.size > PI_SDK_MESSAGE_ID_CACHE_LIMIT) {
-              const oldest = cache.keys().next().value
-              if (oldest !== undefined) cache.delete(oldest)
-            }
-          }
         }
 
         this.sendEvent({ type: 'text_complete', sessionId, text: event.text, isIntermediate: event.isIntermediate, turnId: event.turnId, parentToolUseId: event.parentToolUseId, timestamp: assistantMessage.timestamp, messageId: assistantMessage.id }, workspaceId)
@@ -7073,23 +7018,85 @@ export class SessionManager implements ISessionManager {
         break
       }
 
-      case 'pi_turn_anchor': {
-        // Follow-up to a `text_complete` from the Pi backend, carrying the
-        // correct leaf id captured AFTER the SDK appended its assistant entry
-        // (the synchronous `message_end` listener could not see it — #782).
-        // Look up the Craft assistant message id by SDK message id and
-        // persist the anchor to the sidecar.
-        const cache = managed.piSdkMessageToCraftMessage
-        const craftMessageId = cache?.get(event.sdkMessageId)
-        if (!craftMessageId) {
-          sessionLog.debug(`pi_turn_anchor for unknown sdkMessageId=${event.sdkMessageId}; ignoring`)
+      case 'custom_message': {
+        const customId = event.id ?? generateMessageId()
+        const beforeReady = new Set(
+          managed.messages
+            .filter(message => message.artifact?.state === 'ready')
+            .map(message => message.artifact!.artifactId),
+        )
+        const result = applyPlanCustomMessageToRuntime(managed.messages, {
+          id: customId,
+          customType: event.customType,
+          content: event.content,
+          details: event.details,
+          timestamp: event.timestamp ?? this.monotonic(),
+        })
+
+        if (result.projection.kind === 'state') {
+          managed.planModeState = result.projection.state
+          sessionLog.info('[PlanMode] state changed', {
+            sessionId,
+            phase: result.projection.state.phase,
+            artifactId: result.projection.state.activeArtifactId,
+          })
+          this.sendEvent({
+            type: 'plan_mode_state_changed',
+            sessionId,
+            state: result.projection.state,
+          }, workspaceId)
+          this.persistSession(managed)
           break
         }
-        const sessionPath = getSessionStoragePath(managed.workspace.rootPath, sessionId)
-        try {
-          await savePiTurnAnchor(sessionPath, craftMessageId, event.sdkTurnAnchor)
-        } catch (error) {
-          sessionLog.warn(`Failed to persist Pi turn anchor for session ${sessionId}:`, error)
+
+        if (result.projection.kind === 'artifact' && result.message) {
+          const artifactProjection = result.projection
+          const afterReady = new Set(
+            managed.messages
+              .filter(message => message.artifact?.state === 'ready')
+              .map(message => message.artifact!.artifactId),
+          )
+          const supersededArtifactIds = [...beforeReady].filter(id => !afterReady.has(id) && id !== artifactProjection.artifact.artifactId)
+          managed.lastMessageRole = 'assistant'
+          managed.lastFinalMessageId = result.message.id
+          sessionLog.info('[PlanMode] artifact bound', {
+            sessionId,
+            artifactId: artifactProjection.artifact.artifactId,
+            messageId: result.message.id,
+            state: artifactProjection.artifact.state,
+            isUpdate: artifactProjection.isUpdate,
+          })
+          this.sendEvent({
+            type: 'plan_artifact_changed',
+            sessionId,
+            message: result.message,
+            supersededArtifactIds,
+          }, workspaceId)
+          if (artifactProjection.artifact.state === 'executing' || artifactProjection.artifact.state === 'completed') {
+            await clearStoredPendingPlanExecution(managed.workspace.rootPath, sessionId)
+          }
+          this.persistSession(managed)
+          break
+        }
+
+        if (event.display) {
+          const customMessage: Message = {
+            id: customId,
+            role: 'info',
+            content: event.content,
+            timestamp: event.timestamp ?? this.monotonic(),
+            customType: event.customType,
+            customDetails: event.details,
+            customDisplay: event.display,
+          }
+          managed.messages.push(customMessage)
+          this.sendEvent({
+            type: 'info',
+            sessionId,
+            message: event.content,
+            timestamp: customMessage.timestamp,
+          }, workspaceId)
+          this.persistSession(managed)
         }
         break
       }
@@ -7321,6 +7328,16 @@ export class SessionManager implements ISessionManager {
         this.persistSession(managed)
         break
       }
+
+      case 'queue_overflow':
+        this.sendEvent({
+          type: 'info',
+          sessionId,
+          message: event.message,
+          level: 'warning',
+          timestamp: this.monotonic(),
+        }, workspaceId)
+        break
 
       case 'status':
         this.sendEvent({
@@ -7880,7 +7897,6 @@ export class SessionManager implements ISessionManager {
 
     const envOverrides: Record<string, string> = {
       CRAFT_WORKSPACE_PATH: workspaceRootPath,
-      ...(miniModel ? { ANTHROPIC_DEFAULT_HAIKU_MODEL: miniModel } : {}),
     }
 
     const agent = createBackendFromResolvedContext({
@@ -8086,7 +8102,7 @@ export class SessionManager implements ISessionManager {
       lastUsedAt: Date.now(),
       // 保留 sdkSessionId（fork 逻辑下方可能清空）
       sdkSessionId: header.sdkSessionId,
-      // 非 SESSION_PERSISTENT_FIELDS 字段
+      // 非 CRAFT_SESSION_METADATA_FIELDS 字段
       messages: bundle.session.messages,
       tokenUsage: header.tokenUsage ?? DEFAULT_TOKEN_USAGE,
     } as StoredSession
@@ -8244,8 +8260,19 @@ export class SessionManager implements ISessionManager {
    * Clean up all resources held by the SessionManager.
    * Should be called on app shutdown to prevent resource leaks.
    */
-  cleanup(): void {
+  async cleanup(): Promise<void> {
     sessionLog.info('Cleaning up resources...')
+
+    // Dispose all live backend runtimes before dropping the session map so Pi
+    // subprocesses, MCP pool clients, and session HTTP pool servers cannot leak.
+    for (const managed of this.sessions.values()) {
+      try {
+        await this.disposeManagedAgentRuntime(managed, 'app quit')
+      } catch (error) {
+        sessionLog.error(`Failed to dispose runtime for ${managed.id} during cleanup:`, error)
+      }
+    }
+    this.sessions.clear()
 
     // Stop all ConfigWatchers (file system watchers)
     for (const [path, watcher] of this.configWatchers) {
@@ -8276,11 +8303,6 @@ export class SessionManager implements ISessionManager {
     this.pendingCredentialResolvers.clear()
     this.pendingPermissionRequests.clear()
     this.adminRememberApprovals.clear()
-
-    // Clean up session-scoped tool callbacks for all sessions
-    for (const sessionId of this.sessions.keys()) {
-      unregisterSessionScopedToolCallbacks(sessionId)
-    }
 
     sessionLog.info('Cleanup complete')
   }

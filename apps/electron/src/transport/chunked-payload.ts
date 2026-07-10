@@ -1,6 +1,8 @@
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { ATTACHMENT_INLINE_RPC_LIMIT_BYTES } from '@craft-agent/shared/utils'
+import { ATTACHMENT_INLINE_RPC_LIMIT_BYTES } from '@craft-agent/shared/utils/attachment-limits'
 import type { RpcClient } from '@craft-agent/server-core/transport'
+
+type ChunkedRpcClient = Pick<RpcClient, 'invoke'> & Partial<Pick<RpcClient, 'invokeWithOptions'>>
 
 /**
  * 2MB raw → ~2.7MB after base64 encoding.
@@ -38,7 +40,8 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
     throw new Error('Web Crypto SHA-256 is not available in this runtime')
   }
 
-  return toHex(await globalThis.crypto.subtle.digest('SHA-256', bytes))
+  const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  return toHex(await globalThis.crypto.subtle.digest('SHA-256', data))
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -69,12 +72,13 @@ export async function prepareChunkedPayload(value: unknown): Promise<PreparedChu
  * Send a large RPC call in chunks over the existing connection.
  */
 export async function invokeChunked(
-  client: Pick<RpcClient, 'invoke'>,
+  client: ChunkedRpcClient,
   channel: string,
   args: any[],
   largeArgIndex: number,
   onProgress?: (sent: number, total: number) => void,
   prepared?: PreparedChunkedPayload,
+  options?: { finalTimeoutMs?: number },
 ): Promise<any> {
   const payload = prepared ?? await prepareChunkedPayload(args[largeArgIndex])
 
@@ -134,7 +138,9 @@ export async function invokeChunked(
     }
 
     console.log('[ChunkedRPC] All chunks sent, committing...')
-    const result = await client.invoke(RPC_CHANNELS.transfer.COMMIT, { transferId })
+    const result = options?.finalTimeoutMs !== undefined && typeof client.invokeWithOptions === 'function'
+      ? await client.invokeWithOptions(RPC_CHANNELS.transfer.COMMIT, [{ transferId }], { timeoutMs: options.finalTimeoutMs })
+      : await client.invoke(RPC_CHANNELS.transfer.COMMIT, { transferId })
     console.log('[ChunkedRPC] Transfer committed successfully')
     transferId = null
     return result

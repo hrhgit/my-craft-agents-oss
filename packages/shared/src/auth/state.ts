@@ -15,6 +15,7 @@ import {
   type AuthType,
   type Workspace,
 } from '../config/storage.ts';
+import { hasPiGlobalAuthForConnection, readPiGlobalApiKeyForConnection } from '../config/pi-global-config.ts';
 
 function toLegacyBillingType(
   authType: NonNullable<ReturnType<typeof getLlmConnection>>['authType'],
@@ -100,10 +101,14 @@ export async function getAuthState(): Promise<AuthState> {
   if (connection && defaultConnectionSlug) {
     // Use LLM connection credentials
     // Pass providerType for OAuth routing (OpenAI OAuth needs idToken)
-    hasCredentials = await manager.hasLlmCredentials(defaultConnectionSlug, connection.authType, connection.providerType);
+    hasCredentials =
+      await manager.hasLlmCredentials(defaultConnectionSlug, connection.authType, connection.providerType)
+      || hasPiGlobalAuthForConnection(connection);
 
     if (connection.authType === 'api_key' || connection.authType === 'api_key_with_endpoint' || connection.authType === 'bearer_token') {
-      apiKey = await manager.getLlmApiKey(defaultConnectionSlug);
+      apiKey = await manager.getLlmApiKey(defaultConnectionSlug)
+        || readPiGlobalApiKeyForConnection(connection)
+        || null;
       // Keyless providers (Ollama) are valid when a custom base URL is configured
       if (!apiKey && connection.baseUrl) {
         hasCredentials = true;

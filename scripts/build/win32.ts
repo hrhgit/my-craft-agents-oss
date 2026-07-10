@@ -8,7 +8,7 @@
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, rmSync, readdirSync, statSync, cpSync } from 'fs';
 import { join } from 'path';
-import type { BuildConfig } from './common';
+import { copyPiRuntime, type BuildConfig } from './common';
 
 /**
  * Sleep helper (Node.js replacement for Bun.sleep)
@@ -140,13 +140,6 @@ export async function buildElectronAppWindows(config: BuildConfig): Promise<void
   // Build main process with OAuth defines
   buildMainProcess(config);
 
-  // Build unified network interceptor (--require hook for tool metadata)
-  console.log('  Building interceptor...');
-  run(
-    'node ./node_modules/esbuild/bin/esbuild packages/shared/src/unified-network-interceptor.ts --bundle --platform=node --format=cjs --outfile=apps/electron/dist/interceptor.cjs',
-    rootDir
-  );
-
   // Build preload - invoke esbuild directly via node
   console.log('  Building preload...');
   run(
@@ -176,6 +169,11 @@ export async function buildElectronAppWindows(config: BuildConfig): Promise<void
     rmSync(resourcesDst, { recursive: true, force: true });
   }
   cpSync(resourcesSrc, resourcesDst, { recursive: true });
+
+  // Pi RpcClient starts a separate CLI subprocess; ship its package runtime in
+  // dist/resources so packaged Windows builds can create sessions offline from
+  // the development node_modules symlinks.
+  copyPiRuntime(config);
 
   // Copy doc assets (matches electron:build:assets step used by Mac/Linux builds)
   // Without this, loadBundledDocs() can't find the docs and falls back to placeholders

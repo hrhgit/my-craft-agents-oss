@@ -2,7 +2,7 @@
  * Pi 扩展事件桥接层
  *
  * 将 Pi RpcClient 转发的扩展事件（remoteui:request、
- * extension_notify、extension_widget、extension_command_registered）通过
+ * extension_notify、extension_status、extension_widget、extension_command_registered）通过
  * eventSink 广播到渲染进程。
  *
  * 事件流：
@@ -43,7 +43,8 @@ export function createExtensionEventForwarder(
       event = { ...event, sessionId }
     }
 
-    // 所有扩展事件统一通过 extensions:EVENT 频道广播
+    // 所有扩展事件统一通过 extensions:EVENT 频道广播；renderer 只将
+    // extension_notify 视为面向用户的 toast，extension_status 作为运行态事件。
     // 渲染进程根据 event.type 区分具体事件类型
     eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, event)
   }

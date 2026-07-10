@@ -5,7 +5,6 @@
 import {
   CRAFT_SESSION_METADATA_FIELDS,
   type CraftSessionMetadataField,
-  type SessionPersistentField,
 } from './types.js';
 
 /**
@@ -33,6 +32,6 @@ export function pickCraftSessionMetadata<T extends object>(
  */
 export function pickSessionFields<T extends object>(
   source: T
-): Partial<Record<SessionPersistentField, unknown>> {
-  return pickCraftSessionMetadata(source) as Partial<Record<SessionPersistentField, unknown>>;
+): Partial<Record<CraftSessionMetadataField, unknown>> {
+  return pickCraftSessionMetadata(source);
 }

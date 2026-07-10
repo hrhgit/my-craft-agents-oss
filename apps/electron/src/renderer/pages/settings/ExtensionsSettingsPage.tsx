@@ -6,7 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { routes } from '@/lib/navigate'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
-import type { LlmConnectionWithStatus, PiExtensionSettings, StoredPiExtensionSettings } from '../../../shared/types'
+import type { LlmConnectionWithStatus, PiExtensionCatalogEntry, PiExtensionSettings, StoredPiExtensionSettings } from '../../../shared/types'
 import { mergePiExtensionSettings } from '@craft-agent/shared/config/pi-extension-settings'
 import { ExtensionListPanel } from './PiExtensionsSettingsPanel'
 import { ExtensionDetailPanel } from './ExtensionDetailPanel'
@@ -20,6 +20,7 @@ export default function ExtensionsSettingsPage() {
   const { t } = useTranslation()
   const [piExtensionSettings, setPiExtensionSettings] = useState<PiExtensionSettings | null>(null)
   const [llmConnections, setLlmConnections] = useState<LlmConnectionWithStatus[]>([])
+  const [extensionCatalog, setExtensionCatalog] = useState<PiExtensionCatalogEntry[]>([])
   const [extensionStates, setExtensionStates] = useState<Record<string, boolean>>({})
   const [selectedExtensionId, setSelectedExtensionId] = useState<string | null>(null)
 
@@ -28,15 +29,16 @@ export default function ExtensionsSettingsPage() {
 
     async function load() {
       try {
-        const [settings, connections, states] = await Promise.all([
+        const [settings, connections, catalog] = await Promise.all([
           window.electronAPI.getPiExtensionSettings(),
           window.electronAPI.listLlmConnectionsWithStatus(),
-          window.electronAPI.getPiExtensionStates(),
+          window.electronAPI.getPiExtensionCatalog(),
         ])
         if (disposed) return
         setPiExtensionSettings(settings)
         setLlmConnections(connections)
-        setExtensionStates(states)
+        setExtensionCatalog(catalog)
+        setExtensionStates(Object.fromEntries(catalog.map((extension) => [extension.id, extension.enabled])))
       } catch (error) {
         console.error('Failed to load extension settings:', error)
         toast.error('Failed to load extension settings')
@@ -98,6 +100,7 @@ export default function ExtensionsSettingsPage() {
             />
           ) : (
             <ExtensionListPanel
+              extensions={extensionCatalog}
               extensionStates={extensionStates}
               onToggleExtension={handleToggleExtension}
               onSelectExtension={setSelectedExtensionId}

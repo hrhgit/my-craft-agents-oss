@@ -13,10 +13,10 @@ import type { ResolvedBackendRuntimePaths } from './runtime-resolver.ts';
 
 export interface BackendRuntimePaths {
   copilotCli?: string;
-  interceptor?: string;
   sessionServer?: string;
   node?: string;
   bridgeServer?: string;
+  piCli?: string;
 }
 
 export interface BackendRuntimePayload extends Record<string, unknown> {
@@ -28,9 +28,6 @@ export interface BackendRuntimePayload extends Record<string, unknown> {
   customEndpoint?: { api: string; supportsImages?: boolean };
   /** Models registered for a custom endpoint. Strings default to 128K context; objects allow overrides. */
   customModels?: Array<string | { id: string; contextWindow?: number; supportsImages?: boolean }>;
-  /** API key from ~/.pi/agent/models.json for pi_compat custom-endpoint providers.
-   *  Passed to Pi auth/runtime setup so provider validation can pass. */
-  customEndpointApiKey?: string;
 }
 
 export interface BackendResolutionContext {

@@ -38,8 +38,8 @@ describe('BaseAgent', () => {
     });
 
     it('should allow setting thinking level', () => {
-      agent.setThinkingLevel('max');
-      expect(agent.getThinkingLevel()).toBe('max');
+      agent.setThinkingLevel('xhigh');
+      expect(agent.getThinkingLevel()).toBe('xhigh');
     });
 
   });

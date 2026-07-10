@@ -136,7 +136,7 @@ describe('unified migration', () => {
       expect(parsed.craftConfig.browserToolEnabled).toBeUndefined()
       expect(parsed.craftConfig.piShellFullPassthrough).toBeUndefined()
 
-      expect(parsed.piSettings.defaultThinkingLevel).toBe('max')
+      expect(parsed.piSettings.defaultThinkingLevel).toBe('xhigh')
       expect(parsed.piSettings.craft?.agent).toEqual({
         extendedPromptCache: true,
         enable1MContext: false,

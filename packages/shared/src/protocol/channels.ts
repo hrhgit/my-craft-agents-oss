@@ -196,6 +196,7 @@ export const RPC_CHANNELS = {
     GET_GLOBAL_PROVIDERS: 'pi:getGlobalProviders',
     GET_GLOBAL_SETTINGS: 'pi:getGlobalSettings',
     GET_GLOBAL_PROVIDER: 'pi:getGlobalProvider',
+    GET_GLOBAL_PROVIDER_API_KEY: 'pi:getGlobalProviderApiKey',
     SAVE_GLOBAL_PROVIDER: 'pi:saveGlobalProvider',
     DELETE_GLOBAL_PROVIDER: 'pi:deleteGlobalProvider',
     SET_GLOBAL_DEFAULT: 'pi:setGlobalDefault',
@@ -303,6 +304,7 @@ export const RPC_CHANNELS = {
     GET_SETTINGS: 'piExtensions:getSettings',
     SET_SETTINGS: 'piExtensions:setSettings',
     UPDATE_SETTINGS: 'piExtensions:updateSettings',
+    GET_CATALOG: 'piExtensions:getCatalog',
     // 逐扩展启停状态（读写 ~/.pi/agent/settings.json 的 extensions.<name>.enabled）
     GET_EXTENSION_STATES: 'piExtensions:getExtensionStates',
     SET_EXTENSION_ENABLED: 'piExtensions:setExtensionEnabled',
@@ -312,6 +314,7 @@ export const RPC_CHANNELS = {
     EVENT: 'extensions:event',
     REMOTEUI_RESPONSE: 'extensions:remoteuiResponse',
     COMMAND_INVOKE: 'extensions:commandInvoke',
+    GET_COMMANDS: 'extensions:getCommands',
   },
   caching: {
     GET_EXTENDED_PROMPT_CACHE: 'caching:getExtendedPromptCache',

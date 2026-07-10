@@ -56,9 +56,10 @@ add, change, and extend them without touching Pi.
 Scaffolding code talks to Pi through exactly two channels:
 
 1. **`RpcClient`** — typed commands and events over the RPC protocol.
-2. **Pi's config file paths** — reading/writing `~/.pi/agent/*.json` through
-   the typed helpers Pi exposes (e.g. `readPiGlobalAuth`, `SettingsManager`),
-   never by re-instantiating Pi's internal classes in the host process.
+2. **Pi host facade** — typed public helpers exported by
+   `@earendil-works/pi-coding-agent` for global config, credentials, session
+   projection/fork, skills, and extensions. Craft must not reimplement Pi file
+   locking or raw `~/.pi/agent/*.json` read-modify-write logic.
 
 ## The sanctioned seam
 
@@ -102,22 +103,28 @@ where Craft is preserving its own opaque metadata.
 ### Public Pi API imports
 
 - `packages/shared/src/credentials/backends/secure-storage.ts` — thin wrapper
-  over Pi `AuthStorage`'s `craft.<slug>` credential namespace
-  (`setCraftCredential`/`getCraftCredential`), a purpose-built public API. Pi
-  owns credential storage; craft reimplementing auth.json I/O and file locking
-  would violate the boundary in the other direction.
+  over Pi host facade's `craft.<slug>` credential API. It must not import Pi
+  path constants or reimplement `auth.json` I/O/file locking.
 - `packages/shared/src/config/models-pi.ts` — static model/provider catalog
   (`getModels`/`getProviders`) used for pre-auth provider listing in connection
   setup. `RpcClient.getAvailableModels()` requires a live authenticated session
   and cannot serve this path.
-- `packages/shared/src/config/pi-global-config.ts` — uses Pi `SettingsManager`
-  for typed settings fields (`defaultProvider`, `defaultModel`,
-  `defaultThinkingLevel`, `shellGui.*`, `extensionConfig.*`). It still performs
-  raw writes for `models.json` provider CRUD and Pi-opaque `craft.agent.*`
-  values because Pi does not expose typed setters for those domains.
+- `packages/shared/src/config/pi-global-config.ts` — compatibility shell around
+  Pi host facade for global providers/defaults, `craftConnections`,
+  `craft.agent.*`, `shellGui.*`, and `extensionConfig.*`. Its only raw Pi path
+  constant is `PI_AGENT_DIR`, used to watch for external Pi config changes; it
+  must not import `PI_SETTINGS_FILE`, `PI_MODELS_FILE`, or `PI_AUTH_FILE`.
+- `packages/shared/src/pi/pi-skill-resolver.ts` and
+  `packages/shared/src/skills/storage.ts` — synchronous UI/server seams over
+  Pi's skill listing facade. Craft may validate slugs and render metadata, but
+  skill discovery/parsing stays in Pi.
+- `packages/shared/src/sessions/storage.ts` — workspace-scoped session sidecar
+  helpers plus Pi projection creation/lookup facade calls. It may import
+  `PI_SESSIONS_DIR` only to compute the current workspace bucket.
 - `packages/shared/src/sessions/tree-jsonl.ts` — uses Pi `SessionManager` for
-  JSONL entry parsing/projection while preserving Craft's opaque header metadata
-  with a lightweight first-line reader and raw metadata writes.
+  JSONL entry projection and Pi's `setCraftSessionMetadata` facade for Craft's
+  opaque UI metadata. It may keep lightweight first-line/projection readers but
+  must not own Pi transcript locking or rewrite Pi entry bodies.
 - `packages/shared/src/agent/pi-agent.ts` — Craft's backend adapter over Pi's
   public `RpcClient`, preserving host-side workflow scaffolding without
   re-implementing Pi's agent runtime.
@@ -128,21 +135,30 @@ where Craft is preserving its own opaque metadata.
 outside this list:
 
 - `packages/shared/src/config/paths.ts` — defines the path constants.
-- `packages/shared/src/config/pi-global-config.ts` — see above.
-- `packages/shared/src/credentials/backends/secure-storage.ts` — passes
-  `PI_AUTH_FILE` to Pi `AuthStorage`.
-- `packages/shared/src/sessions/storage.ts` and
-  `packages/shared/src/sessions/tree-jsonl.ts` — session projection and
-  Craft metadata sidecar/header writes while Pi lacks a craft-metadata setter.
-  Read paths should delegate to Pi `SessionManager` where that is not a list-view
-  performance regression.
+- `packages/shared/src/config/pi-global-config.ts` — `PI_AGENT_DIR` only, for
+  config-change watching until Pi exposes a typed subscription.
+- `packages/shared/src/sessions/storage.ts` — `PI_SESSIONS_DIR` only, to compute
+  workspace bucket paths and delegate creation/lookup to Pi projection facades.
 - `packages/shared/src/config/unified-migration.ts` — one-shot migration into
   Pi-owned storage with rollback.
-- `packages/shared/src/workspaces/storage.ts` and
-  `packages/shared/src/pi/pi-session-store.ts` — read-only session bucket
-  projections for workspace/session routing.
+- `packages/shared/src/workspaces/storage.ts` — read-only session bucket
+  projection for workspace/session routing.
 
 The allowlists are recorded in `packages/shared/eslint.config.mjs` and
 `packages/shared/eslint-rules/no-raw-pi-file-io.cjs`. Any NEW file that wants a
 Pi import or Pi path constant must either go through `agent/backend/**`, or make
 the case here for why it is a seam extension.
+
+## Ratchet removal route
+
+- `secure-storage.ts` has left the raw path allowlist; it now calls Pi's
+  credential facade only.
+- `pi-global-config.ts` should lose raw path access once Pi exposes a
+  config-change watcher/subscription.
+- `sessions/storage.ts` has moved Pi-owned reads to projection APIs and
+  `sessions/tree-jsonl.ts` uses Pi craft metadata setters. The remaining
+  ratchet is to remove Craft-only overlays once Pi exposes a typed UI metadata
+  sidecar/projection contract.
+- `unified-migration.ts` remains one-shot migration/rollback debt. Remove it
+  after the migration window closes and all supported users are on Pi-owned
+  storage.

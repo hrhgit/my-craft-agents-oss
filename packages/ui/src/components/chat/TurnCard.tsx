@@ -2,8 +2,8 @@ import * as React from 'react'
 import { useMemo, useEffect, useRef, useCallback, useState } from 'react'
 import i18n from 'i18next'
 import { useTranslation } from 'react-i18next'
-import type { ToolDisplayMeta, AnnotationV1 } from '@craft-agent/core'
-import { normalizePath, pathStartsWith, stripPathPrefix } from '@craft-agent/shared/utils'
+import type { ToolDisplayMeta, AnnotationV1, ExtensionCommandResult, PlanArtifactV1 } from '@craft-agent/core'
+import { normalizePath, pathStartsWith, stripPathPrefix } from '@craft-agent/shared/utils/path-strings'
 import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { motion, AnimatePresence } from 'motion/react'
 import {
@@ -83,6 +83,7 @@ import { useAnnotationCancelRestore } from '../annotations/use-annotation-cancel
 import { DocumentFormattedMarkdownOverlay } from '../overlay'
 import { AcceptPlanDropdown } from './AcceptPlanDropdown'
 import { CompactAcceptPlanDrawer } from './CompactAcceptPlanDrawer'
+import { PlanArtifactCard } from './PlanArtifactCard'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -274,6 +275,8 @@ export interface ResponseContent {
   messageId?: string
   /** Persisted annotations attached to the response message */
   annotations?: AnnotationV1[]
+  /** Validated structured artifact attached to this assistant response. */
+  artifact?: PlanArtifactV1
 }
 
 // ============================================================================
@@ -336,6 +339,10 @@ export interface TurnCardProps {
   onAcceptPlan?: () => void
   /** Callback when user accepts the plan with compaction (compact conversation first, then execute) */
   onAcceptPlanWithCompact?: () => void
+  /** Structured plan artifact actions. */
+  onExecutePlanArtifact?: (artifactId: string) => Promise<ExtensionCommandResult>
+  onExecutePlanArtifactWithCompact?: (artifactId: string) => Promise<ExtensionCommandResult>
+  onRefinePlanArtifact?: (artifactId: string) => Promise<ExtensionCommandResult>
   /** Whether this is the last response in the session (shows Accept Plan button only for last response) */
   isLastResponse?: boolean
   /** Session folder path for stripping from file paths in tool display */
@@ -1473,7 +1480,6 @@ function clearAnnotationMarks(root: HTMLElement): void {
   annotatedInlineCodeNodes.forEach((codeNode) => {
     codeNode.removeAttribute('data-ca-annotation-inline-code')
     codeNode.style.backgroundColor = ''
-    codeNode.style.boxShadow = ''
   })
 
   const marks = root.querySelectorAll('span[data-ca-annotation-id]')
@@ -1548,7 +1554,6 @@ function applyTextHighlightRange(
     if (inlineCodeParent) {
       inlineCodeParent.setAttribute('data-ca-annotation-inline-code', 'true')
       inlineCodeParent.style.backgroundColor = annotationColorToCss(annotation.style?.color)
-      inlineCodeParent.style.boxShadow = 'none'
     }
 
     const mark = document.createElement('span')
@@ -2774,6 +2779,9 @@ export const TurnCard = React.memo(function TurnCard({
   renderActionsMenu,
   onAcceptPlan,
   onAcceptPlanWithCompact,
+  onExecutePlanArtifact,
+  onExecutePlanArtifactWithCompact,
+  onRefinePlanArtifact,
   isLastResponse,
   sessionFolderPath,
   displayMode = 'detailed',
@@ -3165,7 +3173,22 @@ export const TurnCard = React.memo(function TurnCard({
               transition={{ duration: 0.3, ease: "easeOut" }}
               className={cn("select-text", hasActivities && "mt-2")}
             >
-              <ResponseCard
+              {response.artifact ? <PlanArtifactCard
+                artifact={response.artifact}
+                content={response.text}
+                onOpenFile={onOpenFile}
+                onOpenUrl={onOpenUrl}
+                onExecute={onExecutePlanArtifact}
+                onExecuteWithCompact={onExecutePlanArtifactWithCompact}
+                onRefine={onRefinePlanArtifact}
+                sessionId={sessionId}
+                messageId={response.messageId}
+                annotations={response.annotations}
+                onAddAnnotation={onAddAnnotation}
+                onRemoveAnnotation={onRemoveAnnotation}
+                onUpdateAnnotation={onUpdateAnnotation}
+                onBranch={onBranch && response.messageId ? () => onBranch(response.messageId!) : undefined}
+              /> : <ResponseCard
                 text={response.text}
                 isStreaming={response.isStreaming}
                 streamStartTime={response.streamStartTime}
@@ -3189,7 +3212,7 @@ export const TurnCard = React.memo(function TurnCard({
                 hasActiveFollowUpAnnotations={hasActiveFollowUpAnnotations}
                 openAnnotationRequest={openAnnotationRequest}
                 annotationInteractionMode={annotationInteractionMode}
-              />
+              />}
             </motion.div>
           )}
         </AnimatePresence>
@@ -3197,7 +3220,22 @@ export const TurnCard = React.memo(function TurnCard({
       {/* Non-animated version for regular app use */}
       {!animateResponse && response && !isBuffering && (
         <div className={cn("select-text", hasActivities && "mt-2")}>
-          <ResponseCard
+          {response.artifact ? <PlanArtifactCard
+            artifact={response.artifact}
+            content={response.text}
+            onOpenFile={onOpenFile}
+            onOpenUrl={onOpenUrl}
+            onExecute={onExecutePlanArtifact}
+            onExecuteWithCompact={onExecutePlanArtifactWithCompact}
+            onRefine={onRefinePlanArtifact}
+            sessionId={sessionId}
+            messageId={response.messageId}
+            annotations={response.annotations}
+            onAddAnnotation={onAddAnnotation}
+            onRemoveAnnotation={onRemoveAnnotation}
+            onUpdateAnnotation={onUpdateAnnotation}
+            onBranch={onBranch && response.messageId ? () => onBranch(response.messageId!) : undefined}
+          /> : <ResponseCard
             text={response.text}
             isStreaming={response.isStreaming}
             streamStartTime={response.streamStartTime}
@@ -3221,7 +3259,7 @@ export const TurnCard = React.memo(function TurnCard({
             hasActiveFollowUpAnnotations={hasActiveFollowUpAnnotations}
             openAnnotationRequest={openAnnotationRequest}
             annotationInteractionMode={annotationInteractionMode}
-          />
+          />}
         </div>
       )}
     </div>

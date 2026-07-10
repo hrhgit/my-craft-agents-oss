@@ -190,7 +190,7 @@ function WidgetCard({ widget }: { widget: ExtensionWidgetEntry }) {
     <div
       className={cn(
         'mb-1 rounded-[10px] border border-border/60 bg-background/80 backdrop-blur',
-        'px-3 py-2 text-[13px] text-foreground/90 shadow-sm',
+        'px-3 py-2 text-[13px] text-foreground/90 shadow-thin',
         'font-mono whitespace-pre-wrap break-words',
       )}
       data-extension-widget-key={widget.key}

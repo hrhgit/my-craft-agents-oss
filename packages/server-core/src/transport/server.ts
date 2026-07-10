@@ -69,6 +69,19 @@ interface PendingInvoke {
   timeout: ReturnType<typeof setTimeout>
 }
 
+interface ActiveRequest {
+  clientId: string
+  channel: string
+  controller: AbortController
+}
+
+interface SafeSendMeta {
+  kind: 'handshake_ack' | 'response' | 'event' | 'error' | 'request'
+  clientId?: string
+  channel?: string
+  requestId?: string
+}
+
 // ---------------------------------------------------------------------------
 // Server options
 // ---------------------------------------------------------------------------
@@ -191,6 +204,7 @@ export class WsRpcServer implements RpcServer {
   private clients = new Map<string, ClientConnection>()
   private handlers = new Map<string, HandlerFn>()
   private pendingInvokes = new Map<string, PendingInvoke>()
+  private activeRequests = new Map<string, ActiveRequest>()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private _port = 0
   private _protocol: 'ws' | 'wss' = 'ws'
@@ -320,7 +334,18 @@ export class WsRpcServer implements RpcServer {
         args,
         serverId: this.serverId,
       }
-      this.safeSend(client.ws, serializeEnvelope(envelope))
+      if (!this.safeSend(client.ws, serializeEnvelope(envelope), {
+        kind: 'request',
+        clientId,
+        channel,
+        requestId: id,
+      })) {
+        this.pendingInvokes.delete(id)
+        clearTimeout(timeout)
+        const err = new Error(`Client not connected: ${clientId}`)
+        ;(err as any).code = 'CLIENT_DISCONNECTED'
+        reject(err)
+      }
     })
   }
 
@@ -645,11 +670,18 @@ export class WsRpcServer implements RpcServer {
                   registeredChannels: [...this.handlers.keys()],
                   reconnected: true,
                 }
-                this.safeSend(ws, serializeEnvelope(ack))
+                this.safeSend(ws, serializeEnvelope(ack), {
+                  kind: 'handshake_ack',
+                  clientId: prevClient.id,
+                  requestId: envelope.id,
+                })
 
                 // Replay missed events in order
                 for (const event of replayEvents) {
-                  this.safeSend(ws, event.data)
+                  this.safeSend(ws, event.data, {
+                    kind: 'event',
+                    clientId: prevClient.id,
+                  })
                 }
 
                 transportLog.info('Client reconnected with replay', {
@@ -669,7 +701,11 @@ export class WsRpcServer implements RpcServer {
                   reconnected: true,
                   stale: true,
                 }
-                this.safeSend(ws, serializeEnvelope(ack))
+                this.safeSend(ws, serializeEnvelope(ack), {
+                  kind: 'handshake_ack',
+                  clientId: prevClient.id,
+                  requestId: envelope.id,
+                })
 
                 transportLog.info('Client reconnected as stale', {
                   clientId: prevClient.id,
@@ -746,7 +782,11 @@ export class WsRpcServer implements RpcServer {
           clientId,
           registeredChannels: [...this.handlers.keys()],
         }
-        this.safeSend(ws, serializeEnvelope(ack))
+        this.safeSend(ws, serializeEnvelope(ack), {
+          kind: 'handshake_ack',
+          clientId,
+          requestId: envelope.id,
+        })
 
         // Notify lifecycle listener
         transportLog.info('Client connected', {
@@ -774,6 +814,8 @@ export class WsRpcServer implements RpcServer {
 
       if (envelope.type === 'request') {
         await this.onRequest(client, envelope)
+      } else if (envelope.type === 'request_cancel') {
+        this.cancelActiveRequest(client, envelope.id, 'Request cancelled by client', 'CLIENT_REQUEST_TIMEOUT')
       } else if (envelope.type === 'response') {
         this.onClientResponse(envelope)
       } else if (envelope.type === 'sequence_ack') {
@@ -819,19 +861,41 @@ export class WsRpcServer implements RpcServer {
       return
     }
 
+    const controller = new AbortController()
     const ctx: RequestContext = {
       clientId: client.id,
       workspaceId: client.workspaceId,
       webContentsId: client.webContentsId,
+      signal: controller.signal,
     }
+
+    this.activeRequests.set(id, {
+      clientId: client.id,
+      channel,
+      controller,
+    })
+
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const abortPromise = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () => {
+        const reason = controller.signal.reason
+        reject(reason instanceof Error ? reason : new Error(`Request cancelled: ${channel}`))
+      }, { once: true })
+    })
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        const err = new Error(`Handler timeout: ${channel} (${WsRpcServer.HANDLER_TIMEOUT_MS}ms)`)
+        ;(err as any).code = 'REQUEST_TIMEOUT'
+        controller.abort(err)
+        reject(err)
+      }, WsRpcServer.HANDLER_TIMEOUT_MS)
+    })
 
     try {
       const result = await Promise.race([
         handler(ctx, ...(args ?? [])),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Handler timeout: ${channel} (${WsRpcServer.HANDLER_TIMEOUT_MS}ms)`)),
-            WsRpcServer.HANDLER_TIMEOUT_MS),
-        ),
+        timeoutPromise,
+        abortPromise,
       ])
       const response: MessageEnvelope = {
         id,
@@ -839,12 +903,20 @@ export class WsRpcServer implements RpcServer {
         channel,
         result,
       }
-      this.safeSend(client.ws, serializeEnvelope(response))
+      this.safeSend(client.ws, serializeEnvelope(response), {
+        kind: 'response',
+        clientId: client.id,
+        channel,
+        requestId: id,
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const rawCode = (err as { code?: unknown } | null)?.code
       const code: TransportErrorCode = isTransportErrorCode(rawCode) ? rawCode : 'HANDLER_ERROR'
       this.sendResponseError(client.ws, id, channel, code, message)
+    } finally {
+      if (timeout) clearTimeout(timeout)
+      this.activeRequests.delete(id)
     }
   }
 
@@ -882,6 +954,7 @@ export class WsRpcServer implements RpcServer {
     ws.on('close', () => {
       transportLog.info('Client disconnected', { clientId: client.id })
       this.clients.delete(client.id)
+      this.abortActiveRequestsForClient(client.id, 'Client disconnected', 'CLIENT_DISCONNECTED')
 
       // Retain buffer for potential reconnect
       const timer = setTimeout(() => {
@@ -934,7 +1007,11 @@ export class WsRpcServer implements RpcServer {
     this.evictBuffer(client)
 
     if (shouldSend) {
-      this.safeSend(client.ws, data)
+      this.safeSend(client.ws, data, {
+        kind: 'event',
+        clientId: client.id,
+        channel,
+      })
     }
   }
 
@@ -1018,7 +1095,12 @@ export class WsRpcServer implements RpcServer {
       channel,
       error: { code, message },
     }
-    this.safeSend(ws, serializeEnvelope(envelope))
+    this.safeSend(ws, serializeEnvelope(envelope), {
+      kind: 'response',
+      clientId: this.findClientByWs(ws)?.id,
+      channel,
+      requestId: id,
+    })
   }
 
   /** Protocol-level errors only (handshake rejection, version mismatch). May close connection. */
@@ -1028,7 +1110,11 @@ export class WsRpcServer implements RpcServer {
       type: 'error',
       error: { code, message },
     }
-    this.safeSend(ws, serializeEnvelope(envelope))
+    this.safeSend(ws, serializeEnvelope(envelope), {
+      kind: 'error',
+      clientId: this.findClientByWs(ws)?.id,
+      requestId: id,
+    })
   }
 
   private onClientResponse(envelope: MessageEnvelope): void {
@@ -1059,9 +1145,54 @@ export class WsRpcServer implements RpcServer {
     }
   }
 
-  private safeSend(ws: WebSocket, data: string): void {
-    if (ws.readyState === ws.OPEN) {
+  private cancelActiveRequest(
+    client: ClientConnection,
+    requestId: string,
+    message: string,
+    code: TransportErrorCode,
+  ): void {
+    const active = this.activeRequests.get(requestId)
+    if (!active || active.clientId !== client.id) return
+
+    const err = new Error(message)
+    ;(err as any).code = code
+    active.controller.abort(err)
+  }
+
+  private abortActiveRequestsForClient(
+    clientId: string,
+    message: string,
+    code: TransportErrorCode,
+  ): void {
+    for (const [requestId, active] of this.activeRequests) {
+      if (active.clientId !== clientId) continue
+
+      const err = new Error(message)
+      ;(err as any).code = code
+      active.controller.abort(err)
+      this.activeRequests.delete(requestId)
+    }
+  }
+
+  private safeSend(ws: WebSocket, data: string, meta?: SafeSendMeta): boolean {
+    if (ws.readyState !== ws.OPEN) {
+      transportLog.warn('WebSocket send skipped because socket is not open', {
+        ...meta,
+        readyState: ws.readyState,
+      })
+      return false
+    }
+
+    try {
       ws.send(data)
+      return true
+    } catch (error) {
+      transportLog.warn('WebSocket send failed', {
+        ...meta,
+        readyState: ws.readyState,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return false
     }
   }
 }

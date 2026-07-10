@@ -23,7 +23,8 @@
  */
 
 import * as React from 'react'
-import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
+import type { ExtensionBridgeEvent, PiExtensionCommand } from '@craft-agent/shared/agent/backend/types'
+import type { ExtensionCommandResult } from '@craft-agent/core/types'
 
 // ============================================================================
 // 类型定义
@@ -42,11 +43,13 @@ export interface ExtensionCommand {
 export interface UseExtensionCommandsReturn {
   /** 当前已注册的扩展命令列表 */
   commands: ExtensionCommand[]
+  /** 按需刷新当前会话的扩展命令快照 */
+  refreshCommands: () => void
   /**
    * 触发执行扩展命令。返回 true 表示已成功派发到主进程，
    * false 表示 ElectronAPI 方法未就绪或派发失败。
    */
-  triggerCommand: (name: string, args?: Record<string, unknown>) => boolean
+  triggerCommand: (name: string, args?: Record<string, unknown>) => Promise<ExtensionCommandResult>
 }
 
 // ============================================================================
@@ -62,6 +65,54 @@ export interface UseExtensionCommandsReturn {
  */
 export function useExtensionCommands(sessionId: string | undefined): UseExtensionCommandsReturn {
   const [commands, setCommands] = React.useState<ExtensionCommand[]>([])
+  const loadedSessionRef = React.useRef<string | undefined>(undefined)
+  const inFlightSessionRef = React.useRef<string | undefined>(undefined)
+
+  const upsertCommand = React.useCallback((command: ExtensionCommand) => {
+    setCommands(prev => {
+      // 同名命令（按 name 去重）：后注册/后查询的覆盖先前版本
+      const filtered = prev.filter(c => c.name !== command.name)
+      return [...filtered, command]
+    })
+  }, [])
+
+  React.useEffect(() => {
+    setCommands([])
+    loadedSessionRef.current = undefined
+    inFlightSessionRef.current = undefined
+  }, [sessionId])
+
+  const refreshCommands = React.useCallback(() => {
+    if (!sessionId) return
+    if (loadedSessionRef.current === sessionId || inFlightSessionRef.current === sessionId) return
+
+    const w = window as unknown as {
+      electronAPI?: {
+        getExtensionCommands?: (sessionId: string) => Promise<PiExtensionCommand[]>
+      }
+    }
+
+    const getCommands = w.electronAPI?.getExtensionCommands
+    if (typeof getCommands !== 'function') return
+
+    inFlightSessionRef.current = sessionId
+    void getCommands(sessionId).then(snapshot => {
+      if (inFlightSessionRef.current !== sessionId || !Array.isArray(snapshot)) return
+      setCommands(snapshot.map(cmd => ({
+        name: cmd.name,
+        description: cmd.description,
+        source: cmd.source,
+      })))
+      loadedSessionRef.current = sessionId
+    }).catch(() => {
+      // Older servers may not expose the snapshot channel; event subscription
+      // below remains as the compatibility path.
+    }).finally(() => {
+      if (inFlightSessionRef.current === sessionId) {
+        inFlightSessionRef.current = undefined
+      }
+    })
+  }, [sessionId])
 
   React.useEffect(() => {
     // onExtensionEvent 已在 channel-map 注册；可选链降级保持向后兼容。
@@ -78,55 +129,46 @@ export function useExtensionCommands(sessionId: string | undefined): UseExtensio
 
     const unsubscribe = subscribe((event: ExtensionBridgeEvent) => {
       if (event.type !== 'extension_command_registered') return
-      setCommands(prev => {
-        // 同名命令（按 name 去重）：后注册的覆盖先注册的
-        const filtered = prev.filter(c => c.name !== event.name)
-        return [...filtered, {
-          name: event.name,
-          description: event.description,
-          source: event.source,
-        }]
+      upsertCommand({
+        name: event.name,
+        description: event.description,
+        source: event.source,
       })
+      loadedSessionRef.current = sessionId
     })
 
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [])
+  }, [sessionId, upsertCommand])
 
   /**
    * 触发执行扩展命令。
    *
    * 当前沿用类型断言 + 可选链模式，旧服务端未提供该通道时返回 false。
    */
-  const triggerCommand = React.useCallback((name: string, args?: Record<string, unknown>): boolean => {
+  const triggerCommand = React.useCallback(async (name: string, args?: Record<string, unknown>): Promise<ExtensionCommandResult> => {
     const w = window as unknown as {
       electronAPI?: {
         invokeExtensionCommand?: (
           sessionId: string,
           commandName: string,
           args?: Record<string, unknown>,
-        ) => Promise<boolean> | boolean
+        ) => Promise<ExtensionCommandResult>
       }
     }
 
     const invoke = w.electronAPI?.invokeExtensionCommand
     if (typeof invoke !== 'function') {
-      return false
+      return { invoked: false, error: 'Extension command API is unavailable.' }
     }
 
     try {
-      const ret = invoke(sessionId ?? '', name, args)
-      // 兼容 Promise 与同步返回
-      if (ret && typeof (ret as Promise<boolean>).then === 'function') {
-        // 异步路径：fire-and-forget；调用方已通过返回 true 得知派发成功
-        return true
-      }
-      return Boolean(ret)
-    } catch {
-      return false
+      return await invoke(sessionId ?? '', name, args)
+    } catch (error) {
+      return { invoked: false, error: error instanceof Error ? error.message : String(error) }
     }
   }, [sessionId])
 
-  return { commands, triggerCommand }
+  return { commands, refreshCommands, triggerCommand }
 }

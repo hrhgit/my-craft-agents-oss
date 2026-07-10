@@ -19,6 +19,7 @@ import { SessionStatusMenu } from '@/components/ui/session-status-menu'
 import { MetadataBadge } from '@/components/ui/metadata-badge'
 import { openLabelLink } from '@/lib/open-label-link'
 import { SessionInfoPopover } from './SessionInfoPopover'
+import { ConversationModeSelector, type ConversationMode } from './ConversationModeSelector'
 
 // ============================================================================
 // Permission Mode Icon Component
@@ -46,6 +47,16 @@ export interface ActiveOptionBadgesProps {
   permissionMode?: PermissionMode
   /** Callback when permission mode changes */
   onPermissionModeChange?: (mode: PermissionMode) => void
+  /** Whether to show the permission mode badge in this row. */
+  showPermissionModeBadge?: boolean
+  /** Current conversation command mode shown in the permission badge slot. */
+  conversationMode?: ConversationMode
+  /** Callback when conversation mode changes */
+  onConversationModeChange?: (mode: ConversationMode) => void
+  /** Whether discussion mode is available in the selector */
+  showDiscussionMode?: boolean
+  /** Whether plan mode is available in the selector */
+  showPlanMode?: boolean
   /** Background tasks to display */
   tasks?: BackgroundTask[]
   /** Session ID for opening preview windows */
@@ -89,6 +100,11 @@ interface ResolvedLabelEntry {
 export function ActiveOptionBadges({
   permissionMode = 'ask',
   onPermissionModeChange,
+  showPermissionModeBadge = true,
+  conversationMode,
+  onConversationModeChange,
+  showDiscussionMode = true,
+  showPlanMode = true,
   tasks = [],
   sessionId,
   sessionFolderPath,
@@ -139,8 +155,11 @@ export function ActiveOptionBadges({
   // shows the same visible strip when stacked. No React re-renders needed.
   const stackRef = useDynamicStack({ gap: 8, minVisible: 20, reservedStart: 0 })
 
+  const showConversationMode = !!conversationMode && (showDiscussionMode || showPlanMode)
+  const showPermissionMode = showPermissionModeBadge && !!permissionMode
+
   // Only render if badges or tasks are active
-  if (!permissionMode && tasks.length === 0 && !hasState && !hasStackContent) {
+  if (!showConversationMode && !showPermissionMode && tasks.length === 0 && !hasState && !hasStackContent) {
     return null
   }
 
@@ -148,8 +167,21 @@ export function ActiveOptionBadges({
     <div className={cn("flex items-start gap-2 mb-2 px-px pt-px pb-0.5", className)}>
       {/* Left side: mode → state → labels stack */}
       <div className="flex items-start gap-2 min-w-0 flex-1">
+        {/* Conversation Mode Badge - occupies the old permission-mode slot in the main chat input row. */}
+        {showConversationMode && (
+          <div className="shrink-0">
+            <ConversationModeSelector
+              mode={conversationMode}
+              onModeChange={onConversationModeChange}
+              showDiscussion={showDiscussionMode}
+              showPlan={showPlanMode}
+              sessionId={sessionId}
+            />
+          </div>
+        )}
+
         {/* Permission Mode Badge */}
-        {permissionMode && (
+        {showPermissionMode && (
           <div className="shrink-0">
             <PermissionModeDropdown
               permissionMode={permissionMode}

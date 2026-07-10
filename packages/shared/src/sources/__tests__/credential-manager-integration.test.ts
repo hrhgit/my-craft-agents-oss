@@ -65,6 +65,41 @@ describe('getApiCredential with multi-header sources', () => {
     idSpy.mockRestore();
   });
 
+  test("MCP authType:'none' can still resolve credential-store headerNames", async () => {
+    const source = createMockSource({
+      type: 'mcp',
+      api: undefined,
+      mcp: {
+        url: 'https://mcp.example.com/mcp',
+        authType: 'none',
+        headerNames: ['X-API-Key', 'X-App-ID'],
+      },
+    });
+    const storedCredential = JSON.stringify({
+      'X-API-Key': 'test-api-key',
+      'X-App-ID': 'test-app-id',
+    });
+    const mockCredentialManager = {
+      get: mock(() => ({ value: storedCredential })),
+    };
+    const managerSpy = spyOn(credentialsModule, 'getCredentialManager')
+      .mockReturnValue(mockCredentialManager as unknown as ReturnType<typeof credentialsModule.getCredentialManager>);
+
+    const result = await credManager.getApiCredential(source);
+
+    expect(result).toEqual({
+      'X-API-Key': 'test-api-key',
+      'X-App-ID': 'test-app-id',
+    });
+    expect(mockCredentialManager.get).toHaveBeenCalledWith({
+      type: 'source_oauth',
+      workspaceId: 'test-workspace',
+      sourceId: 'test-source',
+    });
+
+    managerSpy.mockRestore();
+  });
+
   test('should return MultiHeaderCredential when source has headerNames and credential is valid JSON', async () => {
     const source = createMockSource({
       api: {

@@ -17,7 +17,7 @@
  * 6. Ask-mode prompt decision: Determine if user approval is needed
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { expandPath } from '../../utils/paths.ts';
@@ -37,7 +37,7 @@ import {
 import { FEATURE_FLAGS } from '../../feature-flags.ts';
 import { AGENTS_PLUGIN_NAME } from '../../skills/types.ts';
 import { validateSkillSlug } from '../../skills/storage.ts';
-import { PI_SKILLS_DIR, PI_PROJECT_SKILLS_DIR } from '../../config/paths.ts';
+import { createPiSkillResolver } from '../../pi/pi-skill-resolver.ts';
 import {
   shouldAllowToolInMode,
   isApiEndpointAllowed,
@@ -265,19 +265,8 @@ function resolveSkillPlugin(
   workspaceRootPath: string,
   workingDirectory?: string,
 ): string {
-  // F18: Skills are unified to Pi native paths (~/.pi/agent/skills/ global +
-  // {projectRoot}/.pi/skills/ project). The legacy workspace tier
-  // ({workspaceRoot}/skills/) has been removed so that skill resolution here
-  // matches getActiveSkillsTiers() in storage.ts. Previously skill_validate
-  // could find skills in the legacy workspace dir while skills:get could not.
-
-  // 1. Project: {workingDir}/.pi/skills/{slug}/SKILL.md
-  if (workingDirectory && existsSync(join(workingDirectory, PI_PROJECT_SKILLS_DIR, bareSlug, 'SKILL.md'))) {
-    return `${AGENTS_PLUGIN_NAME}:${bareSlug}`;
-  }
-
-  // 2. Global: ~/.pi/agent/skills/{slug}/SKILL.md
-  if (existsSync(join(PI_SKILLS_DIR, bareSlug, 'SKILL.md'))) {
+  const resolvedSkill = createPiSkillResolver(workingDirectory ?? workspaceRootPath).resolveSkill(bareSlug);
+  if (resolvedSkill) {
     return `${AGENTS_PLUGIN_NAME}:${bareSlug}`;
   }
 

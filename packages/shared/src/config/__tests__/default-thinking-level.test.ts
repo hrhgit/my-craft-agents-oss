@@ -96,13 +96,13 @@ describe('default thinking level storage', () => {
   it('persists defaultThinkingLevel to pi settings without writing config.json', () => {
     const { configDir, configPath } = setupWorkspaceConfigDir()
 
-    runEval(configDir, "await setDefaultThinkingLevel('max'); console.log(String(getDefaultThinkingLevel()))")
+    runEval(configDir, "await setDefaultThinkingLevel('xhigh'); console.log(String(getDefaultThinkingLevel()))")
 
     const config = JSON.parse(readFileSync(configPath, 'utf-8'))
     expect(config.defaultThinkingLevel).toBeUndefined()
 
     const piSettings = JSON.parse(readFileSync(join(configDir, 'pi-agent', 'settings.json'), 'utf-8'))
-    expect(piSettings.defaultThinkingLevel).toBe('max')
+    expect(piSettings.defaultThinkingLevel).toBe('xhigh')
   }, 15_000)
 
   it('round-trips persisted value across processes', () => {
@@ -142,10 +142,18 @@ describe('default thinking level storage', () => {
     expect(output).toBe('medium')
   }, 15_000)
 
+  it('normalizes legacy "max" value to "xhigh"', () => {
+    const { configDir } = setupWorkspaceConfigDir()
+    runEval(configDir, "await setDefaultThinkingLevel('max'); console.log(String(getDefaultThinkingLevel()))")
+
+    const piSettings = JSON.parse(readFileSync(join(configDir, 'pi-agent', 'settings.json'), 'utf-8'))
+    expect(piSettings.defaultThinkingLevel).toBe('xhigh')
+  }, 15_000)
+
   it('does not read legacy defaultThinkingLevel from craft config', () => {
     const { configDir, configPath } = setupWorkspaceConfigDir()
     const config = JSON.parse(readFileSync(configPath, 'utf-8'))
-    config.defaultThinkingLevel = 'max'
+    config.defaultThinkingLevel = 'xhigh'
     writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
 
     const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")

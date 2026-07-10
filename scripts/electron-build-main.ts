@@ -17,8 +17,7 @@ const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
 const DIST_DIR = join(ROOT_DIR, "apps/electron/dist");
 const OUTPUT_FILE = join(DIST_DIR, "main.cjs");
-const INTERCEPTOR_SOURCE = join(ROOT_DIR, "packages/shared/src/unified-network-interceptor.ts");
-const INTERCEPTOR_OUTPUT = join(DIST_DIR, "interceptor.cjs");
+const WORKSPACE_SERVER_OUTPUT = join(DIST_DIR, "workspace-server.mjs");
 const SESSION_TOOLS_CORE_DIR = join(ROOT_DIR, "packages/session-tools-core");
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
@@ -163,39 +162,6 @@ function verifySessionToolsCore(): void {
   console.log("✅ Session tools core verified");
 }
 
-// Build the unified network interceptor (bundled CJS loaded via --require into Node-based SDK subprocesses)
-async function buildInterceptor(): Promise<void> {
-  console.log("🔌 Building unified network interceptor...");
-
-  const proc = spawn({
-    cmd: [
-      "bun", "run", "esbuild",
-      INTERCEPTOR_SOURCE,
-      "--bundle",
-      "--platform=node",
-      "--format=cjs",
-      `--outfile=${INTERCEPTOR_OUTPUT}`,
-    ],
-    cwd: ROOT_DIR,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-
-  const exitCode = await proc.exited;
-
-  if (exitCode !== 0) {
-    console.error("❌ Interceptor build failed with exit code", exitCode);
-    process.exit(exitCode);
-  }
-
-  if (!existsSync(INTERCEPTOR_OUTPUT)) {
-    console.error("❌ Interceptor output not found at", INTERCEPTOR_OUTPUT);
-    process.exit(1);
-  }
-
-  console.log("✅ Interceptor built successfully");
-}
-
 // Build the Session MCP Server (provides session-scoped tools for Codex sessions)
 async function buildSessionServer(): Promise<void> {
   console.log("📋 Building Session MCP Server...");
@@ -288,6 +254,39 @@ async function buildWhatsAppWorker(): Promise<void> {
   console.log("✅ WhatsApp worker built successfully");
 }
 
+async function buildWorkspaceServer(): Promise<void> {
+  console.log("🧩 Building workspace server subprocess bundle...");
+
+  const proc = spawn({
+    cmd: [
+      "bun", "run", "esbuild",
+      "packages/server/src/index.ts",
+      "--bundle",
+      "--platform=node",
+      "--format=esm",
+      "--target=node20",
+      "--outfile=apps/electron/dist/workspace-server.mjs",
+      "--external:electron",
+    ],
+    cwd: ROOT_DIR,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    console.error("❌ Workspace server build failed with exit code", exitCode);
+    process.exit(exitCode);
+  }
+
+  if (!existsSync(WORKSPACE_SERVER_OUTPUT)) {
+    console.error("❌ Workspace server output not found at", WORKSPACE_SERVER_OUTPUT);
+    process.exit(1);
+  }
+
+  console.log("✅ Workspace server subprocess bundle built successfully");
+}
+
 async function main(): Promise<void> {
   loadEnvFile();
 
@@ -309,11 +308,12 @@ async function main(): Promise<void> {
   const buildConfig = getCurrentBuildConfig();
   copySessionServer(buildConfig);
 
-  // Build unified network interceptor (CJS bundle for Node.js --require)
-  await buildInterceptor();
-
   // Build WhatsApp worker (Baileys subprocess — optional package)
   await buildWhatsAppWorker();
+
+  // Build workspace server bundle used by Electron to keep agent runtime out of
+  // the main process in packaged builds.
+  await buildWorkspaceServer();
 
   const buildDefines = getBuildDefines();
 
@@ -327,6 +327,9 @@ async function main(): Promise<void> {
       "--platform=node",
       "--format=cjs",
       "--outfile=apps/electron/dist/main.cjs",
+      "--define:import.meta.url=__craft_import_meta_url",
+      "--define:import.meta.resolve=__craft_import_meta_resolve",
+      "--banner:js=const __craft_import_meta_url = require('url').pathToFileURL(__filename).href; const __craft_import_meta_resolve = (specifier) => require('url').pathToFileURL(require.resolve(specifier)).href;",
       "--external:electron",
       // Replace grammY's bundled polyfills (node-fetch@2 + abort-controller@3)
       // with native Node globals. esbuild otherwise renames the polyfill's

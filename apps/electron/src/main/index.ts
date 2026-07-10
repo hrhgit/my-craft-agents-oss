@@ -114,12 +114,13 @@ import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-p
 import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog } from './logger'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 import { registerPiModelResolver } from '@craft-agent/shared/config'
-import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/config'
+import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/config/models-pi'
 import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount } from './notifications'
 import { checkForUpdatesOnLaunch, setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './auto-update'
 import type { EventSink } from '@craft-agent/server-core/transport'
 import { validateGitBashPath, checkVCRedistInstalled } from '@craft-agent/server-core/services'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
+import { spawnWorkspaceServer, type SpawnedWorkspaceServer } from './workspace-server-spawner'
 
 // Initialize electron-log for renderer process support
 log.initialize()
@@ -214,6 +215,7 @@ let browserPaneManager: BrowserPaneManager | null = null
 let oauthFlowStore: OAuthFlowStore | null = null
 let moduleSink: EventSink | null = null
 let moduleClientResolver: ((webContentsId: number) => string | undefined) | null = null
+let workspaceServer: SpawnedWorkspaceServer | null = null
 
 // Messaging gateway: the bootstrap handle is created once sessionManager is
 // available (inside createHandlerDeps) and populated with the WS publisher
@@ -1038,6 +1040,54 @@ app.whenReady().then(async () => {
       const { setNotificationEventSink } = await import('./notifications')
       setNotificationEventSink(moduleSink!, resolveClientId)
 
+      const workspaceServerIsolationEnabled = !isHeadless
+        && !serverModeEnabled
+        && process.env.CRAFT_ELECTRON_WORKSPACE_SERVER !== '0'
+
+      if (workspaceServerIsolationEnabled && !process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL) {
+        delete process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED
+        delete process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED_REASON
+        try {
+          const timeoutMs = Number.parseInt(process.env.CRAFT_WORKSPACE_SERVER_STARTUP_TIMEOUT_MS ?? '', 10)
+          workspaceServer = await spawnWorkspaceServer({
+            isPackaged: app.isPackaged,
+            appPath: app.getAppPath(),
+            resourcesPath: process.resourcesPath,
+            bundledAssetsRoot: __dirname,
+            version: app.getVersion(),
+            startupTimeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : undefined,
+          })
+
+          if (workspaceServer) {
+            process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL = workspaceServer.url
+            process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN = workspaceServer.token
+            delete process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED
+            delete process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED_REASON
+            mainLog.info('[workspace-server] Local workspace RPC isolated in child process', {
+              url: workspaceServer.url,
+              pid: workspaceServer.pid,
+            })
+          }
+        } catch (err) {
+          workspaceServer = null
+          const reason = err instanceof Error ? err.message : String(err)
+          mainLog.error('[workspace-server] Failed to start child-process workspace server; falling back to embedded runtime:', {
+            reason,
+            ...(err instanceof Error && err.stack ? { stack: err.stack } : {}),
+          })
+          delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL
+          delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN
+          process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED = '1'
+          process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED_REASON = reason
+        }
+      } else if (process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL) {
+        mainLog.info('[workspace-server] Using preconfigured local workspace server', {
+          url: process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL,
+        })
+      } else if (serverModeEnabled) {
+        mainLog.info('[workspace-server] Isolation disabled while server mode is enabled; embedded server remains authoritative.')
+      }
+
       // Headless: print connection details
       if (isHeadless) {
         // Write token to a file with 0600 permissions instead of stdout,
@@ -1227,8 +1277,8 @@ app.on('before-quit', async (event) => {
     } catch (error) {
       mainLog.error('Failed to flush sessions:', error)
     }
-    // Clean up SessionManager resources (file watchers, timers, etc.)
-    sessionManager.cleanup()
+    // Clean up SessionManager resources (backend runtimes, MCP pools, file watchers, timers, etc.)
+    await sessionManager.cleanup()
 
     // Clean up browser pane instances
     if (browserPaneManager) {
@@ -1249,6 +1299,19 @@ app.on('before-quit', async (event) => {
         await messagingHandle.dispose()
       } catch (err) {
         mainLog.error('[messaging] dispose failed:', err)
+      }
+    }
+
+    if (workspaceServer) {
+      try {
+        await workspaceServer.stop()
+        mainLog.info('[workspace-server] Stopped child-process workspace server')
+      } catch (err) {
+        mainLog.error('[workspace-server] Failed to stop child-process workspace server:', err)
+      } finally {
+        workspaceServer = null
+        delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL
+        delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN
       }
     }
 

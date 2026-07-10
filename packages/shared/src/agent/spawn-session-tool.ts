@@ -32,7 +32,7 @@ interface SpawnSessionToolArgs {
   model?: string;
   enabledSourceSlugs?: string[];
   permissionMode?: 'safe' | 'ask' | 'allow-all';
-  thinkingLevel?: 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   labels?: string[];
   workingDirectory?: string;
   attachments?: Array<{ path: string; name?: string }>;
@@ -78,7 +78,7 @@ Only use 'attachments' for existing file paths on disk — the tool reads them a
         .describe('Source slugs to enable in the new session'),
       permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional()
         .describe('Permission mode for the new session'),
-      thinkingLevel: z.enum(['off', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
+      thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional()
         .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the workspace default.'),
       labels: z.array(z.string()).optional()
         .describe('Labels for the new session'),

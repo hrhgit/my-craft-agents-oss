@@ -11,8 +11,8 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createWebApi } from './adapter/web-api'
-import type { WsRpcClient } from '@craft-agent/server-core/transport'
-import { errorMessage } from '@craft-agent/shared/utils'
+import type { WsRpcClient } from '@craft-agent/server-core/transport/client'
+import { errorMessage } from '@craft-agent/shared/utils/text'
 
 // Lazy-load the Electron App after window.electronAPI is set up.
 // This prevents any Electron component from accessing window.electronAPI

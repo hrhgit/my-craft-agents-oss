@@ -1,19 +1,21 @@
 /**
- * Cross-platform resources copy script
+ * Cross-platform resources copy script.
+ *
+ * Delegates to the Electron app script so Windows packaging, root builds, and
+ * app-local builds all stage the same resources and Pi CLI runtime.
  */
 
-import { existsSync, cpSync } from "fs";
+import { spawn } from "bun";
 import { join } from "path";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
 
-const srcDir = join(ELECTRON_DIR, "resources");
-const destDir = join(ELECTRON_DIR, "dist/resources");
+const proc = spawn({
+  cmd: ["bun", "scripts/copy-assets.ts"],
+  cwd: ELECTRON_DIR,
+  stdout: "inherit",
+  stderr: "inherit",
+});
 
-if (existsSync(srcDir)) {
-  cpSync(srcDir, destDir, { recursive: true, force: true });
-  console.log("📦 Copied resources to dist");
-} else {
-  console.log("⚠️ No resources directory found");
-}
+process.exit(await proc.exited);

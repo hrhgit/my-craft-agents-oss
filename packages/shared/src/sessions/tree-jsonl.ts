@@ -3,9 +3,12 @@
  *
  */
 
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync } from 'fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'fs';
 import { dirname, join } from 'path';
-import { SessionManager as PiSessionManager } from '@earendil-works/pi-coding-agent';
+import {
+  SessionManager as PiSessionManager,
+  setCraftSessionMetadata as setPiCraftSessionMetadata,
+} from '@earendil-works/pi-coding-agent';
 import type { MessageRole } from '@craft-agent/core/types';
 import type {
   CraftSessionMetadata,
@@ -20,6 +23,8 @@ import { sanitizeSessionId } from './validation.ts';
 import { debug } from '../utils/debug.ts';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { atomicWriteFileSync } from '../utils/files.ts';
+import { applyPlanCustomMessageToStored } from './plan-artifact-projection.ts';
+import type { PlanModeStateV1 } from '@craft-agent/core/types';
 
 /**
  * On-disk shape of Craft extension fields in Pi tree JSONL v3 header.
@@ -55,78 +60,6 @@ export interface TreeSessionHeader {
   spawnedFrom?: string;
   spawnConfig?: TreeSessionSpawnConfig;
   craft?: CraftMetadataOnDisk;
-}
-
-const TREE_SESSION_FILE_LOCK_STALE_MS = 30_000;
-const TREE_SESSION_FILE_LOCK_RETRY_DELAY_MS = 25;
-// Sync 版本最多阻塞 500ms（20 × 25ms），避免长时间冻结事件循环。
-// 全量 35s 重试仅在 async 版本中可用。
-const TREE_SESSION_FILE_LOCK_SYNC_RETRY_COUNT = 20;
-const TREE_SESSION_FILE_LOCK_ASYNC_RETRY_COUNT = 1_400;
-
-function sleepSync(ms: number): void {
-  // Atomics.wait 是真正的同步阻塞——仅在 sync 版本中使用，且最多 500ms。
-  const buf = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(buf, 0, 0, ms);
-}
-
-function sleepAsync(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function tryAcquireLock(sessionFile: string): (() => void) | null {
-  const lockDir = `${sessionFile}.lock`;
-  try {
-    mkdirSync(lockDir);
-    return () => {
-      try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    };
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== 'EEXIST') {
-      throw error;
-    }
-
-    try {
-      const lockStat = statSync(lockDir);
-      if (lockStat.mtimeMs < Date.now() - TREE_SESSION_FILE_LOCK_STALE_MS) {
-        rmSync(lockDir, { recursive: true, force: true });
-        return null; // 重试
-      }
-    } catch (statError) {
-      const statCode = (statError as NodeJS.ErrnoException).code;
-      if (statCode !== 'ENOENT') {
-        throw statError;
-      }
-    }
-    return null; // 锁仍被持有，重试
-  }
-}
-
-export function acquireTreeSessionFileLock(sessionFile: string): () => void {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= TREE_SESSION_FILE_LOCK_SYNC_RETRY_COUNT; attempt++) {
-    const release = tryAcquireLock(sessionFile);
-    if (release) return release;
-    lastError = new Error(`Lock contention on ${sessionFile}`);
-    if (attempt < TREE_SESSION_FILE_LOCK_SYNC_RETRY_COUNT) {
-      sleepSync(TREE_SESSION_FILE_LOCK_RETRY_DELAY_MS);
-    }
-  }
-  throw (lastError as Error) ?? new Error(`Failed to acquire tree session file lock: ${sessionFile}`);
-}
-
-export async function acquireTreeSessionFileLockAsync(sessionFile: string): Promise<() => void> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= TREE_SESSION_FILE_LOCK_ASYNC_RETRY_COUNT; attempt++) {
-    const release = tryAcquireLock(sessionFile);
-    if (release) return release;
-    lastError = new Error(`Lock contention on ${sessionFile}`);
-    if (attempt < TREE_SESSION_FILE_LOCK_ASYNC_RETRY_COUNT) {
-      await sleepAsync(TREE_SESSION_FILE_LOCK_RETRY_DELAY_MS);
-    }
-  }
-  throw (lastError as Error) ?? new Error(`Failed to acquire tree session file lock: ${sessionFile}`);
 }
 
 interface TreeEntryBase {
@@ -247,6 +180,15 @@ export interface TreeProjectionOptions {
   leafId?: string | null;
 }
 
+export interface TreeSessionProjectionLike {
+  path?: string;
+  sessionDir?: string;
+  cwd?: string;
+  leafId?: string | null;
+  header: unknown;
+  entries: unknown[];
+}
+
 export interface WriteTreeSessionCraftMetadataOptions {
   lastWrittenHeaderSignature?: string;
 }
@@ -332,8 +274,11 @@ function isCanonicalStoredMessage(message: StoredMessage): boolean {
   return message.type === 'user' || message.type === 'assistant' || message.type === 'tool';
 }
 
-function hasCraftOnlyMessageFields(message: StoredMessage): boolean {
-  const canonicalKeys = new Set(['id', 'type', 'content', 'timestamp']);
+function getCanonicalMessageKeys(message: StoredMessage): Set<string> {
+  const canonicalKeys = new Set(['id', 'type', 'timestamp']);
+  if (message.type !== 'user') {
+    canonicalKeys.add('content');
+  }
   if (message.type === 'tool') {
     canonicalKeys.add('toolName');
     canonicalKeys.add('toolUseId');
@@ -341,22 +286,18 @@ function hasCraftOnlyMessageFields(message: StoredMessage): boolean {
     canonicalKeys.add('toolResult');
     canonicalKeys.add('isError');
   }
+  return canonicalKeys;
+}
 
+function hasCraftOnlyMessageFields(message: StoredMessage): boolean {
+  const canonicalKeys = getCanonicalMessageKeys(message);
   return Object.keys(message).some(key => !canonicalKeys.has(key));
 }
 
 function buildCraftOnlyMessagePatch(message: StoredMessage): (Partial<StoredMessage> & { id: string }) | null {
   if (!hasCraftOnlyMessageFields(message)) return null;
 
-  const canonicalKeys = new Set(['id', 'type', 'content', 'timestamp']);
-  if (message.type === 'tool') {
-    canonicalKeys.add('toolName');
-    canonicalKeys.add('toolUseId');
-    canonicalKeys.add('toolInput');
-    canonicalKeys.add('toolResult');
-    canonicalKeys.add('isError');
-  }
-
+  const canonicalKeys = getCanonicalMessageKeys(message);
   const patch: Partial<StoredMessage> & { id: string } = { id: message.id };
   for (const key of Object.keys(message) as Array<keyof StoredMessage>) {
     if (canonicalKeys.has(key)) continue;
@@ -534,68 +475,53 @@ export function writeTreeSessionCraftMetadata(
   session: StoredSession,
   options: WriteTreeSessionCraftMetadataOptions = {},
 ): boolean {
-  const release = acquireTreeSessionFileLock(sessionFile);
   try {
-    const content = readFileSync(sessionFile, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
-    if (lines.length === 0) return false;
-
-    const header = JSON.parse(lines[0]!) as unknown;
+    const header = readTreeSessionHeader(sessionFile);
     if (!isTreeSessionHeader(header)) return false;
 
     const previousCraft = isRecord(header.craft) ? header.craft as CraftMetadataOnDisk : {};
     const craftMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
 
-    const updatedHeader: TreeSessionHeader = {
-      ...header,
-      craft: craftMetadata,
-    };
-
-    atomicWriteFileSync(sessionFile, [JSON.stringify(updatedHeader), ...lines.slice(1)].join('\n') + '\n');
+    setPiCraftSessionMetadata({
+      sessionPath: sessionFile,
+      sessionDir: dirname(sessionFile),
+      cwdOverride: session.workspaceRootPath,
+      metadata: craftMetadata,
+    });
     writeCraftSessionOverlay(sessionFile, session);
     return true;
   } catch (error) {
     debug('[tree-jsonl] Failed to update tree session Craft metadata:', sessionFile, error);
     return false;
-  } finally {
-    release();
   }
 }
 
 /**
- * Async 版本——使用 acquireTreeSessionFileLockAsync 避免阻塞事件循环。
- * 供持久化队列等 async 热路径使用。
+ * Async facade-compatible metadata update for persistence queue hot paths.
  */
 export async function writeTreeSessionCraftMetadataAsync(
   sessionFile: string,
   session: StoredSession,
   options: WriteTreeSessionCraftMetadataOptions = {},
 ): Promise<boolean> {
-  const release = await acquireTreeSessionFileLockAsync(sessionFile);
   try {
-    const content = readFileSync(sessionFile, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
-    if (lines.length === 0) return false;
-
-    const header = JSON.parse(lines[0]!) as unknown;
+    const header = readTreeSessionHeader(sessionFile);
     if (!isTreeSessionHeader(header)) return false;
 
     const previousCraft = isRecord(header.craft) ? header.craft as CraftMetadataOnDisk : {};
     const craftMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
 
-    const updatedHeader: TreeSessionHeader = {
-      ...header,
-      craft: craftMetadata,
-    };
-
-    atomicWriteFileSync(sessionFile, [JSON.stringify(updatedHeader), ...lines.slice(1)].join('\n') + '\n');
+    setPiCraftSessionMetadata({
+      sessionPath: sessionFile,
+      sessionDir: dirname(sessionFile),
+      cwdOverride: session.workspaceRootPath,
+      metadata: craftMetadata,
+    });
     writeCraftSessionOverlay(sessionFile, session);
     return true;
   } catch (error) {
     debug('[tree-jsonl] Failed to update tree session Craft metadata:', sessionFile, error);
     return false;
-  } finally {
-    release();
   }
 }
 
@@ -880,6 +806,33 @@ function extractTextFromContent(content: unknown): string {
     .join('\n');
 }
 
+const LEADING_USER_DATE_CONTEXT_RE =
+  /^\s*\*\*USER'S DATE AND TIME:[\s\S]*?\*\*\s*-\s*ALWAYS use this as the authoritative current date\/time\. Ignore any\s+other date information\.\s*/i;
+
+const LEADING_CRAFT_CONTEXT_BLOCK_RE =
+  /^\s*<(session_state|sources|source_issue)(?:\s[^>]*)?>[\s\S]*?<\/\1>\s*/i;
+
+function stripLeadingCraftInjectedUserContext(content: string): string {
+  let stripped = false;
+  let next = content;
+
+  for (;;) {
+    const before = next;
+    next = next.replace(LEADING_USER_DATE_CONTEXT_RE, () => {
+      stripped = true;
+      return '';
+    });
+    next = next.replace(LEADING_CRAFT_CONTEXT_BLOCK_RE, () => {
+      stripped = true;
+      return '';
+    });
+    if (next === before) break;
+  }
+
+  const cleaned = next.trimStart();
+  return stripped && cleaned ? cleaned : content;
+}
+
 function normalizeToolInput(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
@@ -904,8 +857,14 @@ function appendContentBlockMessages(
     if (!block || typeof block !== 'object') continue;
     if (block.type === 'text' && typeof block.text === 'string') {
       textParts.push(block.text);
-    } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
-      textParts.push(block.thinking);
+    } else if (role === 'assistant' && block.type === 'thinking' && typeof block.thinking === 'string') {
+      out.push({
+        id: `${entry.id}-thinking-${out.length}`,
+        type: role,
+        content: block.thinking,
+        timestamp: ts,
+        isIntermediate: true,
+      });
     } else if (block.type === 'toolCall' || block.type === 'tool_use') {
       const toolUseId = typeof block.id === 'string' ? block.id : `${entry.id}-tool-${out.length}`;
       const toolInput = block.type === 'toolCall' ? block.arguments : block.input;
@@ -937,10 +896,11 @@ function appendContentBlockMessages(
   }
 
   if (textParts.length > 0) {
+    const content = textParts.join('\n');
     out.push({
       id: entry.id,
       type: role,
-      content: textParts.join('\n'),
+      content: role === 'user' ? stripLeadingCraftInjectedUserContext(content) : content,
       timestamp: ts,
     });
   }
@@ -954,7 +914,12 @@ function appendAgentMessage(out: StoredMessage[], entry: TreeMessageEntry): void
   if (roleRaw === 'user' || roleRaw === 'assistant') {
     const content = message.content;
     if (typeof content === 'string') {
-      out.push({ id: entry.id, type: roleRaw, content, timestamp: ts });
+      out.push({
+        id: entry.id,
+        type: roleRaw,
+        content: roleRaw === 'user' ? stripLeadingCraftInjectedUserContext(content) : content,
+        timestamp: ts,
+      });
     } else if (Array.isArray(content)) {
       appendContentBlockMessages(out, entry, roleRaw, content, message.timestamp);
     }
@@ -1071,6 +1036,9 @@ function appendTreeEntryProjection(out: StoredMessage[], entry: TreeSessionEntry
       content: extractTextFromContent(entry.content),
       timestamp: timestampMs(entry.timestamp),
       infoLevel: 'info',
+      customType: entry.customType,
+      customDetails: entry.details,
+      customDisplay: entry.display,
     });
   } else if (entry.type === 'branch_summary' && 'summary' in entry) {
     out.push({
@@ -1092,12 +1060,34 @@ function appendTreeEntryProjection(out: StoredMessage[], entry: TreeSessionEntry
 }
 
 export function projectTreeSessionMessages(entries: TreeSessionEntry[], leafId?: string | null): StoredMessage[] {
+  return projectTreeSessionPlanData(entries, leafId).messages;
+}
+
+export function projectTreeSessionPlanData(
+  entries: TreeSessionEntry[],
+  leafId?: string | null,
+): { messages: StoredMessage[]; planModeState?: PlanModeStateV1 } {
   const branch = getBranch(entries, leafId);
   const messages: StoredMessage[] = [];
+  let planModeState: PlanModeStateV1 | undefined;
   for (const entry of branch) {
+    if (entry.type === 'custom_message' && 'customType' in entry) {
+      const result = applyPlanCustomMessageToStored(messages, {
+        id: entry.id,
+        customType: entry.customType,
+        content: extractTextFromContent(entry.content),
+        details: entry.details,
+        timestamp: timestampMs(entry.timestamp),
+      });
+      if (result.projection.kind === 'state') {
+        planModeState = result.projection.state;
+        continue;
+      }
+      if (result.projection.kind === 'artifact') continue;
+    }
     appendTreeEntryProjection(messages, entry);
   }
-  return messages;
+  return { messages, planModeState };
 }
 
 function latestSessionName(entries: TreeSessionEntry[]): string | undefined {
@@ -1188,8 +1178,16 @@ export function readTreeSessionAsStoredSession(
 ): StoredSession | null {
   const parsed = readTreeSessionJsonl(sessionFile);
   if (!parsed) return null;
+  return projectParsedTreeSessionAsStoredSession(parsed, sessionFile, options);
+}
 
-  const baseMessages = projectTreeSessionMessages(parsed.entries, options.leafId);
+function projectParsedTreeSessionAsStoredSession(
+  parsed: ParsedTreeSession,
+  sessionFile: string,
+  options: TreeProjectionOptions = {},
+): StoredSession | null {
+  const planProjection = projectTreeSessionPlanData(parsed.entries, options.leafId);
+  const baseMessages = planProjection.messages;
   const createdAt = new Date(parsed.header.timestamp).getTime() || Date.now();
   const stat = existsSync(sessionFile) ? statSync(sessionFile) : undefined;
   const lastUsedAt = stat?.mtimeMs ?? createdAt;
@@ -1233,9 +1231,76 @@ export function readTreeSessionAsStoredSession(
     preview: craft.preview ?? extractPreview(messages),
     lastMessageRole: craft.lastMessageRole ?? extractLastMessageRole(messages),
     lastFinalMessageId: craft.lastFinalMessageId ?? extractLastFinalMessageId(messages),
+    planModeState: planProjection.planModeState ?? craft.planModeState,
     messages,
     tokenUsage: craft.tokenUsage ?? tokenUsageFromEntries(parsed.entries),
   } as StoredSession;
+}
+
+function emptySessionTokenUsage(): SessionTokenUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    contextTokens: 0,
+    costUsd: 0,
+  };
+}
+
+export function projectTreeSessionHeaderAsSessionHeader(
+  header: TreeSessionHeader,
+  sessionFile: string,
+  options: TreeProjectionOptions = {},
+): SessionHeader {
+  const createdAt = new Date(header.timestamp).getTime() || Date.now();
+  const stat = existsSync(sessionFile) ? statSync(sessionFile) : undefined;
+  const lastUsedAt = stat?.mtimeMs ?? createdAt;
+  const workspaceRootPath = options.workspaceRootPath
+    ?? header.craft?.workspaceRootPath
+    ?? header.cwd
+    ?? dirname(sessionFile);
+  const craft = header.craft ?? {};
+  const craftId = getCraftIdFromTreeHeader(header, options.sessionIdPrefix ?? '');
+  const { id: _craftIdOnDisk, ...craftRest } = craft;
+
+  return {
+    ...craftRest,
+    craftId,
+    type: header.type,
+    version: header.version,
+    piSessionId: header.id,
+    piTimestamp: header.timestamp,
+    piCwd: header.cwd,
+    parentSession: header.parentSession,
+    workspaceRootPath: expandPath(workspaceRootPath),
+    sdkSessionId: craft.sdkSessionId,
+    createdAt: craft.createdAt ?? createdAt,
+    lastUsedAt: craft.lastUsedAt ?? lastUsedAt,
+    lastMessageAt: craft.lastMessageAt ?? lastUsedAt,
+    workingDirectory: workspaceRootPath,
+    sdkCwd: craft.sdkCwd ?? workspaceRootPath,
+    messageCount: craft.messageCount ?? 0,
+    tokenUsage: craft.tokenUsage ?? emptySessionTokenUsage(),
+  } as SessionHeader;
+}
+
+export function projectTreeSessionProjectionAsStoredSession(
+  projection: TreeSessionProjectionLike,
+  options: TreeProjectionOptions = {},
+): StoredSession | null {
+  if (!isTreeSessionHeader(projection.header)) return null;
+  const entries = projection.entries.filter(isTreeEntry);
+  const sessionFile = projection.path ?? options.sessionFilePath ?? '';
+  return projectParsedTreeSessionAsStoredSession(
+    { header: projection.header, entries },
+    sessionFile,
+    {
+      workspaceRootPath: options.workspaceRootPath ?? projection.cwd,
+      sessionFilePath: sessionFile,
+      sessionIdPrefix: options.sessionIdPrefix,
+      leafId: options.leafId ?? projection.leafId,
+    },
+  );
 }
 
 /**
@@ -1247,14 +1312,15 @@ export function readTreeSessionMetadata(
   workspaceRootPath?: string,
   sessionIdPrefix = '',
 ): SessionHeader | null {
-  const stored = readTreeSessionAsStoredSession(sessionFile, {
+  const header = readTreeSessionHeader(sessionFile);
+  if (!header) return null;
+
+  // Session list metadata is cached in the first-line `craft` object. Do not
+  // open/project the full Pi message tree here: this function runs once per
+  // session during server startup and large histories can otherwise delay the
+  // workspace-server ready signal beyond its startup timeout.
+  return projectTreeSessionHeaderAsSessionHeader(header, sessionFile, {
     workspaceRootPath: workspaceRootPath || undefined,
     sessionIdPrefix,
   });
-  if (!stored) return null;
-
-  // StoredSession 是 SessionHeader 的扩展（多 messages + tokenUsage），
-  // 直接解构返回 SessionHeader 形状
-  const { messages: _messages, ...header } = stored;
-  return header as SessionHeader;
 }

@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Clock } from 'lucide-react'
 import type { StoredAttachment, ContentBadge } from '@craft-agent/core'
-import { normalizePath } from '@craft-agent/shared/utils'
+import { normalizePath } from '@craft-agent/shared/utils/path-strings'
 import { cn } from '../../lib/utils'
 import { Markdown } from '../markdown'
 import { FileTypeIcon, getFileTypeLabel } from './attachment-helpers'

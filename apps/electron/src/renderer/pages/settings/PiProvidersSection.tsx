@@ -6,7 +6,7 @@
  * (~/.pi/agent/settings.json). Lets the user:
  *   - See all configured providers (key, host, model count, default badge)
  *   - Switch the default provider+model (writes settings.json)
- *   - Add / edit / delete providers (writes models.json)
+ *   - Add / edit / delete providers (writes models.json; credentials go to auth.json)
  *
  * Reads ~/.pi/agent/ directly via the pi:* RPC channel; does NOT touch
  * ~/.craft-agent/config.json. Live updates arrive via the GLOBAL_CHANGED
@@ -35,7 +35,14 @@ import {
 } from '@/components/settings'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 import { PiProviderFormDialog } from './PiProviderFormDialog'
-import type { PiGlobalProvider, PiGlobalProviderForDisplay } from '../../../shared/types'
+import type { PiCustomApi, PiGlobalProvider, PiGlobalProviderForDisplay } from '../../../shared/types'
+
+const PI_API_LABELS: Record<PiCustomApi, string> = {
+  'openai-completions': 'OpenAI Chat',
+  'openai-responses': 'OpenAI Responses',
+  'anthropic-messages': 'Anthropic',
+  'google-generative-ai': 'Google AI',
+}
 
 function hostOf(url: string | undefined): string {
   if (!url) return ''
@@ -46,9 +53,14 @@ function hostOf(url: string | undefined): string {
   }
 }
 
+function cleanAddLabel(label: string): string {
+  return label.replace(/^\+\s*/, '')
+}
+
 export function PiProvidersSection() {
   const { t } = useTranslation()
   const { providers, settings, isLoading, error, refresh } = usePiGlobalConfig()
+  const addProviderLabel = cleanAddLabel(t('settings.piProviders.addProvider'))
 
   // Dialog state
   const [dialogOpen, setDialogOpen] = React.useState(false)
@@ -88,8 +100,8 @@ export function PiProvidersSection() {
   }, [])
 
   // Persist a provider (add or edit) via RPC
-  const handleSaveProvider = React.useCallback(async (key: string, provider: PiGlobalProvider) => {
-    const result = await window.electronAPI.savePiGlobalProvider({ key, provider })
+  const handleSaveProvider = React.useCallback(async (key: string, provider: PiGlobalProvider, apiKey?: string) => {
+    const result = await window.electronAPI.savePiGlobalProvider({ key, provider, apiKey })
     if (!result.success) {
       throw new Error(result.error || 'savePiGlobalProvider failed')
     }
@@ -220,7 +232,7 @@ export function PiProvidersSection() {
                     label={
                       <div className="flex flex-col gap-0.5 min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-medium">{entry.key}</span>
+                          <span className="font-medium truncate">{entry.key}</span>
                           {entry.key === defaultProvider && (
                             <span className="inline-flex items-center h-5 px-2 text-[11px] font-medium rounded-[4px] bg-background shadow-minimal text-foreground/60">
                               {t('common.default')}
@@ -229,6 +241,8 @@ export function PiProvidersSection() {
                         </div>
                         <span className="text-xs text-muted-foreground truncate">
                           {hostOf(entry.provider.baseUrl) || t('settings.piProviders.noBaseUrl')}
+                          {' · '}
+                          {entry.provider.api ? PI_API_LABELS[entry.provider.api] : 'OpenAI Chat'}
                           {' · '}
                           {t('settings.piProviders.modelCount', { count: entry.modelCount })}
                           {entry.apiKeyMasked ? ` · ${entry.apiKeyMasked}` : ''}
@@ -275,7 +289,7 @@ export function PiProvidersSection() {
               className="inline-flex items-center h-8 px-3 text-sm rounded-lg bg-background shadow-minimal hover:bg-foreground/[0.02] transition-colors"
             >
               <Plus className="h-3.5 w-3.5 mr-1.5" />
-              {t('settings.piProviders.addProvider')}
+              {addProviderLabel}
             </button>
           </div>
         </SettingsSection>

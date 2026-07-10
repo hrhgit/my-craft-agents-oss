@@ -21,162 +21,35 @@
  * - `promptAutomation.*` / `planMode.*`：craft GUI 控件可见性
  */
 
-export const PI_MIGRATED_EXTENSION_IDS = [
-  'ask_user',
-  'plan-mode',
-  'prompt-automation',
-  'provider-payload-capture',
-  'pwsh-preflight',
-  'pwsh-utf8',
-  'repo-memory',
-  'subagent',
-  'trace-audit',
-  'yourself',
-  'ambiguity-dictionary',
-  'auto-continue-openai-errors',
-  'notify',
-  'web-search-footer',
-] as const;
-
-export type PiExtensionId = typeof PI_MIGRATED_EXTENSION_IDS[number];
-
-export type PiExtensionSourceKind = 'directory' | 'file';
-
-export interface PiExtensionManifestEntry {
-  id: PiExtensionId;
-  title: string;
-  description: string;
-  sourceName: string;
-  sourceKind: PiExtensionSourceKind;
-  category: 'ui' | 'automation' | 'agent' | 'shell' | 'diagnostics' | 'memory' | 'search';
-  configurable?: boolean;
-}
+export type PiExtensionCategory =
+  | 'ui'
+  | 'automation'
+  | 'agent'
+  | 'shell'
+  | 'diagnostics'
+  | 'memory'
+  | 'search'
+  | 'other';
 
 /**
- * 扩展清单——仅用于 GUI 展示扩展元信息（标题、描述、分类）。
- * 扩展启停已迁移到 pi settings.json 的 `extensions.<name>.enabled`，
- * 本清单不再驱动启停 UI 的勾选状态。
+ * Pi 返回给 host shell 的扩展展示 DTO。
+ * 扩展发现、启停配置和元数据归 Pi；Craft 只消费这个 catalog 渲染设置 UI。
  */
-export const PI_EXTENSION_MANIFEST: PiExtensionManifestEntry[] = [
-  {
-    id: 'ask_user',
-    title: 'ask_user',
-    description: 'Frontend question dialogs for extension-driven user input.',
-    sourceName: 'ask_user',
-    sourceKind: 'directory',
-    category: 'ui',
-  },
-  {
-    id: 'plan-mode',
-    title: 'plan-mode',
-    description: 'Discussion and plan mode commands, widgets, and plan rendering.',
-    sourceName: 'plan-mode',
-    sourceKind: 'directory',
-    category: 'ui',
-    configurable: true,
-  },
-  {
-    id: 'prompt-automation',
-    title: 'prompt-automation',
-    description: 'Scheduled prompt jobs and automation widgets.',
-    sourceName: 'prompt-automation',
-    sourceKind: 'directory',
-    category: 'automation',
-    configurable: true,
-  },
-  {
-    id: 'provider-payload-capture',
-    title: 'provider-payload-capture',
-    description: 'Provider request capture diagnostics.',
-    sourceName: 'provider-payload-capture',
-    sourceKind: 'directory',
-    category: 'diagnostics',
-  },
-  {
-    id: 'pwsh-preflight',
-    title: 'pwsh-preflight',
-    description: 'PowerShell command preflight checks.',
-    sourceName: 'pwsh-preflight',
-    sourceKind: 'directory',
-    category: 'shell',
-  },
-  {
-    id: 'pwsh-utf8',
-    title: 'pwsh-utf8',
-    description: 'PowerShell UTF-8 compatibility helpers.',
-    sourceName: 'pwsh-utf8',
-    sourceKind: 'directory',
-    category: 'shell',
-  },
-  {
-    id: 'repo-memory',
-    title: 'repo-memory',
-    description: 'Background repository memory generation and status.',
-    sourceName: 'repo-memory',
-    sourceKind: 'directory',
-    category: 'memory',
-    configurable: true,
-  },
-  {
-    id: 'subagent',
-    title: 'subagent',
-    description: 'Subagent supervisor and command surface.',
-    sourceName: 'subagent',
-    sourceKind: 'directory',
-    category: 'agent',
-    configurable: true,
-  },
-  {
-    id: 'trace-audit',
-    title: 'trace-audit',
-    description: 'Background trace audit subagent and review flow.',
-    sourceName: 'trace-audit',
-    sourceKind: 'directory',
-    category: 'agent',
-    configurable: true,
-  },
-  {
-    id: 'yourself',
-    title: 'yourself',
-    description: 'Background self-summary agent and status.',
-    sourceName: 'yourself',
-    sourceKind: 'directory',
-    category: 'agent',
-    configurable: true,
-  },
-  {
-    id: 'ambiguity-dictionary',
-    title: 'ambiguity-dictionary',
-    description: 'User-editable ambiguity dictionary for prompt clarification.',
-    sourceName: 'ambiguity-dictionary.ts',
-    sourceKind: 'file',
-    category: 'ui',
-  },
-  {
-    id: 'auto-continue-openai-errors',
-    title: 'auto-continue-openai-errors',
-    description: 'Automatic continuation for transient OpenAI-style provider errors.',
-    sourceName: 'auto-continue-openai-errors.ts',
-    sourceKind: 'file',
-    category: 'automation',
-  },
-  {
-    id: 'notify',
-    title: 'notify',
-    description: 'Extension notifications routed into Craft UI.',
-    sourceName: 'notify.ts',
-    sourceKind: 'file',
-    category: 'ui',
-  },
-  {
-    id: 'web-search-footer',
-    title: 'web-search-footer',
-    description: 'Search footer/status integration with native-first search fallback.',
-    sourceName: 'web-search-footer.ts',
-    sourceKind: 'file',
-    category: 'search',
-  },
-];
+export interface PiExtensionCatalogEntry {
+  id: string;
+  title: string;
+  description: string;
+  category: PiExtensionCategory;
+  configurable: boolean;
+  enabled: boolean;
+  path: string;
+  resolvedPath: string;
+  commands: string[];
+  tools: string[];
+  flags: string[];
+  shortcuts: string[];
+  config?: Record<string, unknown>;
+}
 
 /**
  * Pi 扩展设置——仅 craft GUI 专属字段。

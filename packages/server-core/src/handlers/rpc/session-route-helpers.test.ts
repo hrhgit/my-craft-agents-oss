@@ -4,7 +4,10 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { encodePiSessionCwd } from '@craft-agent/shared/config/paths';
 import { setSharedPiSessionsDirForTests } from '@craft-agent/shared/sessions';
-import { collectSessionSearchRoots, resolvePiReadOnlySession } from './session-route-helpers.ts';
+import {
+  collectSessionSearchRoots,
+  serializeExtensionCommandArgs,
+} from './session-route-helpers.ts';
 
 function writePiSession(
   root: string,
@@ -30,6 +33,13 @@ describe('session route helpers', () => {
     workspaceRoot = join(tmpRoot, 'workspace');
     mkdirSync(workspaceRoot, { recursive: true });
     setSharedPiSessionsDirForTests(sessionsRoot);
+  });
+
+  it('normalizes omitted extension command args without creating a null prompt', () => {
+    expect(serializeExtensionCommandArgs(undefined)).toBeUndefined();
+    expect(serializeExtensionCommandArgs(null)).toBeUndefined();
+    expect(serializeExtensionCommandArgs('discussion')).toBe('discussion');
+    expect(serializeExtensionCommandArgs({ instructions: 'focus' })).toBe('{"instructions":"focus"}');
   });
 
   afterEach(() => {
@@ -67,41 +77,5 @@ describe('session route helpers', () => {
     ]);
 
     expect(roots).toEqual([]);
-    expect(resolvePiReadOnlySession('pi-session-b', workspaceRoot)).toBeNull();
-  });
-
-  it('resolves the sidecar directory for pi read-only sessions', () => {
-    const filePath = writePiSession(sessionsRoot, workspaceRoot, '2026-07-04T10-10-00_pi-child.jsonl', {
-      type: 'session',
-      id: 'pi-child',
-      timestamp: '2026-07-04T10:10:00.000Z',
-      cwd: workspaceRoot,
-      craft: {
-        id: 'craft-child',
-      },
-    });
-    const sidecarDir = join(filePath, '..', '.craft', 'craft-child');
-    mkdirSync(sidecarDir, { recursive: true });
-
-    const resolved = resolvePiReadOnlySession('pi-pi-child', workspaceRoot);
-
-    expect(resolved?.filePath).toBe(filePath);
-    expect(resolved?.sessionDir).toBe(join(filePath, '..', '.craft', 'craft-child'));
-    expect(resolved?.sessionFolderPath).toBe(join(filePath, '..', '.craft', 'craft-child'));
-  });
-
-  it('falls back to the session file path when no sidecar directory exists', () => {
-    const filePath = writePiSession(sessionsRoot, workspaceRoot, '2026-07-04T10-15-00_pi-leaf.jsonl', {
-      type: 'session',
-      id: 'pi-leaf',
-      timestamp: '2026-07-04T10:15:00.000Z',
-      cwd: workspaceRoot,
-    });
-
-    const resolved = resolvePiReadOnlySession('pi-pi-leaf', workspaceRoot);
-
-    expect(resolved?.filePath).toBe(filePath);
-    expect(resolved?.sessionDir).toBeNull();
-    expect(resolved?.sessionFolderPath).toBe(filePath);
   });
 });

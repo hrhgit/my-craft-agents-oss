@@ -13,6 +13,7 @@ export type MessageRole =
   | 'status'
   | 'info'
   | 'warning'
+  /** @deprecated Read compatibility only. New plans are assistant messages with artifact.kind=plan. */
   | 'plan'
   | 'auth-request';
 
@@ -277,6 +278,12 @@ export interface Message {
   badges?: ContentBadge[];
   /** Annotation payloads for this message */
   annotations?: AnnotationV1[];
+  /** Versioned structured artifact attached to an otherwise normal assistant message. */
+  artifact?: import('./plan-artifact.ts').PlanArtifactV1;
+  /** Original Pi custom-message protocol fields for non-plan extension output. */
+  customType?: string;
+  customDetails?: unknown;
+  customDisplay?: boolean;
   isError?: boolean;
   isStreaming?: boolean;
   // Pending: streaming text where we don't yet know if it's intermediate
@@ -365,6 +372,12 @@ export interface StoredMessage {
   badges?: ContentBadge[];
   /** Annotations persisted at message level */
   annotations?: AnnotationV1[];
+  /** Versioned structured artifact attached to an otherwise normal assistant message. */
+  artifact?: import('./plan-artifact.ts').PlanArtifactV1;
+  /** Original Pi custom-message protocol fields for non-plan extension output. */
+  customType?: string;
+  customDetails?: unknown;
+  customDisplay?: boolean;
   // Turn grouping - critical for TurnCard rendering after reload
   isIntermediate?: boolean;
   turnId?: string;
@@ -540,6 +553,7 @@ export type AgentEvent =
   | { type: 'info'; message: string }
   | { type: 'text_delta'; text: string; turnId?: string; parentToolUseId?: string }
   | { type: 'text_complete'; text: string; isIntermediate?: boolean; turnId?: string; parentToolUseId?: string; sdkMessageId?: string }
+  | { type: 'custom_message'; id?: string; customType: string; content: string; display: boolean; details?: unknown; timestamp?: number }
   | { type: 'pi_user_message_persisted' }
   | { type: 'pi_turn_anchor'; sdkMessageId: string; sdkTurnAnchor: string }
   | { type: 'tool_start'; toolName: string; toolUseId: string; input: Record<string, unknown>; intent?: string; displayName?: string; turnId?: string; parentToolUseId?: string; toolDisplayMeta?: ToolDisplayMeta }
@@ -562,6 +576,7 @@ export type AgentEvent =
   | { type: 'error'; message: string }
   | { type: 'typed_error'; error: TypedError }
   | { type: 'complete'; usage?: AgentEventUsage }
+  | { type: 'queue_overflow'; droppedEvents: number; maxQueueSize: number; message: string }
   | { type: 'working_directory_changed'; workingDirectory: string }
   | { type: 'task_backgrounded'; toolUseId: string; taskId: string; intent?: string; turnId?: string }
   | { type: 'shell_backgrounded'; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }

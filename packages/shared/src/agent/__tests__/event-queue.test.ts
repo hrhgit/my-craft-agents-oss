@@ -165,6 +165,49 @@ describe('EventQueue', () => {
     });
   });
 
+  describe('backpressure', () => {
+    it('caps queued events and emits a single overflow warning per turn', async () => {
+      const queue = new EventQueue(3);
+
+      queue.enqueue(textDelta('a'));
+      queue.enqueue(textDelta('b'));
+      queue.enqueue(textDelta('c'));
+      queue.enqueue(textDelta('d'));
+      queue.enqueue(textDelta('e'));
+      queue.enqueue(textDelta('f'));
+      queue.complete();
+
+      const events = await collectDrain(queue);
+      expect(events).toHaveLength(3);
+
+      const overflowEvents = events.filter(event => event.type === 'queue_overflow');
+      expect(overflowEvents).toHaveLength(1);
+      expect(overflowEvents[0]).toEqual({
+        type: 'queue_overflow',
+        droppedEvents: 3,
+        maxQueueSize: 3,
+        message: 'Agent event queue exceeded 3 events; some events were dropped.',
+      });
+    });
+
+    it('resets overflow warning state between turns', async () => {
+      const queue = new EventQueue(1);
+
+      queue.enqueue(textDelta('turn1-kept'));
+      queue.enqueue(textDelta('turn1-dropped'));
+      queue.complete();
+      const firstTurn = await collectDrain(queue);
+      expect(firstTurn.some(event => event.type === 'queue_overflow')).toBe(true);
+
+      queue.reset();
+      queue.enqueue(textDelta('turn2-kept'));
+      queue.enqueue(textDelta('turn2-dropped'));
+      queue.complete();
+      const secondTurn = await collectDrain(queue);
+      expect(secondTurn.filter(event => event.type === 'queue_overflow')).toHaveLength(1);
+    });
+  });
+
   describe('edge cases', () => {
     it('should handle multiple complete() calls gracefully', async () => {
       const queue = new EventQueue();

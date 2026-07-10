@@ -14,21 +14,25 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
+import { createSanitizedEnv } from '../utils/env.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
 import {
-  PI_HOST_HOOKS_MODULE_ENV,
   RpcClient as PiRpcClient,
+  type PiRuntimeHandle,
   type RpcCapabilities as PiRpcCapabilities,
   type RpcClientEvent as PiRpcClientEvent,
+  type RpcClientOptions as PiRpcClientOptions,
   type RpcCommandType as PiRpcCommandType,
   type RpcHostToolResult as PiRpcHostToolResult,
 } from '@earendil-works/pi-coding-agent';
+import { piHostManager, type PiHostLease } from './backend/pi-host-manager.ts';
 
 import type {
   BackendConfig,
   BackendRuntimeUpdate,
   ChatOptions,
   ExtensionBridgeEvent,
+  PiExtensionCommand,
   SdkMcpServerConfig,
 } from './backend/types.ts';
 import { AbortReason } from './backend/types.ts';
@@ -103,6 +107,7 @@ import { extractWorkspaceSlug } from '../utils/workspace.ts';
 import type { LLMQueryRequest, LLMQueryResult } from './llm-tool.ts';
 import { executeBrowserToolCommand } from './browser-tool-runtime.ts';
 import { saveBinaryResponse } from '../utils/binary-detection.ts';
+import { writeRuntimeLog, type RuntimeLogLevel } from '../utils/runtime-log.ts';
 
 // ============================================================
 // PiAgent Implementation
@@ -114,8 +119,30 @@ export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
   'browser_tool',
 ]);
 
+const PI_RPC_START_TIMEOUT_MS = 15_000;
+
+const AWS_ENVIRONMENT_AUTH_VARS = [
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'AWS_REGION',
+  'AWS_DEFAULT_REGION',
+  'AWS_PROFILE',
+  'AWS_SHARED_CREDENTIALS_FILE',
+  'AWS_CONFIG_FILE',
+  'AWS_SDK_LOAD_CONFIG',
+  'AWS_WEB_IDENTITY_TOKEN_FILE',
+  'AWS_ROLE_ARN',
+  'AWS_ROLE_SESSION_NAME',
+  'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
+  'AWS_CONTAINER_CREDENTIALS_FULL_URI',
+  'AWS_CONTAINER_AUTHORIZATION_TOKEN',
+  'AWS_EC2_METADATA_DISABLED',
+] as const;
+
 type PiRpcToolPermissionRequest = Extract<PiRpcClientEvent, { type: 'tool_permission_request' }>;
 type PiRpcToolExecuteRequest = Extract<PiRpcClientEvent, { type: 'tool_execute_request' }>;
+type PiSessionRpcClient = PiRpcClient | PiRuntimeHandle;
 type PiRpcHostToolDefinition = {
   name: string;
   description: string;
@@ -212,11 +239,13 @@ export class PiAgent extends BaseAgent {
   // Pi RpcClient State
   // ============================================================
 
-  private rpcClient: PiRpcClient | null = null;
+  private rpcClient: PiSessionRpcClient | null = null;
+  private rpcHostLease: PiHostLease | null = null;
   private rpcClientReady: Promise<void> | null = null;
   private rpcCapabilities: PiRpcCapabilities | null = null;
   private unsubscribePiEvent: (() => void) | null = null;
   private unsubscribePiClientEvent: (() => void) | null = null;
+  private rpcProcessFailureHandled = false;
 
   // Pi session ID (managed by Pi, reported back through RpcClient)
   private piSessionId: string | null = null;
@@ -244,6 +273,24 @@ export class PiAgent extends BaseAgent {
   /** Returns the most recent Pi RpcClient stderr output. Empty string if nothing captured. */
   getRecentStderr(): string {
     return this.rpcClient?.getStderr() ?? '';
+  }
+
+  private writePiRuntimeLog(level: RuntimeLogLevel, event: string, meta?: Record<string, unknown>): void {
+    writeRuntimeLog(level, {
+      scope: 'pi-rpc',
+      event,
+      meta: {
+        sessionId: this.config.session?.craftId,
+        piSessionId: this.piSessionId,
+        workspaceId: this.config.workspace.id,
+        workspaceRootPath: this.config.workspace.rootPath,
+        connectionSlug: this.config.connectionSlug,
+        provider: this.config.provider,
+        providerType: this.config.providerType,
+        model: this._model,
+        ...meta,
+      },
+    });
   }
 
   private supportsPiRpcCommand(command: PiRpcCommandType): boolean {
@@ -315,17 +362,6 @@ export class PiAgent extends BaseAgent {
       this.adapter.setSessionDir(getSessionPath(config.workspace.rootPath, config.session.craftId));
     }
 
-    // Wire the adapter's async overflow fallback into the event queue. The
-    // fallback fires when the SDK doesn't emit a compaction_start after a
-    // held overflow agent_end (e.g. _overflowRecoveryAttempted was already
-    // true). It runs outside adaptEvent() so it can't yield through the
-    // generator — instead, it calls these callbacks to enqueue the buffered
-    // error and terminate the iterator.
-    this.adapter.setOverflowFallbackHandlers(
-      (event) => this.eventQueue.enqueue(event),
-      () => this.eventQueue.complete(),
-    );
-
     if (!config.isHeadless) {
       this.startConfigWatcher();
     }
@@ -351,16 +387,19 @@ export class PiAgent extends BaseAgent {
   // RpcClient Management
   // ============================================================
 
-  private async ensureRpcClient(): Promise<PiRpcClient> {
+  private async ensureRpcClient(): Promise<PiSessionRpcClient> {
     // Fast path: client already initialized successfully.
-    if (this.rpcClient && this.rpcClientReady) {
+    const readyClientPromise = this.rpcClientReady;
+    if (this.rpcClient && readyClientPromise) {
       try {
-        await this.rpcClientReady;
+        await readyClientPromise;
       } catch {
         // The ready promise can reject before cleanup runs; clear the stale
         // handles and retry below instead of permanently poisoning callers.
-        this.rpcClient = null;
-        this.rpcClientReady = null;
+        if (this.rpcClientReady === readyClientPromise) {
+          this.rpcClient = null;
+          this.rpcClientReady = null;
+        }
       }
       if (this.rpcClient) {
         return this.rpcClient;
@@ -370,13 +409,16 @@ export class PiAgent extends BaseAgent {
     // Mutex: if a startRpcClient() is in flight, await its promise instead of
     // starting a second subprocess. startRpcClient assigns this.rpcClientReady
     // before any await, so reading it here is safe within a single microtask.
-    if (this.rpcClientReady) {
+    const readyPromise = this.rpcClientReady;
+    if (readyPromise) {
       try {
-        await this.rpcClientReady;
+        await readyPromise;
       } catch {
         // startRpcClient failed and reset rpcClientReady to null; fall through to retry.
-        this.rpcClient = null;
-        this.rpcClientReady = null;
+        if (this.rpcClientReady === readyPromise) {
+          this.rpcClient = null;
+          this.rpcClientReady = null;
+        }
       }
       if (this.rpcClient) return this.rpcClient;
       // startRpcClient failed and reset rpcClientReady to null; fall through to retry.
@@ -390,13 +432,29 @@ export class PiAgent extends BaseAgent {
   }
 
   private resolvePiCliPath(): string {
-    const resolved = import.meta.resolve('@earendil-works/pi-coding-agent');
-    const packageDist = dirname(fileURLToPath(resolved));
-    const cliPath = join(packageDist, 'cli.js');
-    if (!existsSync(cliPath)) {
-      throw new Error(`Pi CLI entrypoint not found: ${cliPath}`);
+    const checkedPaths: string[] = [];
+    const runtimeCliPath = getBackendRuntime(this.config).paths?.piCli;
+    if (runtimeCliPath) {
+      checkedPaths.push(runtimeCliPath);
+      if (existsSync(runtimeCliPath)) {
+        return runtimeCliPath;
+      }
     }
-    return cliPath;
+
+    try {
+      const resolved = import.meta.resolve('@earendil-works/pi-coding-agent');
+      const packageDist = dirname(fileURLToPath(resolved));
+      const cliPath = join(packageDist, 'cli.js');
+      checkedPaths.push(cliPath);
+      if (existsSync(cliPath)) {
+        return cliPath;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      checkedPaths.push(`@earendil-works/pi-coding-agent resolution failed: ${message}`);
+    }
+
+    throw new Error(`Pi CLI entrypoint not found. Checked: ${checkedPaths.join('; ')}`);
   }
 
   private buildRpcArgs(): string[] {
@@ -438,6 +496,29 @@ export class PiAgent extends BaseAgent {
     return ready;
   }
 
+  private withRpcStartupTimeout(startup: Promise<void>): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error(`Pi RpcClient startup timed out after ${PI_RPC_START_TIMEOUT_MS}ms`));
+      }, PI_RPC_START_TIMEOUT_MS);
+    });
+
+    return Promise.race([startup, timeoutPromise]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+  }
+
+  private shouldUseSharedPiHost(runtime: { piAuthProvider?: string }): boolean {
+    if (process.env.PI_GLOBAL_HOST === '0' || process.env.CRAFT_PI_HOST_MODE === 'legacy') return false;
+    if (runtime.piAuthProvider === 'amazon-bedrock') return false;
+    if (this.config.authType === 'environment' || this.config.authType === 'iam_credentials') return false;
+    const processScopedOverrides = Object.keys(this.config.envOverrides ?? {}).filter(
+      (key) => key !== 'CRAFT_WORKSPACE_PATH',
+    );
+    return processScopedOverrides.length === 0;
+  }
+
   private async startRpcClientUnlocked(): Promise<void> {
     const runtime = getBackendRuntime(this.config);
     const nodePath = runtime.paths?.node || process.execPath;
@@ -446,14 +527,14 @@ export class PiAgent extends BaseAgent {
 
     this.debug(`Starting Pi RpcClient: ${nodePath} ${cliPath}`);
     this.resetRpcErrorDedup();
+    this.rpcProcessFailureHandled = false;
 
     const sessionId = this.config.session?.craftId || `agent-${Date.now()}`;
-    const sessionDir = this.config.session
+    const craftSessionDir = this.config.session
       ? getSessionPath(this.config.workspace.rootPath, sessionId)
       : undefined;
 
     const commandArgs: string[] = [];
-    const interceptorPath = runtime.paths?.interceptor;
 
     if (this.config.authType === 'oauth' && runtime.piAuthProvider === 'github-copilot') {
       const slug = this.config.connectionSlug || 'pi';
@@ -466,75 +547,145 @@ export class PiAgent extends BaseAgent {
 
     const piAuth = await this.getPiAuth();
     const awsEnv = this.buildAwsEnv(piAuth, runtime);
+    const rpcArgs = this.buildRpcArgs();
+    const pipeStderr = process.env.CRAFT_DEBUG === '1';
 
-    const rpcClient = new PiRpcClient({
+    this.writePiRuntimeLog('info', 'startup.begin', {
+      command: nodePath,
+      cliPath,
+      cwd,
+      runtimeProvider: runtime.piAuthProvider,
+      authType: this.config.authType,
+      rpcArgs,
+      craftSessionDir,
+      pipeStderr,
+    });
+
+    const clientOptions: PiRpcClientOptions = {
       command: nodePath,
       commandArgs,
       cliPath,
       cwd,
-      hostHooksModule: interceptorPath,
       provider: runtime.piAuthProvider,
       model: this._model,
-      args: this.buildRpcArgs(),
+      envMode: 'replace',
       env: {
-        ...process.env,
+        ...createSanitizedEnv(),
         ...getProxyEnvVars(),
-        ...this.config.envOverrides,
         ...awsEnv,
-        ...(sessionDir ? { CRAFT_SESSION_DIR: sessionDir } : {}),
-        ...(interceptorPath
-          ? {
-              [PI_HOST_HOOKS_MODULE_ENV]: interceptorPath,
-            }
-          : {}),
         CRAFT_DEBUG: (process.argv.includes('--debug') || process.env.CRAFT_DEBUG === '1') ? '1' : '0',
       },
-      pipeStderr: process.env.CRAFT_DEBUG === '1',
-    });
+      pipeStderr,
+    };
 
-    this.rpcClient = rpcClient;
-    this.unsubscribePiEvent = rpcClient.onEvent((event) => this.handlePiEvent(event as unknown as Record<string, unknown>));
-    this.unsubscribePiClientEvent = rpcClient.onClientEvent((event) => this.handlePiClientEvent(event));
+    let rpcClient: PiSessionRpcClient | null = null;
+    if (this.shouldUseSharedPiHost(runtime)) {
+      try {
+        const sessionDir = this.config.session
+          ? getPiNativeSessionDir(this.config.workspace.rootPath, this.config.session.workingDirectory)
+          : undefined;
+        const runtimeId = this.config.session?.craftId ?? `runtime-${Date.now()}`;
+        const lease = await piHostManager.acquire({
+          key: `${nodePath}\u0000${cliPath}\u0000${process.env.PI_AGENT_DIR ?? 'default'}`,
+          client: clientOptions,
+          runtime: {
+            runtimeId,
+            cwd,
+            sessionDir,
+            sessionId: this.config.session?.craftId,
+            forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
+          },
+        });
+        this.rpcHostLease = lease;
+        this.rpcCapabilities = lease.capabilities;
+        rpcClient = lease.runtime;
+        this.writePiRuntimeLog('info', 'host.runtime.acquired', {
+          runtimeId: lease.runtime.runtimeId,
+          protocolVersion: lease.capabilities.protocolVersion,
+        });
+      } catch (error) {
+        this.writePiRuntimeLog('warn', 'host.fallback', {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
 
-    this.rpcClientReady = rpcClient.start()
-      .then(async () => {
+    if (!rpcClient) {
+      const legacyClient = new PiRpcClient({
+        ...clientOptions,
+        args: rpcArgs,
+        env: {
+          ...clientOptions.env,
+          ...this.config.envOverrides,
+          ...(craftSessionDir ? { CRAFT_SESSION_DIR: craftSessionDir } : {}),
+        },
+      });
+      rpcClient = legacyClient;
+      this.rpcClient = legacyClient;
+      this.unsubscribePiEvent = legacyClient.onEvent((event) => this.handlePiEvent(event as unknown as Record<string, unknown>));
+      this.unsubscribePiClientEvent = legacyClient.onClientEvent((event) => this.handlePiClientEvent(event));
+      const startup = legacyClient.start().then(async () => {
         try {
-          this.rpcCapabilities = await rpcClient.getCapabilities();
+          const capabilities = await legacyClient.getCapabilities();
+          this.rpcCapabilities = capabilities;
           this.debug(
             `Pi RpcClient capabilities loaded: protocol=${this.rpcCapabilities.protocolVersion} ` +
             `version=${this.rpcCapabilities.packageVersion}`
           );
+          this.writePiRuntimeLog('info', 'capabilities.loaded', {
+            protocolVersion: capabilities.protocolVersion,
+            packageVersion: capabilities.packageVersion,
+            commands: capabilities.commands,
+          });
         } catch (error) {
+          this.writePiRuntimeLog('error', 'capabilities.failed', {
+            error,
+            stderr: legacyClient.getStderr(),
+          });
           throw new Error(
-            `Pi RpcClient does not expose get_capabilities. ` +
-            `Upgrade Pi to a version with the public RPC capability contract. ` +
+            `Pi RpcClient get_capabilities failed. ` +
+            `The Pi process may have exited before the capabilities handshake completed. ` +
             `Original error: ${error instanceof Error ? error.message : String(error)}`
           );
         }
-        const state = await rpcClient.getState();
-        this.piSessionId = state.sessionId;
-        this.config.onSdkSessionIdUpdate?.(state.sessionId);
-      })
-      .catch((error) => {
-        this.rpcClientReady = null;
-        this.rpcCapabilities = null;
-        // 清理事件监听器与子进程，避免握手失败时产生孤儿进程
-        try { this.unsubscribePiEvent?.(); } catch {}
-        try { this.unsubscribePiClientEvent?.(); } catch {}
-        this.unsubscribePiEvent = null;
-        this.unsubscribePiClientEvent = null;
-        if (this.rpcClient === rpcClient) {
-          this.rpcClient = null;
-        }
-        // stop() 会终止 Pi 子进程；ignore 错误因为子进程可能已退出
-        rpcClient.stop().catch((stopError) => {
-          this.debug(`Pi RpcClient stop() after start failure threw: ${stopError instanceof Error ? stopError.message : String(stopError)}`);
+      });
+      await this.withRpcStartupTimeout(startup).catch(async (error) => {
+        this.writePiRuntimeLog('error', 'startup.failed', {
+          error,
+          stderr: legacyClient.getStderr(),
         });
+        if (this.rpcClient === legacyClient) {
+          this.rpcCapabilities = null;
+          try { this.unsubscribePiEvent?.(); } catch {}
+          try { this.unsubscribePiClientEvent?.(); } catch {}
+          this.unsubscribePiEvent = null;
+          this.unsubscribePiClientEvent = null;
+          this.rpcClient = null;
+          await legacyClient.stop().catch(() => undefined);
+        }
         throw error;
       });
+    } else {
+      this.rpcClient = rpcClient;
+      this.unsubscribePiEvent = rpcClient.onEvent((event) => this.handlePiEvent(event as unknown as Record<string, unknown>));
+      this.unsubscribePiClientEvent = rpcClient.onClientEvent((event) => this.handlePiClientEvent(event));
+    }
 
-    await this.rpcClientReady;
+    if (this.rpcClient !== rpcClient) throw new Error('Pi RpcClient startup was superseded');
+    const state = await rpcClient.getState();
+    this.piSessionId = state.sessionId;
+    this.config.onSdkSessionIdUpdate?.(state.sessionId);
     this.debug('Pi RpcClient is ready');
+    this.writePiRuntimeLog('info', 'startup.ready', {
+      piSessionId: this.piSessionId,
+      runtimeId: 'runtimeId' in rpcClient ? rpcClient.runtimeId : 'legacy',
+    });
+
+    if ('runtimeId' in rpcClient) {
+      const provider = runtime.piAuthProvider;
+      if (provider && this._model) await rpcClient.setModel(provider, this._model);
+      if (this._thinkingLevel) await rpcClient.setThinkingLevel(this._thinkingLevel as any);
+    }
 
     try {
       await rpcClient.setAutoCompaction(true);
@@ -652,7 +803,8 @@ export class PiAgent extends BaseAgent {
         // API key-based connections.
         // NOTE: authType === 'environment' (e.g. Bedrock with ~/.aws/credentials)
         // intentionally falls through here, finds no API key, and returns null.
-        // The Pi RPC process inherits process.env which contains the AWS credential chain.
+        // buildAwsEnv() re-adds only the AWS credential-chain variables needed
+        // for Bedrock environment auth after the base subprocess env is sanitized.
         const apiKey = await credentialManager.getLlmApiKey(slug);
         if (apiKey) {
           this.debug(`Retrieved API key credential for Pi provider: ${piAuthProvider}`);
@@ -696,12 +848,12 @@ export class PiAgent extends BaseAgent {
       if (piAuth.credential.region) env.AWS_REGION = piAuth.credential.region;
       if (piAuth.credential.sessionToken) env.AWS_SESSION_TOKEN = piAuth.credential.sessionToken;
       this.debug('Injecting IAM credentials into Pi RPC env for AWS SDK');
-    }
-
-    // Defensive: force HTTP/1.1 for Bedrock. AWS SDK v3 defaults to HTTP/2
-    // (NodeHttp2Handler) which can be incompatible with Bun/Electron runtimes.
-    if (!process.env.AWS_BEDROCK_FORCE_HTTP1) {
-      env.AWS_BEDROCK_FORCE_HTTP1 = '1';
+    } else if (this.config.authType === 'environment') {
+      for (const key of AWS_ENVIRONMENT_AUTH_VARS) {
+        const value = process.env[key];
+        if (value !== undefined) env[key] = value;
+      }
+      this.debug('Injecting AWS environment credential chain into Pi RPC env');
     }
 
     return env;
@@ -777,6 +929,15 @@ export class PiAgent extends BaseAgent {
   }
 
   private handlePiClientEvent(event: PiRpcClientEvent): void {
+    if (
+      event.type === 'process_exit' ||
+      event.type === 'process_error' ||
+      event.type === 'stdin_error'
+    ) {
+      this.handleRpcClientLifecycleFailure(event);
+      return;
+    }
+
     if (event.type === 'extension_ui_request') {
       const bridgeEvent = this.mapExtensionUiRequest(event);
       if (bridgeEvent) this.config.onExtensionEvent?.(bridgeEvent);
@@ -793,6 +954,44 @@ export class PiAgent extends BaseAgent {
     }
   }
 
+  private handleRpcClientLifecycleFailure(
+    event: Extract<PiRpcClientEvent, { type: 'process_exit' | 'process_error' | 'stdin_error' }>
+  ): void {
+    if (this.rpcProcessFailureHandled) return;
+    this.rpcProcessFailureHandled = true;
+
+    this.debug(`Pi RpcClient lifecycle failure: ${event.type}: ${event.message}`);
+    this.writePiRuntimeLog('error', 'lifecycle.failure', {
+      lifecycleEvent: event.type,
+      message: event.message,
+      code: event.type === 'process_exit' ? event.code : undefined,
+      signal: event.type === 'process_exit' ? event.signal : undefined,
+      stderr: event.stderr || this.getRecentStderr(),
+    });
+    this.handleRpcError(new Error(event.message));
+
+    for (const [, pending] of this.pendingPermissions) {
+      pending.resolve(false);
+    }
+    this.pendingPermissions.clear();
+    this.preToolMetadataByCallId.clear();
+
+    try { this.unsubscribePiEvent?.(); } catch {}
+    try { this.unsubscribePiClientEvent?.(); } catch {}
+    const failedHostLease = this.rpcHostLease;
+    this.unsubscribePiEvent = null;
+    this.unsubscribePiClientEvent = null;
+    this.rpcClient = null;
+    this.rpcHostLease = null;
+    this.rpcClientReady = null;
+    this.rpcCapabilities = null;
+    if (failedHostLease) {
+      void failedHostLease.release().catch(error => {
+        this.debug(`Failed to release crashed Pi runtime: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+  }
+
   private mapExtensionUiRequest(event: Extract<PiRpcClientEvent, { type: 'extension_ui_request' }>): ExtensionBridgeEvent | null {
     if (event.method === 'notify') {
       return {
@@ -803,11 +1002,15 @@ export class PiAgent extends BaseAgent {
       };
     }
     if (event.method === 'setStatus') {
+      this.writePiRuntimeLog('debug', 'extension.set_status', {
+        statusKey: event.statusKey,
+        statusText: event.statusText,
+      });
       return {
-        type: 'extension_notify',
-        message: event.statusText ?? '',
-        notificationType: 'info',
-        source: event.statusKey,
+        type: 'extension_status',
+        key: event.statusKey,
+        status: event.statusText ?? '',
+        source: 'pi-extension',
       };
     }
     if (event.method === 'setWidget') {
@@ -871,7 +1074,7 @@ export class PiAgent extends BaseAgent {
       this.rpcErrorRepeatCount = 1;
     }
 
-    const parsed = parseError(new Error(rawMessage));
+    const parsed = parseError(error instanceof Error ? error : new Error(rawMessage));
     if (parsed.code !== 'unknown_error') {
       this.eventQueue.enqueue({ type: 'typed_error', error: parsed });
     } else {
@@ -880,9 +1083,8 @@ export class PiAgent extends BaseAgent {
         message: `Pi RpcClient error: ${rawMessage}`,
       });
     }
+    this.eventQueue.enqueue({ type: 'complete' });
     this.eventQueue.complete();
-    // 错误路径下重置 overflow 状态机，避免跨 turn 残留导致后续 turn 死等
-    this.adapter.resetOverflowState();
   }
 
   /**
@@ -957,13 +1159,7 @@ export class PiAgent extends BaseAgent {
       this.eventQueue.enqueue(agentEvent);
     }
 
-    // Turn-completion is now adapter-driven so overflow recovery can hold the
-    // queue open across the SDK's compaction → agent.continue() sequence
-    // (see PiEventAdapter overflow state machine). The adapter returns true
-    // when the queue should terminate — either on a normal agent_end with no
-    // recovery in flight, or on a compaction_end failure that drains a held
-    // overflow.
-    if (this.adapter.shouldCompleteQueue(eventType === 'agent_end')) {
+    if (eventType === 'agent_end') {
       this.eventQueue.complete();
     }
   }
@@ -1428,8 +1624,8 @@ export class PiAgent extends BaseAgent {
    */
   async listChildSessions(parentSessionId: string): Promise<PiChildSessionInfo[]> {
     try {
-      this.requirePiRpcCommand('list_child_sessions', 'child session listing');
       const client = await this.ensureRpcClient();
+      this.requirePiRpcCommand('list_child_sessions', 'child session listing');
       const sessions = await client.listChildSessions(parentSessionId);
       return sessions.map(session => ({
         sessionId: session.id,
@@ -1497,18 +1693,60 @@ export class PiAgent extends BaseAgent {
    * 调用扩展注册的命令。
    * Uses Pi's typed `invoke_extension_command` RPC and returns the command ack.
    */
-  async sendExtensionCommandInvoke(commandId: string, args?: string): Promise<boolean> {
+  async sendExtensionCommandInvoke(commandId: string, args?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult> {
     try {
-      this.requirePiRpcCommand('invoke_extension_command', 'extension command invocation');
       const client = await this.ensureRpcClient();
+      this.requirePiRpcCommand('invoke_extension_command', 'extension command invocation');
       const result = await client.invokeExtensionCommandResult(commandId, args);
       if (!result.invoked && result.error) {
         this.debug(`[sendExtensionCommandInvoke] Pi extension command "${commandId}" was not invoked: ${result.error}`);
       }
-      return result.invoked;
+      return {
+        invoked: result.invoked,
+        error: result.error,
+        customMessages: result.customMessages?.map(message => ({
+          customType: message.customType,
+          content: typeof message.content === 'string'
+            ? message.content
+            : message.content
+              .filter((part): part is { type: 'text'; text: string } => part.type === 'text' && typeof part.text === 'string')
+              .map(part => part.text)
+              .join(''),
+          display: message.display !== false,
+          details: message.details,
+          timestamp: message.timestamp,
+        })),
+      };
     } catch (error) {
-      this.debug(`[sendExtensionCommandInvoke] Failed for "${commandId}": ${error instanceof Error ? error.message : String(error)}`);
-      return false;
+      const message = error instanceof Error ? error.message : String(error);
+      this.debug(`[sendExtensionCommandInvoke] Failed for "${commandId}": ${message}`);
+      return { invoked: false, error: message };
+    }
+  }
+
+  /**
+   * Query currently registered Pi extension slash commands.
+   *
+   * The RPC stream does not emit command-registration events, so renderer
+   * consumers need this snapshot to avoid missing commands registered before
+   * their event listeners mounted.
+   */
+  async listExtensionCommands(): Promise<PiExtensionCommand[]> {
+    try {
+      const client = await this.ensureRpcClient();
+      this.requirePiRpcCommand('get_commands', 'extension command listing');
+      const commands = await client.getCommands();
+      return commands
+        .filter(command => command.source === 'extension')
+        .map(command => ({
+          name: command.name,
+          description: command.description,
+          source: command.sourceInfo?.source ?? 'extension',
+          path: command.sourceInfo?.path,
+        }));
+    } catch (error) {
+      this.debug(`[listExtensionCommands] Failed: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
     }
   }
 
@@ -1572,12 +1810,17 @@ export class PiAgent extends BaseAgent {
     }
 
     try {
+      let client: PiSessionRpcClient;
       // Ensure Pi RpcClient is started and ready.
       try {
-        await this.ensureRpcClient();
+        client = await this.ensureRpcClient();
       } catch (rpcError) {
         const errorMsg = rpcError instanceof Error ? rpcError.message : String(rpcError);
         this.debug(`Failed to start Pi RpcClient: ${errorMsg}`);
+        this.writePiRuntimeLog('error', 'chat.ensure_rpc_failed', {
+          error: rpcError,
+          stderr: this.getRecentStderr(),
+        });
 
         // If resume failed, clear and try fresh
         if (this.piSessionId && !options?.isRetry) {
@@ -1591,7 +1834,7 @@ export class PiAgent extends BaseAgent {
             this.debug('Injected recovery context into message');
           }
 
-          await this.ensureRpcClient();
+          client = await this.ensureRpcClient();
         } else {
           throw rpcError;
         }
@@ -1701,7 +1944,7 @@ export class PiAgent extends BaseAgent {
       // Pi agent-session.ts 用 `systemPrompt !== undefined` 判断是否覆盖。
       // 壳模式下 fullSystemPrompt === ''，必须传 undefined 让 Pi 回落到原生 system prompt，
       // 否则会把原生 prompt 覆盖成空字符串，导致 agent 完全丢失 system prompt。
-      await this.rpcClient!.prompt(
+      await client.prompt(
         userMessage,
         images.length > 0 ? images as any : undefined,
         { systemPrompt: fullSystemPrompt || undefined },
@@ -1768,10 +2011,6 @@ export class PiAgent extends BaseAgent {
       yield { type: 'complete' };
     } finally {
       this._isProcessing = false;
-      // 每个 turn 结束后重置 overflow 状态机，避免跨 turn 残留导致下一 turn 死等。
-      // 注意：合法的跨 turn overflow recovery 在 turn 内已完成或 arm 了 fallback timer，
-      // turn 边界 reset 不会破坏正常恢复路径。
-      this.adapter.resetOverflowState();
     }
   }
 
@@ -1895,8 +2134,6 @@ export class PiAgent extends BaseAgent {
     // Clear bridge cache for this interrupted turn.
     this.preToolMetadataByCallId.clear();
 
-    // abort 后重置 overflow 状态机，避免下一 turn 残留 held/awaiting 状态
-    this.adapter.resetOverflowState();
   }
 
   forceAbort(reason: AbortReason): void {
@@ -1917,9 +2154,6 @@ export class PiAgent extends BaseAgent {
 
     // Clear bridge cache for aborted turn.
     this.preToolMetadataByCallId.clear();
-
-    // forceAbort 后重置 overflow 状态机，避免下一 turn 残留
-    this.adapter.resetOverflowState();
 
     // For PlanSubmitted and AuthRequest, just interrupt the turn
     if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
@@ -2009,21 +2243,23 @@ export class PiAgent extends BaseAgent {
 
   private async stopRpcClient(): Promise<void> {
     const client = this.rpcClient;
+    const hostLease = this.rpcHostLease;
     this.unsubscribePiEvent?.();
     this.unsubscribePiEvent = null;
     this.unsubscribePiClientEvent?.();
     this.unsubscribePiClientEvent = null;
     this.rpcClient = null;
+    this.rpcHostLease = null;
     this.rpcClientReady = null;
     this.rpcCapabilities = null;
     this.preToolMetadataByCallId.clear();
     this.resetRpcErrorDedup();
 
-    // Clear any in-flight overflow-recovery state so a stale fallback timer
-    // doesn't fire on a torn-down adapter.
-    this.adapter.resetOverflowState();
-
-    if (client) {
+    if (hostLease) {
+      await hostLease.release().catch(error => {
+        this.debug(`Failed to release Pi runtime cleanly: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    } else if (client && 'stop' in client) {
       await client.stop().catch(error => {
         this.debug(`Failed to stop Pi RpcClient cleanly: ${error instanceof Error ? error.message : String(error)}`);
       });
@@ -2036,8 +2272,8 @@ export class PiAgent extends BaseAgent {
 
   async runMiniCompletion(prompt: string): Promise<string | null> {
     try {
-      this.requirePiRpcCommand('run_mini_completion', 'mini completion');
       const client = await this.ensureRpcClient();
+      this.requirePiRpcCommand('run_mini_completion', 'mini completion');
       return await client.runMiniCompletion(prompt);
     } catch (error) {
       this.debug(`[runMiniCompletion] Failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -2053,8 +2289,8 @@ export class PiAgent extends BaseAgent {
    */
   async queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
     try {
-      this.requirePiRpcCommand('query_llm', 'secondary LLM query');
       const client = await this.ensureRpcClient();
+      this.requirePiRpcCommand('query_llm', 'secondary LLM query');
       const result = await client.queryLlm(request);
       return {
         text: result.text,
@@ -2130,6 +2366,26 @@ export class PiAgent extends BaseAgent {
         ],
         canRetry: true,
         retryDelayMs: 5000,
+        originalError: error.message,
+      };
+    }
+
+    // Service errors
+    if (
+      errorMessage.includes('agent process exited') ||
+      errorMessage.includes('process exited') ||
+      errorMessage.includes('client not started') ||
+      errorMessage.includes('stdin is not writable')
+    ) {
+      return {
+        code: 'service_error',
+        title: 'Pi Process Exited',
+        message: 'The Pi agent process exited before your message could be sent. Please try again.',
+        actions: [
+          { key: 'r', label: 'Retry', action: 'retry' },
+        ],
+        canRetry: true,
+        retryDelayMs: 1000,
         originalError: error.message,
       };
     }

@@ -11,7 +11,7 @@
 import i18n from 'i18next'
 import { toast } from 'sonner'
 import { openExternalUrl } from '@craft-agent/ui'
-import { WsRpcClient } from '@craft-agent/server-core/transport'
+import { WsRpcClient } from '@craft-agent/server-core/transport/client'
 import { buildClientApi } from '../../../electron/src/transport/build-api'
 import { CHANNEL_MAP } from '../../../electron/src/transport/channel-map'
 import type { ElectronAPI, TransportConnectionState } from '../../../electron/src/shared/types'
@@ -109,7 +109,7 @@ export function createWebApi(options: WebApiOptions): {
     // System info
     getVersions: () => ({ node: 'n/a', chrome: navigator.userAgent, electron: 'web' }),
     getRuntimeEnvironment: () => 'web',
-    getSystemWarnings: () => Promise.resolve({ vcredistMissing: false }),
+    getSystemWarnings: () => Promise.resolve({ vcredistMissing: false, workspaceRuntimeDegraded: false }),
     isDebugMode: () => Promise.resolve(import.meta.env.DEV),
 
     // Theme

@@ -1,5 +1,5 @@
 import type { LlmAuthType, ModelProvider } from '@craft-agent/shared/agent/backend'
-import { isCompatProvider, modelSupportsImages, type LlmConnection } from '@craft-agent/shared/config'
+import { isCompatProvider, modelSupportsImages, normalizePiCustomEndpointBaseUrl, type LlmConnection, type PiCustomApi } from '@craft-agent/shared/config'
 import type { FileAttachment } from '@craft-agent/shared/protocol'
 
 export interface BackendRuntimeSignatureInput {
@@ -31,6 +31,16 @@ function normalizeCustomModels(connection: LlmConnection): Array<Record<string, 
       })
     })
     .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+}
+
+export function normalizeConnectionRuntimeBaseUrl(
+  connection: Pick<LlmConnection, 'baseUrl' | 'customEndpoint'> | null | undefined,
+): string | undefined {
+  if (!connection?.baseUrl?.trim()) return undefined
+  return normalizePiCustomEndpointBaseUrl(
+    connection.baseUrl,
+    connection.customEndpoint?.api as PiCustomApi | undefined,
+  ) ?? connection.baseUrl.trim()
 }
 
 /**
@@ -73,7 +83,7 @@ export function buildBackendRuntimeSignature(input: BackendRuntimeSignatureInput
         defaultModel: connection.defaultModel,
         ...(isCompatProvider(connection.providerType)
           ? {
-              baseUrl: connection.baseUrl,
+              baseUrl: normalizeConnectionRuntimeBaseUrl(connection),
               piAuthProvider: connection.piAuthProvider,
               customEndpoint: connection.customEndpoint
                 ? definedObject({

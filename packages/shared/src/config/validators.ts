@@ -78,7 +78,7 @@ const LlmAuthTypeSchema = z.enum([
 ]);
 
 const CustomEndpointSchema = z.object({
-  api: z.enum(['openai-completions', 'anthropic-messages']),
+  api: z.enum(['openai-completions', 'openai-responses', 'anthropic-messages', 'google-generative-ai']),
   supportsImages: z.boolean().optional(),
 });
 

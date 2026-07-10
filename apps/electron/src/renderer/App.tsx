@@ -34,7 +34,7 @@ import { coerceInputText } from './lib/input-text'
 import { getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
 import { formatSessionLoadFailure, shouldTreatSessionLoadFailureAsTransportFallback } from './lib/session-load'
 import { extractWorkspaceSlugFromPath } from '@craft-agent/shared/utils/workspace-slug'
-import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES } from '@craft-agent/shared/utils'
+import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES } from '@craft-agent/shared/utils/attachment-limits'
 import { DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
 import { initRendererPerf } from './lib/perf'
 import {
@@ -715,6 +715,14 @@ export default function App() {
           },
         })
       }
+      if (warnings.workspaceRuntimeDegraded) {
+        toast.warning('Workspace runtime degraded', {
+          description: warnings.workspaceRuntimeDegradedReason
+            ? `Workspace isolation failed and Craft is using the embedded runtime. Reason: ${warnings.workspaceRuntimeDegradedReason}`
+            : 'Workspace isolation failed and Craft is using the embedded runtime. Heavy agent work may affect app responsiveness.',
+          duration: Infinity,
+        })
+      }
     }).catch(() => { /* non-fatal startup check */ })
     void loadSessionsFromServer()
     // Load LLM connections with authentication status
@@ -1190,6 +1198,7 @@ export default function App() {
   }, [updateSessionById])
 
   const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[]) => {
+    let optimisticMessageId: string | null = null
     try {
       // Capture pre-send processing state so we can flag mid-stream sends
       // for the queued badge (#616 follow-up — covers Pi steer path which
@@ -1352,8 +1361,9 @@ export default function App() {
       // isQueued through that update) and Claude queues (server emits 'queued'
       // which confirms it). Cleared by 'processing' status or when the current
       // turn ends.
+      optimisticMessageId = generateMessageId()
       const userMessage: Message = {
-        id: generateMessageId(),
+        id: optimisticMessageId,
         role: 'user',
         content: message,
         timestamp: Date.now(),
@@ -1374,14 +1384,18 @@ export default function App() {
       await window.electronAPI.sendMessage(sessionId, message, processedAttachments, storedAttachments, {
         skillSlugs,
         badges: badges.length > 0 ? badges : undefined,
-        optimisticMessageId: userMessage.id,
+        optimisticMessageId,
       })
     } catch (error) {
       console.error('Failed to send message:', error)
       updateSessionById(sessionId, (s) => ({
         isProcessing: false,
         messages: [
-          ...s.messages,
+          ...s.messages.map(m =>
+            optimisticMessageId && m.id === optimisticMessageId
+              ? { ...m, isPending: false, isQueued: false }
+              : m
+          ),
           {
             id: generateMessageId(),
             role: 'error' as const,

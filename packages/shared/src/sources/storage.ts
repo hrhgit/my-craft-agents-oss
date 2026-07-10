@@ -17,6 +17,10 @@ import type {
   LoadedSource,
   CreateSourceInput,
 } from './types.ts';
+import {
+  isSourceAuthenticationSatisfied,
+  setSourceConfigAuthState,
+} from './auth-state.ts';
 import { validateSourceConfig } from '../config/validators.ts';
 import { debug } from '../utils/debug.ts';
 import { readJsonFileSync } from '../utils/files.ts';
@@ -99,9 +103,7 @@ export function markSourceAuthenticated(
     return false;
   }
 
-  config.isAuthenticated = true;
-  config.connectionStatus = 'connected';
-  config.connectionError = undefined;
+  setSourceConfigAuthState(config, true, 'connected');
 
   saveSourceConfig(workspaceRootPath, config);
   debug(`[markSourceAuthenticated] Marked ${sourceSlug} as authenticated`);
@@ -396,14 +398,7 @@ export function getEnabledSources(workspaceRootPath: string): LoadedSource[] {
 export function isSourceUsable(source: LoadedSource): boolean {
   if (!source.config.enabled) return false;
 
-  // Get auth type from MCP or API config
-  const authType = source.config.mcp?.authType || source.config.api?.authType;
-
-  // Sources with no auth requirement are always usable when enabled
-  if (authType === 'none' || authType === undefined) return true;
-
-  // Sources requiring auth must be authenticated
-  return source.config.isAuthenticated === true;
+  return isSourceAuthenticationSatisfied(source);
 }
 
 /**
@@ -600,4 +595,9 @@ export function sourceExists(workspaceRootPath: string, sourceSlug: string): boo
 // ============================================================
 
 export { parseGuideMarkdown };
-
+export {
+  isSourceAuthenticationSatisfied,
+  isSourceConfigAuthenticated,
+  setSourceConfigAuthState,
+  sourceRequiresAuthentication,
+} from './auth-state.ts';

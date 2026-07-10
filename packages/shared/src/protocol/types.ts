@@ -12,6 +12,7 @@ export type MessageType =
   | 'handshake'
   | 'handshake_ack'
   | 'request'
+  | 'request_cancel'
   | 'response'
   | 'event'
   | 'error'

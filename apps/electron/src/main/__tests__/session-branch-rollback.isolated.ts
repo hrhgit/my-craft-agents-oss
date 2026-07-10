@@ -14,7 +14,7 @@ const deletedIds: string[] = []
 // Partial-mock baseline: import real modules via file paths (avoids recursive mock imports)
 const actualSharedAgentModule = await import('../../../../../packages/shared/src/agent/index.ts')
 const actualSharedAgentBackendModule = await import('../../../../../packages/shared/src/agent/backend/index.ts')
-// 真实的 SESSION_PERSISTENT_FIELDS 和 pickSessionFields，避免 mock 字段列表与实际不同步
+// 真实的 Craft metadata fields 和 pickSessionFields，避免 mock 字段列表与实际不同步
 const actualSessionUtils = await import('../../../../../packages/shared/src/sessions/utils.ts')
 
 mock.module('electron', () => ({
@@ -240,7 +240,7 @@ mock.module('@craft-agent/shared/sessions', () => ({
   getSessionPath: (_root: string, id: string) => `${workspaceRootPath}/sessions/${id}`,
   getOrCreateLatestSession: async () => null,
   sessionPersistenceQueue: { flush: async () => {} },
-  // 使用真实实现，避免手工维护字段列表与 SESSION_PERSISTENT_FIELDS 不同步
+  // 使用真实实现，避免手工维护字段列表与 Craft metadata fields 不同步
   pickSessionFields: actualSessionUtils.pickSessionFields,
   validateSessionId: () => true,
 }))

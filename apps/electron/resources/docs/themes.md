@@ -51,8 +51,10 @@ widgets:
    rendered line) and forwards it over JSONL as an `extension_widget` message:
    `{ type: 'extension_widget', key, content: string[], placement, source }`.
 4. The Craft main process relays the message to the renderer via IPC.
-5. The renderer (`ExtensionWidgetZone`, `PlanProgressWidget`, …) renders the
-   `string[]` verbatim. **It never sees the Pi `theme` object.**
+5. The renderer's generic `ExtensionWidgetZone` surfaces render the `string[]`
+   verbatim. Structured Craft features such as plan artifacts use their own
+   versioned message protocol instead. **Neither path sees the Pi `theme`
+   object.**
 
 Consequences of this contract:
 

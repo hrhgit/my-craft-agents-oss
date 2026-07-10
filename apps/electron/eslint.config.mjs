@@ -188,6 +188,22 @@ export default [
     },
   },
 
+  // Renderer must not import Pi SDK-backed config helpers; request provider
+  // metadata through IPC/RPC handlers instead.
+  {
+    files: ['src/renderer/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        paths: [
+          {
+            name: '@craft-agent/shared/config/models-pi',
+            message: 'Pi model/provider catalog touches the Pi SDK and is main/server-only. Use the renderer API instead.',
+          },
+        ],
+      }],
+    },
+  },
+
   // Keep main model fetchers provider-agnostic (delegate to shared backend APIs only).
   {
     files: ['src/main/model-fetchers/**/*.{ts,tsx}'],

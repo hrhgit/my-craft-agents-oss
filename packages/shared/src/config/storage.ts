@@ -20,7 +20,7 @@ import type { StoredAttachment, StoredMessage } from '@craft-agent/core/types';
 import type { Plan } from '../agent/plan-types.ts';
 import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
-import { isValidThinkingLevel, normalizeThinkingLevel } from '../agent/thinking-levels.ts';
+import { normalizeThinkingLevel } from '../agent/thinking-levels.ts';
 import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
 import { type ConfigDefaults } from './config-defaults-schema.ts';
 import {
@@ -52,16 +52,21 @@ import type { LlmConnection } from './llm-connections.ts';
 import { modelSetEquals } from './migrations/model-helpers.ts';
 import {
   readPiCraftLlmConnections,
-  writePiCraftLlmConnections,
   upsertPiCraftLlmConnection,
   deletePiCraftLlmConnection,
+  readPiGlobalProviders,
   readPiGlobalSettings,
+  savePiGlobalProvider,
+  deletePiGlobalProvider,
   setPiGlobalDefaultThinkingLevel,
   readPiCraftAgentBoolean,
   writePiCraftAgentBoolean,
   readPiShellGuiBoolean,
   writePiShellGuiBoolean,
+  type PiGlobalModel,
+  type PiGlobalProvider,
 } from './pi-global-config.ts';
+import type { ModelDefinition } from './models.ts';
 
 // Config stored in JSON file (credentials stored in encrypted file, not here)
 export interface StoredConfig {
@@ -1720,20 +1725,270 @@ export type {
   LlmConnectionWithStatus,
 } from './llm-connections.ts';
 
+const DERIVED_PI_CONNECTION_CREATED_AT = 0;
+const DEFAULT_CUSTOM_ENDPOINT_API = 'openai-completions';
+const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 200_000;
+
+function piProviderSlug(providerKey: string): string {
+  return `pi-${providerKey}`;
+}
+
+function piProviderKeyFromSlug(slug: string): string | null {
+  if (!slug.startsWith('pi-')) return null;
+  const key = slug.slice('pi-'.length).trim();
+  return key || null;
+}
+
+function providerHasInlineApiKey(provider: PiGlobalProvider): boolean {
+  const value = (provider as PiGlobalProvider & { apiKey?: unknown }).apiKey;
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function providerRequiresExternalApiKey(provider: PiGlobalProvider): boolean {
+  const api = provider.api ?? DEFAULT_CUSTOM_ENDPOINT_API;
+  return !providerHasInlineApiKey(provider)
+    && (
+      provider.authHeader === true
+      || api === 'anthropic-messages'
+      || api === 'google-generative-ai'
+    );
+}
+
+function piModelSupportsImages(model: PiGlobalModel): boolean {
+  return Array.isArray(model.input) && model.input.includes('image');
+}
+
+function piGlobalModelsToConnectionModels(models: PiGlobalModel[] | undefined): ModelDefinition[] {
+  const seen = new Set<string>();
+  return (models ?? [])
+    .filter((model) => typeof model.id === 'string' && model.id.trim().length > 0)
+    .filter((model) => {
+      if (seen.has(model.id)) return false;
+      seen.add(model.id);
+      return true;
+    })
+    .map((model) => ({
+      id: model.id,
+      name: model.name ?? model.id,
+      shortName: model.name ?? model.id,
+      description: '',
+      provider: 'pi' as const,
+      contextWindow: model.contextWindow ?? DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW,
+      ...(model.reasoning !== undefined ? { supportsThinking: model.reasoning } : {}),
+      supportsImages: piModelSupportsImages(model) || undefined,
+    }));
+}
+
+function choosePiProviderDefaultModel(
+  providerKey: string,
+  provider: PiGlobalProvider,
+  settings: ReturnType<typeof readPiGlobalSettings>,
+): string | undefined {
+  const modelIds = (provider.models ?? [])
+    .map(model => model.id)
+    .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+
+  if (
+    settings.defaultProvider === providerKey
+    && typeof settings.defaultModel === 'string'
+    && modelIds.includes(settings.defaultModel)
+  ) {
+    return settings.defaultModel;
+  }
+
+  return modelIds[0];
+}
+
+function deriveConnectionFromPiProvider(
+  providerKey: string,
+  provider: PiGlobalProvider,
+  settings: ReturnType<typeof readPiGlobalSettings>,
+): LlmConnection {
+  const supportsImages = provider.models?.some(piModelSupportsImages) || undefined;
+  return {
+    slug: piProviderSlug(providerKey),
+    name: providerKey,
+    providerType: 'pi_compat',
+    authType: providerRequiresExternalApiKey(provider) ? 'api_key_with_endpoint' : 'none',
+    createdAt: DERIVED_PI_CONNECTION_CREATED_AT,
+    baseUrl: provider.baseUrl,
+    models: piGlobalModelsToConnectionModels(provider.models),
+    defaultModel: choosePiProviderDefaultModel(providerKey, provider, settings),
+    modelSelectionMode: 'automaticallySyncedFromProvider',
+    piAuthProvider: providerKey,
+    customEndpoint: {
+      api: provider.api ?? DEFAULT_CUSTOM_ENDPOINT_API,
+      ...(supportsImages ? { supportsImages } : {}),
+    },
+  };
+}
+
+function getPiProviderConnections(): LlmConnection[] {
+  const providers = readPiGlobalProviders();
+  const settings = readPiGlobalSettings();
+  return Object.entries(providers).map(([key, provider]) =>
+    deriveConnectionFromPiProvider(key, provider, settings),
+  );
+}
+
+function getMergedLlmConnections(): LlmConnection[] {
+  const merged = new Map<string, LlmConnection>();
+  for (const connection of getPiProviderConnections()) {
+    merged.set(connection.slug, connection);
+  }
+
+  // Legacy Craft-owned entries remain as a compatibility fallback only. Pi
+  // providers win on slug collisions so models.json.providers is authoritative.
+  for (const connection of readPiCraftLlmConnections()) {
+    if (!merged.has(connection.slug)) {
+      merged.set(connection.slug, connection);
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function resolvePiProviderForConnectionSlug(slug: string): { key: string; provider: PiGlobalProvider } | null {
+  const key = piProviderKeyFromSlug(slug);
+  if (!key) return null;
+  const provider = readPiGlobalProviders()[key];
+  return provider ? { key, provider } : null;
+}
+
+function normalizePiModelInput(existing: PiGlobalModel | undefined, supportsImages: boolean | undefined): ('text' | 'image')[] | undefined {
+  if (supportsImages === undefined) return existing?.input;
+  const input = new Set<'text' | 'image'>(existing?.input ?? ['text']);
+  if (supportsImages) {
+    input.add('image');
+  } else {
+    input.delete('image');
+  }
+  if (input.size === 0) input.add('text');
+  return ['text', 'image'].filter(kind => input.has(kind as 'text' | 'image')) as ('text' | 'image')[];
+}
+
+function connectionModelsToPiGlobalModels(
+  models: LlmConnection['models'],
+  existingModels: PiGlobalModel[] | undefined,
+): PiGlobalModel[] | undefined {
+  if (!models) return existingModels;
+
+  const existingById = new Map(
+    (existingModels ?? [])
+      .filter(model => typeof model.id === 'string')
+      .map(model => [model.id, model] as const),
+  );
+
+  return models
+    .map((entry): PiGlobalModel | null => {
+      const id = typeof entry === 'string' ? entry : entry.id;
+      if (!id?.trim()) return null;
+
+      const existing = existingById.get(id);
+      const next: PiGlobalModel = {
+        ...(existing ?? {}),
+        id,
+      };
+
+      if (typeof entry === 'string') {
+        next.name = existing?.name ?? id;
+        return next;
+      }
+
+      next.name = entry.name ?? existing?.name ?? id;
+      if (entry.contextWindow !== undefined) {
+        next.contextWindow = entry.contextWindow;
+      }
+      if (entry.supportsThinking !== undefined) {
+        next.reasoning = entry.supportsThinking;
+      }
+      const input = normalizePiModelInput(existing, entry.supportsImages);
+      if (input) {
+        next.input = input;
+      }
+      return next;
+    })
+    .filter((model): model is PiGlobalModel => model !== null);
+}
+
+function moveDefaultModelFirst(models: PiGlobalModel[] | undefined, defaultModel: string | undefined): PiGlobalModel[] | undefined {
+  if (!models || !defaultModel) return models;
+  const index = models.findIndex(model => model.id === defaultModel);
+  if (index <= 0) return models;
+  const next = [...models];
+  const [model] = next.splice(index, 1);
+  if (model) next.unshift(model);
+  return next;
+}
+
+function updatePiProviderFromConnection(
+  provider: PiGlobalProvider,
+  updated: LlmConnection,
+): PiGlobalProvider {
+  const next: PiGlobalProvider = { ...provider };
+  if (updated.baseUrl !== undefined) {
+    next.baseUrl = updated.baseUrl;
+  }
+  if (updated.customEndpoint?.api) {
+    next.api = updated.customEndpoint.api;
+  }
+  if (updated.models !== undefined) {
+    next.models = connectionModelsToPiGlobalModels(updated.models, provider.models);
+  }
+  next.models = moveDefaultModelFirst(next.models, updated.defaultModel);
+  return next;
+}
+
+function buildUpdatedConnection(
+  existing: LlmConnection,
+  updates: Partial<Omit<LlmConnection, 'slug'>>,
+): LlmConnection {
+  return {
+    // Preserve required fields from existing
+    slug: existing.slug,
+    name: updates.name ?? existing.name,
+    providerType: updates.providerType ?? existing.providerType,
+    type: updates.type ?? existing.type, // Legacy field
+    authType: updates.authType ?? existing.authType,
+    createdAt: updates.createdAt ?? existing.createdAt,
+    // Optional fields from updates or existing
+    baseUrl: updates.baseUrl !== undefined ? updates.baseUrl : existing.baseUrl,
+    models: updates.models !== undefined ? updates.models : existing.models,
+    defaultModel: updates.defaultModel !== undefined ? updates.defaultModel : existing.defaultModel,
+    modelSelectionMode: updates.modelSelectionMode !== undefined ? updates.modelSelectionMode : existing.modelSelectionMode,
+    // Pi auth provider
+    piAuthProvider: updates.piAuthProvider !== undefined ? updates.piAuthProvider : existing.piAuthProvider,
+    // Custom endpoint protocol (Anthropic/OpenAI compatible)
+    customEndpoint: updates.customEndpoint !== undefined ? updates.customEndpoint : existing.customEndpoint,
+    // Mid-stream send behavior (steer vs queue) — read via resolveMidStreamBehavior()
+    midStreamBehavior: updates.midStreamBehavior !== undefined ? updates.midStreamBehavior : existing.midStreamBehavior,
+    // Resolved Anthropic OAuth identity (issue #838) — preserved across unrelated saves
+    oauthAccountUuid: updates.oauthAccountUuid !== undefined ? updates.oauthAccountUuid : existing.oauthAccountUuid,
+    oauthAccountEmail: updates.oauthAccountEmail !== undefined ? updates.oauthAccountEmail : existing.oauthAccountEmail,
+    oauthOrganizationUuid: updates.oauthOrganizationUuid !== undefined ? updates.oauthOrganizationUuid : existing.oauthOrganizationUuid,
+    oauthOrganizationName: updates.oauthOrganizationName !== undefined ? updates.oauthOrganizationName : existing.oauthOrganizationName,
+    oauthProfileVerifiedAt: updates.oauthProfileVerifiedAt !== undefined ? updates.oauthProfileVerifiedAt : existing.oauthProfileVerifiedAt,
+    // Timestamps
+    lastUsedAt: updates.lastUsedAt !== undefined ? updates.lastUsedAt : existing.lastUsedAt,
+  };
+}
+
 /**
  * Ensure default LLM connection is set correctly.
  * Called internally by write operations to fix inconsistent state.
  * This is NOT called on read - reads never modify config.
  *
- * Source of truth for connections is Pi `~/.pi/agent/models.json.craftConnections`;
- * only the `defaultLlmConnection` slug pointer lives in Craft config.json.
+ * Source of truth for primary connections is Pi
+ * `~/.pi/agent/models.json.providers`. `craftConnections` is only retained as
+ * a compatibility fallback for legacy/manual entries that are not provider
+ * projections.
  *
  * Exported for reuse by migrations/migrate-llm-connections.ts and
  * migrations/migrate-orphaned-defaults.ts (safe circular dep — calls
  * are inside function bodies, not at module evaluation time).
  */
 export function ensureDefaultLlmConnection(config: StoredConfig): boolean {
-  const connections = readPiCraftLlmConnections();
+  const connections = getLlmConnections();
   if (connections.length === 0) {
     return false;
   }
@@ -1749,13 +2004,12 @@ export function ensureDefaultLlmConnection(config: StoredConfig): boolean {
 
 /**
  * Get all LLM connections.
- * Returns only user-added connections (no auto-populated built-ins).
- *
- * Source of truth: Pi `~/.pi/agent/models.json.craftConnections`.
- * Call migrateLegacyLlmConnectionsConfig() on app startup to handle migration.
+ * Returns provider-derived connections from Pi
+ * `~/.pi/agent/models.json.providers`, plus legacy Craft-owned connections
+ * that do not collide with a provider-derived slug.
  */
 export function getLlmConnections(): LlmConnection[] {
-  return readPiCraftLlmConnections();
+  return getMergedLlmConnections();
 }
 
 /**
@@ -1764,7 +2018,7 @@ export function getLlmConnections(): LlmConnection[] {
  * @returns Connection or null if not found
  */
 export function getLlmConnection(slug: string): LlmConnection | null {
-  const connections = readPiCraftLlmConnections();
+  const connections = getLlmConnections();
   return connections.find(c => c.slug === slug) || null;
 }
 
@@ -1774,7 +2028,7 @@ export function getLlmConnection(slug: string): LlmConnection | null {
  * @returns true if added, false if slug already exists
  */
 export function addLlmConnection(connection: LlmConnection): boolean {
-  const connections = readPiCraftLlmConnections();
+  const connections = getLlmConnections();
 
   // Check for duplicate slug
   if (connections.some(c => c.slug === connection.slug)) {
@@ -1804,7 +2058,7 @@ export function addLlmConnection(connection: LlmConnection): boolean {
  * @returns true if updated, false if not found
  */
 export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConnection, 'slug'>>): boolean {
-  const connections = readPiCraftLlmConnections();
+  const connections = getLlmConnections();
   const index = connections.findIndex(c => c.slug === slug);
   if (index === -1) return false;
 
@@ -1812,34 +2066,16 @@ export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConne
   const toModelIds = (models?: Array<{ id: string } | string>): string[] =>
     (models ?? []).map(m => typeof m === 'string' ? m : m.id);
 
-  const updated: LlmConnection = {
-    // Preserve required fields from existing
-    slug: existing.slug,
-    name: updates.name ?? existing.name,
-    providerType: updates.providerType ?? existing.providerType,
-    type: updates.type ?? existing.type, // Legacy field
-    authType: updates.authType ?? existing.authType,
-    createdAt: updates.createdAt ?? existing.createdAt,
-    // Optional fields from updates or existing
-    baseUrl: updates.baseUrl !== undefined ? updates.baseUrl : existing.baseUrl,
-    models: updates.models !== undefined ? updates.models : existing.models,
-    defaultModel: updates.defaultModel !== undefined ? updates.defaultModel : existing.defaultModel,
-    modelSelectionMode: updates.modelSelectionMode !== undefined ? updates.modelSelectionMode : existing.modelSelectionMode,
-    // Pi auth provider
-    piAuthProvider: updates.piAuthProvider !== undefined ? updates.piAuthProvider : existing.piAuthProvider,
-    // Custom endpoint protocol (Anthropic/OpenAI compatible)
-    customEndpoint: updates.customEndpoint !== undefined ? updates.customEndpoint : existing.customEndpoint,
-    // Mid-stream send behavior (steer vs queue) — read via resolveMidStreamBehavior()
-    midStreamBehavior: updates.midStreamBehavior !== undefined ? updates.midStreamBehavior : existing.midStreamBehavior,
-    // Resolved Anthropic OAuth identity (issue #838) — preserved across unrelated saves
-    oauthAccountUuid: updates.oauthAccountUuid !== undefined ? updates.oauthAccountUuid : existing.oauthAccountUuid,
-    oauthAccountEmail: updates.oauthAccountEmail !== undefined ? updates.oauthAccountEmail : existing.oauthAccountEmail,
-    oauthOrganizationUuid: updates.oauthOrganizationUuid !== undefined ? updates.oauthOrganizationUuid : existing.oauthOrganizationUuid,
-    oauthOrganizationName: updates.oauthOrganizationName !== undefined ? updates.oauthOrganizationName : existing.oauthOrganizationName,
-    oauthProfileVerifiedAt: updates.oauthProfileVerifiedAt !== undefined ? updates.oauthProfileVerifiedAt : existing.oauthProfileVerifiedAt,
-    // Timestamps
-    lastUsedAt: updates.lastUsedAt !== undefined ? updates.lastUsedAt : existing.lastUsedAt,
-  };
+  const updated = buildUpdatedConnection(existing, updates);
+
+  const piProviderEntry = resolvePiProviderForConnectionSlug(slug);
+  if (piProviderEntry) {
+    savePiGlobalProvider(
+      piProviderEntry.key,
+      updatePiProviderFromConnection(piProviderEntry.provider, updated),
+    );
+    return true;
+  }
 
   upsertPiCraftLlmConnection(updated);
 
@@ -1887,16 +2123,25 @@ export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConne
  * @returns true if deleted, false if not found
  */
 export function deleteLlmConnection(slug: string): boolean {
-  const connections = readPiCraftLlmConnections();
+  const connections = getLlmConnections();
   const existed = connections.some(c => c.slug === slug);
   if (!existed) return false;
 
-  deletePiCraftLlmConnection(slug);
+  const piProviderEntry = resolvePiProviderForConnectionSlug(slug);
+  if (piProviderEntry) {
+    deletePiGlobalProvider(piProviderEntry.key).catch((error) => {
+      console.error(`[storage] Failed to delete Pi provider '${piProviderEntry.key}':`, error);
+    });
+  }
+
+  if (!piProviderEntry) {
+    deletePiCraftLlmConnection(slug);
+  }
 
   // If deleted connection was the default, reset to first remaining or clear
   const config = loadStoredConfig();
   if (config && config.defaultLlmConnection === slug) {
-    const remaining = readPiCraftLlmConnections();
+    const remaining = getLlmConnections().filter(c => c.slug !== slug);
     config.defaultLlmConnection = remaining.length > 0 ? remaining[0]!.slug : undefined;
     saveConfig(config);
   }
@@ -1933,11 +2178,25 @@ export function deleteLlmConnection(slug: string): boolean {
  * @returns Default connection slug, or null if no connections exist
  */
 export function getDefaultLlmConnection(): string | null {
-  const connections = readPiCraftLlmConnections();
+  const connections = getLlmConnections();
   if (connections.length === 0) return null;
 
+  const providers = readPiGlobalProviders();
+  const settings = readPiGlobalSettings();
+  if (settings.defaultProvider && providers[settings.defaultProvider]) {
+    const slug = piProviderSlug(settings.defaultProvider);
+    if (connections.some(c => c.slug === slug)) {
+      return slug;
+    }
+  }
+
   const config = loadStoredConfig();
-  return config?.defaultLlmConnection || connections[0]?.slug || null;
+  const configDefault = config?.defaultLlmConnection;
+  if (configDefault && connections.some(c => c.slug === configDefault)) {
+    return configDefault;
+  }
+
+  return connections[0]?.slug || null;
 }
 
 /**
@@ -1946,7 +2205,7 @@ export function getDefaultLlmConnection(): string | null {
  * @returns true if set, false if connection not found
  */
 export function setDefaultLlmConnection(slug: string): boolean {
-  const connections = readPiCraftLlmConnections();
+  const connections = getLlmConnections();
   if (connections.length === 0) return false;
 
   // Verify connection exists
@@ -1984,9 +2243,10 @@ export function getDefaultThinkingLevel(): ThinkingLevel {
  *
  * @returns true if persisted, false if validation failed
  */
-export async function setDefaultThinkingLevel(level: ThinkingLevel): Promise<boolean> {
-  if (!isValidThinkingLevel(level)) return false;
-  await setPiGlobalDefaultThinkingLevel(level);
+export async function setDefaultThinkingLevel(level: unknown): Promise<boolean> {
+  const normalized = normalizeThinkingLevel(level);
+  if (!normalized) return false;
+  await setPiGlobalDefaultThinkingLevel(normalized);
   return true;
 }
 
@@ -1995,6 +2255,9 @@ export async function setDefaultThinkingLevel(level: ThinkingLevel): Promise<boo
  * @param slug - Connection slug
  */
 export function touchLlmConnection(slug: string): void {
+  const piProviderEntry = resolvePiProviderForConnectionSlug(slug);
+  if (piProviderEntry) return;
+
   const connections = readPiCraftLlmConnections();
   const connection = connections.find(c => c.slug === slug);
   if (connection) {

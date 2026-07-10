@@ -126,6 +126,34 @@ describe('SourceServerBuilder.buildApiConfig', () => {
   });
 });
 
+describe('SourceServerBuilder.buildMcpServer', () => {
+  const builder = new SourceServerBuilder();
+
+  test("applies credential-store headers for MCP authType:'none'", () => {
+    const source = createMockSource({
+      type: 'mcp',
+      api: undefined,
+      mcp: {
+        url: 'https://mcp.example.com/mcp',
+        authType: 'none',
+        headerNames: ['X-API-Key', 'X-App-ID'],
+      },
+    });
+    const credential: MultiHeaderCredential = {
+      'X-API-Key': 'test-api-key',
+      'X-App-ID': 'test-app-id',
+    };
+
+    const config = builder.buildMcpServer(source, null, credential);
+
+    expect(config).toEqual({
+      type: 'http',
+      url: 'https://mcp.example.com/mcp',
+      headers: credential,
+    });
+  });
+});
+
 describe('buildHeaders with MultiHeaderCredential', () => {
   test('should apply all headers from MultiHeaderCredential', () => {
     const credential: MultiHeaderCredential = {

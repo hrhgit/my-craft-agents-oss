@@ -17,9 +17,10 @@ import { getWorkspaceOrThrow } from '../utils'
 import { resizeImageForAPI, inspectImageBuffer } from '@craft-agent/server-core/services'
 import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs, isSensitivePath } from '@craft-agent/server-core/handlers'
 import { MarkItDown } from 'markitdown-js'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import type { HandlerFn, RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
+import { setTransferableHandler } from './transfer'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.file.READ,
@@ -44,6 +45,12 @@ function isTrustedLocalUserPathRequest(
   const windowWorkspaceId = deps.windowManager.getWorkspaceForWindow(ctx.webContentsId)
   if (!windowWorkspaceId) return false
   return !workspaceId || workspaceId === windowWorkspaceId
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const reason = signal.reason
+  throw reason instanceof Error ? reason : new Error('Request cancelled')
 }
 
 function getFilePathValidationOptions(
@@ -256,11 +263,12 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
   // Store an attachment to disk and generate thumbnail/markdown conversion
   // This is the core of the persistent file attachment system
-  server.handle(RPC_CHANNELS.file.STORE_ATTACHMENT, async (ctx, sessionId: string, attachment: FileAttachment): Promise<StoredAttachment> => {
+  const storeAttachmentHandler: HandlerFn = async (ctx, sessionId: string, attachment: FileAttachment): Promise<StoredAttachment> => {
     // Track files we've written for cleanup on error
     const filesToCleanup: string[] = []
 
     try {
+      throwIfAborted(ctx.signal)
       // Reject empty files early
       if (attachment.size === 0) {
         throw new Error('Cannot attach empty file')
@@ -293,6 +301,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       // Create attachments directory if it doesn't exist
       const attachmentsDir = getSessionAttachmentsPath(workspaceRootPath, sessionId)
       await mkdir(attachmentsDir, { recursive: true })
+      throwIfAborted(ctx.signal)
 
       // Generate unique ID for this attachment
       const id = randomUUID()
@@ -330,6 +339,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         attachment.base64 = undefined
         attachment.text = undefined
         let decoded: Buffer = await readFile(realAttachmentPath)
+        throwIfAborted(ctx.signal)
 
         // Reuse the same binary validation/resizing path as base64 uploads.
         if (attachment.type === 'image') {
@@ -405,12 +415,14 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           }
         }
 
+        filesToCleanup.push(storedPath)
+        throwIfAborted(ctx.signal)
         await writeFile(storedPath, decoded)
         finalSize = decoded.length
-        filesToCleanup.push(storedPath)
       } else if (attachment.base64) {
         // Images, PDFs, Office files - decode from base64
         let decoded: Buffer = Buffer.from(attachment.base64, 'base64')
+        throwIfAborted(ctx.signal)
         if (decoded.length > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES) {
           throw new Error(`Attachment exceeds the ${Math.round(ATTACHMENT_SINGLE_FILE_LIMIT_BYTES / 1024 / 1024)} MiB single-file limit`)
         }
@@ -511,8 +523,9 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           }
         }
 
-        await writeFile(storedPath, decoded)
         filesToCleanup.push(storedPath)
+        throwIfAborted(ctx.signal)
+        await writeFile(storedPath, decoded)
       } else if (attachment.text) {
         // Text files - save as UTF-8
         const textBytes = Buffer.byteLength(attachment.text, 'utf-8')
@@ -522,12 +535,15 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         if (Math.abs(textBytes - attachment.size) > 100) {
           throw new Error(`Attachment corrupted: size mismatch (expected ${attachment.size}, got ${textBytes})`)
         }
+        filesToCleanup.push(storedPath)
+        throwIfAborted(ctx.signal)
         await writeFile(storedPath, attachment.text, 'utf-8')
         finalSize = textBytes
-        filesToCleanup.push(storedPath)
       } else {
         throw new Error('Attachment has no content (neither base64 nor text)')
       }
+
+      throwIfAborted(ctx.signal)
 
       // 2. Generate thumbnail (images only — PDFs/Office get icon fallback)
       let thumbnailPath: string | undefined
@@ -535,10 +551,12 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       const thumbFileName = `${id}_thumb.png`
       const thumbPath = join(attachmentsDir, thumbFileName)
       try {
+        throwIfAborted(ctx.signal)
         const pngBuffer = await deps.platform.imageProcessor.process(storedPath, {
           resize: { width: 200, height: 200 },
           format: 'png',
         })
+        throwIfAborted(ctx.signal)
         await writeFile(thumbPath, pngBuffer)
         thumbnailPath = thumbPath
         thumbnailBase64 = pngBuffer.toString('base64')
@@ -555,8 +573,10 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         const mdFileName = `${id}_${safeName}.md`
         const mdPath = join(attachmentsDir, mdFileName)
         try {
+          throwIfAborted(ctx.signal)
           const markitdown = new MarkItDown()
           const result = await markitdown.convert(storedPath)
+          throwIfAborted(ctx.signal)
           if (!result || !result.textContent) {
             throw new Error('Conversion returned empty result')
           }
@@ -601,7 +621,9 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       deps.platform.logger.error('storeAttachment error:', message)
       throw new Error(`Failed to store attachment: ${message}`)
     }
-  })
+  }
+  server.handle(RPC_CHANNELS.file.STORE_ATTACHMENT, storeAttachmentHandler)
+  setTransferableHandler(RPC_CHANNELS.file.STORE_ATTACHMENT, storeAttachmentHandler)
 
   // Filesystem search for @ mention file selection.
   // Parallel BFS walk that skips ignored directories BEFORE entering them,

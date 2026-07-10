@@ -1,4 +1,5 @@
 export * from './debug.ts';
+export * from './env.ts';
 export * from './files.ts';
 export * from './open-url.ts';
 export * from './url-safety.ts';
@@ -7,6 +8,7 @@ export * from './icon-encoder.ts';
 export * from './paths.ts';
 export * from './perf.ts';
 export * from './large-response.ts';
+export * from './runtime-log.ts';
 export * from './title-generator.ts';
 export * from './toolNames.ts';
 export * from './workspace.ts';

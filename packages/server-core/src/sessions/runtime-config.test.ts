@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { LlmConnection } from '@craft-agent/shared/config'
 import type { FileAttachment } from '@craft-agent/shared/protocol'
-import { buildBackendRuntimeSignature, filterAttachmentsForModelInput } from './runtime-config'
+import { buildBackendRuntimeSignature, filterAttachmentsForModelInput, normalizeConnectionRuntimeBaseUrl } from './runtime-config'
 
 const baseCompat: LlmConnection = {
   slug: 'local',
@@ -44,6 +44,13 @@ const textAttachment: FileAttachment = {
 }
 
 describe('buildBackendRuntimeSignature', () => {
+  it('normalizes custom endpoint baseUrl values in runtime signatures', () => {
+    const one = sig({ ...baseCompat, baseUrl: 'http://127.0.0.1:1234/v1' })
+    const duplicate = sig({ ...baseCompat, baseUrl: 'http://127.0.0.1:1234/v1/v1' })
+
+    expect(duplicate).toBe(one)
+  })
+
   it('changes when a custom endpoint model image override changes', () => {
     const enabled = sig(baseCompat)
     const disabled = sig({
@@ -56,6 +63,15 @@ describe('buildBackendRuntimeSignature', () => {
 
   it('ignores non-runtime metadata such as lastUsedAt', () => {
     expect(sig({ ...baseCompat, lastUsedAt: 1 })).toBe(sig({ ...baseCompat, lastUsedAt: 2 }))
+  })
+})
+
+describe('normalizeConnectionRuntimeBaseUrl', () => {
+  it('normalizes by the configured custom endpoint protocol', () => {
+    expect(normalizeConnectionRuntimeBaseUrl({
+      baseUrl: 'https://api.anthropic.com/v1',
+      customEndpoint: { api: 'anthropic-messages' },
+    } as LlmConnection)).toBe('https://api.anthropic.com')
   })
 })
 

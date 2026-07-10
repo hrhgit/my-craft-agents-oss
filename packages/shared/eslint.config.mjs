@@ -82,12 +82,18 @@ export default [
   //   - models-pi.ts: static model/provider catalog (getModels/getProviders) used for
   //     PRE-AUTH provider listing in connection setup. RpcClient.getAvailableModels()
   //     requires a live authenticated session and cannot serve this path.
+  //   - pi-skill-resolver.ts / skills/storage.ts: synchronous UI/server seams over
+  //     Pi host facade skill listing.
+  //   - sessions/storage.ts: session projection creation/lookup via Pi host facade.
   //   - pi-agent.ts: the Craft backend adapter over Pi's PUBLIC RpcClient.
   {
     files: [
       'src/credentials/backends/secure-storage.ts',
       'src/config/models-pi.ts',
       'src/config/pi-global-config.ts',
+      'src/pi/pi-skill-resolver.ts',
+      'src/skills/storage.ts',
+      'src/sessions/storage.ts',
       'src/sessions/tree-jsonl.ts',
       'src/agent/pi-agent.ts',
     ],

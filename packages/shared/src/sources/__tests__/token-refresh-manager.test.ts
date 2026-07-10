@@ -9,7 +9,7 @@
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { isOAuthSource, hasRenewEndpoint, isRefreshableSource, type LoadedSource, type FolderSourceConfig } from '../types.ts';
 import { TokenRefreshManager } from '../token-refresh-manager.ts';
-import { isSourceUsable } from '../storage.ts';
+import { isSourceConfigAuthenticated, isSourceUsable } from '../storage.ts';
 import * as storage from '../storage.ts';
 import type { SourceCredentialManager } from '../credential-manager.ts';
 
@@ -504,7 +504,7 @@ describe('TokenRefreshManager', () => {
 
       await manager.ensureFreshToken(source);
 
-      expect(source.config.isAuthenticated).toBe(false);
+      expect(isSourceConfigAuthenticated(source.config)).toBe(false);
       expect(source.config.connectionStatus).toBe('needs_auth');
       expect(source.config.connectionError).toBe('Token refresh failed');
       expect(isSourceUsable(source)).toBe(false);
@@ -535,7 +535,7 @@ describe('TokenRefreshManager', () => {
 
       await manager.ensureFreshToken(source);
 
-      expect(source.config.isAuthenticated).toBe(false);
+      expect(isSourceConfigAuthenticated(source.config)).toBe(false);
       expect(source.config.connectionStatus).toBe('needs_auth');
       expect(source.config.connectionError).toBe('Refresh error: network down');
       expect(isSourceUsable(source)).toBe(false);

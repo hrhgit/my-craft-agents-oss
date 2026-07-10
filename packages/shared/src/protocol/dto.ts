@@ -14,6 +14,7 @@ import type {
   AnnotationV1,
   PermissionRequest as BasePermissionRequest,
   Session as CoreSession,
+  PlanModeStateV1,
 } from '@craft-agent/core/types'
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
@@ -50,6 +51,8 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
   lastMessageAt: number
   messages: Message[]
   isProcessing: boolean
+  /** True for sessions projected from Pi runtime that Craft can display but not mutate. */
+  readOnly?: boolean
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
   sessionStatus?: SessionStatus
@@ -94,6 +97,8 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
   hidden?: boolean
   archivedAt?: number
   supportsBranching?: boolean
+  /** Session-authoritative state emitted by the Pi Plan Mode extension. */
+  planModeState?: PlanModeStateV1
 }
 
 export interface CreateSessionOptions {
@@ -175,6 +180,8 @@ export type SessionEvent =
   | { type: 'credential_request'; sessionId: string; request: CredentialRequest }
   | { type: 'permission_mode_changed'; sessionId: string; permissionMode: PermissionMode; previousPermissionMode?: PermissionMode; transitionDisplay?: string; modeVersion?: number; changedAt?: string; changedBy?: PermissionModeState['changedBy'] }
   | { type: 'plan_submitted'; sessionId: string; message: Message }
+  | { type: 'plan_artifact_changed'; sessionId: string; message: Message; supersededArtifactIds?: string[] }
+  | { type: 'plan_mode_state_changed'; sessionId: string; state: PlanModeStateV1 }
   | { type: 'sources_changed'; sessionId: string; enabledSourceSlugs: string[] }
   | { type: 'labels_changed'; sessionId: string; labels: string[] }
   | { type: 'connection_changed'; sessionId: string; connectionSlug: string; supportsBranching?: boolean }
@@ -234,7 +241,7 @@ export type SessionCommand =
   | { type: 'revokeShare' }
   | { type: 'refreshTitle' }
   | { type: 'setConnection'; connectionSlug: string }
-  | { type: 'setPendingPlanExecution'; planPath: string; draftInputSnapshot?: string }
+  | { type: 'setPendingPlanExecution'; planPath?: string; artifactId?: string; draftInputSnapshot?: string }
   | { type: 'markCompactionComplete' }
   | { type: 'markPendingPlanExecutionDispatched' }
   | { type: 'clearPendingPlanExecution' }

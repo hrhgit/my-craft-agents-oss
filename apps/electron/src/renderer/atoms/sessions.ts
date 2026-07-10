@@ -73,6 +73,8 @@ export interface SessionMeta {
   isArchived?: boolean
   /** Timestamp when session was archived (for retention policy) */
   archivedAt?: number
+  /** Display-only sessions projected from Pi runtime cannot be mutated by Craft. */
+  readOnly?: boolean
 }
 
 /**

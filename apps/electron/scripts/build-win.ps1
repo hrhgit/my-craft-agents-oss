@@ -86,7 +86,6 @@ Start-Sleep -Seconds 2
 Write-Host "Cleaning previous builds..."
 # 注意:vendor\bun\ 不在此清理列表中,以便复用已下载的 bun.exe,避免每次打包都重新下载。
 $foldersToClean = @(
-    "$ElectronDir\resources\pi-agent-server",
     "$ElectronDir\resources\session-mcp-server",
     "$ElectronDir\release"
 )
@@ -113,6 +112,40 @@ foreach ($folder in $foldersToClean) {
 # 开发环境已装好依赖(含指向 E:\_workSpace\_Agents\pi\packages\* 的 symlink),
 # 构建只需复用现有 node_modules,因此跳过安装步骤。
 Write-Host "Skipping 'bun install' (reusing dev node_modules with Pi symlinks)" -ForegroundColor Yellow
+
+# Skipping install means stale workspace links from removed packages can linger in
+# node_modules. electron-builder's npm collector follows those links and fails on
+# missing targets, even when the package is no longer declared anywhere.
+function Remove-StaleCraftWorkspaceLinks {
+    param([string]$ScopeDir)
+
+    if (-not (Test-Path -LiteralPath $ScopeDir)) {
+        return
+    }
+
+    Write-Host "Checking @craft-agent workspace links..."
+    foreach ($item in Get-ChildItem -LiteralPath $ScopeDir -Force) {
+        $isReparsePoint = (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq [System.IO.FileAttributes]::ReparsePoint)
+        if (-not $isReparsePoint) {
+            continue
+        }
+
+        $targets = @($item.Target) | Where-Object { $_ }
+        if ($targets.Count -eq 0) {
+            continue
+        }
+
+        $missingTargets = @($targets | Where-Object { -not (Test-Path -LiteralPath $_) })
+        if ($missingTargets.Count -eq 0) {
+            continue
+        }
+
+        Write-Host "  Removing stale link $($item.FullName) -> $($targets -join ', ')" -ForegroundColor Yellow
+        Remove-Item -LiteralPath $item.FullName -Force -ErrorAction Stop
+    }
+}
+
+Remove-StaleCraftWorkspaceLinks -ScopeDir "$RootDir\node_modules\@craft-agent"
 
 # 3. Download Bun binary for Windows (cached by version marker file)
 # Use baseline build - works on all x64 CPUs (no AVX2 requirement)
@@ -205,27 +238,11 @@ New-Item -ItemType Directory -Force -Path "$ElectronDir\node_modules\@vscode" | 
 Remove-Item -Recurse -Force "$ElectronDir\node_modules\@vscode\ripgrep" -ErrorAction SilentlyContinue
 Copy-Item -Recurse -Force $RgSource "$ElectronDir\node_modules\@vscode\"
 
-# 5. Copy network interceptor sources for the Pi subprocess.
-$InterceptorSource = "$RootDir\packages\shared\src\unified-network-interceptor.ts"
-if (-not (Test-Path $InterceptorSource)) {
-    Write-Host "ERROR: Interceptor not found at $InterceptorSource" -ForegroundColor Red
-    throw "Interceptor not found"
-}
-Write-Host "Copying interceptor (for Pi subprocess)..."
-New-Item -ItemType Directory -Force -Path "$ElectronDir\packages\shared\src" | Out-Null
-Copy-Item $InterceptorSource "$ElectronDir\packages\shared\src\"
-foreach ($dep in @("interceptor-common.ts", "feature-flags.ts", "interceptor-request-utils.ts")) {
-    $depPath = "$RootDir\packages\shared\src\$dep"
-    if (Test-Path $depPath) {
-        Copy-Item $depPath "$ElectronDir\packages\shared\src\"
-    }
-}
-
 # 6. Build Electron app
 Write-Host "Building Electron app..."
 
-# Build main process + all subprocesses (session-mcp-server, pi-agent-server,
-# interceptor, WhatsApp worker) via the canonical build script.
+# Build main process + all subprocesses (session-mcp-server, interceptor,
+# WhatsApp worker) via the canonical build script.
 # This ensures --alias flags (node-fetch, abort-controller) and build defines
 # (OAuth, Sentry) are applied consistently with `bun run electron:build`.
 Write-Host "  Building main process + subprocesses..."
@@ -276,6 +293,8 @@ Push-Location $ElectronDir
 try {
     bun scripts/copy-assets.ts
     if ($LASTEXITCODE -ne 0) { throw "Asset copy failed" }
+    bun scripts/validate-assets.ts
+    if ($LASTEXITCODE -ne 0) { throw "Asset validation failed" }
     Write-Host "  Assets copied" -ForegroundColor Green
 } finally {
     Pop-Location

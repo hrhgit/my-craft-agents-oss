@@ -10,15 +10,14 @@ import type { ThinkingLevel } from '../../thinking-levels.ts';
 
 /**
  * Map Craft's {@link ThinkingLevel} to Pi's `ThinkingLevel`.
- * Pi's ceiling is `xhigh`; Craft's `max` saturates there.
  */
 export const THINKING_TO_PI: Record<ThinkingLevel, PiThinkingLevel> = {
   off: 'off',
+  minimal: 'minimal',
   low: 'low',
   medium: 'medium',
   high: 'high',
   xhigh: 'xhigh',
-  max: 'xhigh',
 };
 
 /**

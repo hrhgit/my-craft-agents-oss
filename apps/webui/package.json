@@ -7,10 +7,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@craft-agent/server-core": "workspace:*",
     "@craft-agent/shared": "workspace:*",
     "@craft-agent/ui": "workspace:*",
     "i18next": "^26.0.3",

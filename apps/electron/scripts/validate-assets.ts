@@ -1,0 +1,106 @@
+/**
+ * Validate packaged resource staging before electron-builder runs.
+ */
+
+import { existsSync, statSync } from 'fs';
+import { spawnSync } from 'child_process';
+import { join, resolve } from 'path';
+import { pathToFileURL } from 'url';
+
+const ELECTRON_DIR = resolve(import.meta.dir, '..');
+const resourcesDir = join(ELECTRON_DIR, 'dist', 'resources');
+const piRuntimeRoot = join(resourcesDir, 'pi-runtime');
+const piRuntimeModules = join(piRuntimeRoot, 'node_modules');
+
+const sidecarPlatform = process.platform === 'win32' ? 'windows' : process.platform;
+const sidecarTarget = `${sidecarPlatform}-${process.arch}`;
+const sidecarBinary = process.platform === 'win32' ? 'pi-network-sidecar.exe' : 'pi-network-sidecar';
+
+const requiredPaths = [
+  resourcesDir,
+  join(resourcesDir, 'powershell-parser.ps1'),
+  join(piRuntimeRoot, 'package.json'),
+  join(piRuntimeRoot, 'dist', 'cli.bundle.js'),
+  join(piRuntimeRoot, 'dist', 'cli.full.bundle.js'),
+  join(piRuntimeRoot, 'dist', 'cli.interactive.bundle.js'),
+  join(piRuntimeRoot, 'dist', 'index.js'),
+  join(piRuntimeRoot, 'dist', 'core', 'package-manager.js'),
+  join(piRuntimeRoot, 'dist', 'core', 'export-html', 'template.html'),
+  join(piRuntimeRoot, 'dist', 'modes', 'interactive', 'theme', 'dark.json'),
+  join(piRuntimeRoot, 'sidecar', 'bin', sidecarTarget, sidecarBinary),
+  join(piRuntimeModules, '@earendil-works', 'pi-ai', 'package.json'),
+  join(piRuntimeModules, 'ignore', 'package.json'),
+  join(piRuntimeModules, 'minimatch', 'package.json'),
+  join(piRuntimeModules, 'undici', 'package.json'),
+];
+
+let failed = false;
+
+for (const path of requiredPaths) {
+  if (!existsSync(path)) {
+    console.error(`Missing required staged asset: ${path}`);
+    failed = true;
+    continue;
+  }
+
+  const stat = statSync(path);
+  if (stat.isFile() && stat.size === 0) {
+    console.error(`Required staged asset is empty: ${path}`);
+    failed = true;
+  }
+}
+
+if (failed) {
+  process.exit(1);
+}
+
+function evalArgs(script: string): string[] {
+  return 'bun' in process.versions
+    ? ['-e', script]
+    : ['--input-type=module', '-e', script];
+}
+
+function validateSpawn(name: string, args: string[], options?: { cwd?: string }): void {
+  const result = spawnSync(process.execPath, args, {
+    cwd: options?.cwd ?? ELECTRON_DIR,
+    encoding: 'utf-8',
+    env: {
+      ...process.env,
+      PI_CHECK_PACKAGE_UPDATES: '0',
+      PI_OFFLINE: '1',
+    },
+  });
+
+  if (result.status === 0) return;
+
+  console.error(`${name} failed with exit code ${result.status ?? 'unknown'}`);
+  if (result.stdout.trim()) {
+    console.error(result.stdout.trim());
+  }
+  if (result.stderr.trim()) {
+    console.error(result.stderr.trim());
+  }
+  process.exit(1);
+}
+
+validateSpawn(
+  'Pi CLI bundle smoke test',
+  [join(piRuntimeRoot, 'dist', 'cli.bundle.js'), '--version'],
+  { cwd: piRuntimeRoot },
+);
+
+const packageManagerUrl = pathToFileURL(join(piRuntimeRoot, 'dist', 'core', 'package-manager.js')).href;
+validateSpawn(
+  'Pi package-manager dynamic import smoke test',
+  evalArgs(`await import(${JSON.stringify(packageManagerUrl)});`),
+  { cwd: piRuntimeRoot },
+);
+
+const publicApiUrl = pathToFileURL(join(piRuntimeRoot, 'dist', 'index.js')).href;
+validateSpawn(
+  'Pi public API import smoke test',
+  evalArgs(`await import(${JSON.stringify(publicApiUrl)});`),
+  { cwd: piRuntimeRoot },
+);
+
+console.log('Staged Electron assets validated');

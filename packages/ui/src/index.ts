@@ -29,6 +29,7 @@ export {
 export {
   SessionViewer,
   TurnCard,
+  PlanArtifactCard,
   TurnCardActionsMenu,
   ResponseCard,
   UserMessageBubble,
@@ -49,6 +50,7 @@ export {
   type SessionViewerProps,
   type SessionViewerMode,
   type TurnCardProps,
+  type PlanArtifactCardProps,
   type TurnCardActionsMenuProps,
   type ResponseCardProps,
   type UserMessageBubbleProps,

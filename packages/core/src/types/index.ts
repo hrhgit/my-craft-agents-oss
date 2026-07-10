@@ -53,6 +53,32 @@ export type {
 } from './message.ts';
 export { generateMessageId } from './message.ts';
 
+export type {
+  PlanArtifactState,
+  PlanReviewStatus,
+  PlanReviewVerdict,
+  PlanChecklistItemStatus,
+  PlanChecklistItemV1,
+  PlanReviewV1,
+  PlanArtifactV1,
+  PlanModePhase,
+  PlanModeStateV1,
+  PlanArtifactMessageDetailsV1,
+  PlanModeStateMessageDetailsV1,
+  ExtensionCommandResult,
+} from './plan-artifact.ts';
+export {
+  PLAN_ARTIFACT_SCHEMA_VERSION,
+  PLAN_ARTIFACT_CUSTOM_TYPE,
+  PLAN_ARTIFACT_UPDATE_CUSTOM_TYPE,
+  PLAN_MODE_STATE_CUSTOM_TYPE,
+  isPlanArtifactV1,
+  isPlanModeStateV1,
+  parsePlanArtifactMessageDetails,
+  parsePlanModeStateMessageDetails,
+  createLegacyPlanArtifact,
+} from './plan-artifact.ts';
+
 // Message persistence mappers
 export { messageToStored, storedToMessage } from './message-mapper.ts';
 
@@ -63,4 +89,3 @@ export type {
   SessionProcessingStatus,
   ActiveSessionInfo,
 } from './server.ts';
-

@@ -12,7 +12,7 @@
  * - AsyncGenerator for streaming: Consistent with existing CraftAgent API
  */
 
-import type { AgentEvent } from '@craft-agent/core/types';
+import type { AgentEvent, ExtensionCommandResult } from '@craft-agent/core/types';
 import type { FileAttachment } from '../../utils/files.ts';
 import type { ThinkingLevel } from '../thinking-levels.ts';
 import type { PermissionMode } from '../mode-manager.ts';
@@ -58,6 +58,7 @@ import type { AutomationSystem } from '../../automations/index.ts';
  */
 export type ExtensionBridgeEvent =
   | { type: 'extension_notify'; message: string; notificationType?: 'info' | 'warning' | 'error'; source?: string }
+  | { type: 'extension_status'; key?: string; status: string; source?: string }
   | { type: 'extension_widget'; key: string; content: string[] | undefined; placement?: 'aboveEditor' | 'belowEditor'; source?: string }
   | { type: 'extension_command_registered'; name: string; description?: string; source: string }
   | {
@@ -75,6 +76,13 @@ export type ExtensionBridgeEvent =
       /** 发起请求的会话 ID（由 SessionManager 注入，渲染进程据此回传响应） */
       sessionId?: string;
     };
+
+export interface PiExtensionCommand {
+  name: string;
+  description?: string;
+  source: string;
+  path?: string;
+}
 
 /**
  * Permission prompt types for different tool categories.
@@ -176,8 +184,6 @@ export interface BackendHostRuntimeContext {
   isPackaged: boolean;
   /** Optional runtime override for Node/Bun executable */
   nodeRuntimePath?: string;
-  /** Optional interceptor bundle override (CJS bundle loaded via --require) */
-  interceptorBundlePath?: string;
 }
 
 /**
@@ -292,7 +298,7 @@ export interface CoreBackendConfig {
 
   /**
    * 扩展事件桥接回调：当 Pi RpcClient 转发扩展事件（remoteui:request、
-   * extension_notify、extension_widget、extension_command_registered 等）时调用。
+   * extension_notify、extension_status、extension_widget、extension_command_registered 等）时调用。
    * 由 SessionManager 通过 eventSink 广播到渲染进程。
    */
   onExtensionEvent?: (event: ExtensionBridgeEvent) => void;
@@ -651,7 +657,13 @@ export interface AgentBackend {
    * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端可不实现。
    * args 为 JSON 字符串。
    */
-  sendExtensionCommandInvoke?(commandId: string, args?: string): Promise<boolean>;
+  sendExtensionCommandInvoke?(commandId: string, args?: string): Promise<ExtensionCommandResult>;
+
+  /**
+   * 查询 Pi 当前会话已注册的扩展 slash commands。
+   * 仅 Pi 后端实现；非 Pi 后端可不实现。
+   */
+  listExtensionCommands?(): Promise<PiExtensionCommand[]>;
 
   // ============================================================
   // Callbacks (set by facade after construction)

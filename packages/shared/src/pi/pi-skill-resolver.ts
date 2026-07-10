@@ -1,6 +1,4 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { PI_PROJECT_SKILLS_DIR, PI_SKILLS_DIR } from '../config/paths.ts';
+import { listSkillsSync as listPiSkillsSync } from '@earendil-works/pi-coding-agent';
 import { validateSkillSlug } from '../skills/storage.ts';
 
 export type PiSkillTier = 'global' | 'project';
@@ -16,30 +14,33 @@ export interface PiResolvedSkill {
   skillFile: string;
 }
 
+function tierForIndex(index: number): PiSkillTier {
+  return index === 0 ? 'global' : 'project';
+}
+
 export class PiSkillResolver {
   constructor(private readonly projectRoot?: string) {}
 
   getSkillPaths(): PiSkillPath[] {
-    const paths: PiSkillPath[] = [{ tier: 'global', dir: PI_SKILLS_DIR }];
-    if (this.projectRoot) {
-      paths.push({ tier: 'project', dir: join(this.projectRoot, PI_PROJECT_SKILLS_DIR) });
-    }
-    return paths;
+    return listPiSkillsSync({ cwd: this.projectRoot }).skillRoots.map((dir, index) => ({
+      tier: tierForIndex(index),
+      dir,
+    }));
   }
 
   resolveSkill(slug: string): PiResolvedSkill | null {
     if (validateSkillSlug(slug) === null) return null;
 
-    const tiers = this.getSkillPaths();
-    for (let i = tiers.length - 1; i >= 0; i--) {
-      const tier = tiers[i]!;
-      const skillDir = join(tier.dir, slug);
-      const skillFile = join(skillDir, 'SKILL.md');
-      if (existsSync(skillFile)) {
-        return { tier: tier.tier, skillDir, skillFile };
-      }
-    }
-    return null;
+    const result = listPiSkillsSync({ cwd: this.projectRoot });
+    const skill = result.skills.find(candidate => candidate.slug === slug);
+    if (!skill) return null;
+
+    const tierIndex = result.skillRoots.findIndex(root => skill.baseDir === root || skill.baseDir.startsWith(`${root}\\`) || skill.baseDir.startsWith(`${root}/`));
+    return {
+      tier: tierForIndex(tierIndex <= 0 ? 0 : tierIndex),
+      skillDir: skill.baseDir,
+      skillFile: skill.filePath,
+    };
   }
 }
 

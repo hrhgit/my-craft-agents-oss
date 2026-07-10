@@ -2,6 +2,7 @@ import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { Command as CommandPrimitive } from 'cmdk'
 import { AnimatePresence, motion } from 'motion/react'
+import { toast } from 'sonner'
 import {
   Paperclip,
   ArrowUp,
@@ -13,8 +14,6 @@ import {
   AlertCircle,
   Image as ImageIcon,
   Sparkles,
-  MessageSquare,
-  ClipboardList,
   X,
 } from 'lucide-react'
 import { Icon_Home, Icon_Folder, Spinner } from '@craft-agent/ui'
@@ -86,7 +85,7 @@ import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@c
 import {
   ATTACHMENT_INLINE_RPC_LIMIT_BYTES,
   ATTACHMENT_SINGLE_FILE_LIMIT_BYTES,
-} from '@craft-agent/shared/utils'
+} from '@craft-agent/shared/utils/attachment-limits'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { hasOpenOverlay } from '@/lib/overlay-detection'
 import { ToolbarStatusSlot } from './ToolbarStatusSlot'
@@ -269,7 +268,7 @@ export interface FreeFormInputProps {
   /** Callback when model changes (includes connection slug for proper persistence) */
   onModelChange: (model: string, connection?: string) => void
   // Thinking level (session-level setting)
-  /** Current thinking level ('off', 'think', 'max') */
+  /** Current thinking level ('off', 'minimal', 'low', 'medium', 'high', 'xhigh') */
   thinkingLevel?: ThinkingLevel
   /** Callback when thinking level changes */
   onThinkingLevelChange?: (level: ThinkingLevel) => void
@@ -356,11 +355,11 @@ export interface FreeFormInputProps {
    */
   enableCompactModelPicker?: boolean
   // Connection selection (hierarchical connection → model selector)
-  /** Current LLM connection slug (locked after first message) */
+  /** Current LLM connection slug */
   currentConnection?: string
-  /** Callback when connection changes (only works when session is empty) */
+  /** Callback when connection changes */
   onConnectionChange?: (connectionSlug: string) => void
-  /** When true, the session's locked connection has been removed */
+  /** When true, the session's selected connection has been removed */
   connectionUnavailable?: boolean
   /**
    * True when the input is collapsed because the agent is processing in
@@ -465,8 +464,8 @@ export function FreeFormInput({
   }, [currentConnection, workspaceDefaultConnection, llmConnections])
 
   // Decide which of the four picker UIs to render. The `switcher` branch
-  // wins over `locked-single` so users with a single-model pi_compat default
-  // can still reach the connection list on a fresh session (#727).
+  // wins over `locked-single` so users with multiple providers can always
+  // reach the connection list, including after a session has started.
   const pickerMode = derivePickerMode({
     connectionUnavailable,
     connectionDefaultModel,
@@ -492,25 +491,6 @@ export function FreeFormInput({
   }, [llmConnections, currentConnection, workspaceDefaultConnection, connectionUnavailable])
 
   const availableThinkingLevels = THINKING_LEVELS
-  const [piExtensionSettings, setPiExtensionSettings] = React.useState<import('../../../../shared/types').PiExtensionSettings | null>(null)
-
-  React.useEffect(() => {
-    let disposed = false
-    window.electronAPI?.getPiExtensionSettings?.()
-      .then((settings) => {
-        if (!disposed) setPiExtensionSettings(settings)
-      })
-      .catch(() => {
-        if (!disposed) setPiExtensionSettings(null)
-      })
-    return () => {
-      disposed = true
-    }
-  }, [])
-
-  const showPlanButtons = piExtensionSettings?.enabled !== false
-  const showDiscussionButton = showPlanButtons && piExtensionSettings?.planMode?.showDiscussionButton !== false
-  const showPlanButton = showPlanButtons && piExtensionSettings?.planMode?.showPlanButton !== false
 
   // Disable thinking selector when the current model explicitly doesn't support it
   const thinkingDisabled = React.useMemo(() => {
@@ -805,10 +785,8 @@ export function FreeFormInput({
     source?: string
   }
 
-  // Listen for craft:approve-plan events (used by ResponseCard's Accept Plan button)
-  // pi-first：点击 "Accept Plan" 时通过 RPC 调用 pi plan-mode 扩展的 /plan-finalize 命令，
-  // 由扩展完成 plan 工作流收尾（架构收缩审查、执行清单落地等）。
-  // 仅处理本会话事件（sessionId 必须匹配）。
+  // Legacy role=plan compatibility. Structured assistant artifacts use
+  // /plan-execute directly from PlanArtifactCard instead of this event.
   React.useEffect(() => {
     const handleApprovePlan = (e: CustomEvent<PlanApprovalEventDetail>) => {
       // Only handle if this event is for our session
@@ -820,36 +798,9 @@ export function FreeFormInput({
       const draftInput = shouldIncludeDraft ? consumeInputDraftSnapshot() : ''
       const planPath = e.detail?.planPath
 
-      // Switch to allow-all (Auto) mode if in Explore mode (allow execution without prompts)
-      // Only switch if currently in safe mode - if user is in 'ask' mode, respect their choice
-      if (permissionMode === 'safe') {
+      if (permissionMode !== 'allow-all') {
         onPermissionModeChange?.('allow-all')
       }
-
-      // 通过 extension_command_invoke RPC 触发 pi plan-mode 扩展的 /plan-finalize 命令。
-      // 该 RPC 由 pi-extension-bridge 桥接层（Task 2）实现：主进程收到 invokeExtensionCommand
-      // 后，向子进程发送 { type: 'extension_command_invoke', name: 'plan-finalize', args }
-      // 消息，由 Pi SDK 转发给 plan-mode 扩展的 registerCommand handler。
-      // 桥接层未就绪时的回退路径，保证 UI 按钮可用。
-      const w = window as unknown as {
-        electronAPI?: {
-          invokeExtensionCommand?: (
-            sessionId: string,
-            commandName: string,
-            args?: Record<string, unknown>,
-          ) => Promise<boolean> | boolean
-        }
-      }
-      const invoked = w.electronAPI?.invokeExtensionCommand?.(
-        sessionId ?? '',
-        'plan-finalize',
-        { planPath, draftInput },
-      )
-      if (invoked) {
-        return
-      }
-
-      // 回退路径：桥接层未实现时，仍走原有 plan 文本提交（兼容回滚场景）。
       const text = buildPlanApprovalMessage({
         planPath,
         draftInput,
@@ -876,13 +827,13 @@ export function FreeFormInput({
       const draftInputSnapshot = shouldIncludeDraft ? consumeInputDraftSnapshot() : ''
 
       // Switch to allow-all (Auto) mode if in Explore mode
-      if (permissionMode === 'safe') {
+      if (permissionMode !== 'allow-all') {
         onPermissionModeChange?.('allow-all')
       }
 
       // Persist the pending plan execution state BEFORE sending /compact.
       // This allows reload recovery if CMD+R happens during compaction.
-      if (sessionId) {
+      if (sessionId && planPath) {
         await window.electronAPI.sessionCommand(sessionId, {
           type: 'setPendingPlanExecution',
           planPath: planPath ?? '',
@@ -904,11 +855,10 @@ export function FreeFormInput({
         // Remove the listener (one-time use)
         window.removeEventListener('craft:compaction-complete', handleCompactionComplete as unknown as EventListener)
 
-        const executionMessage = buildPlanApprovalMessage({
-          planPath,
-          draftInput: draftInputSnapshot,
-        })
-        onSubmit(executionMessage, undefined)
+        if (planPath) {
+          const executionMessage = buildPlanApprovalMessage({ planPath, draftInput: draftInputSnapshot })
+          onSubmit(executionMessage, undefined)
+        }
 
         // Clear the pending state since we just sent the execution message
         if (sessionId) {
@@ -949,24 +899,27 @@ export function FreeFormInput({
         const pending = await window.electronAPI.getPendingPlanExecution(sessionId)
         if (!pending || pending.awaitingCompaction || pending.executionDispatched) return
 
-        // Mark dispatched before sending so reload recovery does not double-submit
-        // the same plan if onSubmit succeeds but cleanup fails during a reconnect.
-        await window.electronAPI.sessionCommand(sessionId, {
-          type: 'markPendingPlanExecutionDispatched',
-        })
+        if (pending.artifactId) {
+          const result = await window.electronAPI.invokeExtensionCommand(sessionId, 'plan-execute', {
+            artifactId: pending.artifactId,
+          })
+          if (!result.invoked) {
+            toast.error('Could not execute the compacted plan', { description: result.error })
+            return
+          }
+        } else if (pending.planPath) {
+          onSubmit(buildPlanApprovalMessage({
+            planPath: pending.planPath,
+            draftInput: pending.draftInputSnapshot,
+          }), undefined)
+        } else {
+          toast.error('Pending plan execution is missing its target.')
+          return
+        }
 
-        // Compaction completed but we never sent the execution message (page reloaded).
-        // Send it now and clear the pending state.
         hasExecuted = true
-        const executionMessage = buildPlanApprovalMessage({
-          planPath: pending.planPath,
-          draftInput: pending.draftInputSnapshot,
-        })
-        onSubmit(executionMessage, undefined)
-
-        await window.electronAPI.sessionCommand(sessionId, {
-          type: 'clearPendingPlanExecution',
-        })
+        await window.electronAPI.sessionCommand(sessionId, { type: 'markPendingPlanExecutionDispatched' })
+        await window.electronAPI.sessionCommand(sessionId, { type: 'clearPendingPlanExecution' })
       } catch (error) {
         if (!isExpectedReconnectError(error)) {
           console.error('[FreeFormInput] Failed to resume pending plan execution:', error)
@@ -1098,15 +1051,11 @@ export function FreeFormInput({
 
   // pi 扩展命令：监听 extension_command_registered 事件并维护命令列表，
   // triggerCommand 通过 invokeExtensionCommand ElectronAPI 方法派发到子进程。
-  const { commands: extensionCommands, triggerCommand: triggerExtensionCommand } = useExtensionCommands(sessionId)
-
-  const triggerPlanModeCommand = React.useCallback((command: 'plan' | 'discuss') => {
-    const invoked = triggerExtensionCommand(command)
-    if (invoked) return
-    const slash = `/${command}`
-    onInputChange?.(slash)
-    setInput(slash)
-  }, [onInputChange, triggerExtensionCommand])
+  const {
+    commands: extensionCommands,
+    refreshCommands: refreshExtensionCommands,
+    triggerCommand: triggerExtensionCommand,
+  } = useExtensionCommands(sessionId)
 
   // 将扩展命令转为 slash menu 可识别的 SlashCommand[]，id 使用 'ext:<name>' 前缀
   // 以便在 handleSlashCommand 中与内置命令区分。
@@ -1131,7 +1080,9 @@ export function FreeFormInput({
     // pi 扩展命令：id 形如 'ext:<name>'，触发后通过 invokeExtensionCommand 派发
     if (typeof commandId === 'string' && commandId.startsWith('ext:')) {
       const name = commandId.slice('ext:'.length)
-      triggerExtensionCommand(name)
+      void triggerExtensionCommand(name).then(result => {
+        if (!result.invoked) toast.error(`/${name} failed`, { description: result.error })
+      })
       return
     }
     if (commandId === 'safe') onPermissionModeChange?.('safe')
@@ -1646,6 +1597,11 @@ export function FreeFormInput({
   // Handle input with cursor position (for menu detection)
   const handleRichInput = React.useCallback((value: string, cursorPosition: number) => {
     const nextValue = coerceInputText(value)
+    const textBeforeCursor = nextValue.slice(0, cursorPosition)
+
+    if (/(?:^|\s)\/[\w:-]*$/.test(textBeforeCursor)) {
+      refreshExtensionCommands()
+    }
 
     // Update inline slash command state
     inlineSlash.handleInputChange(nextValue, cursorPosition)
@@ -1680,7 +1636,7 @@ export function FreeFormInput({
       setInput(newValue)
       syncToParent(newValue)
     }
-  }, [inlineSlash, inlineMention, inlineLabel, syncToParent, autoCapitalisation])
+  }, [inlineSlash, inlineMention, inlineLabel, syncToParent, autoCapitalisation, refreshExtensionCommands])
 
   // Handle inline slash command selection (removes the /command text)
   const handleInlineSlashCommandSelect = React.useCallback((commandId: SlashCommandId) => {
@@ -1999,48 +1955,25 @@ export function FreeFormInput({
             onChange={handleFileInputChange}
           />
 
-          {/* Compact mode: permission mode drawer + standard icon badges for attach/sources/working dir.
+          {/* Compact mode: standard icon badges plus the permission selector in the input footer.
               Wrapper absorbs all squeeze so the model label truncates first and the send button stays
               anchored to the right (craft-agents-oss#798). overflow-hidden is safe — Radix Drawer /
               dropdowns inside render via portals, so they aren't clipped. */}
-          {showDiscussionButton && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7 shrink-0 rounded-[6px]"
-                onClick={() => triggerPlanModeCommand('discuss')}
-                disabled={disabled}
-                aria-label="Discussion mode"
-              >
-                <MessageSquare className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top">Discussion mode</TooltipContent>
-          </Tooltip>
-          )}
-          {showPlanButton && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7 shrink-0 rounded-[6px]"
-                onClick={() => triggerPlanModeCommand('plan')}
-                disabled={disabled}
-                aria-label="Plan mode"
-              >
-                <ClipboardList className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top">Plan mode</TooltipContent>
-          </Tooltip>
-          )}
           {compactMode && (
           <div className="flex items-center gap-1 min-w-0 shrink overflow-hidden">
+          <FreeFormInputContextBadge
+            icon={<Paperclip className="h-4 w-4" />}
+            label={attachments.length > 0
+              ? t("chat.filesCount", { count: attachments.length })
+              : t("chat.attach")
+            }
+            isExpanded={false}
+            hasSelection={attachments.length > 0}
+            showChevron={false}
+            onClick={handleAttachClick}
+            tooltip={t("chat.attachFilesTooltip")}
+            disabled={disabled}
+          />
           {onPermissionModeChange && (
             <CompactPermissionModeSelector
               permissionMode={permissionMode}
@@ -2060,19 +1993,6 @@ export function FreeFormInput({
               contextStatus={contextStatus}
             />
           )}
-          <FreeFormInputContextBadge
-            icon={<Paperclip className="h-4 w-4" />}
-            label={attachments.length > 0
-              ? t("chat.filesCount", { count: attachments.length })
-              : t("chat.attach")
-            }
-            isExpanded={false}
-            hasSelection={attachments.length > 0}
-            showChevron={false}
-            onClick={handleAttachClick}
-            tooltip={t("chat.attachFilesTooltip")}
-            disabled={disabled}
-          />
           {onSourcesChange && (
             <div className="relative shrink min-w-0">
               <FreeFormInputContextBadge
@@ -2174,7 +2094,15 @@ export function FreeFormInput({
             disabled={disabled}
           />
 
-          {/* 2. Source Selector Badge - only show if onSourcesChange is provided */}
+          {/* 2. Permission Mode Selector */}
+          {onPermissionModeChange && (
+            <CompactPermissionModeSelector
+              permissionMode={permissionMode}
+              onPermissionModeChange={onPermissionModeChange}
+            />
+          )}
+
+          {/* 3. Source Selector Badge - only show if onSourcesChange is provided */}
           {onSourcesChange && (
             <div className="relative shrink min-w-0 overflow-hidden">
               <FreeFormInputContextBadge
@@ -2251,7 +2179,7 @@ export function FreeFormInput({
             </div>
           )}
 
-          {/* 3. Working Directory Selector Badge */}
+          {/* 4. Working Directory Selector Badge */}
           {onWorkingDirectoryChange && (
             <WorkingDirectoryBadge
               workingDirectory={workingDirectory}
@@ -2393,7 +2321,7 @@ export function FreeFormInput({
                   )
                 })()
               ) : pickerMode === 'switcher' ? (
-                /* Hierarchical view: Provider → Connection → Models (empty session with multiple connections — lets the user switch BEFORE the first message locks the connection) */
+                /* Hierarchical view: Provider → Connection → Models */
                 connectionsByProvider.map(([providerName, connections], index) => (
                   <React.Fragment key={providerName}>
                     {/* Provider group label */}
@@ -2503,7 +2431,7 @@ export function FreeFormInput({
                   </React.Fragment>
                 ))
               ) : (
-                /* Flat model list (single connection or session started) */
+                /* Flat model list (single connection) */
                 <>
                   {/* Indicator showing which connection is being used */}
                   {!isEmptySession && currentConnectionDetails && llmConnections.length > 1 && (

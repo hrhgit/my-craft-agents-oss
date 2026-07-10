@@ -301,7 +301,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId])
 
-  // Check if session's locked connection has been removed
+  // Check if session's selected connection has been removed
   const connectionUnavailable = React.useMemo(() =>
     isSessionConnectionUnavailable(session?.llmConnection, llmConnections),
     [session?.llmConnection, llmConnections]
@@ -697,7 +697,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
       return (
         <>
-          <div className="h-full flex flex-col">
+          <div className="h-full flex flex-col" data-e2e-chat-session-id={sessionId}>
             <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isTitleBusy={isAsyncOperationOngoing} />
             <div className="flex-1 flex flex-col min-h-0">
               <ChatDisplay
@@ -757,7 +757,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
     // Session truly doesn't exist
     return (
-      <div className="h-full flex flex-col">
+      <div className="h-full flex flex-col" data-e2e-chat-session-id={sessionId}>
         <PanelHeader  title={t('chat.session')} leadingAction={leadingAction} rightSidebarButton={rightSidebarButton} />
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
           <AlertCircle className="h-10 w-10" />
@@ -769,7 +769,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
   return (
     <>
-      <div className="h-full flex flex-col">
+      <div className="h-full flex flex-col" data-e2e-chat-session-id={sessionId}>
         <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isTitleBusy={isAsyncOperationOngoing} />
         <div className="flex-1 flex flex-col min-h-0">
           <ChatDisplay

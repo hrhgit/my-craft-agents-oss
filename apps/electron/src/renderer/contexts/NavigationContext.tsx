@@ -84,7 +84,6 @@ import {
   updateFocusedPanelRouteAtom,
   parseSessionIdFromRoute,
 } from '@/atoms/panel-stack'
-import { isPiReadOnlySessionId } from '../../shared/pi-session-route'
 
 // Re-export routes for convenience
 export { routes }
@@ -621,16 +620,13 @@ export function NavigationProvider({
 
       // Validate session exists in current workspace (local or remote ID)
       if (isSessionsNavigation(nextState) && nextState.details) {
-        const isPiReadOnlySession = isPiReadOnlySessionId(nextState.details.sessionId)
-        if (!isPiReadOnlySession) {
-          const freshMetaMap = store.get(sessionMetaMapAtom)
-          const meta = freshMetaMap.get(nextState.details.sessionId)
-          const matchesWorkspace = !workspaceId
-            || meta?.workspaceId === workspaceId
-            || (remoteWorkspaceId && meta?.workspaceId === remoteWorkspaceId)
-          if (!meta || !matchesWorkspace) {
-            nextState = { ...nextState, details: null }
-          }
+        const freshMetaMap = store.get(sessionMetaMapAtom)
+        const meta = freshMetaMap.get(nextState.details.sessionId)
+        const matchesWorkspace = !workspaceId
+          || meta?.workspaceId === workspaceId
+          || (remoteWorkspaceId && meta?.workspaceId === remoteWorkspaceId)
+        if (meta && !matchesWorkspace) {
+          nextState = { ...nextState, details: null }
         }
       }
 

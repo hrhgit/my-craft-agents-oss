@@ -19,6 +19,8 @@
  */
 
 /** @type {import('eslint').Rule.RuleModule} */
+const path = require('node:path')
+
 module.exports = {
   meta: {
     type: 'problem',
@@ -37,7 +39,7 @@ module.exports = {
   create(context) {
     // Allow direct calls in the interceptor implementation files
     const filename = context.filename || context.getFilename()
-    const basename = filename.split('/').pop() || ''
+    const basename = path.basename(filename)
     if (basename === 'App.tsx' || basename === 'useLinkInterceptor.ts') {
       return {}
     }

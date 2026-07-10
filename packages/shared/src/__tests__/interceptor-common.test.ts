@@ -61,4 +61,15 @@ describe('interceptor-common', () => {
     expect(toolMetadataStore.get('newTool', sessionDirA)?.intent).toBe('New intent');
     expect(existsSync(join(sessionDirA, 'tool-metadata.json'))).toBe(false);
   });
+
+  it('drops stale in-memory tool metadata', () => {
+    toolMetadataStore.set('oldTool', {
+      intent: 'Old intent',
+      displayName: 'Old Tool',
+      timestamp: Date.now() - 11 * 60 * 1000,
+    });
+
+    expect(toolMetadataStore.get('oldTool', sessionDirA)).toBeUndefined();
+    expect(toolMetadataStore.size).toBe(0);
+  });
 });

@@ -1,4 +1,5 @@
 import type { Message, StoredMessage } from './message.ts';
+import { createLegacyPlanArtifact } from './plan-artifact.ts';
 
 /**
  * Convert runtime Message to StoredMessage for persistence.
@@ -19,5 +20,14 @@ export function messageToStored(msg: Message): StoredMessage {
  */
 export function storedToMessage(stored: StoredMessage): Message {
   const { type, ...rest } = stored;
-  return { ...rest, role: type, timestamp: stored.timestamp ?? Date.now() } as Message;
+  const timestamp = stored.timestamp ?? Date.now();
+  if (type === 'plan') {
+    return {
+      ...rest,
+      role: 'assistant',
+      timestamp,
+      artifact: stored.artifact ?? createLegacyPlanArtifact(stored.id, timestamp),
+    } as Message;
+  }
+  return { ...rest, role: type, timestamp } as Message;
 }

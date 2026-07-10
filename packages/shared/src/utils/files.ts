@@ -2,39 +2,16 @@ import { closeSync, existsSync, fsyncSync, openSync, readFileSync, statSync, wri
 import { extname, basename, resolve, join, relative, dirname } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
+import { stripBom } from './text.ts';
+import { ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, ATTACHMENT_TEXT_INLINE_LIMIT_BYTES } from './attachment-limits.ts';
 
-/**
- * Strip UTF-8 BOM (Byte Order Mark) from a string.
- * BOM (\uFEFF) can appear when files are written by certain editors or tools
- * and causes JSON.parse() to fail with "Unexpected token" errors.
- */
-export function stripBom(text: string): string {
-  return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
-}
-
-/**
- * Extract a string message from an unknown error value.
- * Replaces the repeated `error instanceof Error ? error.message : String(error)` pattern.
- */
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-/**
- * Parse a JSON string, stripping any leading UTF-8 BOM.
- * Use this instead of raw JSON.parse() for any content that may originate from a file.
- */
-export function safeJsonParse(text: string): unknown {
-  return JSON.parse(stripBom(text));
-}
-
-/**
- * Escape special regex characters in a string so it can be used as a literal
- * pattern inside a RegExp. Shared canonical implementation.
- */
-export function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+export { stripBom, errorMessage, safeJsonParse, escapeRegExp } from './text.ts';
+export {
+  ATTACHMENT_SINGLE_FILE_LIMIT_BYTES,
+  ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES,
+  ATTACHMENT_INLINE_RPC_LIMIT_BYTES,
+  ATTACHMENT_TEXT_INLINE_LIMIT_BYTES,
+} from './attachment-limits.ts';
 
 /**
  * Read and parse a JSON file, handling UTF-8 BOM transparently.
@@ -143,11 +120,6 @@ const AUDIO_EXTENSIONS: Record<string, string> = {
   '.weba': 'audio/webm',
   '.webm': 'audio/webm',
 };
-
-export const ATTACHMENT_SINGLE_FILE_LIMIT_BYTES = 50 * 1024 * 1024;
-export const ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES = 100 * 1024 * 1024;
-export const ATTACHMENT_INLINE_RPC_LIMIT_BYTES = 5 * 1024 * 1024;
-export const ATTACHMENT_TEXT_INLINE_LIMIT_BYTES = 2 * 1024 * 1024;
 
 const MAX_FILE_SIZE = ATTACHMENT_SINGLE_FILE_LIMIT_BYTES;
 const MAX_TEXT_SIZE = ATTACHMENT_TEXT_INLINE_LIMIT_BYTES;

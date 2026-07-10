@@ -24,6 +24,14 @@ const MAIN_PROCESS_ALIAS: Record<string, string> = {
   "abort-controller": join(ROOT_DIR, "apps/electron/src/main/shims/abort-controller.cjs"),
 };
 
+const MAIN_PROCESS_IMPORT_META_DEFINES: Record<string, string> = {
+  "import.meta.url": "__craft_import_meta_url",
+  "import.meta.resolve": "__craft_import_meta_resolve",
+};
+
+const MAIN_PROCESS_IMPORT_META_BANNER =
+  "const __craft_import_meta_url = require('url').pathToFileURL(__filename).href; const __craft_import_meta_resolve = (specifier) => require('url').pathToFileURL(require.resolve(specifier)).href;";
+
 // MCP server paths
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
@@ -281,7 +289,7 @@ async function runEsbuild(
   entryPoint: string,
   outfile: string,
   defines: Record<string, string> = {},
-  options: { packagesExternal?: boolean; alias?: Record<string, string> } = {}
+  options: { packagesExternal?: boolean; alias?: Record<string, string>; importMetaCompat?: boolean } = {}
 ): Promise<{ success: boolean; error?: string }> {
   try {
     await esbuild.build({
@@ -293,7 +301,11 @@ async function runEsbuild(
       external: MAIN_BUNDLE_EXTERNALS,
       ...(options.packagesExternal ? { packages: "external" as const } : {}),
       ...(options.alias ? { alias: options.alias } : {}),
-      define: defines,
+      ...(options.importMetaCompat ? { banner: { js: MAIN_PROCESS_IMPORT_META_BANNER } } : {}),
+      define: {
+        ...(options.importMetaCompat ? MAIN_PROCESS_IMPORT_META_DEFINES : {}),
+        ...defines,
+      },
       logLevel: "warning",
     });
     return { success: true };
@@ -413,7 +425,7 @@ async function main(): Promise<void> {
       "apps/electron/src/main/index.ts",
       "apps/electron/dist/main.cjs",
       oauthDefines,
-      { alias: MAIN_PROCESS_ALIAS }
+      { alias: MAIN_PROCESS_ALIAS, importMetaCompat: true }
     ),
     runEsbuild(
       "apps/electron/src/preload/bootstrap.ts",
@@ -506,7 +518,11 @@ async function main(): Promise<void> {
     outfile: join(ROOT_DIR, "apps/electron/dist/main.cjs"),
     external: MAIN_BUNDLE_EXTERNALS,
     alias: MAIN_PROCESS_ALIAS,
-    define: oauthDefines,
+    define: {
+      ...MAIN_PROCESS_IMPORT_META_DEFINES,
+      ...oauthDefines,
+    },
+    banner: { js: MAIN_PROCESS_IMPORT_META_BANNER },
     logLevel: "info",
   });
   await mainContext.watch();

@@ -121,31 +121,6 @@ mkdir -p "$ELECTRON_DIR/node_modules/@vscode"
 rm -rf "$ELECTRON_DIR/node_modules/@vscode/ripgrep"
 cp -r "$RG_SOURCE" "$ELECTRON_DIR/node_modules/@vscode/"
 
-# 6. Copy network interceptor sources (for Pi subprocess; Claude no longer
-#    uses --preload — Phase 2 will move that to SDK hooks or a local proxy).
-INTERCEPTOR_SOURCE="$ROOT_DIR/packages/shared/src/unified-network-interceptor.ts"
-require_path "$INTERCEPTOR_SOURCE" "Interceptor" "Ensure packages/shared/src/unified-network-interceptor.ts exists."
-echo "Copying interceptor (for Pi subprocess)..."
-mkdir -p "$ELECTRON_DIR/packages/shared/src"
-cp "$INTERCEPTOR_SOURCE" "$ELECTRON_DIR/packages/shared/src/"
-for dep in interceptor-common.ts feature-flags.ts interceptor-request-utils.ts; do
-  if [ -f "$ROOT_DIR/packages/shared/src/$dep" ]; then
-    cp "$ROOT_DIR/packages/shared/src/$dep" "$ELECTRON_DIR/packages/shared/src/"
-  fi
-done
-
-# 5. Copy network interceptor sources for the Pi subprocess.
-INTERCEPTOR_SOURCE="$ROOT_DIR/packages/shared/src/unified-network-interceptor.ts"
-require_path "$INTERCEPTOR_SOURCE" "Interceptor" "Ensure packages/shared/src/unified-network-interceptor.ts exists."
-echo "Copying interceptor (for Pi subprocess)..."
-mkdir -p "$ELECTRON_DIR/packages/shared/src"
-cp "$INTERCEPTOR_SOURCE" "$ELECTRON_DIR/packages/shared/src/"
-for dep in interceptor-common.ts feature-flags.ts interceptor-request-utils.ts; do
-  if [ -f "$ROOT_DIR/packages/shared/src/$dep" ]; then
-    cp "$ROOT_DIR/packages/shared/src/$dep" "$ELECTRON_DIR/packages/shared/src/"
-  fi
-done
-
 # 6. Build Electron app
 echo "Building Electron app..."
 cd "$ROOT_DIR"

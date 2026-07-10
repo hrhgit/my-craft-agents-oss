@@ -632,7 +632,7 @@ export function useInlineSlashCommand({
     currentInputRef.current = { value, cursorPosition }
 
     const textBeforeCursor = value.slice(0, cursorPosition)
-    const slashMatch = textBeforeCursor.match(/(?:^|\s)\/(\w*)$/)
+    const slashMatch = textBeforeCursor.match(/(?:^|\s)\/([\w:-]*)$/)
 
     // Only show menu if we have sections with items
     const hasItems = sections.some(s => s.items.length > 0)

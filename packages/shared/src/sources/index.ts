@@ -63,6 +63,12 @@ export {
   // Parsing utilities
   parseGuideMarkdown,
 } from './storage.ts';
+export {
+  isSourceAuthenticationSatisfied,
+  isSourceConfigAuthenticated,
+  setSourceConfigAuthState,
+  sourceRequiresAuthentication,
+} from './auth-state.ts';
 
 // Credential Manager (unified credential operations)
 export {

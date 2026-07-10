@@ -5,7 +5,6 @@
  * instantiated in the browser. This shim satisfies the bundler.
  */
 
-/* eslint-disable @typescript-eslint/no-unused-vars */
 export class WebSocketServer {
   constructor(_opts?: any) {
     throw new Error('WebSocketServer is not available in the browser')

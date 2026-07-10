@@ -20,12 +20,13 @@ import { watch, existsSync, readdirSync, statSync, readFileSync, mkdirSync } fro
 import { join, dirname, basename, relative } from 'path';
 import { platform } from 'os';
 import type { FSWatcher } from 'fs';
-import { CONFIG_DIR, PI_AGENT_DIR } from './paths.ts';
+import { CONFIG_DIR } from './paths.ts';
 import { debug } from '../utils/debug.ts';
 import { expandPath } from '../utils/paths.ts';
 import { readJsonFileSync } from '../utils/files.ts';
 import { perf } from '../utils/perf.ts';
-import { getLlmConnections, loadStoredConfig, type StoredConfig } from './storage.ts';
+import { getDefaultLlmConnection, getLlmConnections, loadStoredConfig, type StoredConfig } from './storage.ts';
+import { watchPiGlobalModelsFile } from './pi-global-config.ts';
 import {
   validateConfig,
   validatePreferences,
@@ -318,8 +319,14 @@ export class ConfigWatcher {
    * Initialize LLM connections hash for change detection
    */
   private initLlmConnectionsHash(): void {
-    const connections = getLlmConnections();
-    this.lastLlmConnectionsHash = JSON.stringify(connections);
+    this.lastLlmConnectionsHash = this.getLlmConnectionsHash();
+  }
+
+  private getLlmConnectionsHash(): string {
+    return JSON.stringify({
+      connections: getLlmConnections(),
+      defaultSlug: getDefaultLlmConnection(),
+    });
   }
 
   /**
@@ -401,21 +408,14 @@ export class ConfigWatcher {
    * connection metadata after the Pi/Craft config migration.
    */
   private watchPiGlobalConfigs(): void {
-    if (!existsSync(PI_AGENT_DIR)) {
-      mkdirSync(PI_AGENT_DIR, { recursive: true });
-    }
-
     try {
-      const watcher = watch(PI_AGENT_DIR, (eventType, filename) => {
-        if (!filename) return;
-        if (filename === 'models.json') {
-          this.debounce('pi-models.json', () => this.handleLlmConnectionsChange());
-        }
+      const watcher = watchPiGlobalModelsFile(() => {
+        this.debounce('pi-models.json', () => this.handleLlmConnectionsChange());
       });
 
       watcher.on('error', (err) => debug('[ConfigWatcher] Pi global configs watcher error:', err));
       this.watchers.push(watcher);
-      debug('[ConfigWatcher] Watching Pi global configs:', PI_AGENT_DIR);
+      debug('[ConfigWatcher] Watching Pi global models config');
     } catch (error) {
       debug('[ConfigWatcher] Error watching Pi global configs:', error);
     }
@@ -953,7 +953,7 @@ export class ConfigWatcher {
   private handleLlmConnectionsChange(): void {
     try {
       const connections = getLlmConnections();
-      const currentHash = JSON.stringify(connections);
+      const currentHash = this.getLlmConnectionsHash();
       if (currentHash !== this.lastLlmConnectionsHash) {
         debug('[ConfigWatcher] LLM connections changed');
         this.lastLlmConnectionsHash = currentHash;

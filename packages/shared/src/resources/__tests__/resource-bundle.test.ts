@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { exportResources, importResources, validateResourceBundle } from '../resource-bundle'
+import { isSourceConfigAuthenticated } from '../../sources/storage'
 import type { ResourceBundle, SourceBundleEntry, SkillBundleEntry, AutomationBundleEntry } from '../types'
 import type { FolderSourceConfig } from '../../sources/types'
 import type { AutomationMatcher } from '../../automations/types'
@@ -138,7 +139,7 @@ describe('resource-bundle', () => {
       const source = bundle.resources.sources![0]!
       expect(source.slug).toBe('github')
       // Auth state should be reset
-      expect(source.config.isAuthenticated).toBe(false)
+      expect(isSourceConfigAuthenticated(source.config)).toBe(false)
       expect(source.config.connectionStatus).toBe('needs_auth')
       expect(source.config.connectionError).toBeUndefined()
       expect(source.config.lastTestedAt).toBeUndefined()

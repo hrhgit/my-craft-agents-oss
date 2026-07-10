@@ -45,6 +45,7 @@ import { useTheme } from "@/hooks/useTheme"
 import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, LoadedSource, LoadedSkill } from "../../../shared/types"
 import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
+import type { ExtensionCommandResult } from "@craft-agent/core/types"
 import {
   TurnCard,
   UserMessageBubble,
@@ -66,8 +67,6 @@ import {
 import { MemoizedAuthRequestCard } from "@/components/chat/AuthRequestCard"
 import { ChatInputZone, type StructuredInputState, type StructuredResponse, type PermissionResponse, type AdminApprovalResponse } from "./input"
 import { ExtensionWidgetZone } from "@/components/extensions/ExtensionWidgetZone"
-import { PlanModeSplitView } from "@/components/extensions/PlanModeSplitView"
-import { PlanProgressWidget } from "@/components/extensions/PlanProgressWidget"
 import { BackgroundAgentBadges } from "@/components/extensions/BackgroundAgentBadges"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { useBackgroundTasks } from "@/hooks/useBackgroundTasks"
@@ -141,8 +140,8 @@ interface ChatDisplayProps {
   // Model selection
   currentModel: string
   onModelChange: (model: string, connection?: string) => void
-  // Connection selection (locked after first message)
-  /** Callback when LLM connection changes (only works when session is empty) */
+  // Connection selection
+  /** Callback when LLM connection changes */
   onConnectionChange?: (connectionSlug: string) => void
   /** Ref for the input, used for external focus control */
   textareaRef?: React.RefObject<RichTextInputHandle>
@@ -241,7 +240,7 @@ interface ChatDisplayProps {
   placeholder?: string | string[]
   /** Label shown as empty state in compact mode (e.g., "Permission Settings") */
   emptyStateLabel?: string
-  /** When true, the session's locked connection has been removed - disables send and shows unavailable state */
+  /** When true, the session's selected connection has been removed - disables send and shows unavailable state */
   connectionUnavailable?: boolean
 }
 
@@ -1276,6 +1275,51 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
   }
 
+  const invokePlanArtifactCommand = useCallback(async (
+    command: 'plan-execute' | 'plan-refine',
+    artifactId: string,
+  ): Promise<ExtensionCommandResult> => {
+    if (!session) return { invoked: false, error: 'Session is unavailable.' }
+    if (command === 'plan-execute') {
+      try {
+        await window.electronAPI.sessionCommand(session.id, { type: 'setPermissionMode', mode: 'allow-all' })
+      } catch (error) {
+        return { invoked: false, error: `Failed to switch to Allow-all: ${error instanceof Error ? error.message : String(error)}` }
+      }
+    }
+    try {
+      return await window.electronAPI.invokeExtensionCommand(session.id, command, { artifactId })
+    } catch (error) {
+      return { invoked: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }, [session])
+
+  const executePlanArtifactWithCompact = useCallback(async (artifactId: string): Promise<ExtensionCommandResult> => {
+    if (!session) return { invoked: false, error: 'Session is unavailable.' }
+    try {
+      await window.electronAPI.sessionCommand(session.id, { type: 'setPermissionMode', mode: 'allow-all' })
+      await window.electronAPI.sessionCommand(session.id, {
+        type: 'setPendingPlanExecution',
+        artifactId,
+      })
+      handleSubmit('/compact')
+      return { invoked: true }
+    } catch (error) {
+      return { invoked: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }, [session, handleSubmit])
+
+  const refinePlanArtifact = useCallback(async (artifactId: string): Promise<ExtensionCommandResult> => {
+    if (!session) return { invoked: false, error: 'Session is unavailable.' }
+    const message = session.messages.find(candidate => candidate.artifact?.artifactId === artifactId)
+    if (message?.artifact?.legacy) {
+      return window.electronAPI.invokeExtensionCommand(session.id, 'discuss', {
+        instructions: `Use this historical plan as the discussion baseline:\n\n${message.content}`,
+      })
+    }
+    return invokePlanArtifactCommand('plan-refine', artifactId)
+  }, [invokePlanArtifactCommand, session])
+
   const handleSaveAndSendFollowUp = useCallback((_target: {
     messageId: string
     annotationId: string
@@ -1392,6 +1436,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     if (!session) return []
     return groupMessagesByTurn(session.messages, { isSessionProcessing: session.isProcessing })
   }, [session?.messages, session?.isProcessing])
+
+  const activePlanArtifact = React.useMemo(() => {
+    if (!session) return undefined
+    const activeId = session.planModeState?.activeArtifactId
+    if (activeId) {
+      return session.messages.find(message => message.artifact?.artifactId === activeId)?.artifact
+    }
+    return [...session.messages].reverse().find(message => message.artifact)?.artifact
+  }, [session?.messages, session?.planModeState?.activeArtifactId])
 
   // Keep ref in sync for scroll handler
   totalTurnCountRef.current = allTurns.length
@@ -1832,6 +1885,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             },
                           }))
                         }}
+                        onExecutePlanArtifact={(artifactId) => invokePlanArtifactCommand('plan-execute', artifactId)}
+                        onExecutePlanArtifactWithCompact={executePlanArtifactWithCompact}
+                        onRefinePlanArtifact={refinePlanArtifact}
                         onPopOut={(text) => {
                           // Open raw markdown source in code viewer
                           setOverlayState({
@@ -1920,12 +1976,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           {/* === EXTENSION WIDGET ZONE: pi 扩展 belowEditor widget（编辑器下方、输入框上方） === */}
           <ExtensionWidgetZone className={CHAT_LAYOUT.maxWidth} />
 
-          {/* === PLAN-MODE SPLIT VIEW: 主计划 + 架构收缩审查（响应式 split 布局） === */}
-          <PlanModeSplitView className={CHAT_LAYOUT.maxWidth} />
-
-          {/* === PLAN-MODE PROGRESS WIDGET: 执行清单进度（已完成/总数 + 进度条） === */}
-          <PlanProgressWidget className={CHAT_LAYOUT.maxWidth} />
-
           {/* === INPUT CONTAINER: FreeForm or Structured Input === */}
           <ChatInputZone
             compactMode={compactMode}
@@ -1933,6 +1983,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             onPermissionModeChange={onPermissionModeChange}
             tasks={backgroundTasks}
             sessionId={session.id}
+            planModeState={session.planModeState}
+            activePlanArtifact={activePlanArtifact}
+            readOnly={session.readOnly}
             sessionFolderPath={sessionFolderPath}
             onKillTask={(taskId) => killTask(taskId, backgroundTasks.find(t => t.id === taskId)?.type ?? 'shell')}
             onInsertMessage={onInputChange}
@@ -1944,7 +1997,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             onSessionStatusChange={onSessionStatusChange}
             inputProps={{
               placeholder,
-              disabled: isInputDisabled,
+              disabled: isInputDisabled || session.readOnly,
               isProcessing: session.isProcessing,
               onAnimatedHeightChange: handleAnimatedHeightChange,
               onSubmit: handleSubmit,

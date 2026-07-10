@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, afterEach } from 'bun:test';
 import { mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { resolveBackendRuntimePaths } from '../internal/runtime-resolver.ts';
 import { resolveBackendHostTooling } from '../factory.ts';
@@ -77,42 +77,25 @@ describe('resolveRipgrepPath', () => {
   });
 });
 
-describe('resolveInterceptorBundlePath dev-mode source preference', () => {
-  const tmpBase = join(tmpdir(), `interceptor-resolver-test-${Date.now()}`);
+describe('resolvePiCliPath', () => {
+  const tmpBase = join(tmpdir(), `pi-cli-resolver-test-${Date.now()}`);
 
   afterEach(() => {
     try { rmSync(tmpBase, { recursive: true, force: true }); } catch {}
   });
 
-  it('prefers .ts source over the bundled .cjs in dev (non-packaged) so changes propagate without rebuild', () => {
-    const appRoot = join(tmpBase, 'monorepo', 'apps', 'electron');
-    const sourceDir = join(tmpBase, 'monorepo', 'packages', 'shared', 'src');
-    const bundleDir = join(tmpBase, 'monorepo', 'apps', 'electron', 'dist');
-    mkdirSync(sourceDir, { recursive: true });
-    mkdirSync(bundleDir, { recursive: true });
-    const sourcePath = join(sourceDir, 'unified-network-interceptor.ts');
-    const bundlePath = join(bundleDir, 'interceptor.cjs');
-    writeFileSync(sourcePath, '// ts source\n');
-    writeFileSync(bundlePath, '// cjs bundle\n');
-
-    const hostRuntime: BackendHostRuntimeContext = {
-      appRootPath: appRoot,
-      resourcesPath: appRoot,
-      isPackaged: false,
-    };
-    const paths = resolveBackendRuntimePaths(hostRuntime);
-    expect(paths.interceptorBundlePath).toBe(sourcePath);
-  });
-
-  it('uses the bundled .cjs in packaged builds even when source is reachable', () => {
+  it('finds the packaged Pi CLI runtime under dist/resources', () => {
     const appRoot = join(tmpBase, 'packaged-app');
-    const sourceDir = join(tmpBase, 'packaged-app', 'packages', 'shared', 'src');
-    const bundleDir = join(tmpBase, 'packaged-app', 'dist');
-    mkdirSync(sourceDir, { recursive: true });
-    mkdirSync(bundleDir, { recursive: true });
-    writeFileSync(join(sourceDir, 'unified-network-interceptor.ts'), '// source\n');
-    const bundlePath = join(bundleDir, 'interceptor.cjs');
-    writeFileSync(bundlePath, '// bundle\n');
+    const cliPath = join(
+      appRoot,
+      'dist',
+      'resources',
+      'pi-runtime',
+      'dist',
+      'cli.bundle.js',
+    );
+    mkdirSync(dirname(cliPath), { recursive: true });
+    writeFileSync(cliPath, '// pi cli\n');
 
     const hostRuntime: BackendHostRuntimeContext = {
       appRootPath: appRoot,
@@ -120,22 +103,54 @@ describe('resolveInterceptorBundlePath dev-mode source preference', () => {
       isPackaged: true,
     };
     const paths = resolveBackendRuntimePaths(hostRuntime);
-    expect(paths.interceptorBundlePath).toBe(bundlePath);
+    expect(paths.piCliPath).toBe(cliPath);
   });
 
-  it('honors explicit hostRuntime.interceptorBundlePath override regardless of mode', () => {
-    const appRoot = join(tmpBase, 'override');
-    mkdirSync(appRoot, { recursive: true });
-    const overridePath = join(appRoot, 'custom-interceptor.cjs');
-    writeFileSync(overridePath, '// custom\n');
+  it('keeps the legacy packaged Pi CLI node_modules path as a fallback', () => {
+    const appRoot = join(tmpBase, 'packaged-app-legacy');
+    const cliPath = join(
+      appRoot,
+      'dist',
+      'resources',
+      'pi-runtime',
+      'node_modules',
+      '@earendil-works',
+      'pi-coding-agent',
+      'dist',
+      'cli.js',
+    );
+    mkdirSync(dirname(cliPath), { recursive: true });
+    writeFileSync(cliPath, '// pi cli\n');
+
+    const hostRuntime: BackendHostRuntimeContext = {
+      appRootPath: appRoot,
+      resourcesPath: appRoot,
+      isPackaged: true,
+    };
+    const paths = resolveBackendRuntimePaths(hostRuntime);
+    expect(paths.piCliPath).toBe(cliPath);
+  });
+
+  it('finds the workspace Pi CLI runtime in development', () => {
+    const appRoot = join(tmpBase, 'monorepo', 'apps', 'electron');
+    const cliPath = join(
+      tmpBase,
+      'monorepo',
+      'node_modules',
+      '@earendil-works',
+      'pi-coding-agent',
+      'dist',
+      'cli.js',
+    );
+    mkdirSync(dirname(cliPath), { recursive: true });
+    writeFileSync(cliPath, '// pi cli\n');
 
     const hostRuntime: BackendHostRuntimeContext = {
       appRootPath: appRoot,
       resourcesPath: appRoot,
       isPackaged: false,
-      interceptorBundlePath: overridePath,
     };
     const paths = resolveBackendRuntimePaths(hostRuntime);
-    expect(paths.interceptorBundlePath).toBe(overridePath);
+    expect(paths.piCliPath).toBe(cliPath);
   });
 });

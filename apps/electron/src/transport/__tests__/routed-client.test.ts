@@ -13,11 +13,17 @@ import type { WsRpcClient, TransportConnectionState } from '@craft-agent/server-
 function stubClient(overrides?: Partial<WsRpcClient>): WsRpcClient {
   const listeners = new Map<string, Set<(...args: any[]) => void>>()
   const capabilities = new Map<string, (...args: any[]) => any>()
+  const invoke = overrides?.invoke ?? mock(async () => undefined)
+  const invokeWithOptions = overrides?.invokeWithOptions ?? mock(async (channel: string, args: any[]) => invoke(channel, ...args))
+  const passthroughOverrides = { ...(overrides as Record<string, unknown> | undefined) }
+  delete passthroughOverrides.invoke
+  delete passthroughOverrides.invokeWithOptions
 
   return {
     connect: mock(() => {}),
     destroy: mock(() => {}),
-    invoke: mock(async () => undefined),
+    invoke,
+    invokeWithOptions,
     on: mock((channel: string, cb: (...args: any[]) => void) => {
       let set = listeners.get(channel)
       if (!set) { set = new Set(); listeners.set(channel, set) }
@@ -46,7 +52,7 @@ function stubClient(overrides?: Partial<WsRpcClient>): WsRpcClient {
     // expose internals for assertions
     _listeners: listeners,
     _capabilities: capabilities,
-    ...overrides,
+    ...passthroughOverrides,
   } as any
 }
 
@@ -79,6 +85,18 @@ describe('RoutedClient', () => {
       expect(result).toBe('ws-result')
       expect(workspace.invoke).toHaveBeenCalledWith(REMOTE_CHANNEL)
       expect(local.invoke).not.toHaveBeenCalled()
+    })
+
+    it('passes timeout options through to invokeWithOptions when available', async () => {
+      const local = stubClient()
+      const workspace = stubClient({ invokeWithOptions: mock(async () => 'ws-result') })
+      const routed = new RoutedClient(local, workspace)
+
+      const result = await routed.invokeWithOptions(REMOTE_CHANNEL, ['session-1'], { timeoutMs: 4321 })
+
+      expect(result).toBe('ws-result')
+      expect(workspace.invokeWithOptions).toHaveBeenCalledWith(REMOTE_CHANNEL, ['session-1'], { timeoutMs: 4321 })
+      expect(workspace.invoke).not.toHaveBeenCalled()
     })
 
     it('routes LOCAL_ONLY listeners to localClient', () => {
@@ -145,6 +163,30 @@ describe('RoutedClient', () => {
       // Subsequent REMOTE_ELIGIBLE calls should go to localClient
       await routed.invoke(REMOTE_CHANNEL)
       expect(local.invoke).toHaveBeenCalledWith(REMOTE_CHANNEL)
+    })
+
+    it('uses localWorkspaceClient when switching back to a local workspace', async () => {
+      const local = stubClient({
+        invoke: mock(async () => ({
+          workspaceId: 'ws-local',
+          remoteServer: null,
+        })),
+      })
+      const localWorkspace = stubClient()
+      const remoteWs = stubClient()
+
+      const routed = new RoutedClient(local, remoteWs, {
+        localWorkspaceClient: localWorkspace,
+      })
+
+      await routed.invoke(SWITCH_CHANNEL)
+
+      expect(remoteWs.destroy).toHaveBeenCalled()
+      expect(localWorkspace.destroy).not.toHaveBeenCalled()
+
+      await routed.invoke(REMOTE_CHANNEL)
+      expect(localWorkspace.invoke).toHaveBeenCalledWith(REMOTE_CHANNEL)
+      expect(local.invoke).not.toHaveBeenCalledWith(REMOTE_CHANNEL)
     })
 
     it('re-subscribes REMOTE_ELIGIBLE listeners on swap (make-before-break)', async () => {

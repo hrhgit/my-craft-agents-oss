@@ -1,5 +1,5 @@
 import { RPC_CHANNELS, type LlmConnectionSetup } from '@craft-agent/shared/protocol'
-import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus, toBedrockNativeId, deriveBedrockRegionPrefix, type PiGlobalProvider, type PiGlobalSettings, type FetchedEndpointModel } from '@craft-agent/shared/config'
+import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, getDefaultModelsForConnection, getDefaultModelForConnection, hasPiGlobalAuthForConnection, readPiGlobalApiKeyForConnection, sanitizePiGlobalProvider, maskApiKey, normalizePiCustomEndpointBaseUrl, type LlmConnection, type LlmConnectionWithStatus, toBedrockNativeId, deriveBedrockRegionPrefix, type PiGlobalProvider, type PiGlobalSettings, type PiCustomApi, type FetchedEndpointModel } from '@craft-agent/shared/config'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { setSetupDeferred } from '@craft-agent/shared/config/storage'
 import {
@@ -33,6 +33,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.pi.GET_GLOBAL_PROVIDERS,
   RPC_CHANNELS.pi.GET_GLOBAL_SETTINGS,
   RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER,
+  RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER_API_KEY,
   RPC_CHANNELS.pi.SAVE_GLOBAL_PROVIDER,
   RPC_CHANNELS.pi.DELETE_GLOBAL_PROVIDER,
   RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT,
@@ -63,10 +64,15 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         isNewConnection = true
       }
 
+      const requestedCustomApi = setup.customEndpoint?.api as PiCustomApi | undefined
+      const baseUrlApi = requestedCustomApi ?? (connection.piAuthProvider === 'anthropic' ? 'anthropic-messages' : undefined)
+      const normalizedSetupBaseUrl = setup.baseUrl?.trim()
+        ? normalizePiCustomEndpointBaseUrl(setup.baseUrl, baseUrlApi) ?? setup.baseUrl.trim()
+        : undefined
       const updates: Partial<LlmConnection> = {}
-      const hasConfiguredBaseUrl = !!setup.baseUrl?.trim()
+      const hasConfiguredBaseUrl = !!normalizedSetupBaseUrl
       if (setup.baseUrl !== undefined) {
-        updates.baseUrl = setup.baseUrl?.trim() || undefined
+        updates.baseUrl = normalizedSetupBaseUrl
 
         const isAnthropicAuthConnection = connection.piAuthProvider === 'anthropic'
         if (isAnthropicAuthConnection && connection.authType !== 'oauth') {
@@ -102,7 +108,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         updates.customEndpoint = customEndpoint
         updates.providerType = 'pi_compat'
         const branch = resolveCustomEndpointSetup({
-          baseUrl: setup.baseUrl ?? undefined,
+          baseUrl: normalizedSetupBaseUrl,
           credential: setup.credential ?? undefined,
           customEndpointApi: customEndpoint.api,
         })
@@ -110,7 +116,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         if (branch.name !== undefined) updates.name = branch.name
         if (branch.piAuthProvider !== undefined) updates.piAuthProvider = branch.piAuthProvider
 
-        if (isNewConnection && !updates.name && setup.baseUrl?.toLowerCase().includes('manifest.build')) {
+        if (isNewConnection && !updates.name && normalizedSetupBaseUrl?.toLowerCase().includes('manifest.build')) {
           updates.name = 'Manifest'
         }
       } else if (setup.baseUrl !== undefined) {
@@ -320,8 +326,13 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       return { success: false, error: setupValidation.error }
     }
 
-    const hint = resolveSetupTestConnectionHint({ provider, baseUrl, piAuthProvider, customEndpoint })
-    deps.platform.logger?.info(`[testLlmConnectionSetup] Testing: provider=${provider}${piAuthProvider ? ` piAuth=${piAuthProvider}` : ''}${baseUrl ? ` baseUrl=${baseUrl}` : ''} hasCustomEndpoint=${!!customEndpoint} hintProvider=${hint.providerType}`)
+    const testBaseUrlApi = (customEndpoint?.api as PiCustomApi | undefined)
+      ?? (piAuthProvider === 'anthropic' ? 'anthropic-messages' : undefined)
+    const normalizedBaseUrl = baseUrl?.trim()
+      ? normalizePiCustomEndpointBaseUrl(baseUrl, testBaseUrlApi) ?? baseUrl.trim()
+      : baseUrl
+    const hint = resolveSetupTestConnectionHint({ provider, baseUrl: normalizedBaseUrl, piAuthProvider, customEndpoint })
+    deps.platform.logger?.info(`[testLlmConnectionSetup] Testing: provider=${provider}${piAuthProvider ? ` piAuth=${piAuthProvider}` : ''}${normalizedBaseUrl ? ` baseUrl=${normalizedBaseUrl}` : ''} hasCustomEndpoint=${!!customEndpoint} hintProvider=${hint.providerType}`)
 
     const startedAt = Date.now()
     try {
@@ -332,7 +343,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         apiKey: trimmedKey,
         allowEmptyApiKey,
         model: testModel,
-        baseUrl,
+        baseUrl: normalizedBaseUrl,
         timeoutMs: 45000,
         hostRuntime: buildBackendHostRuntimeContext(deps.platform),
         connection: hint,
@@ -359,33 +370,22 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // ============================================================
 
   server.handle(RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS, async () => {
-    const { getPiApiKeyProviders } = await import('@craft-agent/shared/config')
+    const { getPiApiKeyProviders } = await import('@craft-agent/shared/config/models-pi')
     return getPiApiKeyProviders()
   })
 
   server.handle(RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL, async (_ctx, provider: string) => {
-    const { getPiProviderBaseUrl } = await import('@craft-agent/shared/config')
+    const { getPiProviderBaseUrl } = await import('@craft-agent/shared/config/models-pi')
     return getPiProviderBaseUrl(provider)
   })
 
   server.handle(RPC_CHANNELS.pi.GET_PROVIDER_MODELS, async (_ctx, provider: string) => {
-    const { getModels } = await import('@earendil-works/pi-ai')
-    try {
-      const models = getModels(provider as Parameters<typeof getModels>[0])
-      const sorted = [...models].sort((a, b) => b.cost.output - a.cost.output || b.cost.input - a.cost.input)
-      return {
-        models: sorted.map(m => ({
-          id: m.id.startsWith('pi/') ? m.id : `pi/${m.id}`,
-          name: m.name,
-          costInput: m.cost.input,
-          costOutput: m.cost.output,
-          contextWindow: m.contextWindow,
-          reasoning: m.reasoning,
-        })),
-        totalCount: models.length,
-      }
-    } catch {
-      return { models: [], totalCount: 0 }
+    const { getPiProviderCatalogModels } = await import('@craft-agent/shared/config/models-pi')
+    const models = getPiProviderCatalogModels(provider)
+    const sorted = [...models].sort((a, b) => b.costOutput - a.costOutput || b.costInput - a.costInput)
+    return {
+      models: sorted,
+      totalCount: models.length,
     }
   })
 
@@ -408,15 +408,20 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   server.handle(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER, async (_ctx, key: string) => {
     const { readPiGlobalProviders } = await import('@craft-agent/shared/config')
     const providers = readPiGlobalProviders()
-    return providers[key] ?? null
+    return providers[key] ? sanitizePiGlobalProvider(providers[key]) : null
+  })
+
+  server.handle(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER_API_KEY, async (_ctx, key: string): Promise<string | null> => {
+    const { readPiGlobalApiKey } = await import('@craft-agent/shared/config')
+    return readPiGlobalApiKey(key) ?? null
   })
 
   server.handle(
     RPC_CHANNELS.pi.SAVE_GLOBAL_PROVIDER,
-    async (_ctx, args: { key: string; provider: PiGlobalProvider }): Promise<{ success: boolean; error?: string }> => {
+    async (_ctx, args: { key: string; provider: PiGlobalProvider; apiKey?: string }): Promise<{ success: boolean; error?: string }> => {
       const { savePiGlobalProvider } = await import('@craft-agent/shared/config')
       try {
-        savePiGlobalProvider(args.key, args.provider)
+        savePiGlobalProvider(args.key, args.provider, args.apiKey)
         pushTyped(server, RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
         // Sync providers/credentials (thin wrapper: reads ~/.pi/agent/, pi credentials live in auth.json).
         void serializePiSettingsWrite(() => runPiGlobalSync('saveGlobalProvider'))
@@ -468,12 +473,15 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     RPC_CHANNELS.pi.FETCH_MODELS_FOR_ENDPOINT,
     async (
       _ctx,
-      args: { baseUrl: string; apiKey: string },
-    ): Promise<{ success: boolean; models: FetchedEndpointModel[]; error?: string }> => {
-      const { fetchModelsForEndpoint } = await import('@craft-agent/shared/config')
+      args: { baseUrl: string; apiKey?: string; api?: PiCustomApi; authHeader?: boolean },
+    ): Promise<{ success: boolean; models: FetchedEndpointModel[]; resolvedBaseUrl?: string; error?: string }> => {
+      const { fetchModelsForEndpointWithResolution } = await import('@craft-agent/shared/config')
       try {
-        const models = await fetchModelsForEndpoint(args.baseUrl, args.apiKey)
-        return { success: true, models }
+        const result = await fetchModelsForEndpointWithResolution(args.baseUrl, args.apiKey ?? '', {
+          api: args.api,
+          authHeader: args.authHeader,
+        })
+        return { success: true, models: result.models, resolvedBaseUrl: result.resolvedBaseUrl }
       } catch (e) {
         return { success: false, models: [], error: e instanceof Error ? e.message : String(e) }
       }
@@ -551,8 +559,21 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         return
       }
       const settings = readPiGlobalSettings()
-      // Determine the model to persist: explicit override > current setting > first model
-      const model = defaultModel || settings.defaultModel || providers[providerKey]?.models?.[0]?.id
+      const modelIds = (providers[providerKey]?.models ?? [])
+        .map(model => model.id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      // Determine the model to persist: explicit valid override > current
+      // setting for the same provider > first provider model.
+      const model =
+        (defaultModel && modelIds.includes(defaultModel) ? defaultModel : undefined)
+        || (
+          settings.defaultProvider === providerKey
+          && settings.defaultModel
+          && modelIds.includes(settings.defaultModel)
+            ? settings.defaultModel
+            : undefined
+        )
+        || modelIds[0]
       if (!model) {
         deps.platform.logger?.warn(`[pi-global-writeback] no model to persist for "${providerKey}"`)
         return
@@ -582,7 +603,9 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
 
     return Promise.all(connections.map(async (conn): Promise<LlmConnectionWithStatus> => {
       // Check if credentials exist for this connection
-      const hasCredentials = await credentialManager.hasLlmCredentials(conn.slug, conn.authType)
+      const hasCredentials =
+        await credentialManager.hasLlmCredentials(conn.slug, conn.authType)
+        || hasPiGlobalAuthForConnection(conn)
       return {
         ...conn,
         isAuthenticated: conn.authType === 'none' || hasCredentials,
@@ -599,13 +622,11 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // Get stored API key for an LLM connection (masked — for edit form display only)
   server.handle(RPC_CHANNELS.llmConnections.GET_API_KEY, async (_ctx, slug: string): Promise<string | null> => {
     const manager = getCredentialManager()
-    const key = await manager.getLlmApiKey(slug)
+    const connection = getLlmConnection(slug)
+    const key = await manager.getLlmApiKey(slug) || readPiGlobalApiKeyForConnection(connection)
     if (!key) return null
     // Show provider prefix (first 7 chars) + last 4 chars, mask the middle
-    if (key.length > 15) {
-      return key.slice(0, 7) + '••••••••' + key.slice(-4)
-    }
-    return '••••••••'
+    return maskApiKey(key)
   })
 
   // Save (create or update) an LLM connection
@@ -717,11 +738,12 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       const success = setDefaultLlmConnection(slug)
       if (success) {
         deps.platform.logger?.info(`Global default LLM connection set to: ${slug}`)
-        // Reinitialize auth so env vars and summarization model override match the new default
-        await sessionManager.reinitializeAuth()
         // Write-back: if switching to a pi-* connection, update ~/.pi/agent/settings.json
         // so the Pi CLI / PiProvidersSettingsPage reflect the same default provider.
-        void serializePiSettingsWrite(() => writeBackToPiGlobal(slug))
+        await serializePiSettingsWrite(() => writeBackToPiGlobal(slug))
+        broadcastLlmConnectionsChanged()
+        // Reinitialize auth so env vars and summarization model override match the new default.
+        await sessionManager.reinitializeAuth()
       }
       return { success, error: success ? undefined : 'Connection not found' }
     } catch (error) {

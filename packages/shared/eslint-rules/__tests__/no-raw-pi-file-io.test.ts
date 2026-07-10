@@ -94,4 +94,37 @@ describe('no-raw-pi-file-io', () => {
 
     expect(messages).toHaveLength(0)
   })
+
+  it('allows pi-global-config only the PI_AGENT_DIR watcher seam', () => {
+    const messages = runRule(
+      "import { PI_AGENT_DIR } from './paths'",
+      'packages/shared/src/config/pi-global-config.ts',
+    )
+
+    expect(messages).toHaveLength(0)
+  })
+
+  it('blocks pi-global-config from reintroducing raw settings file access', () => {
+    const messages = runRule(
+      "import { PI_SETTINGS_FILE } from './paths'",
+      'packages/shared/src/config/pi-global-config.ts',
+    )
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.message).toContain('PI_SETTINGS_FILE')
+  })
+
+  it('flags raw global Pi skills paths outside the migration seam', () => {
+    const messages = runRule("import { PI_SKILLS_DIR } from '@craft-agent/shared/config/paths'")
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.message).toContain('PI_SKILLS_DIR')
+  })
+
+  it('flags private Pi hook env strings', () => {
+    const messages = runRule("const hook = 'PI_HOST_HOOKS_MODULE'")
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.message).toContain('PI_HOST_HOOKS_MODULE')
+  })
 })

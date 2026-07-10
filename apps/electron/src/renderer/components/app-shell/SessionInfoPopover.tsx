@@ -5,7 +5,6 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from 
 import { Input } from '@/components/ui/input'
 import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { cn } from '@/lib/utils'
-import { isPiReadOnlySessionId } from '../../../shared/pi-session-route'
 import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
 
 interface SessionInfoPopoverProps {
@@ -104,7 +103,7 @@ function SessionInfoPopoverContent({ sessionId, sessionFolderPath }: { sessionId
   const { onRenameSession } = useAppShellContext()
   const [name, setName] = React.useState('')
   const renameTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const isReadOnlyTitle = isPiReadOnlySessionId(sessionId)
+  const isReadOnlyTitle = session?.readOnly === true
 
   React.useEffect(() => {
     setName(session?.name || '')

@@ -2,7 +2,7 @@
  * LLM Connections
  *
  * Named provider configurations that users can add, configure, and switch between.
- * Each session locks to a specific connection after the first message.
+ * Sessions can switch between configured connections.
  * Workspaces can set a default connection.
  */
 
@@ -657,7 +657,7 @@ export function getDefaultModelForConnection(providerType: LlmProviderType, piAu
  * Resolve the effective LLM connection slug from available fallbacks.
  *
  * Single source of truth for the fallback chain used everywhere in the UI:
- *   1. Explicit session connection (locked after first message)
+ *   1. Explicit session connection
  *   2. Workspace-level default override
  *   3. Global default (isDefault flag on a connection)
  *   4. First available connection
@@ -679,7 +679,7 @@ export function resolveEffectiveConnectionSlug(
 }
 
 /**
- * Check if a session's locked connection is unavailable (deleted/removed).
+ * Check if a session's selected connection is unavailable (deleted/removed).
  * Returns true only when a session has an explicit llmConnection that doesn't
  * match any current connection. Sessions without a stored connection (using
  * the fallback chain) are never "unavailable".

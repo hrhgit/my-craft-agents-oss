@@ -1,13 +1,14 @@
 import * as React from 'react'
-import { Check } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { Check, ChevronDown } from 'lucide-react'
 import {
-  Drawer,
-  DrawerTrigger,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerClose,
-} from '@/components/ui/drawer'
+  DropdownMenu,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  StyledDropdownMenuContent,
+  StyledDropdownMenuItem,
+} from '@/components/ui/styled-dropdown'
 import { cn } from '@/lib/utils'
 import {
   PERMISSION_MODE_CONFIG,
@@ -68,6 +69,7 @@ export function CompactPermissionModeSelector({
   permissionMode,
   onPermissionModeChange,
 }: CompactPermissionModeSelectorProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
   // Optimistic local state — updates immediately, syncs with prop
   const [optimisticMode, setOptimisticMode] = React.useState(permissionMode)
@@ -82,15 +84,24 @@ export function CompactPermissionModeSelector({
     setOpen(false)
   }, [onPermissionModeChange])
 
-  const config = PERMISSION_MODE_CONFIG[optimisticMode]
   const style = MODE_STYLES[optimisticMode]
+  const labelKeyByMode: Record<PermissionMode, string> = {
+    safe: 'mode.explore',
+    ask: 'mode.ask',
+    'allow-all': 'mode.execute',
+  }
+  const descriptionKeyByMode: Record<PermissionMode, string> = {
+    safe: 'mode.exploreFullDesc',
+    ask: 'mode.askFullDesc',
+    'allow-all': 'mode.executeFullDesc',
+  }
 
   return (
-    <Drawer open={open} onOpenChange={setOpen}>
-      <DrawerTrigger asChild>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`Permission mode: ${config.displayName}`}
+          aria-label={`Permission mode: ${t(labelKeyByMode[optimisticMode])}`}
           className={cn(
             "h-7 pl-2 pr-2.5 text-xs font-medium rounded-[6px] flex items-center gap-1.5 shadow-tinted outline-none select-none shrink-0",
             style.className,
@@ -98,45 +109,36 @@ export function CompactPermissionModeSelector({
           style={{ '--shadow-color': style.shadowVar } as React.CSSProperties}
         >
           <ModeIcon mode={optimisticMode} className="h-3.5 w-3.5" />
-          <span>{config.shortName}</span>
+          <span>{t(labelKeyByMode[optimisticMode])}</span>
+          <ChevronDown className="h-3 w-3 opacity-60" />
         </button>
-      </DrawerTrigger>
+      </DropdownMenuTrigger>
 
-      <DrawerContent>
-        <DrawerHeader>
-          <DrawerTitle>Permission Mode</DrawerTitle>
-        </DrawerHeader>
-
-        <div className="px-4 pb-6 flex flex-col gap-1">
-          {PERMISSION_MODE_ORDER.map((mode) => {
-            const modeConfig = PERMISSION_MODE_CONFIG[mode]
-            const isSelected = mode === optimisticMode
-            return (
-              <DrawerClose asChild key={mode}>
-                <button
-                  type="button"
-                  className={cn(
-                    "flex items-center gap-3 w-full px-3 py-3 rounded-lg text-left transition-colors",
-                    isSelected ? "bg-foreground/5" : "hover:bg-foreground/5",
-                  )}
-                  onClick={() => handleSelect(mode)}
-                >
-                  <span className={cn("shrink-0", PERMISSION_MODE_CONFIG[mode].colorClass.text)}>
-                    <ModeIcon mode={mode} className="h-5 w-5" />
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium">{modeConfig.displayName}</div>
-                    <div className="text-xs text-muted-foreground">{modeConfig.description}</div>
-                  </div>
-                  {isSelected && (
-                    <Check className="h-4 w-4 shrink-0 text-foreground/60" />
-                  )}
-                </button>
-              </DrawerClose>
-            )
-          })}
-        </div>
-      </DrawerContent>
-    </Drawer>
+      <StyledDropdownMenuContent side="top" align="start" sideOffset={4} className="min-w-[220px]">
+        {PERMISSION_MODE_ORDER.map((mode) => {
+          const isSelected = mode === optimisticMode
+          return (
+            <StyledDropdownMenuItem
+              key={mode}
+              onSelect={() => handleSelect(mode)}
+              className="flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={cn("shrink-0", PERMISSION_MODE_CONFIG[mode].colorClass.text)}>
+                  <ModeIcon mode={mode} className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 text-left">
+                  <div className="text-sm font-medium">{t(labelKeyByMode[mode])}</div>
+                  <div className="text-xs text-muted-foreground truncate">{t(descriptionKeyByMode[mode])}</div>
+                </div>
+              </div>
+              {isSelected && (
+                <Check className="h-3.5 w-3.5 shrink-0 ml-3 text-foreground/60" />
+              )}
+            </StyledDropdownMenuItem>
+          )
+        })}
+      </StyledDropdownMenuContent>
+    </DropdownMenu>
   )
 }

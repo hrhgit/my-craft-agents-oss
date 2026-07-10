@@ -35,7 +35,7 @@ import { join, dirname, basename } from 'node:path';
 import type { ToolResult } from '@craft-agent/shared/agent';
 import { isDeveloperFeedbackEnabled } from '@craft-agent/shared/feature-flags';
 import { CONFIG_DIR } from '@craft-agent/shared/config/paths';
-import { findPiSessionFileInDefaultRoot, getSharedPiSidecarPathForFile, readSessionHeader, sanitizeSessionId } from '@craft-agent/shared/sessions';
+import { getSessionPath } from '@craft-agent/shared/sessions';
 import { createPiSkillResolver } from '@craft-agent/shared/pi/skill-resolver';
 // Import from session-tools-core
 import {
@@ -201,19 +201,12 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
   // Create credential manager that reads from cache files
   const credentialManager = createCredentialManager(workspaceRootPath);
 
-  // Session paths for transform_data / render_template.
-  // Pi/Craft 一体化后 sidecar 数据存放在 Pi session 文件同目录下的
-  // .craft/{sessionId}/ 子目录（spec: dirname(piSessionFile)/.craft/{sessionId}/）。
-  // 找不到 Pi session 文件时回退到旧路径，兼容未迁移的 session。
-  // 通过 @craft-agent/shared 统一复用路径解析与 sanitizeSessionId 防御。
-  const piSessionFile = findPiSessionFileInDefaultRoot(sessionId);
-  const sessionsDir = piSessionFile
-    ? getSharedPiSidecarPathForFile(piSessionFile, sessionId)
-    : join(workspaceRootPath, 'sessions', sanitizeSessionId(sessionId));
+  // Session paths for transform_data / render_template. Shared storage helpers
+  // resolve the sidecar next to Pi's workspace-scoped session projection without
+  // scanning the global Pi session root from this subprocess.
+  const sessionsDir = getSessionPath(workspaceRootPath, sessionId);
   const sessionDataDir = join(sessionsDir, 'data');
-  const workingDirectory = piSessionFile
-    ? readSessionHeader(piSessionFile)?.workingDirectory
-    : undefined;
+  const workingDirectory = workspaceRootPath;
 
   // Build context
   return {

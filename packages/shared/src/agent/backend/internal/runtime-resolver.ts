@@ -11,15 +11,11 @@ import type { BackendHostRuntimeContext } from '../types.ts';
 const IS_DEV_RUNTIME = !!process.env.CRAFT_DEV_RUNTIME;
 
 export interface ResolvedBackendRuntimePaths {
-  /**
-   * Source/bundle path for the network interceptor preloaded into the **Pi**
-   * helper process.
-   */
-  interceptorBundlePath?: string;
   sessionServerPath?: string;
   bridgeServerPath?: string;
   nodeRuntimePath?: string;
   bundledRuntimePath?: string;
+  piCliPath?: string;
 }
 
 export interface ResolvedBackendHostTooling {
@@ -70,28 +66,6 @@ function resolveBundledRuntimePath(hostRuntime: BackendHostRuntimeContext): stri
   return undefined;
 }
 
-function resolveInterceptorBundlePath(hostRuntime: BackendHostRuntimeContext): string | undefined {
-  if (hostRuntime.interceptorBundlePath && existsSync(hostRuntime.interceptorBundlePath)) {
-    return hostRuntime.interceptorBundlePath;
-  }
-
-  // In dev / monorepo runs, prefer the TypeScript source so changes are
-  // picked up without a manual `bun run build:interceptor`. Bun handles
-  // `--require <file>.ts` natively. Packaged builds always go through the
-  // pre-built `dist/interceptor.cjs` bundle.
-  if (!hostRuntime.isPackaged) {
-    const source = resolveUpwards(
-      hostRuntime.appRootPath,
-      join('packages', 'shared', 'src', 'unified-network-interceptor.ts'),
-      10,
-    );
-    if (source) return source;
-  }
-
-  return resolveUpwards(hostRuntime.appRootPath, join('dist', 'interceptor.cjs'))
-    ?? resolveUpwards(hostRuntime.appRootPath, join('apps', 'electron', 'dist', 'interceptor.cjs'));
-}
-
 function resolveServerPath(hostRuntime: BackendHostRuntimeContext, serverName: string): string | undefined {
   if (hostRuntime.isPackaged) {
     return firstExistingPath([
@@ -103,6 +77,35 @@ function resolveServerPath(hostRuntime: BackendHostRuntimeContext, serverName: s
     hostRuntime.appRootPath,
     join('packages', serverName, 'dist', 'index.js'),
   );
+}
+
+function resolvePiCliPath(hostRuntime: BackendHostRuntimeContext): string | undefined {
+  const override = process.env.CRAFT_PI_CLI_PATH;
+  if (override && existsSync(override)) return override;
+
+  const bundledCli = join('dist', 'cli.bundle.js');
+  const bundledFullCli = join('dist', 'cli.full.bundle.js');
+  const packageCli = join(
+    'node_modules',
+    '@earendil-works',
+    'pi-coding-agent',
+    'dist',
+    'cli.js',
+  );
+
+  if (hostRuntime.isPackaged) {
+    return firstExistingPath([
+      join(hostRuntime.appRootPath, 'dist', 'resources', 'pi-runtime', bundledCli),
+      join(hostRuntime.appRootPath, 'resources', 'pi-runtime', bundledCli),
+      join(hostRuntime.appRootPath, 'dist', 'resources', 'pi-runtime', bundledFullCli),
+      join(hostRuntime.appRootPath, 'resources', 'pi-runtime', bundledFullCli),
+      join(hostRuntime.appRootPath, 'dist', 'resources', 'pi-runtime', packageCli),
+      join(hostRuntime.appRootPath, 'resources', 'pi-runtime', packageCli),
+    ]);
+  }
+
+  return resolveUpwards(hostRuntime.appRootPath, packageCli, 10)
+    ?? (existsSync(join(process.cwd(), packageCli)) ? join(process.cwd(), packageCli) : undefined);
 }
 
 /**
@@ -144,11 +147,11 @@ export function resolveBackendRuntimePaths(hostRuntime: BackendHostRuntimeContex
   const bundledRuntimePath = hostRuntime.nodeRuntimePath || resolveBundledRuntimePath(hostRuntime);
 
   return {
-    interceptorBundlePath: resolveInterceptorBundlePath(hostRuntime),
     sessionServerPath: resolveServerPath(hostRuntime, 'session-mcp-server'),
     bridgeServerPath: resolveServerPath(hostRuntime, 'bridge-mcp-server'),
     nodeRuntimePath: hostRuntime.nodeRuntimePath || bundledRuntimePath || process.execPath,
     bundledRuntimePath,
+    piCliPath: resolvePiCliPath(hostRuntime),
   };
 }
 

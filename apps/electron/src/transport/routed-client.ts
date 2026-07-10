@@ -33,6 +33,10 @@ export interface WorkspaceSwitchResult {
 /** Factory to create a new WsRpcClient for a remote workspace. */
 export type WorkspaceClientFactory = (remoteServer: RemoteServerConfig) => WsRpcClient
 
+export interface RoutedClientOptions {
+  localWorkspaceClient?: WsRpcClient
+}
+
 // ---------------------------------------------------------------------------
 // RoutedClient
 // ---------------------------------------------------------------------------
@@ -53,6 +57,9 @@ export class RoutedClient implements RpcClient {
   /** Factory for creating remote workspace clients on switch. */
   private clientFactory: WorkspaceClientFactory | null = null
 
+  /** Client used for local workspace-owned channels; may be a child-process server. */
+  private readonly localWorkspaceClient: WsRpcClient
+
   /**
    * Workspace ID mapping — translates local workspace IDs to remote ones.
    * When set, REMOTE_ELIGIBLE invoke() calls replace the local ID in
@@ -63,7 +70,9 @@ export class RoutedClient implements RpcClient {
   constructor(
     private readonly localClient: WsRpcClient,
     initialWorkspaceClient: WsRpcClient,
+    options?: RoutedClientOptions,
   ) {
+    this.localWorkspaceClient = options?.localWorkspaceClient ?? localClient
     this.workspaceClient = initialWorkspaceClient
     this.bindConnectionState()
   }
@@ -93,6 +102,14 @@ export class RoutedClient implements RpcClient {
   // -------------------------------------------------------------------------
 
   async invoke(channel: string, ...args: any[]): Promise<any> {
+    return this.invokeWithOptions(channel, args)
+  }
+
+  async invokeWithOptions(
+    channel: string,
+    args: any[],
+    options?: { timeoutMs?: number },
+  ): Promise<any> {
     const isLocal = isLocalOnly(channel)
     const target = isLocal ? this.localClient : this.workspaceClient
 
@@ -112,7 +129,9 @@ export class RoutedClient implements RpcClient {
         })
       : args
 
-    const result = await target.invoke(channel, ...translatedArgs)
+    const result = typeof target.invokeWithOptions === 'function'
+      ? await target.invokeWithOptions(channel, translatedArgs, options)
+      : await target.invoke(channel, ...translatedArgs)
 
     // Intercept SWITCH_WORKSPACE response to swap workspace client
     if (channel === RPC_CHANNELS.window.SWITCH_WORKSPACE) {
@@ -147,10 +166,11 @@ export class RoutedClient implements RpcClient {
 
   handleCapability(channel: string, handler: (...args: any[]) => Promise<any> | any): void {
     this.capabilities.set(channel, handler)
-    // Register on both clients — either server can invoke capabilities
-    this.localClient.handleCapability(channel, handler)
-    if (this.workspaceClient !== this.localClient) {
-      this.workspaceClient.handleCapability(channel, handler)
+    // Register on every currently known client. Either the local GUI bridge,
+    // the local workspace server, or a remote workspace server may invoke one.
+    const clients = new Set([this.localClient, this.localWorkspaceClient, this.workspaceClient])
+    for (const client of clients) {
+      client.handleCapability(channel, handler)
     }
   }
 
@@ -190,10 +210,11 @@ export class RoutedClient implements RpcClient {
       const newClient = this.clientFactory(result.remoteServer)
       newClient.connect()
       this.swapWorkspaceClient(newClient)
-    } else if (!result.remoteServer && this.workspaceClient !== this.localClient) {
-      // Switching to local workspace — clear mapping and revert to local client
+    } else if (!result.remoteServer && this.workspaceClient !== this.localWorkspaceClient) {
+      // Switching to a local workspace — clear mapping and use the local
+      // workspace runtime. This can be distinct from the Electron GUI bridge.
       this.clearWorkspaceMapping()
-      this.swapWorkspaceClient(this.localClient)
+      this.swapWorkspaceClient(this.localWorkspaceClient)
     }
   }
 
@@ -219,8 +240,8 @@ export class RoutedClient implements RpcClient {
     // Rebind connection state delegation
     this.bindConnectionState()
 
-    // Destroy old client (unless it's the local client or same as new)
-    if (old !== this.localClient && old !== newClient) {
+    // Destroy old client unless it is one of the long-lived local clients.
+    if (old !== this.localClient && old !== this.localWorkspaceClient && old !== newClient) {
       old.destroy()
     }
 

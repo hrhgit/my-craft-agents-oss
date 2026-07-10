@@ -4,18 +4,22 @@ import { join } from 'path'
 import { RPC_CHANNELS, type FileAttachment, type SendMessageOptions, type SessionEvent, type Session } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { storedToMessage } from '@craft-agent/core/types'
-import { getWorkspaceByNameOrId, getPiShellFullPassthrough } from '@craft-agent/shared/config'
-import { loadPiSessionMessages, validateSessionId } from '@craft-agent/shared/sessions'
-import { perf } from '@craft-agent/shared/utils'
+import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import {
+  findPiSessionProjectionById,
+  projectTreeSessionProjectionAsStoredSession,
+  validateSessionId,
+} from '@craft-agent/shared/sessions'
+import { perf, writeRuntimeLog } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
-import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
+import { pushTyped, type HandlerFn, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import type { ISessionManager } from '../session-manager-interface'
 import { getWorkspaceOrNull, resolveWorkspaceId } from '../utils'
 import { setTransferableHandler } from './transfer'
-import { collectSessionSearchRoots, resolvePiReadOnlySession } from './session-route-helpers'
+import { collectSessionSearchRoots, serializeExtensionCommandArgs } from './session-route-helpers'
 
 interface ClientSessionWatchState {
   watcher: import('fs').FSWatcher
@@ -65,15 +69,13 @@ async function assertSessionWorkspace(
   sessionManager: ISessionManager,
   ctxWorkspaceId: string | null | undefined,
   sessionId: string,
+  options: { allowMissingWithWorkspace?: boolean } = {},
 ): Promise<void> {
   validateSessionId(sessionId)
 
   const session = await sessionManager.getSession(sessionId)
   if (!session) {
-    if (sessionId.startsWith('pi-') && getPiShellFullPassthrough()) {
-      if (!ctxWorkspaceId) {
-        throw new Error(`No workspace context for Pi session: ${sessionId}`)
-      }
+    if (options.allowMissingWithWorkspace && ctxWorkspaceId) {
       return
     }
     throw new Error(`Session not found: ${sessionId}`)
@@ -162,24 +164,16 @@ function resolveWorkspaceRootPath(
 function resolveSessionDirectory(
   sessionManager: ISessionManager,
   sessionId: string,
-  workspaceRootPath: string,
+  _workspaceRootPath: string,
 ): string | null {
-  if (getPiShellFullPassthrough()) {
-    const piSession = resolvePiReadOnlySession(sessionId, workspaceRootPath)
-    if (piSession) return piSession.sessionDir
-  }
   return sessionManager.getSessionPath(sessionId)
 }
 
 function resolveSessionDisplayPath(
   sessionManager: ISessionManager,
   sessionId: string,
-  workspaceRootPath: string,
+  _workspaceRootPath: string,
 ): string | null {
-  if (getPiShellFullPassthrough()) {
-    const piSession = resolvePiReadOnlySession(sessionId, workspaceRootPath)
-    if (piSession) return piSession.sessionFolderPath
-  }
   return sessionManager.getSessionPath(sessionId)
 }
 
@@ -267,34 +261,45 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Get a single session with messages (for lazy loading)
   server.handle(RPC_CHANNELS.sessions.GET_MESSAGES, async (ctx, sessionId: string) => {
     const end = perf.start('rpc.getSessionMessages')
-    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId, { allowMissingWithWorkspace: true })
 
-    // Pi 会话（只读）：从 ~/.pi/agent/sessions/ 加载并转换为 Craft Message[]
-    // 渲染层通过 sessionId 以 'pi-' 前缀判断只读，禁用输入框
-    if (sessionId.startsWith('pi-') && getPiShellFullPassthrough()) {
+    const session = await sessionManager.getSession(sessionId)
+    if (session) {
+      end()
+      return session
+    }
+
+    // Pi-owned session projection (read-only): load from Pi's session bucket
+    // and expose an ordinary Session DTO with readOnly=true. No `pi-*` route id.
+    {
       const windowWorkspaceId = ctx.webContentsId != null
         ? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId)
         : undefined
       const workspaceId = ctx.workspaceId ?? windowWorkspaceId ?? ''
       const workspace = workspaceId ? getWorkspaceByNameOrId(workspaceId) : undefined
       const workspaceRoot = workspace?.rootPath ?? ''
-      const readonlyPiSession = resolvePiReadOnlySession(sessionId, workspaceRoot)
-      if (readonlyPiSession) {
-        const storedMessages = loadPiSessionMessages(readonlyPiSession.filePath)
-        const messages = storedMessages.map(storedToMessage)
+      const projection = workspaceRoot
+        ? await findPiSessionProjectionById(workspaceRoot, sessionId)
+        : null
+      const projectedSession = projection
+        ? projectTreeSessionProjectionAsStoredSession(projection, { workspaceRootPath: workspaceRoot })
+        : null
+      if (projection && projectedSession) {
+        const messages = projectedSession.messages.map(storedToMessage)
         const piSession: Session = {
           id: sessionId,
           workspaceId,
           workspaceName: workspace?.name ?? 'Pi',
-          name: readonlyPiSession.metadata?.name,
-          preview: readonlyPiSession.metadata?.preview,
-          lastMessageAt: readonlyPiSession.metadata?.lastUsedAt ?? Date.now(),
-          createdAt: readonlyPiSession.metadata?.createdAt,
+          name: projectedSession.name,
+          preview: projectedSession.preview,
+          lastMessageAt: projectedSession.lastMessageAt ?? projectedSession.lastUsedAt ?? Date.now(),
+          createdAt: projectedSession.createdAt,
           messages,
           isProcessing: false,
+          readOnly: true,
           messageCount: messages.length,
-          workingDirectory: readonlyPiSession.metadata?.workingDirectory,
-          sessionFolderPath: readonlyPiSession.sessionFolderPath,
+          workingDirectory: projectedSession.workingDirectory,
+          sessionFolderPath: projection.path ?? projection.sessionDir,
         }
         end()
         return piSession
@@ -302,10 +307,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       end()
       return null
     }
-
-    const session = await sessionManager.getSession(sessionId)
-    end()
-    return session
   })
 
   // Create a new session
@@ -336,7 +337,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   //   - Post-persist errors (model API failures, etc.) are routed via the
   //     event stream as today.
   // attachments: FileAttachment[] for Claude (has content), storedAttachments: StoredAttachment[] for persistence (has thumbnailBase64)
-  server.handle(RPC_CHANNELS.sessions.SEND_MESSAGE, async (ctx, sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachment[], options?: SendMessageOptions) => {
+  const sendMessageHandler: HandlerFn = async (ctx, sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachment[], options?: SendMessageOptions) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
 
     // Capture the caller's clientId for error routing
@@ -366,11 +367,31 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           log.error('Error in sendMessage:', err)
           if (!acked) {
             // Pre-persist error — surface synchronously to the caller.
+            writeRuntimeLog('error', {
+              scope: 'session',
+              event: 'send_message.rejected',
+              meta: {
+                sessionId,
+                workspaceId: ctx.workspaceId,
+                callerClientId,
+                error: err,
+              },
+            })
             acked = true
             reject(err)
             return
           }
           // Post-persist error — route via the event stream as today.
+          writeRuntimeLog('error', {
+            scope: 'session',
+            event: 'send_message.post_accept_error',
+            meta: {
+              sessionId,
+              workspaceId: ctx.workspaceId,
+              callerClientId,
+              error: err,
+            },
+          })
           pushTyped(server, RPC_CHANNELS.sessions.EVENT, { to: 'client', clientId: callerClientId }, {
             type: 'error',
             sessionId,
@@ -382,7 +403,9 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           } as SessionEvent)
         })
     })
-  })
+  }
+  server.handle(RPC_CHANNELS.sessions.SEND_MESSAGE, sendMessageHandler)
+  setTransferableHandler(RPC_CHANNELS.sessions.SEND_MESSAGE, sendMessageHandler)
 
   // Cancel processing
   server.handle(RPC_CHANNELS.sessions.CANCEL, async (ctx, sessionId: string, silent?: boolean) => {
@@ -430,12 +453,16 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // 调用 pi 扩展注册的命令（extension_command_invoke）
   // 由 automation 委托路径触发，转发到对应会话的 PiAgent.sendExtensionCommandInvoke
-  server.handle(RPC_CHANNELS.extensions.COMMAND_INVOKE, async (ctx, sessionId: string, commandId: string, args?: string | Record<string, unknown>) => {
+  server.handle(RPC_CHANNELS.extensions.COMMAND_INVOKE, async (ctx, sessionId: string, commandId: string, args?: string | Record<string, unknown> | null) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
-    const serializedArgs = typeof args === 'string' || args === undefined
-      ? args
-      : JSON.stringify(args)
+    const serializedArgs = serializeExtensionCommandArgs(args)
     return sessionManager.invokeExtensionCommand(sessionId, commandId, serializedArgs)
+  })
+
+  // 查询当前会话已注册的 Pi 扩展 slash commands，用于 renderer slash menu 初始快照
+  server.handle(RPC_CHANNELS.extensions.GET_COMMANDS, async (ctx, sessionId: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    return sessionManager.listExtensionCommands(sessionId)
   })
 
   // List child sessions in pi's session tree spawned from the given parent session.
@@ -511,13 +538,13 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       case 'refreshTitle':
         log.info(`IPC: refreshTitle received for session ${sessionId}`)
         return sessionManager.refreshTitle(sessionId)
-      // Connection selection (locked after first message)
+      // Connection selection
       case 'setConnection':
         log.info(`IPC: setConnection received for session ${sessionId}, connection: ${command.connectionSlug}`)
         return sessionManager.setSessionConnection(sessionId, command.connectionSlug)
       // Pending plan execution (Accept & Compact flow)
       case 'setPendingPlanExecution':
-        return sessionManager.setPendingPlanExecution(sessionId, command.planPath, command.draftInputSnapshot)
+        return sessionManager.setPendingPlanExecution(sessionId, { planPath: command.planPath, artifactId: command.artifactId }, command.draftInputSnapshot)
       case 'markCompactionComplete':
         return sessionManager.markCompactionComplete(sessionId)
       case 'markPendingPlanExecutionDispatched':
@@ -680,9 +707,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Set session notes (writes to notes.md in session directory)
   server.handle(RPC_CHANNELS.sessions.SET_NOTES, async (ctx, sessionId: string, content: string) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
-    if (sessionId.startsWith('pi-') && getPiShellFullPassthrough()) {
-      throw new Error(`Session is read-only: ${sessionId}`)
-    }
 
     const sessionPath = resolveSessionDirectory(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
     if (!sessionPath) {

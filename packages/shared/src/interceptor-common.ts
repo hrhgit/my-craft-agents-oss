@@ -245,8 +245,18 @@ export interface ToolMetadata {
  * compatibility while older callers are cleaned up.
  */
 
-// In-memory Map for same-process lookups (accumulates entries across all sessions)
+const MAX_TOOL_METADATA_AGE_MS = 10 * 60 * 1000; // 10 minutes
+
+// In-memory Map for same-process lookups.
 const _metadataMap = new Map<string, ToolMetadata>();
+
+function pruneExpiredToolMetadata(now = Date.now()): void {
+  for (const [toolUseId, metadata] of _metadataMap) {
+    if (now - metadata.timestamp > MAX_TOOL_METADATA_AGE_MS) {
+      _metadataMap.delete(toolUseId);
+    }
+  }
+}
 
 export const toolMetadataStore = {
   /**
@@ -259,6 +269,9 @@ export const toolMetadataStore = {
 
   /** Store metadata in memory for same-process lookups */
   set(toolUseId: string, metadata: ToolMetadata): void {
+    const now = Date.now();
+    pruneExpiredToolMetadata(now);
+    if (now - metadata.timestamp > MAX_TOOL_METADATA_AGE_MS) return;
     _metadataMap.set(toolUseId, metadata);
   },
 
@@ -267,7 +280,13 @@ export const toolMetadataStore = {
    * for compatibility.
    */
   get(toolUseId: string, _sessionDir?: string): ToolMetadata | undefined {
-    return _metadataMap.get(toolUseId);
+    const metadata = _metadataMap.get(toolUseId);
+    if (!metadata) return undefined;
+    if (Date.now() - metadata.timestamp > MAX_TOOL_METADATA_AGE_MS) {
+      _metadataMap.delete(toolUseId);
+      return undefined;
+    }
+    return metadata;
   },
 
   delete(toolUseId: string): void {

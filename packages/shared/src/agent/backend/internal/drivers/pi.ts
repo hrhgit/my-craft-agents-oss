@@ -3,9 +3,12 @@ import type { ModelDefinition } from '../../../../config/models.ts';
 import { getAllPiModels, getPiModelsForAuthProvider, isDeprecatedClaudeOpus46Model } from '../../../../config/models-pi.ts';
 import { getPiProviderBaseUrl } from '../../../../config/models-pi.ts';
 import {
+  getPiGlobalProviderKeyForConnection,
+  normalizePiCustomEndpointBaseUrl,
   readPiGlobalProviders,
   type PiGlobalProvider,
   type PiGlobalModel,
+  type PiCustomApi,
 } from '../../../../config/pi-global-config.ts';
 import type { LlmConnection } from '../../../../config/llm-connections.ts';
 
@@ -197,7 +200,8 @@ async function testAnthropicCompatible(
   model: string,
   timeoutMs: number,
 ): Promise<{ success: boolean; error?: string }> {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/messages`;
+  const normalizedBaseUrl = normalizePiCustomEndpointBaseUrl(baseUrl, 'anthropic-messages') ?? baseUrl.trim();
+  const url = `${normalizedBaseUrl.replace(/\/+$/, '')}/v1/messages`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -246,22 +250,17 @@ async function testAnthropicCompatible(
  *
  * 返回 null 表示 pi 文件中没有对应的 provider（调用方回退到 connection 自身字段）。
  */
-function resolvePiCompatProvider(
+function resolvePiCompatProviderEntry(
   connection: LlmConnection | null | undefined,
-): PiGlobalProvider | null {
+): { key: string; provider: PiGlobalProvider } | null {
   if (!connection) return null;
 
-  // 优先用 slug 推导 provider key（pi-<key> 约定）
-  let providerKey: string | undefined;
-  if (connection.slug.startsWith('pi-')) {
-    providerKey = connection.slug.slice('pi-'.length);
-  } else if (connection.piAuthProvider) {
-    providerKey = connection.piAuthProvider;
-  }
+  const providerKey = getPiGlobalProviderKeyForConnection(connection);
   if (!providerKey) return null;
 
   const providers = readPiGlobalProviders();
-  return providers[providerKey] ?? null;
+  const provider = providers[providerKey];
+  return provider ? { key: providerKey, provider } : null;
 }
 
 /**
@@ -319,19 +318,29 @@ function piGlobalModelsToModelDefinitions(
   }));
 }
 
+function normalizeRuntimeBaseUrl(
+  baseUrl: string | undefined,
+  api: string | undefined,
+): string | undefined {
+  if (!baseUrl?.trim()) return undefined;
+  return normalizePiCustomEndpointBaseUrl(baseUrl, api as PiCustomApi | undefined) ?? baseUrl.trim();
+}
+
 export const piDriver: ProviderDriver = {
   provider: 'pi',
   buildRuntime: ({ context, providerOptions, resolvedPaths }) => {
+    const piCompatProviderEntry = context.connection?.providerType === 'pi_compat'
+      ? resolvePiCompatProviderEntry(context.connection)
+      : null;
     const inferredPiAuthProvider =
       providerOptions?.piAuthProvider
+      || piCompatProviderEntry?.key
       || context.connection?.piAuthProvider;
 
     // pi_compat 连接的 customEndpoint/customModels 从 ~/.pi/agent/models.json 读取
     // （pi 文件为 SoT）。pi 文件中无对应 provider 时回退到 connection 自身字段，
     // 保留对旧配置的兼容。
-    const piCompatProvider = context.connection?.providerType === 'pi_compat'
-      ? resolvePiCompatProvider(context.connection)
-      : null;
+    const piCompatProvider = piCompatProviderEntry?.provider ?? null;
 
     const customEndpoint = piCompatProvider
       ? buildCustomEndpointFromPiProvider(piCompatProvider) ?? context.connection?.customEndpoint
@@ -354,28 +363,27 @@ export const piDriver: ProviderDriver = {
         return m.id;
       });
 
+    const rawBaseUrl = piCompatProvider?.baseUrl ?? context.connection?.baseUrl;
+    const baseUrl = normalizeRuntimeBaseUrl(rawBaseUrl, customEndpoint?.api);
+
     return ({
     paths: {
-      interceptor: resolvedPaths.interceptorBundlePath,
       node: resolvedPaths.nodeRuntimePath,
+      piCli: resolvedPaths.piCliPath,
     },
     piAuthProvider: inferredPiAuthProvider,
-    baseUrl: piCompatProvider?.baseUrl ?? context.connection?.baseUrl,
+    baseUrl,
     customEndpoint,
     customModels,
-    // Pass apiKey from ~/.pi/agent/models.json so Pi can register
-    // the custom-endpoint provider. Without this, registerProvider() validation
-    // fails with "apiKey or oauth is required when defining models".
-    customEndpointApiKey: piCompatProvider?.apiKey,
   });
   },
   fetchModels: async ({ connection, credentials, timeoutMs }) => {
     // pi_compat 连接的 models 直接从 ~/.pi/agent/models.json 读取（用户手填，
     // 不走自动发现）。pi 文件中无对应 provider 时返回空列表。
     if (connection.providerType === 'pi_compat') {
-      const provider = resolvePiCompatProvider(connection);
-      const models = provider?.models?.length
-        ? piGlobalModelsToModelDefinitions(provider.models)
+      const entry = resolvePiCompatProviderEntry(connection);
+      const models = entry?.provider.models?.length
+        ? piGlobalModelsToModelDefinitions(entry.provider.models)
         : [];
       return { models };
     }
@@ -430,7 +438,10 @@ export const piDriver: ProviderDriver = {
       return null;
     }
 
-    const baseUrl = args.baseUrl?.trim() || modelBaseUrl || getPiProviderBaseUrl(piAuthProvider);
+    const baseUrl = normalizePiCustomEndpointBaseUrl(
+      args.baseUrl?.trim() || modelBaseUrl || getPiProviderBaseUrl(piAuthProvider),
+      'anthropic-messages',
+    );
     if (!baseUrl) {
       return { success: false, error: 'Could not determine API endpoint for provider' };
     }

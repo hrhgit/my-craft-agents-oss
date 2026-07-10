@@ -21,6 +21,7 @@
  */
 
 import {
+  migratePiGlobalProviderApiKeysToAuth,
   readPiGlobalProviders,
   readPiGlobalSettings,
   setPiGlobalDefault,
@@ -44,6 +45,17 @@ export interface SyncResult {
 export async function syncPiGlobalToLlmConnections(): Promise<SyncResult> {
   let providers: Record<string, PiGlobalProvider> = {}
   let settings: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string } = {}
+  let changed = false
+
+  try {
+    const migration = migratePiGlobalProviderApiKeysToAuth()
+    changed = migration.changed
+  } catch (e) {
+    return {
+      changed: false,
+      error: `Failed to migrate ~/.pi/agent/models.json apiKey fields into auth.json: ${e instanceof Error ? e.message : String(e)}`,
+    }
+  }
 
   try {
     providers = readPiGlobalProviders()
@@ -58,8 +70,6 @@ export async function syncPiGlobalToLlmConnections(): Promise<SyncResult> {
   } catch {
     // settings.json 可选——不存在时不应用默认值
   }
-
-  let changed = false
 
   // 自动修复：当 defaultProvider 是保留的内部名称（如 'custom-endpoint'）或
   // 不匹配 models.json 中的任何真实 provider 时，改写为第一个真实 provider，

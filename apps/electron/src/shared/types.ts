@@ -68,8 +68,8 @@ import type { ExportResourcesOptions, ExportResult, ResourceImportMode, Resource
 export type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult };
 
 // LLM connection types
-import type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings } from '@craft-agent/shared/config';
-export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings };
+import type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry } from '@craft-agent/shared/config';
+export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry };
 
 // =============================================================================
 // GUI-only types (not used by server/handler code)
@@ -254,7 +254,7 @@ export interface ElectronAPI {
   importRemoteSessionTransfer(targetWorkspaceId: string, payload: RemoteSessionTransferPayload): Promise<ImportRemoteSessionTransferResult>
 
   // Pending plan execution (for reload recovery)
-  getPendingPlanExecution(sessionId: string): Promise<{ planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null>
+  getPendingPlanExecution(sessionId: string): Promise<{ planPath?: string; artifactId?: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null>
   // Permission mode reconciliation
   getSessionPermissionModeState(sessionId: string): Promise<PermissionModeState | null>
 
@@ -365,7 +365,12 @@ export interface ElectronAPI {
   getLatestReleaseVersion(): Promise<string | undefined>
 
   // System warnings (startup checks)
-  getSystemWarnings(): Promise<{ vcredistMissing: boolean; downloadUrl?: string }>
+  getSystemWarnings(): Promise<{
+    vcredistMissing: boolean
+    downloadUrl?: string
+    workspaceRuntimeDegraded: boolean
+    workspaceRuntimeDegradedReason?: string
+  }>
 
   // Shell operations
   openUrl(url: string): Promise<void>
@@ -408,10 +413,11 @@ export interface ElectronAPI {
   getPiGlobalProviders(): Promise<PiGlobalProviderForDisplay[]>
   getPiGlobalSettings(): Promise<PiGlobalSettings>
   getPiGlobalProvider(key: string): Promise<PiGlobalProvider | null>
-  savePiGlobalProvider(args: { key: string; provider: PiGlobalProvider }): Promise<{ success: boolean; error?: string }>
+  getPiGlobalProviderApiKey(key: string): Promise<string | null>
+  savePiGlobalProvider(args: { key: string; provider: PiGlobalProvider; apiKey?: string }): Promise<{ success: boolean; error?: string }>
   deletePiGlobalProvider(key: string): Promise<{ success: boolean; error?: string }>
   setPiGlobalDefault(args: { provider: string; model: string; thinkingLevel?: string }): Promise<{ success: boolean; error?: string }>
-  fetchModelsForEndpoint(args: { baseUrl: string; apiKey: string }): Promise<{ success: boolean; models: FetchedEndpointModel[]; error?: string }>
+  fetchModelsForEndpoint(args: { baseUrl: string; apiKey?: string; api?: PiCustomApi; authHeader?: boolean }): Promise<{ success: boolean; models: FetchedEndpointModel[]; resolvedBaseUrl?: string; error?: string }>
   onPiGlobalChanged(callback: () => void): () => void
 
   // Refresh models for a single LLM connection (triggers ModelRefreshService)
@@ -548,6 +554,7 @@ export interface ElectronAPI {
   getPiExtensionSettings(): Promise<PiExtensionSettings>
   setPiExtensionSettings(settings: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   updatePiExtensionSettings(patch: StoredPiExtensionSettings): Promise<PiExtensionSettings>
+  getPiExtensionCatalog(): Promise<PiExtensionCatalogEntry[]>
   getPiExtensionStates(): Promise<Record<string, boolean>>
   setPiExtensionEnabled(name: string, enabled: boolean): Promise<void>
 
@@ -555,7 +562,8 @@ export interface ElectronAPI {
   onExtensionEvent(callback: (event: import('@craft-agent/shared/agent/backend/types').ExtensionBridgeEvent) => void): () => void
   // 回复 remoteui:request（payload=null 表示取消）
   sendRemoteUIResponse(sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): Promise<boolean>
-  invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>): Promise<boolean>
+  invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>): Promise<import('@craft-agent/core/types').ExtensionCommandResult>
+  getExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent/backend/types').PiExtensionCommand[]>
   // Pi session tree — list child sessions spawned from the given parent session
   listChildSessions(sessionId: string): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]>
 

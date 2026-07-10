@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { findPiSessionFileInDefaultRoot, sanitizeSessionId, readSessionHeader } from '@craft-agent/shared/sessions';
+import { readSessionHeader, sanitizeSessionId, tryGetSessionFilePath } from '@craft-agent/shared/sessions';
 import { stripBom } from '@craft-agent/shared/utils';
 import type { SourceConfig } from './types.ts';
 
@@ -143,8 +143,8 @@ export function getSkillMdPath(workspaceRootPath: string, skillSlug: string): st
 /**
  * Read the session's workingDirectory from the persisted session header.
  *
- * Tries the new Pi tree JSONL v3 path first (~/.pi/agent/sessions/{encoded-cwd}/
- * {timestamp}_{sessionId}.jsonl), then falls back to the legacy craft workspace
+ * Tries the workspace-scoped Pi projection path first
+ * (~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl), then falls back to the legacy craft workspace
  * path (~/.craft-agent/workspaces/{id}/sessions/{sessionId}/session.jsonl) for
  * sessions not yet migrated.
  *
@@ -158,10 +158,8 @@ export function resolveSessionWorkingDirectory(
   // sanitizeSessionId as path traversal defense (basename strips any path components).
   const safeSessionId = sanitizeSessionId(sessionId);
 
-  // Try new Pi session path first. shared's findPiSessionFile respects
-  // PI_CODING_AGENT_DIR via shared's default Pi sessions root, fixing the bug
-  // where the local hardcoded ~/.pi/agent/sessions path ignored that override.
-  const piSessionFile = findPiSessionFileInDefaultRoot(safeSessionId);
+  // Try the workspace bucket first without scanning the global Pi sessions root.
+  const piSessionFile = tryGetSessionFilePath(workspacePath, safeSessionId);
   if (piSessionFile) {
     // shared's readSessionHeader normalizes both Pi tree (workingDirectory =
     // craft.workingDirectory ?? header.cwd) and legacy craft headers.

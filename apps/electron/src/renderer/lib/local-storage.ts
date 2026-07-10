@@ -41,6 +41,8 @@ export const KEYS = {
   // Working directory
   recentWorkingDirs: 'recent-working-dirs',
 
+  // Chat input command mode (session-scoped via suffix = sessionId)
+
   // TurnCard expansion state (persisted across session switches)
   turnCardExpansion: 'turncard-expansion',
 

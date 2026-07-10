@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs'
 import { uptime as osUptime } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { OAuthFlowStore } from '@craft-agent/shared/auth'
 import { ensureConfigDir, getWorkspaceByNameOrId, loadStoredConfig, saveConfig } from '@craft-agent/shared/config'
 import { CONFIG_DIR } from '@craft-agent/shared/config/paths'
@@ -43,6 +43,11 @@ export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   cleanupClientResources?: (clientId: string) => void
   onClientConnected?: (info: { clientId: string; webContentsId: number | null; workspaceId: string | null; capabilities: string[] }) => void
   serverId?: string
+  /**
+   * Name of the lock file under CONFIG_DIR. Use a distinct name for supervised
+   * in-process companion servers that share the same config directory.
+   */
+  serverLockName?: string
   /** App version string, included in handshake_ack for client compatibility checks. */
   serverVersion?: string
   /** TLS configuration. When provided, the server listens on wss:// instead of ws://. */
@@ -122,7 +127,7 @@ export function generateServerToken(): string {
 // Startup lock file
 // ---------------------------------------------------------------------------
 
-const LOCK_FILE = join(CONFIG_DIR, '.server.lock')
+const DEFAULT_LOCK_NAME = '.server.lock'
 
 interface LockPayload {
   pid: number
@@ -164,10 +169,15 @@ function isLockFromPreviousBoot(startedAt: number): boolean {
   return startedAt < bootTime
 }
 
-function acquireServerLock(logger: PlatformServices['logger']): void {
-  if (existsSync(LOCK_FILE)) {
+function resolveServerLockFile(lockName?: string): string {
+  const name = lockName || process.env.CRAFT_SERVER_LOCK_NAME || DEFAULT_LOCK_NAME
+  return isAbsolute(name) ? name : join(CONFIG_DIR, name)
+}
+
+function acquireServerLock(logger: PlatformServices['logger'], lockFile: string): void {
+  if (existsSync(lockFile)) {
     try {
-      const content = readFileSync(LOCK_FILE, 'utf-8')
+      const content = readFileSync(lockFile, 'utf-8')
       const lock = parseLockContent(content)
 
       if (lock) {
@@ -184,7 +194,7 @@ function acquireServerLock(logger: PlatformServices['logger']): void {
           } else {
             throw new Error(
               `Another server instance is already running (PID ${lock.pid}). ` +
-              `If this is stale, delete ${LOCK_FILE} and retry. ` +
+              `If this is stale, delete ${lockFile} and retry. ` +
               `To run a parallel instance (e.g. for dev), set CRAFT_CONFIG_DIR to a different path.`
             )
           }
@@ -201,11 +211,11 @@ function acquireServerLock(logger: PlatformServices['logger']): void {
   }
 
   const payload: LockPayload = { pid: process.pid, startedAt: Date.now() }
-  writeFileSync(LOCK_FILE, JSON.stringify(payload), 'utf-8')
+  writeFileSync(lockFile, JSON.stringify(payload), 'utf-8')
 
   // Safety net: release the lock on unexpected exits (SIGKILL, uncaught exceptions, etc.).
   // process.on('exit') only allows synchronous code — releaseServerLock is fully sync.
-  process.on('exit', () => { releaseServerLock() })
+  process.on('exit', () => { releaseServerLock(lockFile) })
 }
 
 /**
@@ -213,13 +223,13 @@ function acquireServerLock(logger: PlatformServices['logger']): void {
  * Exported so consumers (e.g. the Electron before-quit handler) can call it
  * directly without going through `instance.stop()`.
  */
-export function releaseServerLock(): void {
+export function releaseServerLock(lockFile = resolveServerLockFile()): void {
   try {
-    if (existsSync(LOCK_FILE)) {
-      const lock = parseLockContent(readFileSync(LOCK_FILE, 'utf-8'))
+    if (existsSync(lockFile)) {
+      const lock = parseLockContent(readFileSync(lockFile, 'utf-8'))
       // Only delete if it's our lock
       if (lock && lock.pid === process.pid) {
-        unlinkSync(LOCK_FILE)
+        unlinkSync(lockFile)
       }
     }
   } catch {
@@ -279,7 +289,8 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
 
   bootstrapConfigArtifacts(platform)
   ensureGlobalConfigExists(platform)
-  acquireServerLock(platform.logger)
+  const serverLockFile = resolveServerLockFile(options.serverLockName)
+  acquireServerLock(platform.logger, serverLockFile)
 
   const modelRefreshService = options.initModelRefreshService()
   const sessionManager = options.createSessionManager()
@@ -400,7 +411,7 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
       platform.logger.error('[bootstrap] Failed to dispose OAuth flow store:', error)
     }
 
-    releaseServerLock()
+    releaseServerLock(serverLockFile)
   }
 
   return {

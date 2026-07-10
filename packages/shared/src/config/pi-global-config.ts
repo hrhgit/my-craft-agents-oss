@@ -1,25 +1,48 @@
 /**
- * Pi CLI Global Config (~/.pi/agent/)
- *
- * Reads/writes the Pi CLI's global configuration files:
- * - models.json:   provider definitions (baseUrl, apiKey, api, models)
- * - settings.json: defaultProvider, defaultModel, defaultThinkingLevel,
- *                  shellGui.*, extensionConfig.*
- * - auth.json:     OAuth credentials (usually empty for custom-endpoint providers)
+ * Pi CLI Global Config facade.
  *
  * This is the single source of truth for "pure Pi + custom provider" mode.
- * Typed settings.json fields are written through Pi's public SettingsManager;
- * models.json provider CRUD and Pi-opaque craft.agent.* settings are still raw
- * file edits because Pi does not expose typed setters for those domains.
- * Credentials live in ~/.pi/agent/auth.json. The subprocess loads credentials
- * from ~/.pi/agent/auth.json.
+ * Craft keeps this module as a compatibility wrapper for older settings IPC
+ * handlers, but storage reads/writes go through Pi's host facade.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'fs';
-import { SettingsManager } from '@earendil-works/pi-coding-agent';
+import { existsSync, mkdirSync, watch, type FSWatcher } from 'fs';
+import {
+  deleteCraftLlmConnection as deletePiHostCraftLlmConnection,
+  deleteGlobalApiKey as deletePiHostGlobalApiKey,
+  deleteGlobalProvider as deletePiHostGlobalProvider,
+  deleteShellGuiEntry as deletePiHostShellGuiEntry,
+  hasGlobalProviderAuth as hasPiHostGlobalProviderAuth,
+  maskApiKey as maskPiHostApiKey,
+  migrateGlobalProviderApiKeysToAuth as migratePiHostGlobalProviderApiKeysToAuth,
+  getExtensions as getPiHostExtensions,
+  readCraftAgentSettings as readPiHostCraftAgentSettings,
+  readCraftLlmConnections as readPiHostCraftLlmConnections,
+  readExtensionConfig as readPiHostExtensionConfig,
+  readExtensionNamespace as readPiHostExtensionNamespace,
+  readGlobalAuthFile as readPiHostGlobalAuthFile,
+  readGlobalApiKey as readPiHostGlobalApiKey,
+  readGlobalCredential as readPiHostGlobalCredential,
+  readGlobalModelsFile as readPiHostGlobalModelsFile,
+  readGlobalProviders as readPiHostGlobalProviders,
+  readGlobalProvidersForDisplay as readPiHostGlobalProvidersForDisplay,
+  readGlobalSettings as readPiHostGlobalSettings,
+  readShellGuiEntry as readPiHostShellGuiEntry,
+  readShellGuiNamespace as readPiHostShellGuiNamespace,
+  saveGlobalProvider as savePiHostGlobalProvider,
+  setDefaultThinkingLevel as setPiHostDefaultThinkingLevel,
+  setExtensionConfig as setPiHostExtensionConfig,
+  setGlobalApiKey as setPiHostGlobalApiKey,
+  setGlobalDefault as setPiHostGlobalDefault,
+  setShellGuiEntry as setPiHostShellGuiEntry,
+  upsertCraftLlmConnection as upsertPiHostCraftLlmConnection,
+  writeCraftAgentSettingsBulk as writePiHostCraftAgentSettingsBulk,
+  writeCraftLlmConnections as writePiHostCraftLlmConnections,
+  type HostGlobalProvider,
+} from '@earendil-works/pi-coding-agent';
 import type { LlmConnection } from './llm-connections.ts';
-import { PI_MODELS_FILE, PI_SETTINGS_FILE, PI_AUTH_FILE, PI_AGENT_DIR } from './paths';
-import { atomicWriteFileSync } from '../utils/files.ts';
+import type { PiExtensionCatalogEntry } from './pi-extension-settings.ts';
+import { PI_AGENT_DIR } from './paths';
 
 export type PiCustomApi =
   | 'openai-completions'
@@ -42,7 +65,6 @@ export interface PiGlobalModel {
 
 export interface PiGlobalProvider {
   baseUrl?: string;
-  apiKey?: string;
   api?: PiCustomApi;
   authHeader?: boolean;
   headers?: Record<string, string>;
@@ -68,130 +90,47 @@ export interface PiGlobalSettings {
   [key: string]: unknown;
 }
 
-const corruptPiFileBackups = new Set<string>();
-
-function backupCorruptPiFile(filePath: string, label: string, reason: unknown): void {
-  try {
-    if (!existsSync(filePath)) return;
-    if (corruptPiFileBackups.has(filePath)) return;
-
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = `${filePath}.corrupt-${stamp}`;
-    copyFileSync(filePath, backupPath);
-    corruptPiFileBackups.add(filePath);
-    console.error(
-      `[pi-global-config] Backed up unreadable ${label} to ${backupPath}:`,
-      reason instanceof Error ? reason.message : reason,
-    );
-  } catch (backupError) {
-    console.error(
-      `[pi-global-config] Failed to back up unreadable ${label}:`,
-      backupError instanceof Error ? backupError.message : backupError,
-    );
-  }
-}
-
-function normalizePiGlobalModelsFile(parsed: unknown): PiGlobalModelsFile {
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('models.json root must be an object');
-  }
-  const file = parsed as PiGlobalModelsFile;
-  if (!file.providers || typeof file.providers !== 'object' || Array.isArray(file.providers)) {
-    file.providers = {};
-  }
-  return file;
-}
-
-function readPiGlobalModelsFileStrict(): PiGlobalModelsFile {
-  if (!existsSync(PI_MODELS_FILE)) return { providers: {} };
-  try {
-    return normalizePiGlobalModelsFile(JSON.parse(readFileSync(PI_MODELS_FILE, 'utf-8')));
-  } catch (error) {
-    backupCorruptPiFile(PI_MODELS_FILE, 'models.json', error);
-    throw error;
-  }
-}
-
-/**
- * Create a Pi SettingsManager for the global ~/.pi/agent/settings.json file.
- *
- * SettingsManager requires a cwd so it can also resolve project settings. Craft's
- * global-config helpers intentionally operate on the global file only, matching
- * the previous raw-file behavior, so callers read via getGlobalSettings() and
- * writes use SettingsManager's global setters followed by flush().
- */
-function createPiGlobalSettingsManager(): SettingsManager {
-  return SettingsManager.create(PI_AGENT_DIR, PI_AGENT_DIR);
-}
-
-async function flushPiSettings(manager: SettingsManager): Promise<void> {
-  await manager.flush();
-  const errors = manager.drainErrors();
-  if (errors.length > 0) {
-    throw errors[0]!.error;
-  }
-}
-
 // ===== Reads =====
 
 export function readPiGlobalModelsFile(): PiGlobalModelsFile {
   try {
-    if (!existsSync(PI_MODELS_FILE)) return { providers: {} };
-    return normalizePiGlobalModelsFile(JSON.parse(readFileSync(PI_MODELS_FILE, 'utf-8')));
+    return readPiHostGlobalModelsFile() as PiGlobalModelsFile;
   } catch (error) {
-    backupCorruptPiFile(PI_MODELS_FILE, 'models.json', error);
+    console.error('[pi-global-config] Failed to read Pi models config:', error);
     return { providers: {} };
   }
 }
 
 export function readPiGlobalProviders(): Record<string, PiGlobalProvider> {
-  return readPiGlobalModelsFile().providers ?? {};
+  return readPiHostGlobalProviders() as Record<string, PiGlobalProvider>;
 }
 
 export function readPiCraftLlmConnections(): LlmConnection[] {
-  const connections = readPiGlobalModelsFile().craftConnections;
-  return Array.isArray(connections) ? connections : [];
+  return readPiHostCraftLlmConnections<LlmConnection>();
 }
 
 export function writePiCraftLlmConnections(connections: LlmConnection[]): void {
-  mutatePiGlobalModelsFile((file) => {
-    file.providers = file.providers ?? {};
-    file.craftConnections = connections;
-  });
+  writePiHostCraftLlmConnections(connections);
 }
 
 export function upsertPiCraftLlmConnection(connection: LlmConnection): void {
-  mutatePiGlobalModelsFile((file) => {
-    const connections = Array.isArray(file.craftConnections) ? file.craftConnections : [];
-    const index = connections.findIndex(c => c.slug === connection.slug);
-    file.craftConnections = index === -1
-      ? [...connections, connection]
-      : connections.map((existing, i) => i === index ? connection : existing);
-  });
+  upsertPiHostCraftLlmConnection(connection as LlmConnection & { [key: string]: unknown });
 }
 
 export function deletePiCraftLlmConnection(slug: string): boolean {
-  let deleted = false;
-  mutatePiGlobalModelsFile((file) => {
-    const connections = Array.isArray(file.craftConnections) ? file.craftConnections : [];
-    const next = connections.filter(c => c.slug !== slug);
-    if (next.length === connections.length) return false;
-    file.craftConnections = next;
-    deleted = true;
-  });
-  return deleted;
+  return deletePiHostCraftLlmConnection(slug);
 }
 
 export function readPiGlobalSettings(): PiGlobalSettings {
   try {
-    return createPiGlobalSettingsManager().getGlobalSettings() as PiGlobalSettings;
+    return readPiHostGlobalSettings() as PiGlobalSettings;
   } catch (error) {
-    backupCorruptPiFile(PI_SETTINGS_FILE, 'settings.json', error);
+    console.error('[pi-global-config] Failed to read Pi settings config:', error);
     return {};
   }
 }
 
-// ===== auth.json (OAuth / IAM credentials) =====
+// ===== auth.json (provider credentials) =====
 
 /**
  * Pi auth.json credential for a single provider.
@@ -222,34 +161,91 @@ export interface PiGlobalAuthCredential {
 /**
  * Pi auth.json top-level structure.
  * Keyed by provider name (e.g. 'anthropic', 'openai', 'github-copilot').
+ * Craft-owned credentials live under opaque `craft.*` keys in the same file,
+ * so helpers below always narrow entries before treating them as Pi credentials.
  */
-export interface PiGlobalAuthFile {
-  providers?: Record<string, PiGlobalAuthCredential>;
-  [key: string]: unknown;
-}
+export type PiGlobalAuthFile = Record<string, unknown>;
 
 /**
- * Read ~/.pi/agent/auth.json. Returns null if the file does not exist or
- * cannot be parsed. Used by pi-global-sync to keep OAuth/IAM credentials in
- * ~/.pi/agent/auth.json so getPiAuth() can resolve them by slug.
+ * Read Pi's auth storage via the host facade. Returns null for an empty store
+ * to preserve the historical wrapper contract.
  */
 export function readPiGlobalAuth(): PiGlobalAuthFile | null {
-  if (!existsSync(PI_AUTH_FILE)) return null;
   try {
-    const raw = readFileSync(PI_AUTH_FILE, 'utf-8');
-    const parsed = JSON.parse(raw) as PiGlobalAuthFile;
-    if (!parsed || typeof parsed !== 'object') return null;
-    return parsed;
+    const auth = readPiHostGlobalAuthFile() as PiGlobalAuthFile;
+    return Object.keys(auth).length > 0 ? auth : null;
   } catch {
     return null;
   }
 }
 
+function isPiGlobalAuthCredential(value: unknown): value is PiGlobalAuthCredential {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const type = (value as { type?: unknown }).type;
+  return type === 'api_key' || type === 'oauth' || type === 'iam';
+}
+
+export function readPiGlobalCredential(providerKey: string): PiGlobalAuthCredential | undefined {
+  const credential = readPiHostGlobalCredential(providerKey);
+  return isPiGlobalAuthCredential(credential) ? credential : undefined;
+}
+
+export function readPiGlobalApiKey(providerKey: string): string | undefined {
+  return readPiHostGlobalApiKey(providerKey);
+}
+
+export function hasPiGlobalProviderAuth(providerKey: string | undefined): boolean {
+  return hasPiHostGlobalProviderAuth(providerKey);
+}
+
+export function getPiGlobalProviderKeyForConnection(
+  connection: Pick<LlmConnection, 'slug' | 'piAuthProvider' | 'providerType'> | null | undefined,
+): string | undefined {
+  if (!connection) return undefined;
+  const inferredFromSlug = inferPiGlobalProviderKeyFromSlug(connection.slug);
+  if (connection.providerType === 'pi') {
+    return connection.piAuthProvider || inferredFromSlug;
+  }
+  return inferredFromSlug || connection.piAuthProvider;
+}
+
+export function readPiGlobalApiKeyForConnection(
+  connection: Pick<LlmConnection, 'slug' | 'piAuthProvider' | 'providerType'> | null | undefined,
+): string | undefined {
+  if (!connection) return undefined;
+  if (connection.providerType !== 'pi' && connection.providerType !== 'pi_compat') return undefined;
+  const providerKey = getPiGlobalAuthProviderKeyForConnection(connection);
+  return providerKey ? readPiGlobalApiKey(providerKey) : undefined;
+}
+
+export function hasPiGlobalAuthForConnection(
+  connection: Pick<LlmConnection, 'slug' | 'piAuthProvider' | 'providerType'> | null | undefined,
+): boolean {
+  if (!connection) return false;
+  if (connection.providerType !== 'pi' && connection.providerType !== 'pi_compat') return false;
+  return hasPiGlobalProviderAuth(getPiGlobalAuthProviderKeyForConnection(connection));
+}
+
+function inferPiGlobalProviderKeyFromSlug(slug: string): string | undefined {
+  if (!slug.startsWith('pi-')) return undefined;
+  const key = slug.slice('pi-'.length);
+  // pi-api-key is a generic onboarding slug; the real provider is piAuthProvider.
+  if (key === 'api-key' || /^api-key-\d+$/.test(key)) return undefined;
+  return key;
+}
+
+function getPiGlobalAuthProviderKeyForConnection(
+  connection: Pick<LlmConnection, 'slug' | 'piAuthProvider' | 'providerType'>,
+): string | undefined {
+  const providerKey = getPiGlobalProviderKeyForConnection(connection);
+  if (!providerKey) return undefined;
+  if (connection.providerType === 'pi') return providerKey;
+  return readPiGlobalProviders()[providerKey] ? providerKey : undefined;
+}
+
 /** Mask apiKey for list display: first 7 + last 4 chars. */
 export function maskApiKey(key: string | undefined): string {
-  if (!key) return '';
-  if (key.length <= 11) return key;
-  return `${key.slice(0, 7)}...${key.slice(-4)}`;
+  return maskPiHostApiKey(key);
 }
 
 export interface PiGlobalProviderForDisplay {
@@ -260,15 +256,7 @@ export interface PiGlobalProviderForDisplay {
 }
 
 export function readPiGlobalProvidersForDisplay(): PiGlobalProviderForDisplay[] {
-  const providers = readPiGlobalProviders();
-  return Object.entries(providers)
-    .map(([key, provider]) => ({
-      key,
-      provider,
-      apiKeyMasked: maskApiKey(provider.apiKey),
-      modelCount: provider.models?.length ?? 0,
-    }))
-    .sort((a, b) => a.key.localeCompare(b.key));
+  return readPiHostGlobalProvidersForDisplay() as PiGlobalProviderForDisplay[];
 }
 
 // ===== Writes =====
@@ -279,102 +267,17 @@ function ensurePiAgentDir(): void {
   }
 }
 
-const PI_FILE_LOCK_STALE_MS = 30_000;
-const PI_FILE_LOCK_RETRY_DELAY_MS = 20;
-const PI_FILE_LOCK_RETRY_COUNT = 100;
-
-function sleepSync(ms: number): void {
-  const buf = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(buf, 0, 0, ms);
-}
-
-function tryAcquirePiFileLock(filePath: string): (() => void) | null {
-  const lockDir = `${filePath}.lock`;
-  try {
-    mkdirSync(lockDir);
-    return () => {
-      try { rmSync(lockDir, { recursive: true, force: true }); } catch {}
-    };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-      throw error;
-    }
-    try {
-      const lockStat = statSync(lockDir);
-      if (lockStat.mtimeMs < Date.now() - PI_FILE_LOCK_STALE_MS) {
-        rmSync(lockDir, { recursive: true, force: true });
-      }
-    } catch (statError) {
-      if ((statError as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw statError;
-      }
-    }
-    return null;
-  }
-}
-
-function acquirePiFileLock(filePath: string): () => void {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= PI_FILE_LOCK_RETRY_COUNT; attempt++) {
-    const release = tryAcquirePiFileLock(filePath);
-    if (release) return release;
-    lastError = new Error(`Lock contention on ${filePath}`);
-    if (attempt < PI_FILE_LOCK_RETRY_COUNT) {
-      sleepSync(PI_FILE_LOCK_RETRY_DELAY_MS);
-    }
-  }
-  throw (lastError as Error) ?? new Error(`Failed to acquire file lock: ${filePath}`);
-}
-
-function acquirePiSettingsFileLock(): () => void {
-  return acquirePiFileLock(PI_SETTINGS_FILE);
-}
-
-function acquirePiModelsFileLock(): () => void {
-  return acquirePiFileLock(PI_MODELS_FILE);
-}
-
-function mutatePiGlobalSettings(mutator: (settings: PiGlobalSettings) => boolean | void): void {
+/**
+ * Watch Pi's global model/default-provider config without exposing
+ * ~/.pi/agent path handling to higher-level config watchers.
+ */
+export function watchPiGlobalModelsFile(onModelsChanged: () => void): FSWatcher {
   ensurePiAgentDir();
-  const release = acquirePiSettingsFileLock();
-  try {
-    const settings = existsSync(PI_SETTINGS_FILE)
-      ? (() => {
-          try {
-            return JSON.parse(readFileSync(PI_SETTINGS_FILE, 'utf-8')) as PiGlobalSettings;
-          } catch (error) {
-            backupCorruptPiFile(PI_SETTINGS_FILE, 'settings.json', error);
-            throw error;
-          }
-        })()
-      : {};
-    const shouldWrite = mutator(settings);
-    if (shouldWrite === false) return;
-    atomicWriteFileSync(PI_SETTINGS_FILE, JSON.stringify(settings, null, 2));
-  } finally {
-    release();
-  }
-}
-
-function mutatePiGlobalModelsFile(mutator: (file: PiGlobalModelsFile) => boolean | void): void {
-  ensurePiAgentDir();
-  const release = acquirePiModelsFileLock();
-  try {
-    const file = readPiGlobalModelsFileStrict();
-    const shouldWrite = mutator(file);
-    if (shouldWrite === false) return;
-    atomicWriteFileSync(PI_MODELS_FILE, JSON.stringify(file, null, 2));
-  } finally {
-    release();
-  }
-}
-
-function writePiGlobalSettings(settings: PiGlobalSettings): void {
-  mutatePiGlobalSettings((current) => {
-    for (const key of Object.keys(current)) {
-      delete current[key];
+  return watch(PI_AGENT_DIR, (_eventType, filename) => {
+    if (!filename) return;
+    if (filename === 'models.json' || filename === 'settings.json') {
+      onModelsChanged();
     }
-    Object.assign(current, settings);
   });
 }
 
@@ -383,32 +286,169 @@ export function isValidProviderKey(key: string): boolean {
   return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(key);
 }
 
-export function savePiGlobalProvider(key: string, provider: PiGlobalProvider): void {
+function assertValidProviderKey(key: string): void {
   if (!isValidProviderKey(key)) {
     throw new Error(`Invalid provider key: ${key} (must be lowercase slug a-z0-9-)`);
   }
-  mutatePiGlobalModelsFile((file) => {
-    file.providers = file.providers ?? {};
-    file.providers[key] = provider;
+}
+
+function normalizeApiKeyInput(apiKey: string | undefined): string | undefined {
+  const trimmed = apiKey?.trim();
+  if (!trimmed || trimmed.includes('••')) return undefined;
+  return trimmed;
+}
+
+export function sanitizePiGlobalProvider(provider: PiGlobalProvider): PiGlobalProvider {
+  const { apiKey: _apiKey, ...rest } = provider as PiGlobalProvider & { apiKey?: unknown };
+  return rest;
+}
+
+function isVersionPathSegment(segment: string | undefined): boolean {
+  return typeof segment === 'string' && /^v\d+(?:beta)?$/i.test(segment);
+}
+
+function isOpenRouterHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return lower === 'openrouter.ai' || lower.endsWith('.openrouter.ai');
+}
+
+function usesRootOpenAiCompatibleBaseUrl(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return lower === 'ai-gateway.vercel.sh' || lower.endsWith('.ai-gateway.vercel.sh');
+}
+
+function stripTrailingEndpointSegments(segments: string[]): string[] {
+  const next = [...segments];
+  const lower = () => next.map(segment => segment.toLowerCase());
+  const removeSuffix = (suffix: string[]): boolean => {
+    const parts = lower();
+    if (parts.length < suffix.length) return false;
+    const offset = parts.length - suffix.length;
+    if (!suffix.every((part, index) => parts[offset + index] === part)) return false;
+    next.splice(offset, suffix.length);
+    return true;
+  };
+
+  let changed = true;
+  while (changed) {
+    changed = removeSuffix(['chat', 'completions'])
+      || removeSuffix(['responses'])
+      || removeSuffix(['messages'])
+      || removeSuffix(['models']);
+  }
+  return next;
+}
+
+function collapseDuplicateTrailingVersionSegments(segments: string[]): string[] {
+  const next = [...segments];
+  while (
+    next.length >= 2
+    && isVersionPathSegment(next.at(-1))
+    && next.at(-1)?.toLowerCase() === next.at(-2)?.toLowerCase()
+  ) {
+    next.pop();
+  }
+  return next;
+}
+
+function setUrlPathSegments(url: URL, segments: string[]): void {
+  url.pathname = segments.length > 0 ? `/${segments.join('/')}` : '/';
+}
+
+function hasAnyVersionPathSegment(segments: string[]): boolean {
+  return segments.some(isVersionPathSegment);
+}
+
+/**
+ * Normalize the provider API base URL as Pi's runtime expects it.
+ *
+ * OpenAI-compatible SDK calls expect /v1 in the base URL; Anthropic SDK calls
+ * append /v1/messages themselves; Google GenAI expects the version in baseUrl
+ * because Pi passes apiVersion="" to the client.
+ */
+export function normalizePiCustomEndpointBaseUrl(
+  baseUrl: string | undefined,
+  api: PiCustomApi = 'openai-completions',
+): string | undefined {
+  const trimmed = baseUrl?.trim();
+  if (!trimmed) return undefined;
+
+  const url = new URL(trimmed);
+  url.hash = '';
+  url.search = '';
+
+  let segments = url.pathname
+    .split('/')
+    .filter(Boolean);
+  segments = collapseDuplicateTrailingVersionSegments(stripTrailingEndpointSegments(segments));
+
+  if (api === 'anthropic-messages') {
+    while (isVersionPathSegment(segments.at(-1))) {
+      segments.pop();
+    }
+  } else if (api === 'google-generative-ai') {
+    if (!hasAnyVersionPathSegment(segments)) {
+      segments.push('v1beta');
+    }
+  } else if (isOpenRouterHost(url.hostname)) {
+    const lowerPath = segments.map(segment => segment.toLowerCase()).join('/');
+    if (!lowerPath || lowerPath === 'v1' || lowerPath === 'api') {
+      segments = ['api', 'v1'];
+    }
+  } else if (!hasAnyVersionPathSegment(segments) && !usesRootOpenAiCompatibleBaseUrl(url.hostname)) {
+    segments.push('v1');
+  }
+
+  segments = collapseDuplicateTrailingVersionSegments(segments);
+  setUrlPathSegments(url, segments);
+  return normalizeUrlWithoutTrailingSlash(url);
+}
+
+export function setPiGlobalApiKey(providerKey: string, apiKey: string): void {
+  assertValidProviderKey(providerKey);
+  const trimmed = normalizeApiKeyInput(apiKey);
+  if (!trimmed) return;
+  setPiHostGlobalApiKey(providerKey, trimmed);
+}
+
+export function deletePiGlobalApiKey(providerKey: string): void {
+  assertValidProviderKey(providerKey);
+  deletePiHostGlobalApiKey(providerKey);
+}
+
+export interface PiGlobalApiKeyMigrationResult {
+  migrated: number;
+  removedFromModels: number;
+  changed: boolean;
+}
+
+export function migratePiGlobalProviderApiKeysToAuth(): PiGlobalApiKeyMigrationResult {
+  return migratePiHostGlobalProviderApiKeysToAuth();
+}
+
+export function savePiGlobalProvider(key: string, provider: PiGlobalProvider, apiKey?: string): void {
+  assertValidProviderKey(key);
+  const legacyApiKey = normalizeApiKeyInput((provider as PiGlobalProvider & { apiKey?: string }).apiKey);
+  const nextApiKey = normalizeApiKeyInput(apiKey) ?? legacyApiKey;
+  if (nextApiKey) {
+    setPiGlobalApiKey(key, nextApiKey);
+  }
+  const nextProvider = sanitizePiGlobalProvider(provider);
+  const normalizedBaseUrl = normalizePiCustomEndpointBaseUrl(nextProvider.baseUrl, nextProvider.api);
+  if (normalizedBaseUrl) {
+    nextProvider.baseUrl = normalizedBaseUrl;
+  } else {
+    delete nextProvider.baseUrl;
+  }
+  savePiHostGlobalProvider({
+    key,
+    provider: nextProvider as HostGlobalProvider,
+    apiKey: nextApiKey,
   });
 }
 
 export async function deletePiGlobalProvider(key: string): Promise<void> {
-  mutatePiGlobalModelsFile((file) => {
-    if (!file.providers?.[key]) return false;
-    delete file.providers[key];
-  });
-  // If deleted provider was default, clear default. Pi SettingsManager exposes
-  // typed setters but no clear/unset API for these fields, so this one branch
-  // remains a direct settings.json edit.
-  mutatePiGlobalSettings((settings) => {
-    if (settings.defaultProvider === key) {
-      delete settings.defaultProvider;
-      delete settings.defaultModel;
-      return;
-    }
-    return false;
-  });
+  await deletePiHostGlobalProvider(key);
 }
 
 export async function setPiGlobalDefault(
@@ -416,20 +456,11 @@ export async function setPiGlobalDefault(
   model: string,
   thinkingLevel?: string,
 ): Promise<void> {
-  // 'custom-endpoint' is a Pi SDK internal provider name registered by the
-  // subprocess — it must never be persisted as the default in settings.json
-  // (it doesn't exist in models.json, so pi-global-sync can't resolve it).
-  if (provider === 'custom-endpoint') {
-    throw new Error(
-      "Refusing to set 'custom-endpoint' as default provider — it is an internal provider name. Use a real provider key from models.json instead.",
-    );
-  }
-  const manager = createPiGlobalSettingsManager();
-  manager.setDefaultModelAndProvider(provider, model);
-  if (thinkingLevel !== undefined) {
-    manager.setDefaultThinkingLevel(thinkingLevel as Parameters<SettingsManager['setDefaultThinkingLevel']>[0]);
-  }
-  await flushPiSettings(manager);
+  await setPiHostGlobalDefault({
+    provider,
+    model,
+    thinkingLevel,
+  });
 }
 
 /**
@@ -439,9 +470,7 @@ export async function setPiGlobalDefault(
  * its value here so the subprocess picks it up immediately.
  */
 export async function setPiGlobalDefaultThinkingLevel(level: string): Promise<void> {
-  const manager = createPiGlobalSettingsManager();
-  manager.setDefaultThinkingLevel(level as Parameters<SettingsManager['setDefaultThinkingLevel']>[0]);
-  await flushPiSettings(manager);
+  await setPiHostDefaultThinkingLevel(level);
 }
 
 // ===== Craft agent runtime namespace (craft.agent.*) =====
@@ -453,12 +482,7 @@ export async function setPiGlobalDefaultThinkingLevel(level: string): Promise<vo
 export type PiCraftAgentSettings = Record<string, unknown>;
 
 export function readPiCraftAgentSettings(): PiCraftAgentSettings {
-  const settings = readPiGlobalSettings();
-  const craft = settings.craft;
-  if (!craft || typeof craft !== 'object') return {};
-  const agent = (craft as { agent?: unknown }).agent;
-  if (!agent || typeof agent !== 'object') return {};
-  return agent as PiCraftAgentSettings;
+  return readPiHostCraftAgentSettings();
 }
 
 export function readPiCraftAgentSetting(key: string, fallback: unknown): unknown {
@@ -472,15 +496,7 @@ export function readPiCraftAgentBoolean(key: string, fallback = false): boolean 
 }
 
 export function writePiCraftAgentSettingsBulk(updates: Record<string, unknown>): void {
-  mutatePiGlobalSettings((settings) => {
-    const craft = settings.craft && typeof settings.craft === 'object' ? settings.craft : {};
-    const agent = craft.agent && typeof craft.agent === 'object' ? craft.agent : {};
-    settings.craft = craft;
-    settings.craft.agent = {
-      ...(agent as Record<string, unknown>),
-      ...updates,
-    };
-  });
+  writePiHostCraftAgentSettingsBulk(updates);
 }
 
 export function writePiCraftAgentSetting(key: string, value: unknown): void {
@@ -495,7 +511,7 @@ export function writePiCraftAgentBoolean(key: string, value: boolean): void {
 //
 // Task 7：扩展级 model/enabled/concurrency 已回归 ~/.pi/agent/settings.json 的
 // `extensionConfig.<name>.*` typed 命名空间。读取时兼容旧 `extensions.<name>.*`，
-// 写入时统一走 Pi SettingsManager 的 setExtensionConfig().
+// 写入时保留既有字段，只覆盖目标 extensionConfig.<name> 对象。
 
 /**
  * settings.json 中扩展配置命名空间的松散结构。
@@ -508,38 +524,21 @@ export type PiExtensionNamespaceSettings = Record<string, Record<string, unknown
  * 文件缺失或字段缺失时返回空对象。
  */
 export function readPiExtensionNamespace(): PiExtensionNamespaceSettings {
-  const settings = readPiGlobalSettings() as PiGlobalSettings & {
-    extensionConfig?: PiExtensionNamespaceSettings;
-    extensions?: PiExtensionNamespaceSettings;
-  };
-  return {
-    ...(settings.extensions && typeof settings.extensions === 'object' ? settings.extensions : {}),
-    ...(settings.extensionConfig && typeof settings.extensionConfig === 'object' ? settings.extensionConfig : {}),
-  };
+  return readPiHostExtensionNamespace() as PiExtensionNamespaceSettings;
 }
 
 /**
  * 读取某个扩展在 settings.json 的 `extensionConfig.<name>` 配置对象。
  */
 function readPiExtensionConfig(name: string): Record<string, unknown> {
-  const settings = readPiGlobalSettings() as PiGlobalSettings & {
-    extensionConfig?: PiExtensionNamespaceSettings;
-    extensions?: PiExtensionNamespaceSettings;
-  };
-  const typedEntry = settings.extensionConfig?.[name];
-  if (typedEntry && typeof typedEntry === 'object') return typedEntry;
-  const legacyEntry = settings.extensions?.[name];
-  if (legacyEntry && typeof legacyEntry === 'object') return legacyEntry;
-  return {};
+  return readPiHostExtensionConfig(name) as Record<string, unknown>;
 }
 
 /**
  * 写入某个扩展在 settings.json 的 `extensionConfig.<name>` 配置对象（整体覆盖）。
  */
 async function writePiExtensionConfig(name: string, config: Record<string, unknown>): Promise<void> {
-  const manager = createPiGlobalSettingsManager();
-  manager.setExtensionConfig(name, config);
-  await flushPiSettings(manager);
+  await setPiHostExtensionConfig(name, config);
 }
 
 /**
@@ -597,6 +596,29 @@ export async function writePiExtensionConcurrency(name: string, concurrency: num
   await writePiExtensionConfig(name, config);
 }
 
+/**
+ * 读取 Pi 扩展 catalog。扩展发现、metadata、enabled/config 均来自 Pi host facade；
+ * Craft 只把结果作为设置 UI 的展示 DTO。
+ */
+export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: string } = {}): Promise<PiExtensionCatalogEntry[]> {
+  const result = await getPiHostExtensions(options);
+  return result.extensions.map((extension): PiExtensionCatalogEntry => ({
+    id: extension.id,
+    title: extension.title,
+    description: extension.description,
+    category: extension.category,
+    configurable: extension.configurable,
+    enabled: extension.enabled,
+    path: extension.path,
+    resolvedPath: extension.resolvedPath,
+    commands: extension.commands,
+    tools: extension.tools,
+    flags: extension.flags,
+    shortcuts: extension.shortcuts,
+    config: extension.config as Record<string, unknown> | undefined,
+  }));
+}
+
 // ===== Shell GUI 命名空间（shellGui.<name>.*）=====
 //
 // craft shell 的 GUI 开关与 agent 行为字段（showStatusBadge/widgetVisible/
@@ -614,29 +636,21 @@ export type PiShellGuiNamespaceSettings = Record<string, unknown>;
  * 文件缺失或字段缺失时返回空对象。
  */
 export function readPiShellGuiNamespace(): Record<string, PiShellGuiNamespaceSettings> {
-  const settings = readPiGlobalSettings();
-  const shellGui = (settings as { shellGui?: unknown }).shellGui;
-  if (!shellGui || typeof shellGui !== 'object') return {};
-  return shellGui as Record<string, PiShellGuiNamespaceSettings>;
+  return readPiHostShellGuiNamespace() as Record<string, PiShellGuiNamespaceSettings>;
 }
 
 /**
  * 读取某个 shell 在 settings.json 的 `shellGui.<name>` 配置对象。
  */
 function readPiShellGuiConfig(name: string): PiShellGuiNamespaceSettings {
-  const ns = readPiShellGuiNamespace();
-  const entry = ns[name];
-  if (!entry || typeof entry !== 'object') return {};
-  return entry as PiShellGuiNamespaceSettings;
+  return readPiHostShellGuiEntry(name) as PiShellGuiNamespaceSettings;
 }
 
 /**
  * 写入某个 shell 在 settings.json 的 `shellGui.<name>` 配置对象（整体覆盖）。
  */
 async function writePiShellGuiConfig(name: string, config: PiShellGuiNamespaceSettings): Promise<void> {
-  const manager = createPiGlobalSettingsManager();
-  manager.setShellGuiEntry(name, config);
-  await flushPiSettings(manager);
+  await setPiHostShellGuiEntry(name, config);
 }
 
 /**
@@ -657,9 +671,9 @@ export function readPiShellGuiSetting(name: string, key: string, fallback: unkno
  * 写入 `shellGui.<name>.<key>`。保留该 shell 已有的其他字段。
  */
 export async function writePiShellGuiSetting(name: string, key: string, value: unknown): Promise<void> {
-  const manager = createPiGlobalSettingsManager();
-  manager.setShellGuiSetting(name, key, value);
-  await flushPiSettings(manager);
+  const config = readPiShellGuiConfig(name);
+  config[key] = value;
+  await writePiShellGuiConfig(name, config);
 }
 
 /**
@@ -673,13 +687,13 @@ export async function writePiShellGuiSetting(name: string, key: string, value: u
 export async function writePiShellGuiSettingsBulk(
   updates: Record<string, Record<string, unknown>>,
 ): Promise<void> {
-  const manager = createPiGlobalSettingsManager();
-  for (const [name, fields] of Object.entries(updates)) {
-    for (const [key, value] of Object.entries(fields)) {
-      manager.setShellGuiSetting(name, key, value);
-    }
-  }
-  await flushPiSettings(manager);
+  await Promise.all(Object.entries(updates).map(async ([name, fields]) => {
+    const current = readPiShellGuiConfig(name);
+    await writePiShellGuiConfig(name, {
+      ...current,
+      ...fields,
+    });
+  }));
 }
 
 /**
@@ -702,11 +716,7 @@ export async function writePiShellGuiBoolean(name: string, key: string, value: b
  * 用于迁移回滚或清理。命名空间不存在时无副作用。
  */
 export async function deletePiShellGuiEntry(name: string): Promise<void> {
-  const ns = readPiShellGuiNamespace();
-  if (!(name in ns)) return;
-  const manager = createPiGlobalSettingsManager();
-  manager.deleteShellGuiEntry(name);
-  await flushPiSettings(manager);
+  await deletePiHostShellGuiEntry(name);
 }
 
 // ===== Fetch models from custom endpoint (/v1/models) =====
@@ -717,43 +727,348 @@ export interface FetchedEndpointModel {
   ownedBy?: string;
 }
 
+type FetchModelsForEndpointOptions = {
+  api?: PiCustomApi;
+  authHeader?: boolean;
+  timeoutMs?: number;
+};
+
+export interface FetchModelsForEndpointResult {
+  models: FetchedEndpointModel[];
+  resolvedBaseUrl: string;
+  requestUrl: string;
+  attemptedUrls: string[];
+}
+
+type ModelEndpointErrorKind = 'http' | 'html' | 'empty' | 'invalid-json';
+
+class ModelEndpointResponseError extends Error {
+  constructor(
+    message: string,
+    readonly kind: ModelEndpointErrorKind,
+    readonly requestUrl: string,
+  ) {
+    super(message);
+    this.name = 'ModelEndpointResponseError';
+  }
+}
+
+interface ModelEndpointCandidate {
+  baseUrl: string;
+  modelsUrl: string;
+}
+
+function normalizeUrlWithoutTrailingSlash(url: URL): string {
+  const next = new URL(url.toString());
+  next.hash = '';
+  next.search = '';
+  if (next.pathname.length > 1) {
+    next.pathname = next.pathname.replace(/\/+$/, '');
+  }
+  return next.toString().replace(/\/$/, '');
+}
+
+function appendPath(baseUrl: string, suffix: string): string {
+  const url = new URL(baseUrl);
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/${suffix.replace(/^\/+/, '')}`;
+  return normalizeUrlWithoutTrailingSlash(url);
+}
+
+function modelsUrlForBase(baseUrl: string, api: PiCustomApi): string {
+  const normalized = baseUrl.replace(/\/+$/, '');
+  return api === 'anthropic-messages'
+    ? `${normalized}/v1/models`
+    : `${normalized}/models`;
+}
+
+function addCandidate(
+  candidates: ModelEndpointCandidate[],
+  seen: Set<string>,
+  baseUrl: string,
+  api: PiCustomApi,
+  modelsUrl = modelsUrlForBase(baseUrl, api),
+): void {
+  const key = modelsUrl;
+  if (seen.has(key)) return;
+  seen.add(key);
+  candidates.push({ baseUrl, modelsUrl });
+}
+
+function buildModelEndpointCandidates(baseUrl: string, api: PiCustomApi): ModelEndpointCandidate[] {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) throw new Error('baseUrl is required');
+
+  const input = new URL(trimmed);
+  const base = normalizeUrlWithoutTrailingSlash(input);
+  const path = input.pathname.replace(/\/+$/, '');
+  const lowerPath = path.toLowerCase();
+  const candidates: ModelEndpointCandidate[] = [];
+  const seen = new Set<string>();
+
+  if (/\/models$/i.test(path)) {
+    const resolved = new URL(input.toString());
+    resolved.hash = '';
+    resolved.search = '';
+    resolved.pathname = path.replace(/\/models$/i, '') || '/';
+    const resolvedBaseUrl = normalizePiCustomEndpointBaseUrl(normalizeUrlWithoutTrailingSlash(resolved), api)
+      ?? normalizeUrlWithoutTrailingSlash(resolved);
+    addCandidate(candidates, seen, resolvedBaseUrl, api, input.toString());
+    return candidates;
+  }
+
+  const firstBase = api === 'anthropic-messages'
+    ? normalizePiCustomEndpointBaseUrl(base, api) ?? base
+    : base;
+  addCandidate(candidates, seen, firstBase, api);
+
+  const normalizedBase = normalizePiCustomEndpointBaseUrl(base, api);
+  if (normalizedBase && normalizedBase !== firstBase) {
+    addCandidate(candidates, seen, normalizedBase, api);
+  }
+
+  const isRootPath = lowerPath === '' || lowerPath === '/';
+  const hasVersionPath = /(^|\/)(v\d+(?:beta)?|api\/v\d+)(\/|$)/i.test(lowerPath);
+  const versionSuffixes = api === 'google-generative-ai'
+    ? ['v1beta', 'v1']
+    : ['v1'];
+  for (const suffix of versionSuffixes) {
+    if (!hasVersionPath && !lowerPath.endsWith(`/${suffix}`) && lowerPath !== `/${suffix}`) {
+      const candidateBase = appendPath(base, suffix);
+      const resolvedBase = normalizePiCustomEndpointBaseUrl(candidateBase, api) ?? candidateBase;
+      addCandidate(candidates, seen, resolvedBase, api);
+    }
+  }
+
+  const host = input.hostname.toLowerCase();
+  const apiV1First = host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
+  const apiV1 = appendPath(base, 'api/v1');
+  if (isRootPath && apiV1First) {
+    const resolvedBase = normalizePiCustomEndpointBaseUrl(apiV1, api) ?? apiV1;
+    const candidate = { baseUrl: resolvedBase, modelsUrl: modelsUrlForBase(resolvedBase, api) };
+    if (!seen.has(candidate.modelsUrl)) {
+      seen.add(candidate.modelsUrl);
+      candidates.splice(1, 0, candidate);
+    }
+  } else if (isRootPath) {
+    const resolvedBase = normalizePiCustomEndpointBaseUrl(apiV1, api) ?? apiV1;
+    addCandidate(candidates, seen, resolvedBase, api);
+  }
+
+  return candidates.filter((candidate, index, all) =>
+    all.findIndex(item => item.modelsUrl === candidate.modelsUrl) === index,
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function mapOpenAiModels(data: unknown): FetchedEndpointModel[] {
+  const root = asRecord(data);
+  return asArray(root.data ?? root.models)
+    .map(item => asRecord(item))
+    .filter(item => typeof item.id === 'string' && item.id.trim())
+    .map(item => ({
+      id: String(item.id),
+      name: typeof item.name === 'string' ? item.name : String(item.id),
+      ownedBy: typeof item.owned_by === 'string' ? item.owned_by : undefined,
+    }));
+}
+
+function mapAnthropicModels(data: unknown): FetchedEndpointModel[] {
+  const root = asRecord(data);
+  return asArray(root.data ?? root.models)
+    .map(item => asRecord(item))
+    .filter(item => typeof item.id === 'string' && item.id.trim())
+    .map(item => ({
+      id: String(item.id),
+      name: typeof item.display_name === 'string'
+        ? item.display_name
+        : typeof item.name === 'string'
+          ? item.name
+          : String(item.id),
+      ownedBy: 'Anthropic',
+    }));
+}
+
+function mapGoogleModels(data: unknown): FetchedEndpointModel[] {
+  const root = asRecord(data);
+  return asArray(root.models ?? root.data)
+    .map(item => asRecord(item))
+    .map((item): FetchedEndpointModel | null => {
+      const rawName = typeof item.name === 'string' ? item.name : '';
+      const id = rawName.startsWith('models/') ? rawName.slice('models/'.length) : rawName;
+      if (!id) return null;
+      return {
+        id,
+        name: typeof item.displayName === 'string' ? item.displayName : id,
+        ownedBy: 'Google',
+      } satisfies FetchedEndpointModel;
+    })
+    .filter((item): item is FetchedEndpointModel => item !== null);
+}
+
+function redactUrlForError(requestUrl: string): string {
+  try {
+    const url = new URL(requestUrl);
+    for (const key of ['key', 'api_key', 'apikey', 'token', 'access_token']) {
+      if (url.searchParams.has(key)) url.searchParams.set(key, 'REDACTED');
+    }
+    return url.toString();
+  } catch {
+    return requestUrl;
+  }
+}
+
+function summarizeResponseBody(body: string): string {
+  return body
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+}
+
+function isHtmlResponse(contentType: string, body: string): boolean {
+  const trimmed = body.trimStart().toLowerCase();
+  return contentType.toLowerCase().includes('text/html')
+    || trimmed.startsWith('<!doctype')
+    || trimmed.startsWith('<html')
+    || trimmed.startsWith('<head')
+    || trimmed.startsWith('<body');
+}
+
+async function readEndpointJson(resp: Response, requestUrl: string): Promise<unknown> {
+  const contentType = resp.headers.get('content-type') ?? '';
+  const body = await resp.text().catch(() => '');
+  const safeUrl = redactUrlForError(requestUrl);
+  const snippet = summarizeResponseBody(body);
+
+  if (!resp.ok) {
+    throw new Error(
+      `Model list request failed with HTTP ${resp.status} at ${safeUrl}${snippet ? `: ${snippet}` : ''}`,
+    );
+  }
+
+  if (!body.trim()) {
+    throw new Error(`Model list endpoint returned an empty response at ${safeUrl}. Check the API endpoint URL.`);
+  }
+
+  if (isHtmlResponse(contentType, body)) {
+    throw new Error(
+      `Model list endpoint returned HTML instead of JSON at ${safeUrl}. Check that the endpoint is the provider API base URL, not a website or dashboard URL.`,
+    );
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error(
+      `Model list endpoint returned invalid JSON at ${safeUrl}${contentType ? ` (${contentType})` : ''}${snippet ? `: ${snippet}` : ''}`,
+    );
+  }
+}
+
+function appendAttemptedUrls(error: unknown, attemptedUrls: string[]): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  const attempted = attemptedUrls.map(redactUrlForError).join(', ');
+  return new Error(`${message}${attempted ? ` Tried model endpoints: ${attempted}` : ''}`);
+}
+
+function buildModelEndpointRequest(
+  candidate: ModelEndpointCandidate,
+  api: PiCustomApi,
+  apiKey: string,
+  authHeader: boolean,
+): { requestUrl: string; headers: Record<string, string> } {
+  const headers: Record<string, string> = {};
+  let requestUrl = candidate.modelsUrl;
+
+  switch (api) {
+    case 'anthropic-messages':
+      if (apiKey.trim()) headers['x-api-key'] = apiKey.trim();
+      headers['anthropic-version'] = '2023-06-01';
+      break;
+    case 'google-generative-ai': {
+      const withKey = new URL(candidate.modelsUrl);
+      if (apiKey.trim()) withKey.searchParams.set('key', apiKey.trim());
+      requestUrl = withKey.toString();
+      if (apiKey.trim()) headers['x-goog-api-key'] = apiKey.trim();
+      break;
+    }
+    case 'openai-completions':
+    case 'openai-responses':
+    default:
+      if (authHeader && apiKey.trim()) headers.Authorization = `Bearer ${apiKey.trim()}`;
+      break;
+  }
+
+  return {
+    requestUrl,
+    headers: {
+      Accept: 'application/json',
+      ...headers,
+    },
+  };
+}
+
 /**
- * Fetch model list from a custom OpenAI-compatible endpoint.
- * Tries `${baseUrl}/models` with Bearer auth.
+ * Fetch model list from a custom endpoint.
+ * OpenAI-compatible protocols use `${baseUrl}/models` with optional Bearer auth.
+ * Anthropic-compatible endpoints use `x-api-key`; Google Generative AI uses
+ * the `key` query parameter and strips the returned `models/` prefix.
  */
 export async function fetchModelsForEndpoint(
   baseUrl: string,
   apiKey: string,
-  options?: { timeoutMs?: number },
+  options?: FetchModelsForEndpointOptions,
 ): Promise<FetchedEndpointModel[]> {
+  return (await fetchModelsForEndpointWithResolution(baseUrl, apiKey, options)).models;
+}
+
+export async function fetchModelsForEndpointWithResolution(
+  baseUrl: string,
+  apiKey: string,
+  options?: FetchModelsForEndpointOptions,
+): Promise<FetchModelsForEndpointResult> {
   const timeoutMs = options?.timeoutMs ?? 15_000;
-  const trimmed = baseUrl.replace(/\/+$/, '');
-  if (!trimmed) throw new Error('baseUrl is required');
-  const url = trimmed + '/models';
+  const api = options?.api ?? 'openai-completions';
+  const authHeader = options?.authHeader ?? true;
+  const candidates = buildModelEndpointCandidates(baseUrl, api);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const attemptedUrls: string[] = [];
+  let lastError: unknown;
   try {
-    const resp = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-    });
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => '');
-      throw new Error(`HTTP ${resp.status}: ${body.slice(0, 500)}`);
+    for (const candidate of candidates) {
+      const { requestUrl, headers } = buildModelEndpointRequest(candidate, api, apiKey, authHeader);
+      attemptedUrls.push(requestUrl);
+      try {
+        const resp = await fetch(requestUrl, {
+          headers,
+          signal: controller.signal,
+        });
+        const data = await readEndpointJson(resp, requestUrl);
+        const models = api === 'anthropic-messages'
+          ? mapAnthropicModels(data)
+          : api === 'google-generative-ai'
+            ? mapGoogleModels(data)
+            : mapOpenAiModels(data);
+        return {
+          models,
+          resolvedBaseUrl: candidate.baseUrl,
+          requestUrl,
+          attemptedUrls,
+        };
+      } catch (error) {
+        lastError = error;
+      }
     }
-    const data = (await resp.json()) as {
-      data?: Array<{ id: string; owned_by?: string }>;
-      models?: Array<{ id: string; owned_by?: string }>;
-    };
-    const list = data.data ?? data.models ?? [];
-    return list.map((m) => ({
-      id: m.id,
-      name: m.id,
-      ownedBy: m.owned_by,
-    }));
+    throw appendAttemptedUrls(lastError ?? new Error('Failed to fetch models'), attemptedUrls);
   } finally {
     clearTimeout(timer);
   }

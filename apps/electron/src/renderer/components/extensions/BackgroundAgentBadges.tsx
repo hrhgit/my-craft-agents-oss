@@ -171,10 +171,10 @@ function BackgroundAgentBadge({
     if (!stop || !sessionId) return
     try {
       const ok = await window.electronAPI?.invokeExtensionCommand?.(sessionId, stop.command, stop.args)
-      if (ok) {
+      if (ok?.invoked) {
         toast.info(`Stop requested for ${AGENT_LABELS[agent.name]}`)
       } else {
-        toast.warning(`${AGENT_LABELS[agent.name]} stop command is not available`)
+        toast.warning(`${AGENT_LABELS[agent.name]} stop command is not available`, { description: ok?.error })
       }
     } catch (error) {
       toast.error(`Failed to stop ${AGENT_LABELS[agent.name]}`, {
@@ -190,7 +190,7 @@ function BackgroundAgentBadge({
           type="button"
           className={cn(
             'pointer-events-auto inline-flex h-6 max-w-52 items-center gap-1.5 rounded-[6px]',
-            'border border-border/60 bg-background/90 px-2 text-[11px] text-foreground/75 shadow-sm backdrop-blur',
+            'border border-border/60 bg-background/90 px-2 text-[11px] text-foreground/75 shadow-thin backdrop-blur',
             'transition-colors hover:bg-background focus:outline-none focus-visible:ring-1 focus-visible:ring-ring',
           )}
           onMouseEnter={() => setOpen(true)}

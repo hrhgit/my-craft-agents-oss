@@ -35,6 +35,23 @@ export interface ApiServerConfig {
   instance: McpServer;
 }
 
+interface SharedPhysicalConnection {
+  client: PoolClient;
+  ready: Promise<Tool[]>;
+  refs: number;
+}
+
+const workspacePhysicalConnections = new Map<string, Map<string, SharedPhysicalConnection>>();
+
+function normalizeWorkspaceKey(workspaceRootPath: string): string {
+  const normalized = workspaceRootPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function physicalConnectionKey(slug: string, config: SdkMcpServerConfig): string {
+  return `${slug}\u0000${JSON.stringify(config)}`;
+}
+
 /**
  * Proxy tool definition — the format passed to backends for registration.
  * Uses mcp__{slug}__{toolName} naming convention.
@@ -102,6 +119,9 @@ export class McpClientPool {
   /** Active MCP clients keyed by source slug */
   private clients = new Map<string, PoolClient>();
 
+  /** Source slug to workspace physical-connection key for this session view. */
+  private sharedConnectionKeys = new Map<string, string>();
+
   /** Configs used for active MCP connections (for change detection during sync) */
   protected activeConfigs = new Map<string, SdkMcpServerConfig>();
 
@@ -123,13 +143,21 @@ export class McpClientPool {
   /** Summarize callback for large response handling */
   private summarizeCallback?: (prompt: string) => Promise<string | null>;
 
+  private createPhysicalClient: (config: McpClientConfig) => PoolClient;
+
   /** Called after sync() connects/disconnects sources, so clients can be notified */
   onToolsChanged?: () => void;
 
-  constructor(options?: { debug?: (msg: string) => void; workspaceRootPath?: string; sessionPath?: string }) {
+  constructor(options?: {
+    debug?: (msg: string) => void;
+    workspaceRootPath?: string;
+    sessionPath?: string;
+    clientFactory?: (config: McpClientConfig) => PoolClient;
+  }) {
     this.debugFn = options?.debug;
     this.workspaceRootPath = options?.workspaceRootPath;
     this.sessionPath = options?.sessionPath;
+    this.createPhysicalClient = options?.clientFactory ?? ((config) => new CraftMcpClient(config));
   }
 
   /**
@@ -152,9 +180,9 @@ export class McpClientPool {
    * Register a client: connect, cache tools, build proxy mappings.
    * Shared logic for both remote MCP and in-process API sources.
    */
-  protected async registerClient(slug: string, client: PoolClient): Promise<void> {
-    // listTools() triggers connect() internally for both CraftMcpClient and ApiSourcePoolClient
-    const tools = await client.listTools();
+  protected async registerClient(slug: string, client: PoolClient, knownTools?: Tool[]): Promise<void> {
+    // listTools() triggers connect() internally for both CraftMcpClient and ApiSourcePoolClient.
+    const tools = knownTools ?? await client.listTools();
     this.clients.set(slug, client);
     this.toolCache.set(slug, tools);
 
@@ -177,7 +205,36 @@ export class McpClientPool {
       this.debug(`Unknown MCP server type for ${slug}: ${(config as { type: string }).type}`);
       return;
     }
-    await this.registerClient(slug, new CraftMcpClient(clientConfig));
+    if (this.workspaceRootPath) {
+      const workspaceKey = normalizeWorkspaceKey(this.workspaceRootPath);
+      let workspaceConnections = workspacePhysicalConnections.get(workspaceKey);
+      if (!workspaceConnections) {
+        workspaceConnections = new Map();
+        workspacePhysicalConnections.set(workspaceKey, workspaceConnections);
+      }
+      const connectionKey = physicalConnectionKey(slug, config);
+      let shared = workspaceConnections.get(connectionKey);
+      if (!shared) {
+        const client = this.createPhysicalClient(clientConfig);
+        shared = { client, ready: client.listTools(), refs: 0 };
+        workspaceConnections.set(connectionKey, shared);
+      }
+      shared.refs++;
+      try {
+        await this.registerClient(slug, shared.client, await shared.ready);
+        this.sharedConnectionKeys.set(slug, connectionKey);
+      } catch (error) {
+        shared.refs = Math.max(0, shared.refs - 1);
+        if (shared.refs === 0) {
+          workspaceConnections.delete(connectionKey);
+          await shared.client.close().catch(() => {});
+          if (workspaceConnections.size === 0) workspacePhysicalConnections.delete(workspaceKey);
+        }
+        throw error;
+      }
+    } else {
+      await this.registerClient(slug, this.createPhysicalClient(clientConfig));
+    }
     this.activeConfigs.set(slug, config);
   }
 
@@ -194,7 +251,22 @@ export class McpClientPool {
    */
   async disconnect(slug: string): Promise<void> {
     const client = this.clients.get(slug);
-    if (client) {
+    const sharedConnectionKey = this.sharedConnectionKeys.get(slug);
+    if (client && sharedConnectionKey && this.workspaceRootPath) {
+      const workspaceKey = normalizeWorkspaceKey(this.workspaceRootPath);
+      const workspaceConnections = workspacePhysicalConnections.get(workspaceKey);
+      const shared = workspaceConnections?.get(sharedConnectionKey);
+      if (shared) {
+        shared.refs = Math.max(0, shared.refs - 1);
+        if (shared.refs === 0) {
+          workspaceConnections?.delete(sharedConnectionKey);
+          await shared.client.close().catch(() => {});
+        }
+      }
+      if (workspaceConnections?.size === 0) workspacePhysicalConnections.delete(workspaceKey);
+      this.sharedConnectionKeys.delete(slug);
+      this.clients.delete(slug);
+    } else if (client) {
       await client.close().catch(() => {});
       this.clients.delete(slug);
     }
@@ -212,12 +284,11 @@ export class McpClientPool {
    * Disconnect all sources and clear all state.
    */
   async disconnectAll(): Promise<void> {
-    const closePromises = Array.from(this.clients.values()).map(c => c.close().catch(() => {}));
-    await Promise.all(closePromises);
-    this.clients.clear();
+    await Promise.all(Array.from(this.clients.keys(), (slug) => this.disconnect(slug)));
     this.toolCache.clear();
     this.proxyTools.clear();
     this.activeConfigs.clear();
+    this.sharedConnectionKeys.clear();
     this.debug('Disconnected all MCP clients');
   }
 
