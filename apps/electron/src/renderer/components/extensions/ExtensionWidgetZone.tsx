@@ -5,8 +5,8 @@
  *
  * 事件流：
  *   pi 扩展 ctx.ui.setWidget(key, renderFn)
- *   → pi-agent-server 子进程 JSONL extension_widget
- *   → pi-extension-bridge 桥接层调用 renderFn(theme) 解析为 string[]
+ *   → Pi RPC runtime extension_ui_request(setWidget)
+ *   → PiAgent / pi-extension-bridge 路由为 session-scoped extension_widget
  *   → eventSink(RPC_CHANNELS.extensions.EVENT, target, event)
  *   → renderer 的 onExtensionEvent 监听器
  *   → 本组件按 key 维护 widget 集合，按 placement 渲染文本行数组
@@ -17,11 +17,9 @@
  * - aboveEditor 暂未启用（预留位），目前统一回落到 belowEditor
  *
  * [SubTask 3.2] 渲染函数处理说明：
- * - pi 扩展传入的 renderFn(width, theme) => string[] 由 pi-agent-server 子进程
- *   的 createBridgeUIContext().setWidget() 在子进程内调用并解析为纯 string[] 后
- *   通过 JSONL extension_widget 消息转发。
+ * - Pi runtime 仅转发可序列化的 string[]；Craft 不接收 TUI component factory。
  * - 本组件只负责渲染收到的 string[]，不感知 pi theme 对象（fg/bold 等降级映射
- *   由子进程桥接层完成）。这是为了让 renderer 保持与 pi 内部实现解耦。
+ *   由扩展的 Craft adapter 完成）。这是为了让 renderer 保持与 Pi TUI 实现解耦。
  */
 
 import * as React from 'react'
@@ -84,6 +82,7 @@ function applyWidgetEvent(
 
 export interface ExtensionWidgetZoneProps {
   className?: string
+  sessionId: string
 }
 
 /**
@@ -92,9 +91,13 @@ export interface ExtensionWidgetZoneProps {
  * 监听器 `onExtensionEvent` 已在 channel-map 中注册（与 useExtensionStatus 共用）；
  * 此处再次订阅同一频道——buildClientApi 的 listener 实现支持多订阅者。
  */
-export function ExtensionWidgetZone({ className }: ExtensionWidgetZoneProps) {
+export function ExtensionWidgetZone({ className, sessionId }: ExtensionWidgetZoneProps) {
   const [widgets, setWidgets] = React.useState<Map<string, ExtensionWidgetEntry>>(() => new Map())
   const [settings, setSettings] = React.useState<PiExtensionSettings | null>(null)
+
+  React.useEffect(() => {
+    setWidgets(new Map())
+  }, [sessionId])
 
   React.useEffect(() => {
     let disposed = false
@@ -127,6 +130,7 @@ export function ExtensionWidgetZone({ className }: ExtensionWidgetZoneProps) {
 
     const unsubscribe = subscribe((event: ExtensionBridgeEvent) => {
       if (event.type !== 'extension_widget') return
+      if (event.sessionId !== sessionId) return
       if (BACKGROUND_AGENT_WIDGET_KEYS.has(event.key)) return
       setWidgets(prev => applyWidgetEvent(prev, event))
     })
@@ -134,7 +138,7 @@ export function ExtensionWidgetZone({ className }: ExtensionWidgetZoneProps) {
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [])
+  }, [sessionId])
 
   // 仅渲染 belowEditor 区；aboveEditor 预留（暂未挂载对应位置）
   const belowWidgets = React.useMemo(() => {

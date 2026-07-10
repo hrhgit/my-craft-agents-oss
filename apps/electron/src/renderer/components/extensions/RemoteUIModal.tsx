@@ -50,7 +50,23 @@ export interface RemoteUISelectRequest {
   allowFreeform?: boolean
   allowComment?: boolean
   source: string
-  sessionId?: string
+  sessionId: string
+  extensionId: string
+  runtimeId: string
+  timeout?: number
+}
+
+export interface RemoteUIConfirmRequest {
+  type: 'remoteui_request'
+  requestId: string
+  kind: 'confirm'
+  title: string
+  message: string
+  source: string
+  sessionId: string
+  extensionId: string
+  runtimeId: string
+  timeout?: number
 }
 
 export interface RemoteUIEditorRequest {
@@ -60,10 +76,13 @@ export interface RemoteUIEditorRequest {
   title: string
   prefill?: string
   source: string
-  sessionId?: string
+  sessionId: string
+  extensionId: string
+  runtimeId: string
+  timeout?: number
 }
 
-export type RemoteUIRequest = RemoteUISelectRequest | RemoteUIEditorRequest
+export type RemoteUIRequest = RemoteUISelectRequest | RemoteUIConfirmRequest | RemoteUIEditorRequest
 
 export interface RemoteUISelectResult {
   selections: string[]
@@ -75,7 +94,11 @@ export interface RemoteUIEditorResult {
   text: string
 }
 
-export type RemoteUIResult = RemoteUISelectResult | RemoteUIEditorResult
+export interface RemoteUIConfirmResult {
+  confirmed: boolean
+}
+
+export type RemoteUIResult = RemoteUISelectResult | RemoteUIConfirmResult | RemoteUIEditorResult
 
 export type RemoteUICancelReason = 'cancelled'
 
@@ -102,7 +125,33 @@ export function RemoteUIModal({ request, onRespond }: RemoteUIModalProps) {
   if (isSelectRequest(request)) {
     return <SelectModal request={request} onRespond={onRespond} />
   }
+  if (request.kind === 'confirm') {
+    return <ConfirmModal request={request} onRespond={onRespond} />
+  }
   return <EditorModal request={request} onRespond={onRespond} />
+}
+
+function ConfirmModal({
+  request,
+  onRespond,
+}: {
+  request: RemoteUIConfirmRequest
+  onRespond: (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => void
+}) {
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onRespond(null, 'cancelled') }}>
+      <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{request.title}</DialogTitle>
+          <DialogDescription className="whitespace-pre-wrap">{request.message}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onRespond({ confirmed: false })}>Cancel</Button>
+          <Button onClick={() => onRespond({ confirmed: true })}>Confirm</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 // ---------------------------------------------------------------------------

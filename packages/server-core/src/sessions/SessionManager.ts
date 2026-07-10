@@ -6544,6 +6544,16 @@ export class SessionManager implements ISessionManager {
     }
   }
 
+  async reloadExtensions(): Promise<void> {
+    const reloads: Promise<unknown>[] = []
+    for (const managed of this.sessions.values()) {
+      if (managed.agent && typeof managed.agent.reloadExtensions === 'function') {
+        reloads.push(managed.agent.reloadExtensions())
+      }
+    }
+    await Promise.allSettled(reloads)
+  }
+
   /**
    * 查询当前会话已注册的 Pi 扩展 slash commands。
    */

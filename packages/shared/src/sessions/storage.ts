@@ -45,7 +45,7 @@ import { readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionM
 import {
   createSessionProjection as createPiSessionProjection,
   findSessionProjectionById as findPiHostSessionProjectionById,
-} from '@earendil-works/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent/host-facade';
 
 let sharedPiSessionsDirOverride: string | undefined;
 

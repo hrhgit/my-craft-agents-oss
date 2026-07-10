@@ -68,8 +68,8 @@ import type { ExportResourcesOptions, ExportResult, ResourceImportMode, Resource
 export type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult };
 
 // LLM connection types
-import type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry } from '@craft-agent/shared/config';
-export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry };
+import type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult } from '@craft-agent/shared/config';
+export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult };
 
 // =============================================================================
 // GUI-only types (not used by server/handler code)
@@ -554,7 +554,7 @@ export interface ElectronAPI {
   getPiExtensionSettings(): Promise<PiExtensionSettings>
   setPiExtensionSettings(settings: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   updatePiExtensionSettings(patch: StoredPiExtensionSettings): Promise<PiExtensionSettings>
-  getPiExtensionCatalog(): Promise<PiExtensionCatalogEntry[]>
+  getPiExtensionCatalog(): Promise<PiExtensionCatalogResult>
   getPiExtensionStates(): Promise<Record<string, boolean>>
   setPiExtensionEnabled(name: string, enabled: boolean): Promise<void>
 

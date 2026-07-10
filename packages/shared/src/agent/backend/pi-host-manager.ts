@@ -5,7 +5,7 @@ import {
   type RpcClientEvent,
   type RpcClientOptions,
   type RpcRuntimeOpenOptions,
-} from '@earendil-works/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent/rpc';
 import { writeRuntimeLog } from '../../utils/runtime-log.ts';
 
 const DEFAULT_IDLE_TIMEOUT_MS = 0;

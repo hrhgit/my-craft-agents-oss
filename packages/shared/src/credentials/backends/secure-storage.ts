@@ -35,7 +35,7 @@ import {
   getCraftCredential as getPiHostCraftCredential,
   listCraftCredentialSlugs as listPiHostCraftCredentialSlugs,
   setCraftCredential as setPiHostCraftCredential,
-} from '@earendil-works/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent/host-facade';
 import type { CredentialBackend } from './types.ts';
 import type { CredentialId, CredentialType, StoredCredential } from '../types.ts';
 import {

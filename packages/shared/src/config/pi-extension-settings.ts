@@ -2,12 +2,12 @@
  * Pi 扩展设置（craft GUI 专属字段）
  *
  * Task 7 瘦身后：本文件只保留 craft GUI 专属的开关类字段。
- * 以下字段已回归到 `~/.pi/agent/settings.json` 的 `extensions.<name>.*` 命名空间：
- * - `extensions.<name>.enabled`（扩展启停）
- * - `extensions.subagent.defaultModel`
- * - `extensions.trace-audit.model` / `extensions.trace-audit.concurrency`
- * - `extensions.yourself.model`
- * - `extensions.repo-memory.model`
+ * 以下字段位于 `~/.pi/agent/settings.json` 的 `extensionConfig.<id>.*` 命名空间：
+ * - `extensionConfig.<id>.enabled`（扩展启停）
+ * - `extensionConfig.subagent.defaultModel`
+ * - `extensionConfig.trace-audit.model` / `extensionConfig.trace-audit.concurrency`
+ * - `extensionConfig.yourself.model`
+ * - `extensionConfig.repo-memory.model`
  * - webSearch（pi 原生搜索配置）
  * - ambiguityDictionary（pi 原生歧义词典）
  *
@@ -37,6 +37,8 @@ export type PiExtensionCategory =
  */
 export interface PiExtensionCatalogEntry {
   id: string;
+  target: 'pi' | 'craft';
+  loaded: boolean;
   title: string;
   description: string;
   category: PiExtensionCategory;
@@ -49,6 +51,17 @@ export interface PiExtensionCatalogEntry {
   flags: string[];
   shortcuts: string[];
   config?: Record<string, unknown>;
+}
+
+export interface PiExtensionCatalogError {
+  path: string;
+  error: string;
+  target: 'pi' | 'craft';
+}
+
+export interface PiExtensionCatalogResult {
+  extensions: PiExtensionCatalogEntry[];
+  errors: PiExtensionCatalogError[];
 }
 
 /**

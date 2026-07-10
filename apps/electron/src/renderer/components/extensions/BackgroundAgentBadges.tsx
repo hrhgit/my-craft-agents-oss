@@ -102,6 +102,10 @@ export function BackgroundAgentBadges({ sessionId, className }: BackgroundAgentB
   const [settings, setSettings] = React.useState<PiExtensionSettings | null>(null)
 
   React.useEffect(() => {
+    setAgents(new Map())
+  }, [sessionId])
+
+  React.useEffect(() => {
     let disposed = false
     void loadSettings().then(next => {
       if (!disposed) setSettings(next)
@@ -122,12 +126,13 @@ export function BackgroundAgentBadges({ sessionId, className }: BackgroundAgentB
 
     const unsubscribe = subscribe((event) => {
       if (event.type !== 'extension_widget') return
+      if (event.sessionId !== sessionId) return
       setAgents(prev => applyWidgetEvent(prev, event))
     })
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [])
+  }, [sessionId])
 
   const visibleAgents = React.useMemo(() => {
     return Array.from(agents.values())

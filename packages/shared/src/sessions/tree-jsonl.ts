@@ -8,7 +8,7 @@ import { dirname, join } from 'path';
 import {
   SessionManager as PiSessionManager,
   setCraftSessionMetadata as setPiCraftSessionMetadata,
-} from '@earendil-works/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent/host-facade';
 import type { MessageRole } from '@craft-agent/core/types';
 import type {
   CraftSessionMetadata,

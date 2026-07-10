@@ -9,7 +9,7 @@ import {
   getModelCatalog,
   isDeprecatedClaudeOpus46Model,
   type HostModelCatalogModel,
-} from '@earendil-works/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent/host-facade';
 import type { ModelDefinition } from './models.ts';
 
 function piModelToDefinition(model: HostModelCatalogModel): ModelDefinition {

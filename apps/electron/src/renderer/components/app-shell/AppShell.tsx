@@ -843,9 +843,6 @@ function AppShellContent({
     getAutomationHistory, handleReplayAutomation,
   } = useAutomations(activeWorkspaceId)
 
-  // Pi 扩展 RemoteUI 请求（select / editor 对话框），由 pi 扩展通过 remoteui:request 发起
-  const { currentRequest: remoteUIRequest, respond: respondRemoteUI } = useRemoteUIRequests()
-
   // Whether local MCP servers are enabled (affects stdio source status)
   const [localMcpEnabled, setLocalMcpEnabled] = React.useState(true)
 
@@ -1086,6 +1083,9 @@ function AppShellContent({
   // Shift+Tab cycles permission mode through enabled modes (textarea handles its own, this handles when focus is elsewhere)
   // In multi-panel, targets the focused panel's session
   const effectiveSessionId = focusedSessionId ?? session.selected
+  // Pi extension dialogs are visible only for the active session. Requests for
+  // other sessions remain queued until that session becomes active.
+  const { currentRequest: remoteUIRequest, respond: respondRemoteUI } = useRemoteUIRequests(effectiveSessionId)
 
   // Focus chat input for the target session only (multi-panel safe).
   const focusChatInputForSession = useCallback((targetSessionId?: string | null) => {

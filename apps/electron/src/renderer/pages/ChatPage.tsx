@@ -38,7 +38,7 @@ export interface ChatPageProps {
 const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const { t } = useTranslation()
   // 监听 yourself / repo-memory 扩展的 extension_notify 完成通知并显示 toast
-  useExtensionStatus()
+  useExtensionStatus(sessionId)
   // Diagnostic: mark when component runs
   React.useLayoutEffect(() => {
     rendererPerf.markSessionSwitch(sessionId, 'panel.mounted')

@@ -24,7 +24,7 @@ import {
   type RpcClientOptions as PiRpcClientOptions,
   type RpcCommandType as PiRpcCommandType,
   type RpcHostToolResult as PiRpcHostToolResult,
-} from '@earendil-works/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent/rpc';
 import { piHostManager, type PiHostLease } from './backend/pi-host-manager.ts';
 
 import type {
@@ -573,6 +573,7 @@ export class PiAgent extends BaseAgent {
         ...createSanitizedEnv(),
         ...getProxyEnvVars(),
         ...awsEnv,
+        PI_EXTENSION_TARGET: 'craft',
         CRAFT_DEBUG: (process.argv.includes('--debug') || process.env.CRAFT_DEBUG === '1') ? '1' : '0',
       },
       pipeStderr,
@@ -591,6 +592,7 @@ export class PiAgent extends BaseAgent {
           runtime: {
             runtimeId,
             cwd,
+            extensionTarget: 'craft',
             sessionDir,
             sessionId: this.config.session?.craftId,
             forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
@@ -950,6 +952,7 @@ export class PiAgent extends BaseAgent {
         message: event.error,
         notificationType: 'error',
         source: event.extensionPath,
+        ...this.extensionEventRoute(event.extensionId, event.runtimeId),
       });
     }
   }
@@ -992,13 +995,27 @@ export class PiAgent extends BaseAgent {
     }
   }
 
+  private extensionEventRoute(extensionId: string, runtimeId?: string): Pick<ExtensionBridgeEvent, 'extensionId' | 'runtimeId' | 'sessionId'> {
+    const client = this.rpcClient;
+    return {
+      extensionId,
+      runtimeId: runtimeId ?? (client && 'runtimeId' in client ? client.runtimeId : 'legacy'),
+      sessionId: this.config.session?.craftId ?? this.piSessionId ?? '',
+    };
+  }
+
   private mapExtensionUiRequest(event: Extract<PiRpcClientEvent, { type: 'extension_ui_request' }>): ExtensionBridgeEvent | null {
+    const extensionId = 'extensionId' in event && typeof event.extensionId === 'string'
+      ? event.extensionId
+      : 'pi-extension';
+    const route = this.extensionEventRoute(extensionId, event.runtimeId);
     if (event.method === 'notify') {
       return {
         type: 'extension_notify',
         message: event.message,
         notificationType: event.notifyType,
-        source: 'pi-extension',
+        source: extensionId,
+        ...route,
       };
     }
     if (event.method === 'setStatus') {
@@ -1010,7 +1027,8 @@ export class PiAgent extends BaseAgent {
         type: 'extension_status',
         key: event.statusKey,
         status: event.statusText ?? '',
-        source: 'pi-extension',
+        source: extensionId,
+        ...route,
       };
     }
     if (event.method === 'setWidget') {
@@ -1019,7 +1037,8 @@ export class PiAgent extends BaseAgent {
         key: event.widgetKey,
         content: event.widgetLines,
         placement: event.widgetPlacement,
-        source: event.widgetKey,
+        source: extensionId,
+        ...route,
       };
     }
     if (event.method === 'select') {
@@ -1029,7 +1048,21 @@ export class PiAgent extends BaseAgent {
         kind: 'select',
         title: event.title,
         options: event.options.map(title => ({ title })),
-        source: 'pi-extension',
+        timeout: event.timeout,
+        source: extensionId,
+        ...route,
+      };
+    }
+    if (event.method === 'confirm') {
+      return {
+        type: 'remoteui_request',
+        requestId: event.id,
+        kind: 'confirm',
+        title: event.title,
+        message: event.message,
+        timeout: event.timeout,
+        source: extensionId,
+        ...route,
       };
     }
     if (event.method === 'editor' || event.method === 'input') {
@@ -1039,8 +1072,16 @@ export class PiAgent extends BaseAgent {
         kind: 'editor',
         title: event.title,
         prefill: event.method === 'editor' ? event.prefill : event.placeholder,
-        source: 'pi-extension',
+        timeout: event.method === 'input' ? event.timeout : undefined,
+        source: extensionId,
+        ...route,
       };
+    }
+    if (event.method === 'setTitle') {
+      return { type: 'extension_set_title', title: event.title, ...route };
+    }
+    if (event.method === 'set_editor_text') {
+      return { type: 'extension_set_editor_text', text: event.text, ...route };
     }
     return null;
   }
@@ -1722,6 +1763,11 @@ export class PiAgent extends BaseAgent {
       this.debug(`[sendExtensionCommandInvoke] Failed for "${commandId}": ${message}`);
       return { invoked: false, error: message };
     }
+  }
+
+  async reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
+    const client = await this.ensureRpcClient();
+    return await client.reloadExtensions();
   }
 
   /**

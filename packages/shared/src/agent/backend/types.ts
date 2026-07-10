@@ -56,15 +56,21 @@ import type { AutomationSystem } from '../../automations/index.ts';
  * 扩展事件桥接类型：从 Pi RpcClient 转发到主进程的扩展事件联合类型。
  * 对应 Pi RpcClient 扩展 UI 事件。
  */
-export type ExtensionBridgeEvent =
+export type ExtensionBridgeEvent = {
+  extensionId: string;
+  runtimeId: string;
+  sessionId: string;
+} & (
   | { type: 'extension_notify'; message: string; notificationType?: 'info' | 'warning' | 'error'; source?: string }
   | { type: 'extension_status'; key?: string; status: string; source?: string }
   | { type: 'extension_widget'; key: string; content: string[] | undefined; placement?: 'aboveEditor' | 'belowEditor'; source?: string }
   | { type: 'extension_command_registered'; name: string; description?: string; source: string }
+  | { type: 'extension_set_title'; title: string }
+  | { type: 'extension_set_editor_text'; text: string }
   | {
       type: 'remoteui_request';
       requestId: string;
-      kind: 'select' | 'editor';
+      kind: 'select' | 'confirm' | 'editor';
       title: string;
       message?: string;
       options?: Array<{ title: string; description?: string }>;
@@ -72,10 +78,10 @@ export type ExtensionBridgeEvent =
       allowFreeform?: boolean;
       allowComment?: boolean;
       prefill?: string;
+      timeout?: number;
       source: string;
-      /** 发起请求的会话 ID（由 SessionManager 注入，渲染进程据此回传响应） */
-      sessionId?: string;
-    };
+    }
+);
 
 export interface PiExtensionCommand {
   name: string;
@@ -658,6 +664,9 @@ export interface AgentBackend {
    * args 为 JSON 字符串。
    */
   sendExtensionCommandInvoke?(commandId: string, args?: string): Promise<ExtensionCommandResult>;
+
+  /** Reload the current Pi runtime's extension set without replacing the session. */
+  reloadExtensions?(): Promise<{ reloaded: boolean; deferred: boolean }>;
 
   /**
    * 查询 Pi 当前会话已注册的扩展 slash commands。

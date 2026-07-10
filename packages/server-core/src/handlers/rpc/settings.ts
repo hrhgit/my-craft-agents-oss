@@ -384,7 +384,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // 逐扩展启停：读写 Pi settings.json 的 extensionConfig.<name>.enabled
   server.handle(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES, async () => {
     const { getPiExtensionCatalog } = await import('@craft-agent/shared/config/pi-global-config')
-    const extensions = await getPiExtensionCatalog()
+    const { extensions } = await getPiExtensionCatalog()
     const states: Record<string, boolean> = {}
     for (const extension of extensions) {
       states[extension.id] = extension.enabled
@@ -395,6 +395,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED, async (_ctx, payload: { name: string; enabled: boolean }) => {
     const { writePiExtensionEnabled } = await import('@craft-agent/shared/config/pi-global-config')
     await writePiExtensionEnabled(payload.name, payload.enabled)
+    await deps.sessionManager.reloadExtensions()
   })
 
   // ============================================================

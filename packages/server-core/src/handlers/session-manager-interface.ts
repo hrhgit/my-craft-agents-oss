@@ -138,6 +138,9 @@ export interface ISessionManager {
     args?: string,
   ): Promise<import('@craft-agent/core/types').ExtensionCommandResult>
 
+  /** Reload extensions in all active Pi runtimes; streaming runtimes defer until settled. */
+  reloadExtensions(): Promise<void>
+
   /**
    * 查询当前会话已注册的 Pi 扩展 slash commands。
    * 非 Pi 后端或会话未就绪时返回空数组。

@@ -7,8 +7,8 @@
  *
  * 事件流：
  *   pi 扩展 ctx.ui.notify(message, level)
- *     Pi RpcClient createBridgeUIContext().notify()
- *     JSONL extension_notify   PiAgent.handleLine   onExtensionEvent
+ *     Pi RpcClient extension_ui_request(notify)
+ *     PiAgent.mapExtensionUiRequest   onExtensionEvent
  *     pi-extension-bridge 桥接层   eventSink
  *     RPC_CHANNELS.extensions.EVENT   renderer 的 onExtensionEvent 监听器
  *     此 hook 调用 toast 显示通知
@@ -52,7 +52,7 @@ function showToast(message: string, level: 'info' | 'warning' | 'error' | undefi
  * 在 `onExtensionEvent` 监听器未就绪时（桥接层尚未在 channel-map 注册），
  * hook 静默跳过订阅，不会抛错。
  */
-export function useExtensionStatus(): void {
+export function useExtensionStatus(sessionId: string): void {
   useEffect(() => {
     const w = window as unknown as {
       electronAPI?: {
@@ -67,12 +67,24 @@ export function useExtensionStatus(): void {
     }
 
     const unsubscribe = subscribe((event: ExtensionBridgeEvent) => {
-      if (event.type !== 'extension_notify') return
-      showToast(event.message, event.notificationType)
+      if (event.sessionId !== sessionId) return
+      if (event.type === 'extension_notify') {
+        showToast(event.message, event.notificationType)
+        return
+      }
+      if (event.type === 'extension_set_title') {
+        document.title = event.title
+        return
+      }
+      if (event.type === 'extension_set_editor_text') {
+        window.dispatchEvent(new CustomEvent('craft:restore-input', {
+          detail: { sessionId, text: event.text },
+        }))
+      }
     })
 
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [])
+  }, [sessionId])
 }

@@ -10,7 +10,7 @@ import { basename } from 'path';
 import {
   listSkillsSync as listPiSkillsSync,
   type HostSkillSummary,
-} from '@earendil-works/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent/host-facade';
 import type { LoadedSkill, SkillMetadata, SkillSource } from './types.ts';
 import { validateSlug } from '../config/validators.ts';
 import { isPathWithinDirectory } from '../utils/paths.ts';

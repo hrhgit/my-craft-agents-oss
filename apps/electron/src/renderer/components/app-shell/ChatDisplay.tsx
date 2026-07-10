@@ -1974,7 +1974,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           </div>
 
           {/* === EXTENSION WIDGET ZONE: pi 扩展 belowEditor widget（编辑器下方、输入框上方） === */}
-          <ExtensionWidgetZone className={CHAT_LAYOUT.maxWidth} />
+          <ExtensionWidgetZone className={CHAT_LAYOUT.maxWidth} sessionId={session.id} />
 
           {/* === INPUT CONTAINER: FreeForm or Structured Input === */}
           <ChatInputZone

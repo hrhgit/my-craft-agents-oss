@@ -39,9 +39,9 @@ import {
   writeCraftAgentSettingsBulk as writePiHostCraftAgentSettingsBulk,
   writeCraftLlmConnections as writePiHostCraftLlmConnections,
   type HostGlobalProvider,
-} from '@earendil-works/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent/host-facade';
 import type { LlmConnection } from './llm-connections.ts';
-import type { PiExtensionCatalogEntry } from './pi-extension-settings.ts';
+import type { PiExtensionCatalogEntry, PiExtensionCatalogResult } from './pi-extension-settings.ts';
 import { PI_AGENT_DIR } from './paths';
 
 export type PiCustomApi =
@@ -509,9 +509,8 @@ export function writePiCraftAgentBoolean(key: string, value: boolean): void {
 
 // ===== 扩展命名空间（extensionConfig.<name>.*）=====
 //
-// Task 7：扩展级 model/enabled/concurrency 已回归 ~/.pi/agent/settings.json 的
-// `extensionConfig.<name>.*` typed 命名空间。读取时兼容旧 `extensions.<name>.*`，
-// 写入时保留既有字段，只覆盖目标 extensionConfig.<name> 对象。
+// 扩展级 model/enabled/concurrency 统一存放在 ~/.pi/agent/settings.json 的
+// `extensionConfig.<id>.*` 命名空间；不再读取旧 `extensions.<name>.*` 对象。
 
 /**
  * settings.json 中扩展配置命名空间的松散结构。
@@ -520,7 +519,7 @@ export function writePiCraftAgentBoolean(key: string, value: boolean): void {
 export type PiExtensionNamespaceSettings = Record<string, Record<string, unknown>>;
 
 /**
- * 读取 settings.json 的扩展配置命名空间整体（typed 覆盖 legacy）。
+ * 读取 settings.json 的扩展配置命名空间整体。
  * 文件缺失或字段缺失时返回空对象。
  */
 export function readPiExtensionNamespace(): PiExtensionNamespaceSettings {
@@ -600,23 +599,30 @@ export async function writePiExtensionConcurrency(name: string, concurrency: num
  * 读取 Pi 扩展 catalog。扩展发现、metadata、enabled/config 均来自 Pi host facade；
  * Craft 只把结果作为设置 UI 的展示 DTO。
  */
-export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: string } = {}): Promise<PiExtensionCatalogEntry[]> {
+export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: string } = {}): Promise<PiExtensionCatalogResult> {
   const result = await getPiHostExtensions(options);
-  return result.extensions.map((extension): PiExtensionCatalogEntry => ({
-    id: extension.id,
-    title: extension.title,
-    description: extension.description,
-    category: extension.category,
-    configurable: extension.configurable,
-    enabled: extension.enabled,
-    path: extension.path,
-    resolvedPath: extension.resolvedPath,
-    commands: extension.commands,
-    tools: extension.tools,
-    flags: extension.flags,
-    shortcuts: extension.shortcuts,
-    config: extension.config as Record<string, unknown> | undefined,
-  }));
+  return {
+    extensions: result.extensions
+      .filter((extension) => extension.target === 'craft')
+      .map((extension): PiExtensionCatalogEntry => ({
+        id: extension.id,
+        target: extension.target,
+        loaded: extension.loaded,
+        title: extension.title,
+        description: extension.description,
+        category: extension.category,
+        configurable: extension.configurable,
+        enabled: extension.enabled,
+        path: extension.path,
+        resolvedPath: extension.resolvedPath,
+        commands: extension.commands,
+        tools: extension.tools,
+        flags: extension.flags,
+        shortcuts: extension.shortcuts,
+        config: extension.config as Record<string, unknown> | undefined,
+      })),
+    errors: result.errors.filter((error) => error.target === 'craft'),
+  };
 }
 
 // ===== Shell GUI 命名空间（shellGui.<name>.*）=====

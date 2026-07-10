@@ -129,6 +129,7 @@ export function useExtensionCommands(sessionId: string | undefined): UseExtensio
 
     const unsubscribe = subscribe((event: ExtensionBridgeEvent) => {
       if (event.type !== 'extension_command_registered') return
+      if (event.sessionId !== sessionId) return
       upsertCommand({
         name: event.name,
         description: event.description,

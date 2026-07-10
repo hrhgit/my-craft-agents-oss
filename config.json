@@ -1,0 +1,19 @@
+{
+  "id": "ws_ba8f0450",
+  "name": "craft-agent",
+  "slug": "craft-agent",
+  "defaults": {
+    "permissionMode": "safe",
+    "cyclablePermissionModes": [
+      "safe",
+      "allow-all"
+    ],
+    "enabledSourceSlugs": [],
+    "defaultLlmConnection": "pi-myapi-gpt"
+  },
+  "localMcpServers": {
+    "enabled": true
+  },
+  "createdAt": 1783415164451,
+  "updatedAt": 1783520214557
+}

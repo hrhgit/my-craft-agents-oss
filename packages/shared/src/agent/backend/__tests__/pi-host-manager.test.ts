@@ -7,7 +7,7 @@ import type {
   RpcClientOptions,
   RpcRuntimeOpenOptions,
 } from '@earendil-works/pi-coding-agent';
-import { PiHostManager, PiHostProtocolError } from '../pi-host-manager.ts';
+import { PiHostManager, PiHostProtocolError, type PiHostAcquireOptions } from '../pi-host-manager.ts';
 
 function capabilities(protocolVersion = 3): RpcCapabilities {
   return {
@@ -75,10 +75,10 @@ describe('PiHostManager process-level sharing', () => {
       idleTimeoutMs: 5,
       createClient: (_options: RpcClientOptions) => fake.client,
     });
-    const options = {
+    const options: PiHostAcquireOptions = {
       key: 'default',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft' },
     };
 
     const first = await manager.acquire(options);
@@ -101,7 +101,7 @@ describe('PiHostManager process-level sharing', () => {
     await expect(manager.acquire({
       key: 'legacy',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft' },
     })).rejects.toBeInstanceOf(PiHostProtocolError);
     expect(fake.openRuntime).not.toHaveBeenCalled();
     expect(fake.stop).toHaveBeenCalledTimes(1);
@@ -114,10 +114,10 @@ describe('PiHostManager process-level sharing', () => {
       .mockReturnValueOnce(firstFake.client)
       .mockReturnValueOnce(secondFake.client);
     const manager = new PiHostManager({ createClient });
-    const options = {
+    const options: PiHostAcquireOptions = {
       key: 'recoverable',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft' },
     };
 
     const firstLease = await manager.acquire(options);

@@ -4,7 +4,7 @@
  * 显示 pi 会话树中从当前会话派生的子会话分支列表。
  *
  * 数据来源：pi 会话树（~/.pi/agent/sessions/<encoded-cwd>/*.jsonl）
- * 通过 listChildSessions RPC 查询，由 pi-agent-server 的 list_child_sessions
+ * 通过 Pi runtime 的 listChildSessions RPC 查询，由 list_child_sessions
  * 通道枚举会话目录并按 header.spawnedFrom === parentSessionId 过滤。
  *
  * 这取代了旧的 active-sessions.json 数据源（subagent supervisor 维护）。
@@ -269,6 +269,7 @@ export function SubagentPanel({ sessionId, className }: SubagentPanelProps) {
 
     const unsubscribe = subscribe((event: ExtensionBridgeEvent) => {
       if (event.type !== 'extension_notify') return
+      if (event.sessionId !== sessionId) return
       refresh()
     })
     return () => {

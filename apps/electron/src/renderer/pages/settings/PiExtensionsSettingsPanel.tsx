@@ -9,17 +9,17 @@
  */
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight } from 'lucide-react'
+import { AlertTriangle, ChevronRight } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { SettingsCard } from '@/components/settings'
-import type { PiExtensionCatalogEntry, PiExtensionCategory } from '@craft-agent/shared/config/pi-extension-settings'
+import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionCategory } from '@craft-agent/shared/config/pi-extension-settings'
 
 /**
  * 拥有 craft GUI 配置页的扩展 id 集合。
  * 只有这些扩展的行可点击进入次级页面。
  * Pi 的 `configurable` 表示扩展有配置概念；这里表示 Craft 当前有详情页。
  */
-const GUI_CONFIGURABLE_EXTENSIONS = new Set<string>([
+export const GUI_CONFIGURABLE_EXTENSIONS = new Set<string>([
   'plan-mode',
   'prompt-automation',
   'repo-memory',
@@ -30,6 +30,12 @@ const GUI_CONFIGURABLE_EXTENSIONS = new Set<string>([
 
 export function isExtensionConfigurable(id: string): boolean {
   return GUI_CONFIGURABLE_EXTENSIONS.has(id)
+}
+
+export function findExtensionsMissingGuiPanel(extensions: PiExtensionCatalogEntry[]): string[] {
+  return extensions
+    .filter((extension) => extension.configurable && !isExtensionConfigurable(extension.id))
+    .map((extension) => extension.id)
 }
 
 /**
@@ -48,6 +54,7 @@ const CATEGORY_ORDER: PiExtensionCategory[] = [
 
 interface ExtensionListPanelProps {
   extensions: PiExtensionCatalogEntry[]
+  errors: PiExtensionCatalogError[]
   extensionStates: Record<string, boolean>
   onToggleExtension: (id: string, enabled: boolean) => void
   onSelectExtension: (id: string) => void
@@ -55,6 +62,7 @@ interface ExtensionListPanelProps {
 
 export function ExtensionListPanel({
   extensions,
+  errors,
   extensionStates,
   onToggleExtension,
   onSelectExtension,
@@ -74,8 +82,28 @@ export function ExtensionListPanel({
       .filter((group) => group.entries.length > 0)
   }, [extensions])
 
+  const missingPanels = useMemo(() => findExtensionsMissingGuiPanel(extensions), [extensions])
+
   return (
     <div className="space-y-6">
+      {(errors.length > 0 || missingPanels.length > 0) && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          <div className="flex items-center gap-2 font-medium">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Extension loading issues
+          </div>
+          <ul className="mt-2 space-y-1 pl-6 text-xs list-disc">
+            {errors.map((error, index) => (
+              <li key={`${error.path}:${index}`} className="break-words">
+                {error.path || 'Extension catalog'}: {error.error}
+              </li>
+            ))}
+            {missingPanels.map((id) => (
+              <li key={`missing-panel:${id}`}>Configurable extension “{id}” has no Craft settings panel.</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {grouped.map(({ category, entries }) => (
         <div key={category} className="space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground px-1">
