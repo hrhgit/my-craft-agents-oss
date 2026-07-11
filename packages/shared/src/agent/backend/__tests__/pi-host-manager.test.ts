@@ -20,6 +20,7 @@ function capabilities(protocolVersion = 3): RpcCapabilities {
       toolExecutionMetadata: true,
       hostToolResults: 'content',
       extensionCommandResult: true,
+      extensionHostCapabilities: true,
       secondaryLlmQuery: true,
       childSessionListing: true,
       multiRuntime: protocolVersion >= 3,
@@ -78,12 +79,18 @@ describe('PiHostManager process-level sharing', () => {
     const options: PiHostAcquireOptions = {
       key: 'default',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft' },
+      runtime: {
+        runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft',
+        extensionPaths: ['E:/extensions/browser.js', 'E:/extensions/messaging.js'],
+      },
     };
 
     const first = await manager.acquire(options);
     const second = await manager.acquire(options);
     expect(fake.openRuntime).toHaveBeenCalledTimes(1);
+    expect(fake.openRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      extensionPaths: ['E:/extensions/browser.js', 'E:/extensions/messaging.js'],
+    }));
 
     await first.release();
     expect(fake.close).not.toHaveBeenCalled();

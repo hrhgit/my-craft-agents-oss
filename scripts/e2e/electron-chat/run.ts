@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createRequire } from "node:module";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { _electron as electron, chromium, type Browser, type BrowserContext, type ElectronApplication, type Page } from "playwright-core";
@@ -43,6 +43,9 @@ interface Summary {
     sessionIdsMatched?: boolean;
     fatalUiErrorCount?: number;
     fatalUiErrorKinds?: string[];
+    packagedExecutable?: string;
+    piRuntimeCommand?: string;
+    piProtocolVersion?: number;
   };
   phases: Record<string, { status: "pending" | "running" | "passed" | "failed"; detail?: string }>;
 }
@@ -98,6 +101,9 @@ const summaryPath = join(artifactsDir, "summary.json");
 const tracePath = join(artifactsDir, "trace.zip");
 const tempRoot = join(tmpdir(), `craft-electron-chat-${runId}`);
 const requestedConnectionSlug = process.env.CRAFT_E2E_CONNECTION_SLUG?.trim() || undefined;
+const packagedExecutable = process.env.CRAFT_E2E_EXECUTABLE?.trim()
+  ? resolve(process.env.CRAFT_E2E_EXECUTABLE.trim())
+  : undefined;
 
 let summary: Summary = {
   runId,
@@ -179,6 +185,14 @@ function runCommand(command: string, args: string[], phaseName: string): Promise
 async function ensureBuild(): Promise<void> {
   updatePhase("build", "running");
 
+  if (packagedExecutable) {
+    if (!existsSync(packagedExecutable)) {
+      throw new Error(`Packaged Electron executable is missing: ${packagedExecutable}`);
+    }
+    updatePhase("build", "passed", `Packaged executable: ${packagedExecutable}`);
+    return;
+  }
+
   if (process.env.CRAFT_E2E_SKIP_BUILD === "1") {
     ensureBuildOutputs();
     updatePhase("build", "passed", "Skipped via CRAFT_E2E_SKIP_BUILD=1");
@@ -214,7 +228,7 @@ function prepareProfile(): { craftConfigDir: string; piAgentDir: string; electro
 
   ensureDir(tempRoot);
   copyDirectoryIfExists(sourceCraftConfig, craftConfigDir);
-  copyDirectoryIfExists(sourcePiAgent, piAgentDir);
+  copyDirectoryIfExists(sourcePiAgent, piAgentDir, [join(sourcePiAgent, "npm", "node_modules")]);
   ensureDir(craftConfigDir);
   ensureDir(piAgentDir);
   ensureDir(electronUserDataDir);
@@ -226,14 +240,21 @@ function prepareProfile(): { craftConfigDir: string; piAgentDir: string; electro
   return { craftConfigDir, piAgentDir, electronUserDataDir };
 }
 
-function copyDirectoryIfExists(source: string, target: string): void {
+function copyDirectoryIfExists(source: string, target: string, excludedPaths: string[] = []): void {
   if (!existsSync(source)) return;
+  const excluded = new Set(excludedPaths.map(path => resolve(path).toLowerCase()));
   cpSync(source, target, {
     recursive: true,
     force: true,
     // Windows often cannot recreate user-profile symlinks without elevated
     // privileges; copy the linked contents into the disposable profile instead.
     dereference: true,
+    filter: path => {
+      if (excluded.has(resolve(path).toLowerCase())) return false;
+      // Disposable E2E profiles do not need generated caches or external
+      // skill links, and dereferencing Windows junctions is unreliable.
+      return process.platform !== "win32" || !lstatSync(path).isSymbolicLink();
+    },
   });
 }
 
@@ -255,6 +276,9 @@ function buildElectronEnv(profile: { craftConfigDir: string; piAgentDir: string 
     PI_HOST_HOOKS_MODULE: PROVIDER_HOOK_PATH,
     CRAFT_E2E_PROVIDER_LOG_FILE: providerLogPath,
     CRAFT_E2E_RUN_ID: runId,
+    ...(packagedExecutable
+      ? { CRAFT_E2E_DEBUG_LOGS: "1", CRAFT_ELECTRON_WORKSPACE_SERVER: "0" }
+      : {}),
   };
 }
 
@@ -329,13 +353,13 @@ async function launchWithCdp(profile: { craftConfigDir: string; piAgentDir: stri
 }
 
 async function launchWithNodeInspector(profile: { craftConfigDir: string; piAgentDir: string; electronUserDataDir: string }): Promise<DesktopLaunch> {
-  const electronExecutablePath = String(require("electron"));
+  const electronExecutablePath = packagedExecutable ?? String(require("electron"));
   const child = spawn(electronExecutablePath, [
     "--inspect=0",
     `--user-data-dir=${profile.electronUserDataDir}`,
-    ELECTRON_APP_DIR,
+    ...(packagedExecutable ? [] : [ELECTRON_APP_DIR]),
   ], {
-    cwd: ROOT_DIR,
+    cwd: packagedExecutable ? dirname(packagedExecutable) : ROOT_DIR,
     env: buildElectronEnv(profile),
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
@@ -346,12 +370,63 @@ async function launchWithNodeInspector(profile: { craftConfigDir: string; piAgen
     const inspector = await NodeInspectorClient.connect(inspectorEndpoint);
     await setupInspectorWindow(inspector);
     await captureInspectorScreenshot(inspector, "01-after-launch.png");
-    updatePhase("launch", "passed", "node-inspector-fallback");
+    updatePhase("launch", "passed", packagedExecutable ? "packaged-node-inspector" : "node-inspector-fallback");
     return { mode: "node-inspector", inspector, child };
   } catch (error) {
     await killChildProcess(child);
     throw error;
   }
+}
+
+function collectPackagedPiEvidence(profile: { craftConfigDir: string }): void {
+  if (!packagedExecutable) return;
+
+  const runtimeLogPath = join(profile.craftConfigDir, "logs", "runtime.log");
+  if (!existsSync(runtimeLogPath)) {
+    throw new Error(`Packaged runtime log was not created: ${runtimeLogPath}`);
+  }
+
+  const artifactRuntimeLogPath = join(artifactsDir, "runtime.log");
+  cpSync(runtimeLogPath, artifactRuntimeLogPath, { force: true });
+  const records = readFileSync(runtimeLogPath, "utf8")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as JsonRecord];
+      } catch {
+        return [];
+      }
+    });
+  const piRecords = records.filter((record) => record.scope === "pi-rpc");
+  const startup = [...piRecords].reverse().find((record) => record.event === "startup.begin" || record.message === "startup.begin");
+  const ready = [...piRecords].reverse().find((record) => record.event === "host.ready" || record.message === "host.ready");
+  const startupData = (startup?.meta ?? startup?.data ?? startup) as JsonRecord | undefined;
+  const readyData = (ready?.meta ?? ready?.data ?? ready) as JsonRecord | undefined;
+  const command = typeof startupData?.command === "string" ? startupData.command : undefined;
+  const protocolVersion = typeof readyData?.protocolVersion === "number" ? readyData.protocolVersion : undefined;
+
+  if (!command || basename(command).toLowerCase() !== "pi.exe") {
+    throw new Error(`Packaged E2E did not launch pi.exe. Observed command: ${command ?? "missing"}`);
+  }
+  if (protocolVersion !== 3) {
+    throw new Error(`Packaged E2E did not complete protocol v3 handshake. Observed: ${protocolVersion ?? "missing"}`);
+  }
+
+  updateSummary({
+    evidence: {
+      ...(summary.evidence ?? {
+        providerRequestCount: 0,
+        providerSuccessResponseCount: 0,
+        providerErrorCount: 0,
+        visibleSentinelCount: 0,
+        sendButtonDisappeared: false,
+      }),
+      packagedExecutable,
+      piRuntimeCommand: command,
+      piProtocolVersion: protocolVersion,
+    },
+  });
 }
 
 class NodeInspectorClient {
@@ -446,7 +521,7 @@ function waitForNodeInspectorEndpoint(child: ChildProcessWithoutNullStreams): Pr
 
     const maybeFinish = () => {
       if (settled) return;
-      if (!endpoint || !appReady) return;
+      if (!endpoint || (!packagedExecutable && !appReady)) return;
       settled = true;
       clearTimeout(timeout);
       resolvePromise(endpoint);
@@ -478,9 +553,16 @@ function waitForNodeInspectorEndpoint(child: ChildProcessWithoutNullStreams): Pr
 }
 
 async function setupInspectorWindow(inspector: NodeInspectorClient): Promise<void> {
-  await inspector.evaluate<boolean>(`(async () => {
-    const { BrowserWindow } = require('electron');
-    const fs = require('fs');
+  const deadline = Date.now() + 60_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      await inspector.evaluate<boolean>(`(async () => {
+    const localRequire = typeof require === 'function'
+      ? require
+      : process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
+    const { BrowserWindow } = localRequire('electron');
+    const fs = localRequire('fs');
     const consoleLogPath = ${JSON.stringify(consoleLogPath)};
     const pageErrorLogPath = ${JSON.stringify(pageErrorLogPath)};
     const win = BrowserWindow.getAllWindows()[0];
@@ -506,12 +588,22 @@ async function setupInspectorWindow(inspector: NodeInspectorClient): Promise<voi
     await win.webContents.executeJavaScript('Boolean(window.electronAPI)', true);
     return true;
   })()`);
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+    }
+  }
+  throw new Error(`Timed out waiting for packaged BrowserWindow: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 async function captureInspectorScreenshot(inspector: NodeInspectorClient, fileName: string): Promise<void> {
   await inspector.evaluate<boolean>(`(async () => {
-    const { BrowserWindow } = require('electron');
-    const fs = require('fs');
+    const localRequire = typeof require === 'function'
+      ? require
+      : process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
+    const { BrowserWindow } = localRequire('electron');
+    const fs = localRequire('fs');
     const win = BrowserWindow.getAllWindows()[0];
     if (!win) return false;
     const image = await win.webContents.capturePage();
@@ -522,11 +614,30 @@ async function captureInspectorScreenshot(inspector: NodeInspectorClient, fileNa
 
 async function evaluateInRenderer<T>(inspector: NodeInspectorClient, rendererSource: string): Promise<T> {
   return await inspector.evaluate<T>(`(async () => {
-    const { BrowserWindow } = require('electron');
+    const localRequire = typeof require === 'function'
+      ? require
+      : process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
+    const { BrowserWindow } = localRequire('electron');
     const win = BrowserWindow.getAllWindows()[0];
     if (!win) throw new Error('No BrowserWindow is available.');
     return await win.webContents.executeJavaScript(${JSON.stringify(rendererSource)}, true);
   })()`);
+}
+
+async function evaluateInRendererWhenConnected<T>(inspector: NodeInspectorClient, rendererSource: string): Promise<T> {
+  const deadline = Date.now() + 90_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      return await evaluateInRenderer<T>(inspector, rendererSource);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/Connection timeout|HANDSHAKE_TIMEOUT|WebSocket.*not open/i.test(message)) throw error;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_000));
+    }
+  }
+  throw new Error(`Timed out waiting for packaged workspace connection: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 function devToolsHttpEndpoint(wsEndpoint: string): string {
@@ -717,7 +828,7 @@ function selectConnection(connections: LlmConnectionWithStatus[]): LlmConnection
 async function chooseAndPreflightConnectionWithInspector(inspector: NodeInspectorClient): Promise<LlmConnectionWithStatus> {
   updatePhase("connection", "running");
 
-  const selected = await evaluateInRenderer<LlmConnectionWithStatus>(inspector, `(
+  const selected = await evaluateInRendererWhenConnected<LlmConnectionWithStatus>(inspector, `(
     async () => {
       const api = window.electronAPI;
       if (!api) throw new Error('window.electronAPI is not available.');
@@ -1265,6 +1376,10 @@ async function killChildProcess(child: ChildProcessWithoutNullStreams | undefine
 }
 
 function cleanupTempProfile(): void {
+  if (process.env.CRAFT_E2E_KEEP_PROFILE === "1") {
+    updateSummary({ tempProfileRemoved: false });
+    return;
+  }
   try {
     rmSync(tempRoot, { recursive: true, force: true });
     updateSummary({ tempProfileRemoved: true });
@@ -1296,6 +1411,7 @@ async function main(): Promise<void> {
       chatResult = await runChatFlow(page);
     }
     assertProviderEvidence(chatResult);
+    collectPackagedPiEvidence(profile);
 
     updateSummary({
       status: "passed",

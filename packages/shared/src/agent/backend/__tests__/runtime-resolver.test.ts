@@ -84,12 +84,22 @@ describe('resolvePiCliPath', () => {
     try { rmSync(tmpBase, { recursive: true, force: true }); } catch {}
   });
 
-  it('finds the packaged Pi CLI runtime under dist/resources', () => {
+  it('prefers a packaged compiled Pi binary', () => {
+    const appRoot = join(tmpBase, 'packaged-binary-app');
+    const resourcesPath = join(tmpBase, 'packaged-binary-resources');
+    const binaryPath = join(resourcesPath, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi');
+    mkdirSync(dirname(binaryPath), { recursive: true });
+    writeFileSync(binaryPath, 'pi binary');
+
+    const paths = resolveBackendRuntimePaths({ appRootPath: appRoot, resourcesPath, isPackaged: true });
+    expect(paths.piCliPath).toBe(binaryPath);
+  });
+
+  it('finds the packaged Pi CLI runtime in external resources', () => {
     const appRoot = join(tmpBase, 'packaged-app');
+    const resourcesPath = join(tmpBase, 'packaged-resources');
     const cliPath = join(
-      appRoot,
-      'dist',
-      'resources',
+      resourcesPath,
       'pi-runtime',
       'dist',
       'cli.bundle.js',
@@ -99,7 +109,7 @@ describe('resolvePiCliPath', () => {
 
     const hostRuntime: BackendHostRuntimeContext = {
       appRootPath: appRoot,
-      resourcesPath: appRoot,
+      resourcesPath,
       isPackaged: true,
     };
     const paths = resolveBackendRuntimePaths(hostRuntime);

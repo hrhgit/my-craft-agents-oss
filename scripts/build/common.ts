@@ -505,8 +505,18 @@ function copyPackageSurfacePath(packageDir: string, destRoot: string, relativePa
   }
 }
 
-function shouldCopyPiRuntimeDistPath(sourcePath: string): boolean {
+function shouldCopyPiRuntimeDistPath(sourcePath: string, distRoot: string): boolean {
   const stat = statSync(sourcePath);
+  const relativePath = relative(distRoot, sourcePath).replace(/\\/g, '/');
+
+  // The package dist contains a standalone Pi executable and sidecars for every
+  // supported platform. Craft starts cli.bundle.js with its bundled Bun runtime
+  // and stages exactly one sidecar below, so copying these files is both
+  // redundant and very expensive for Windows installers.
+  if (relativePath === 'pi.exe' || relativePath === 'sidecar' || relativePath.startsWith('sidecar/')) {
+    return false;
+  }
+
   if (stat.isDirectory()) return true;
 
   const normalized = sourcePath.replace(/\\/g, '/').toLowerCase();
@@ -526,7 +536,7 @@ function copyPiRuntimeDist(packageDir: string, runtimeRoot: string): void {
     recursive: true,
     dereference: true,
     force: true,
-    filter: shouldCopyPiRuntimeDistPath,
+    filter: (path) => shouldCopyPiRuntimeDistPath(path, source),
   });
 }
 
@@ -647,6 +657,17 @@ function topLevelPackageFile(entry: string): string {
     .split('/')[0]!;
 }
 
+function shouldCopyRuntimePackageSource(source: string): boolean {
+  const normalized = source.replace(/\\/g, '/').toLowerCase();
+  return !normalized.endsWith('.map')
+    && !normalized.endsWith('.ts')
+    && !normalized.endsWith('.mts')
+    && !normalized.endsWith('.cts')
+    && !normalized.endsWith('.tsx')
+    && !normalized.endsWith('.tsbuildinfo')
+    && !normalized.endsWith('.md');
+}
+
 function copyPiWorkspacePackage(packageDir: string, dest: string): void {
   const pkg = readPackageJson(packageDir);
   const files = Array.isArray(pkg.files) ? pkg.files.filter((entry): entry is string => typeof entry === 'string') : [];
@@ -667,7 +688,11 @@ function copyPiWorkspacePackage(packageDir: string, dest: string): void {
     if (!entry || entry === 'package.json') continue;
     const source = join(packageDir, entry);
     if (!existsSync(source)) continue;
-    cpSync(source, join(dest, entry), { recursive: true, dereference: true });
+    cpSync(source, join(dest, entry), {
+      recursive: true,
+      dereference: true,
+      filter: shouldCopyRuntimePackageSource,
+    });
   }
 }
 
@@ -699,7 +724,12 @@ function copyNpmPackage(packageDir: string, dest: string, packageName: string): 
     filter: (source) => {
       const rel = relative(packageDir, source);
       if (!rel) return true;
-      return !rel.split(sep).some((part) => skipNames.has(part));
+      if (rel.split(sep).some((part) => skipNames.has(part))) return false;
+
+      // Runtime subprocesses do not consume source maps or TypeScript
+      // declarations. Some SDK packages ship thousands of them, and NSIS plus
+      // real-time antivirus scanning can spend minutes creating those files.
+      return shouldCopyRuntimePackageSource(source);
     },
   });
 }
@@ -881,7 +911,10 @@ function copyPackageDependencySet(packageNames: string[], resolverDir: string, d
  * runtime dependencies available in the packaged app.
  */
 export function stagePiRuntime(config: BuildConfig, runtimeRoot: string): void {
-  const destModules = join(runtimeRoot, 'node_modules');
+  // electron-builder treats directories literally named node_modules as app
+  // dependencies even under extraResources and silently prunes packages from
+  // them. Use a neutral directory name and expose it to Bun through NODE_PATH.
+  const destModules = join(runtimeRoot, 'runtime_modules');
   const packageDir = resolvePackageDir(PI_RUNTIME_PACKAGE, config.rootDir);
 
   if (!packageDir) {
@@ -905,8 +938,53 @@ export function stagePiRuntime(config: BuildConfig, runtimeRoot: string): void {
   console.log(`  Pi CLI runtime staged (${copiedCount} dependency packages, entry ${PI_RUNTIME_BUNDLE_ENTRY})`);
 }
 
+function stagePiBinaryRuntime(config: BuildConfig, runtimeRoot: string): void {
+  const packageDir = resolvePackageDir(PI_RUNTIME_PACKAGE, config.rootDir);
+  if (!packageDir) {
+    throw new Error(`Unable to resolve ${PI_RUNTIME_PACKAGE} from ${config.rootDir}`);
+  }
+
+  const binaryDist = join(packageDir, 'dist');
+  const binaryName = config.platform === 'win32' ? 'pi.exe' : 'pi';
+  const binaryPath = join(binaryDist, binaryName);
+  if (!existsSync(binaryPath)) {
+    throw new Error(`Pi compiled binary missing: ${binaryPath}. Run the Pi build:binary script first.`);
+  }
+
+  console.log('Staging compiled Pi runtime...');
+  removeDirectoryWithRetry(runtimeRoot);
+  mkdirSync(runtimeRoot, { recursive: true });
+
+  for (const entry of [
+    binaryName,
+    'package.json',
+    'README.md',
+    'CHANGELOG.md',
+    'theme',
+    'assets',
+    'export-html',
+    'docs',
+    'examples',
+    'photon_rs_bg.wasm',
+  ]) {
+    copyPackageSurfacePath(binaryDist, runtimeRoot, entry, entry === binaryName || entry === 'package.json' || entry === 'theme');
+  }
+
+  const sidecarTarget = piSidecarTarget(config.platform, config.arch);
+  copyPackageSurfacePath(binaryDist, runtimeRoot, `sidecar/bin/${sidecarTarget}`, true);
+  console.log(`  Compiled Pi runtime staged (entry ${binaryName})`);
+}
+
 export function copyPiRuntime(config: BuildConfig): void {
-  stagePiRuntime(config, join(config.electronDir, 'dist', 'resources', 'pi-runtime'));
+  const runtimeRoot = join(config.electronDir, 'dist', 'resources', 'pi-runtime');
+  // Windows defaults to the compiled runtime to avoid installing thousands of
+  // small node_modules files. Set CRAFT_PI_BINARY_RUNTIME=0 for emergency
+  // fallback to the legacy JS runtime while keeping other platforms unchanged.
+  if (config.platform === 'win32' && process.env.CRAFT_PI_BINARY_RUNTIME !== '0') {
+    stagePiBinaryRuntime(config, runtimeRoot);
+    return;
+  }
+  stagePiRuntime(config, runtimeRoot);
 }
 
 /**

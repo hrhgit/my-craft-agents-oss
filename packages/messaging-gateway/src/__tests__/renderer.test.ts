@@ -13,6 +13,7 @@
 
 import { describe, expect, it, beforeEach } from 'bun:test'
 import { Renderer, type SessionEvent } from '../renderer'
+import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
 import {
   normalizeBindingConfig,
   type AdapterCapabilities,
@@ -152,6 +153,70 @@ const ev = {
   }),
   complete: (): SessionEvent => ({ type: 'complete', sessionId: 's' }),
 }
+
+function projection(
+  seq: number,
+  kind: string,
+  payload: Record<string, unknown>,
+  entityType: PiProjectionEventV1['entityType'] = 'content_block',
+): PiProjectionEventV1 {
+  return {
+    schemaVersion: 1,
+    eventId: `runtime-1:${seq}`,
+    seq,
+    sessionId: 'sess-1',
+    runtimeId: 'runtime-1',
+    entityId: `${entityType}:${seq}`,
+    entityType,
+    entityVersion: 1,
+    kind,
+    payload,
+  }
+}
+
+describe('Renderer — Pi projection', () => {
+  it('renders text, tool activity, and lifecycle from Pi envelopes', async () => {
+    const renderer = new Renderer()
+    const adapter = makeAdapter()
+    const binding = makeBinding()
+
+    await renderer.handleProjection(
+      projection(1, 'tool_execution_start', { toolName: 'read', displayName: 'Read' }, 'tool_run'),
+      binding,
+      adapter,
+    )
+    await renderer.handleProjection(
+      projection(2, 'tool_execution_end', { toolName: 'read', status: 'completed' }, 'tool_run'),
+      binding,
+      adapter,
+    )
+    await renderer.handleProjection(
+      projection(3, 'assistant_text', { text: 'Projection answer', streaming: false }),
+      binding,
+      adapter,
+    )
+    await renderer.handleProjection(
+      projection(4, 'agent_end', { status: 'completed' }, 'conversation'),
+      binding,
+      adapter,
+    )
+
+    expect(adapter.calls[0]?.text).toBe('🔧 Read…')
+    expect(adapter.calls.at(-1)?.kind).toBe('editMessage')
+    expect(adapter.calls.at(-1)?.text).toBe('Projection answer')
+  })
+
+  it('renders projection runtime errors as terminal errors', async () => {
+    const renderer = new Renderer()
+    const adapter = makeAdapter()
+    await renderer.handleProjection(
+      projection(1, 'runtime_error', { message: 'projection failed' }, 'conversation'),
+      makeBinding(),
+      adapter,
+    )
+    expect(adapter.calls[0]?.text).toContain('projection failed')
+  })
+})
 
 // ---------------------------------------------------------------------------
 // progress mode (default)

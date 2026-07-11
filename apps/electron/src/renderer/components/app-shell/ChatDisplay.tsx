@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
 import { toast } from "sonner"
+import { useAtomValue } from "jotai"
 
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
@@ -78,6 +79,10 @@ import { CHAT_LAYOUT } from "@/config/layout"
 import { collectFileChangesFromActivities, getFirstFileChangeIdForActivity } from "@/lib/file-changes"
 import { resolveBranchNewPanelOption } from "./branching"
 import { handleErrorMessageAction } from "./error-message-actions"
+import { piProjectionAtomFamily } from "@/atoms/pi-projection"
+import { isPiNativeConversation } from "@/event-processor/projection-migration"
+import { PiProjectionTimeline } from "./PiProjectionTimeline"
+import { buildPiTimelineItems, findPiTimelineMatches, selectActivePiPlanArtifact, selectPendingPiCredential, selectPendingPiPermission, selectPiPlanModeState, selectPiRuntimeState } from "./pi-timeline-model"
 
 // ============================================================================
 // CSS Custom Highlight API helper
@@ -500,6 +505,39 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   connectionUnavailable = false,
 }, ref) {
   const { t } = useTranslation()
+  const piProjection = useAtomValue(piProjectionAtomFamily(session?.id ?? ''))
+  const sessionOwnsPiProjection = isPiNativeConversation(session)
+  // Transcript ownership is persistent session state. A Pi-native session must
+  // never fall back to Craft messages while its projection is empty or syncing.
+  const showPiProjectionTimeline = sessionOwnsPiProjection
+  const projectionEntities = React.useMemo(
+    () => piProjection.entityIds.map(id => piProjection.entitiesById[id]).filter(Boolean),
+    [piProjection.entitiesById, piProjection.entityIds],
+  )
+  const projectedPermission = React.useMemo(() => {
+    if (!sessionOwnsPiProjection || !session || piProjection.syncState !== 'synced') return undefined
+    return selectPendingPiPermission(
+      projectionEntities,
+      session.id,
+    )
+  }, [piProjection.syncState, projectionEntities, session?.id, sessionOwnsPiProjection])
+  const effectivePendingPermission = sessionOwnsPiProjection ? projectedPermission : pendingPermission
+  const projectedCredential = React.useMemo(() => {
+    if (!sessionOwnsPiProjection || !session || piProjection.syncState !== 'synced') return undefined
+    return selectPendingPiCredential(projectionEntities, session.id)
+  }, [piProjection.syncState, projectionEntities, session?.id, sessionOwnsPiProjection])
+  const effectivePendingCredential = sessionOwnsPiProjection ? projectedCredential : pendingCredential
+  const projectedRuntimeState = React.useMemo(
+    () => sessionOwnsPiProjection && piProjection.syncState === 'synced' ? selectPiRuntimeState(projectionEntities) : undefined,
+    [piProjection.syncState, projectionEntities, sessionOwnsPiProjection],
+  )
+  const effectiveIsProcessing = sessionOwnsPiProjection
+    ? projectedRuntimeState?.isProcessing ?? false
+    : session?.isProcessing ?? false
+  const projectedTimelineItems = React.useMemo(
+    () => showPiProjectionTimeline ? buildPiTimelineItems(projectionEntities) : [],
+    [projectionEntities, showPiProjectionTimeline],
+  )
 
   // Panel focus state (for multi-panel auto-scroll behavior)
   const appShellContext = useAppShellContext()
@@ -664,6 +702,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Find ALL individual match occurrences (not just turns)
   // Returns array with unique matchId for each occurrence
   const matchingOccurrences = useMemo(() => {
+    if (showPiProjectionTimeline) {
+      return findPiTimelineMatches(projectedTimelineItems, searchQuery).map(match => ({
+        matchId: match.matchId,
+        turnId: match.itemId,
+        turnIndex: match.itemIndex,
+        matchIndexInTurn: match.matchIndexInItem,
+      }))
+    }
     if (!searchQuery.trim() || !session?.messages) return []
     const startTime = performance.now()
     const query = searchQuery.toLowerCase()
@@ -708,7 +754,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       }
     }
     return matches
-  }, [searchQuery, session?.messages, session?.isProcessing, countOccurrences])
+  }, [showPiProjectionTimeline, projectedTimelineItems, searchQuery, session?.messages, session?.isProcessing, countOccurrences])
 
   // Auto-expand pagination when search is active to show all matching turns
   // This ensures match count is stable and all matches are highlightable from the start
@@ -720,7 +766,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       (min, m) => m.turnIndex < min ? m.turnIndex : min,
       matchingOccurrences[0]!.turnIndex
     )
-    const totalTurns = groupMessagesByTurn(session?.messages || [], { isSessionProcessing: session?.isProcessing }).length
+    const totalTurns = showPiProjectionTimeline
+      ? projectedTimelineItems.length
+      : groupMessagesByTurn(session?.messages || [], { isSessionProcessing: session?.isProcessing }).length
 
     // Calculate how many turns we need to show to include all matches
     // totalTurns - visibleTurnCount = startIndex, so we need visibleTurnCount = totalTurns - earliestMatchTurnIndex + buffer
@@ -729,7 +777,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     if (requiredVisibleCount > visibleTurnCount) {
       setVisibleTurnCount(requiredVisibleCount)
     }
-  }, [isSearchActive, matchingOccurrences, session?.messages, session?.isProcessing, visibleTurnCount])
+  }, [isSearchActive, matchingOccurrences, projectedTimelineItems.length, session?.messages, session?.isProcessing, showPiProjectionTimeline, visibleTurnCount])
 
   // Extract unique turn IDs that have matches (for highlighting)
   const matchingTurnIds = useMemo(() => {
@@ -1346,15 +1394,23 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Handle stop request from InputContainer
   // silent=true when redirecting (sending new message), silent=false when user clicks Stop button
   const handleStop = (silent = false) => {
-    if (!session?.isProcessing) return
+    if (!session || !effectiveIsProcessing) return
 
     // Explicit Stop (not a redirect/new-message send): put the in-flight prompt
     // back in the input so the user can tweak and resend. Append to any draft.
     // Exclude isQueued messages — those are restored separately by the backend
     // `restore_input` effect (App.tsx) and would otherwise double up here.
     if (!silent) {
-      const lastUserMsg = [...session.messages].reverse().find(m => m.role === 'user' && !m.isQueued)
-      const restoredText = coerceInputText(lastUserMsg?.content)
+      const projectedUserItem = sessionOwnsPiProjection
+        ? [...projectedTimelineItems].reverse().find(item => item.type === 'content' && item.role === 'user')
+        : undefined
+      const projectedUserText = projectedUserItem?.type === 'content'
+        ? projectedUserItem.text
+        : undefined
+      const lastUserMsg = sessionOwnsPiProjection
+        ? undefined
+        : [...session.messages].reverse().find(m => m.role === 'user' && !m.isQueued)
+      const restoredText = projectedUserText ?? coerceInputText(lastUserMsg?.content)
       if (restoredText) {
         onInputChange?.(appendRestoredInput(inputValue, restoredText))
       }
@@ -1377,12 +1433,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   // Handle structured input responses (permissions and credentials)
   const handleStructuredResponse = (response: StructuredResponse) => {
-    if ((response.type === 'permission' || response.type === 'admin_approval') && pendingPermission && onRespondToPermission) {
+    if ((response.type === 'permission' || response.type === 'admin_approval') && effectivePendingPermission && onRespondToPermission) {
       if (response.type === 'permission') {
         const permResponse = response as PermissionResponse
         onRespondToPermission(
-          pendingPermission.sessionId,
-          pendingPermission.requestId,
+          effectivePendingPermission.sessionId,
+          effectivePendingPermission.requestId,
           permResponse.allowed,
           permResponse.alwaysAllow
         )
@@ -1391,17 +1447,17 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
       const adminResponse = response as AdminApprovalResponse
       onRespondToPermission(
-        pendingPermission.sessionId,
-        pendingPermission.requestId,
+        effectivePendingPermission.sessionId,
+        effectivePendingPermission.requestId,
         adminResponse.approved,
         false,
         { rememberForMinutes: adminResponse.rememberForMinutes }
       )
-    } else if (response.type === 'credential' && pendingCredential && onRespondToCredential) {
+    } else if (response.type === 'credential' && effectivePendingCredential && onRespondToCredential) {
       const credResponse = response as CredentialResponse
       onRespondToCredential(
-        pendingCredential.sessionId,
-        pendingCredential.requestId,
+        effectivePendingCredential.sessionId,
+        effectivePendingCredential.requestId,
         credResponse
       )
     }
@@ -1409,45 +1465,57 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   // Build structured input state from pending requests (permissions take priority)
   const structuredInput: StructuredInputState | undefined = React.useMemo(() => {
-    if (pendingPermission) {
-      if (pendingPermission.type === 'admin_approval') {
+    if (effectivePendingPermission) {
+      if (effectivePendingPermission.type === 'admin_approval') {
         return {
           type: 'admin_approval',
           data: {
-            appName: pendingPermission.appName || pendingPermission.toolName || 'System action',
-            reason: pendingPermission.reason || pendingPermission.description,
-            impact: pendingPermission.impact,
-            command: pendingPermission.command || '',
-            requiresSystemPrompt: pendingPermission.requiresSystemPrompt ?? true,
-            rememberForMinutes: pendingPermission.rememberForMinutes ?? 10,
+            appName: effectivePendingPermission.appName || effectivePendingPermission.toolName || 'System action',
+            reason: effectivePendingPermission.reason || effectivePendingPermission.description,
+            impact: effectivePendingPermission.impact,
+            command: effectivePendingPermission.command || '',
+            requiresSystemPrompt: effectivePendingPermission.requiresSystemPrompt ?? true,
+            rememberForMinutes: effectivePendingPermission.rememberForMinutes ?? 10,
           },
         }
       }
-      return { type: 'permission', data: pendingPermission }
+      return { type: 'permission', data: effectivePendingPermission }
     }
-    if (pendingCredential) {
-      return { type: 'credential', data: pendingCredential }
+    if (effectivePendingCredential) {
+      return { type: 'credential', data: effectivePendingCredential }
     }
     return undefined
-  }, [pendingPermission, pendingCredential])
+  }, [effectivePendingCredential, effectivePendingPermission])
 
   // Memoize turn grouping - avoids O(n) iteration on every render/keystroke
   const allTurns = React.useMemo(() => {
-    if (!session) return []
+    if (!session || sessionOwnsPiProjection) return []
     return groupMessagesByTurn(session.messages, { isSessionProcessing: session.isProcessing })
-  }, [session?.messages, session?.isProcessing])
+  }, [session?.messages, session?.isProcessing, sessionOwnsPiProjection])
 
-  const activePlanArtifact = React.useMemo(() => {
-    if (!session) return undefined
+  const legacyActivePlanArtifact = React.useMemo(() => {
+    if (!session || sessionOwnsPiProjection) return undefined
     const activeId = session.planModeState?.activeArtifactId
     if (activeId) {
       return session.messages.find(message => message.artifact?.artifactId === activeId)?.artifact
     }
     return [...session.messages].reverse().find(message => message.artifact)?.artifact
-  }, [session?.messages, session?.planModeState?.activeArtifactId])
+  }, [session?.messages, session?.planModeState?.activeArtifactId, sessionOwnsPiProjection])
+  const projectedPlanModeState = React.useMemo(
+    () => sessionOwnsPiProjection && piProjection.syncState === 'synced' ? selectPiPlanModeState(projectionEntities) : undefined,
+    [piProjection.syncState, projectionEntities, sessionOwnsPiProjection],
+  )
+  const effectivePlanModeState = sessionOwnsPiProjection ? projectedPlanModeState : session?.planModeState
+  const projectedActivePlanArtifact = React.useMemo(
+    () => sessionOwnsPiProjection && piProjection.syncState === 'synced'
+      ? selectActivePiPlanArtifact(projectionEntities, effectivePlanModeState?.activeArtifactId)
+      : undefined,
+    [effectivePlanModeState?.activeArtifactId, piProjection.syncState, projectionEntities, sessionOwnsPiProjection],
+  )
+  const activePlanArtifact = sessionOwnsPiProjection ? projectedActivePlanArtifact : legacyActivePlanArtifact
 
   // Keep ref in sync for scroll handler
-  totalTurnCountRef.current = allTurns.length
+  totalTurnCountRef.current = showPiProjectionTimeline ? projectedTimelineItems.length : allTurns.length
 
   // Reverse pagination: only render last N turns for fast initial render
   const startIndex = Math.max(0, allTurns.length - visibleTurnCount)
@@ -1540,7 +1608,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // At render time, prevSessionIdForScrollRef still has the OLD session ID, so we can detect the switch
   const isSessionSwitchForScroll = prevSessionIdForScrollRef.current !== null && prevSessionIdForScrollRef.current !== session?.id
   const skipScrollToBottom = isSessionSwitchForScroll && isSearchActive
-  const hasUnrenderedLoadedMessages = !messagesLoading
+  const hasUnrenderedLoadedMessages = !sessionOwnsPiProjection && !messagesLoading
     && turns.length === 0
     && ((session?.messages?.length ?? 0) > 0 || (session?.messageCount ?? 0) > 0)
 
@@ -1657,12 +1725,27 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                     </div>
                   )}
                   {/* Load more indicator - shown when there are older messages */}
-                  {hasMoreAbove && (
+                  {!showPiProjectionTimeline && hasMoreAbove && (
                     <div className="text-center text-muted-foreground/60 text-xs py-3 select-none">
                       ↑ {t('chat.scrollUpForEarlier', { count: startIndex })}
                     </div>
                   )}
-                  {turns.map((turn, index) => {
+                  {showPiProjectionTimeline && (
+                    <PiProjectionTimeline
+                      projection={piProjection}
+                      searchQuery={searchQuery}
+                      currentMatchIndex={currentMatchIndex}
+                      pageSize={TURNS_PER_PAGE}
+                      onItemRef={(id, element) => { if (element) turnRefs.current.set(id, element); else turnRefs.current.delete(id) }}
+                      onOpenFile={onOpenFile}
+                      onOpenUrl={onOpenUrl}
+                      onExecutePlanArtifact={(artifactId) => invokePlanArtifactCommand('plan-execute', artifactId)}
+                      onExecutePlanArtifactWithCompact={executePlanArtifactWithCompact}
+                      onRefinePlanArtifact={refinePlanArtifact}
+                      onRespondToCredential={onRespondToCredential}
+                    />
+                  )}
+                  {!showPiProjectionTimeline && turns.map((turn, index) => {
                     // Compute turn key and check if it's a search match
                     const turnKey = getTurnKey(turn)
                     const isCurrentMatch = isSearchActive && matchingTurnIds[currentMatchIndex] === turnKey
@@ -1956,7 +2039,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                   </motion.div>
                 </AnimatePresence>
                 {/* Processing Indicator - always visible while processing */}
-                {session.isProcessing && (() => {
+                {effectiveIsProcessing && (() => {
                   // Find the last user message timestamp for accurate elapsed time
                   const lastUserMsg = [...session.messages].reverse().find(m => m.role === 'user')
                   return (
@@ -1983,7 +2066,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             onPermissionModeChange={onPermissionModeChange}
             tasks={backgroundTasks}
             sessionId={session.id}
-            planModeState={session.planModeState}
+            planModeState={effectivePlanModeState}
             activePlanArtifact={activePlanArtifact}
             readOnly={session.readOnly}
             sessionFolderPath={sessionFolderPath}
@@ -1998,7 +2081,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             inputProps={{
               placeholder,
               disabled: isInputDisabled || session.readOnly,
-              isProcessing: session.isProcessing,
+              isProcessing: effectiveIsProcessing,
               onAnimatedHeightChange: handleAnimatedHeightChange,
               onSubmit: handleSubmit,
               onStop: handleStop,

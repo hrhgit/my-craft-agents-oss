@@ -596,12 +596,14 @@ Active: none
     expect(header.id).toBe(session.craftId)
     expect(header.cwd).toBe(workspaceRoot)
     expect(header.craft.name).toBe('Shared write')
+    expect(header.craft.conversationFormat).toBe('pi-projection-v1')
     expect(expandPath(header.craft.workingDirectory)).toBe(workspaceRoot)
     expect(lines.length).toBe(1)
 
     const listed = listSessions(workspaceRoot)
     expect(listed.map(s => s.craftId)).toContain(session.craftId)
     expect(listed.find(s => s.craftId === session.craftId)?.name).toBe('Shared write')
+    expect(listed.find(s => s.craftId === session.craftId)?.conversationFormat).toBe('pi-projection-v1')
   })
 
   it('ignores explicit non-default working directories for new sessions', async () => {

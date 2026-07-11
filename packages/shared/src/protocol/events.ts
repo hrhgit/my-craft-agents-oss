@@ -14,10 +14,12 @@ import type {
   BrowserInstanceInfo,
   DeepLinkNavigation,
 } from './dto'
+import type { PiProjectionEventV1 } from './pi-projection'
 
 export interface BroadcastEventMap {
   // Session events (workspace-scoped via broadcastToWorkspace)
   [RPC_CHANNELS.sessions.EVENT]: [event: SessionEvent]
+  [RPC_CHANNELS.sessions.PI_PROJECTION_EVENT]: [event: PiProjectionEventV1]
   [RPC_CHANNELS.sessions.UNREAD_SUMMARY_CHANGED]: [summary: UnreadSummary]
   [RPC_CHANNELS.sessions.FILES_CHANGED]: [sessionId: string]
 

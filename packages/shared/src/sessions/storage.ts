@@ -491,6 +491,7 @@ export async function createSession(
   const session: SessionHeader = {
     craftId: sessionId,
     workspaceRootPath,
+    conversationFormat: 'pi-projection-v1',
     name: options?.name,
     createdAt: now,
     lastUsedAt: now,

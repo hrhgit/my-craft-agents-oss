@@ -37,6 +37,7 @@ export const CHANNEL_MAP = {
   getUnreadSummary: invoke(RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY),
   markAllSessionsRead: invoke(RPC_CHANNELS.sessions.MARK_ALL_READ),
   getSessionMessages: invoke(RPC_CHANNELS.sessions.GET_MESSAGES),
+  getPiProjectionSnapshot: invoke(RPC_CHANNELS.sessions.GET_PI_PROJECTION_SNAPSHOT),
   createSession: invoke(RPC_CHANNELS.sessions.CREATE),
   deleteSession: invoke(RPC_CHANNELS.sessions.DELETE),
   sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE, undefined, 2, SEND_MESSAGE_RPC_TIMEOUT_MS, 0),
@@ -55,6 +56,7 @@ export const CHANNEL_MAP = {
 
   // Event listeners
   onSessionEvent: listener(RPC_CHANNELS.sessions.EVENT),
+  onPiProjectionEvent: listener(RPC_CHANNELS.sessions.PI_PROJECTION_EVENT),
   onUnreadSummaryChanged: listener(RPC_CHANNELS.sessions.UNREAD_SUMMARY_CHANGED),
 
   // Transport reliability

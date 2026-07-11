@@ -55,7 +55,7 @@ export interface MessagingBootstrapHandle {
    * `instance.wsServer` is available. Safe to call before `initializeWorkspaces`.
    */
   setPublisher(push: PublishEventFn): void
-  /** Compose the session-event fan-out on top of the base RPC push sink. */
+  /** Compose conversation projection and host-event fan-out on the base RPC push sink. */
   wrapSink(baseSink: EventSinkFn): EventSinkFn
   /** Initialize the given workspace IDs. Callers filter (e.g. skip `remoteServer`). */
   initializeWorkspaces(workspaceIds: string[]): Promise<void>

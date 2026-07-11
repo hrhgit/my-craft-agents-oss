@@ -19,7 +19,27 @@ const path = require('path');
 const fs = require('fs');
 
 module.exports = async function afterPack(context) {
-  // Only process macOS builds
+  const packagedResourcesDir = context.electronPlatformName === 'darwin'
+    ? path.join(context.appOutDir, 'Craft Agents.app', 'Contents', 'Resources')
+    : path.join(context.appOutDir, 'resources');
+  const stagedModules = path.join(packagedResourcesDir, 'pi-runtime', 'runtime_modules');
+  const nodeModules = path.join(packagedResourcesDir, 'pi-runtime', 'node_modules');
+  const compiledBinary = path.join(packagedResourcesDir, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi');
+
+  // electron-builder prunes directories named node_modules even when they are
+  // extraResources. The staging step deliberately uses runtime_modules; once
+  // files have been copied, restore the standard name expected by Bun.
+  if (fs.existsSync(compiledBinary)) {
+    console.log(`Compiled Pi runtime finalized: ${compiledBinary}`);
+  } else if (fs.existsSync(stagedModules)) {
+    fs.rmSync(nodeModules, { recursive: true, force: true });
+    fs.renameSync(stagedModules, nodeModules);
+    console.log(`Pi runtime modules finalized: ${nodeModules}`);
+  } else {
+    throw new Error(`Packaged Pi runtime modules missing: ${stagedModules}`);
+  }
+
+  // Only process the icon on macOS builds.
   if (context.electronPlatformName !== 'darwin') {
     console.log('Skipping Liquid Glass icon (not macOS)');
     return;

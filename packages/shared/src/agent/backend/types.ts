@@ -13,6 +13,9 @@
  */
 
 import type { AgentEvent, ExtensionCommandResult } from '@craft-agent/core/types';
+import type { PiProjectionEventV1 } from '../../protocol/pi-projection.ts';
+import type { CapabilityRequestV1, CapabilityResultV1 } from '../../protocol/capabilities.ts';
+import type { ExtensionContributionV1 } from '../../protocol/extension-contributions.ts';
 import type { FileAttachment } from '../../utils/files.ts';
 import type { ThinkingLevel } from '../thinking-levels.ts';
 import type { PermissionMode } from '../mode-manager.ts';
@@ -29,6 +32,18 @@ export { AbortReason, type RecoveryMessage };
 
 /** Runtime backend provider. Craft shells Pi; provider brands live in Pi config. */
 export type ModelProvider = 'pi';
+
+export interface AuthProjectionPromptRequest {
+  requestId: string;
+  authType: 'credential' | 'oauth' | 'oauth-google' | 'oauth-slack' | 'oauth-microsoft';
+  sourceSlug: string;
+  sourceName: string;
+  mode?: 'bearer' | 'basic' | 'header' | 'query' | 'multi-header';
+  labels?: { credential?: string; username?: string; password?: string };
+  headerNames?: string[];
+  passwordRequired?: boolean;
+  service?: string;
+}
 
 // Import LLM connection types for auth
 import type { LlmAuthType, LlmProviderType } from '../../config/llm-connections.ts';
@@ -64,6 +79,7 @@ export type ExtensionBridgeEvent = {
   | { type: 'extension_notify'; message: string; notificationType?: 'info' | 'warning' | 'error'; source?: string }
   | { type: 'extension_status'; key?: string; status: string; source?: string }
   | { type: 'extension_widget'; key: string; content: string[] | undefined; placement?: 'aboveEditor' | 'belowEditor'; source?: string }
+  | { type: 'extension_contribution'; contribution: ExtensionContributionV1 }
   | { type: 'extension_command_registered'; name: string; description?: string; source: string }
   | { type: 'extension_set_title'; title: string }
   | { type: 'extension_set_editor_text'; text: string }
@@ -309,6 +325,22 @@ export interface CoreBackendConfig {
    */
   onExtensionEvent?: (event: ExtensionBridgeEvent) => void;
 
+  /** Pi-first conversation projection stream. Must not contain Craft Message DTOs. */
+  onPiProjectionEvent?: (event: PiProjectionEventV1) => void;
+
+  /** Execute a Pi extension's request against the host-owned capability router. */
+  onHostCapabilityRequest?: (
+    request: CapabilityRequestV1,
+    onProgress: (event: import('@craft-agent/shared/protocol').CapabilityProgressV1) => void,
+  ) => Promise<CapabilityResultV1>;
+
+  /** Cancel an in-flight host capability after an extension abort or timeout. */
+  onHostCapabilityCancel?: (requestId: string, runtimeId: string) => void;
+  onHostCapabilityDeclaration?: (declaration: import('../../protocol/capabilities.ts').ExtensionCapabilityDeclarationV1) => void;
+
+  /** Release all in-flight capabilities owned by a stopped Pi runtime. */
+  onHostCapabilityRuntimeReleased?: (runtimeId: string) => void;
+
   /** Enable 1M context window for current Opus models. Default: true. Set false to use 200K and conserve usage limits. */
   enable1MContext?: boolean;
 
@@ -336,6 +368,10 @@ export interface ChatOptions {
   isRetry?: boolean;
   /** Override thinking level for this message only */
   thinkingOverride?: ThinkingLevel;
+  /** Frontend identity forwarded to Pi for optimistic projection reconciliation. */
+  clientMutationId?: string;
+  /** Sanitized display metadata forwarded to Pi; never include paths or contents. */
+  attachmentRefs?: Array<{ id: string; name: string; mediaType?: string; size?: number }>;
 }
 
 /**
@@ -432,7 +468,7 @@ export interface AgentBackend {
    * @returns true if steered (events flow through existing stream),
    *          false if aborted (session layer must queue + re-send)
    */
-  redirect(message: string): boolean;
+  redirect(message: string, clientMutationId?: string): boolean;
 
   /**
    * Run a simple text completion using the backend's auth infrastructure.
@@ -673,6 +709,15 @@ export interface AgentBackend {
    * 仅 Pi 后端实现；非 Pi 后端可不实现。
    */
   listExtensionCommands?(): Promise<PiExtensionCommand[]>;
+
+  /** Project a Host-owned auth prompt without exposing credential material. */
+  projectAuthPromptRequest?(request: AuthProjectionPromptRequest): void;
+
+  /** Resolve the stable Host-owned auth prompt entity. */
+  projectAuthPromptResolution?(
+    requestId: string,
+    resolution: 'completed' | 'failed' | 'cancelled',
+  ): void;
 
   // ============================================================
   // Callbacks (set by facade after construction)

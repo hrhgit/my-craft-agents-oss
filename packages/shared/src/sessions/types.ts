@@ -29,7 +29,7 @@ import type { PlanModeStateV1, StoredMessage } from '@craft-agent/core/types';
  */
 export const CRAFT_SESSION_METADATA_FIELDS = [
   // Identity
-  'craftId', 'workspaceRootPath', 'sdkSessionId', 'sdkCwd',
+  'craftId', 'workspaceRootPath', 'sdkSessionId', 'sdkCwd', 'conversationFormat',
   // Timestamps
   'createdAt', 'lastUsedAt', 'lastMessageAt',
   // Display
@@ -152,6 +152,12 @@ export interface CraftSessionMetadata {
   sdkSessionId?: string;
   /** Craft workspace 根路径 */
   workspaceRootPath: string;
+  /**
+   * Declares which transcript contract owns this session. Missing means the
+   * pre-projection Craft format; it is intentionally never inferred from a
+   * projection sidecar because an old session can acquire one after resume.
+   */
+  conversationFormat?: 'pi-projection-v1';
 
   // ============================================
   // Craft 时间戳

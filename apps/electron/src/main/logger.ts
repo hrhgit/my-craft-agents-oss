@@ -18,6 +18,7 @@ import type {
  * 4) Non-Electron runtimes default to debug mode (headless Bun / node --check)
  */
 function resolveDebugMode(): boolean {
+  if (process.env.CRAFT_E2E_DEBUG_LOGS === '1') return true
   if (process.argv.includes('--debug')) return true
 
   const packagedEnv = process.env.CRAFT_IS_PACKAGED

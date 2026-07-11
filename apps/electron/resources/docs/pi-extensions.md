@@ -32,6 +32,66 @@ An extension publishes a widget by calling:
 ctx.ui.setWidget(key, renderFn, { placement })
 ```
 
+## Calling Craft Host Capabilities
+
+Craft-targeted extensions request desktop functionality through Pi's typed
+capability client. Extensions never import Electron APIs or Craft IPC modules.
+
+```ts
+pi.declareCapabilities([
+  { capability: 'files.pick', operations: ['open'] },
+])
+
+const result = await ctx.capabilities.invoke<{ paths: string[] }>(
+  'files.pick',
+  'open',
+  { mode: 'file', extensions: ['md'] },
+  { timeoutMs: 30_000, signal: ctx.signal },
+)
+
+if (result.status === 'success') {
+  // Use result.output.paths
+}
+```
+
+The initial Electron host providers are:
+
+| Capability | Operation | Input |
+|---|---|---|
+| `system.notification` | `show` | `{ title, body }` |
+| `files.pick` | `open` | `{ title?, mode?, multiple?, extensions? }` |
+| `files.preview` | `read` | `{ path, maxBytes? }` (workspace-bounded, max 2 MiB) |
+| `browser.open` | `navigate` | `{ url, focus? }` |
+| `browser.control` | `back`, `forward`, `focus`, `hide`, `close` | `{ instanceId }` (session-owned instances only) |
+| `browser.operate` | `snapshot`, `click`, `fill`, `type`, `select`, `screenshot`, `wait`, `key`, `scroll`, monitoring | Session-owned browser input; executable page evaluation is excluded |
+| `oauth.flow` | `begin`, `status`, `cancel`, `revoke` | Host-managed flow references only |
+| `credentials.keychain` | `has`, `remove` | Current-workspace source references only |
+| `session.share` | `status`, `publish`, `refresh`, `revoke` | Current session only |
+| `session.transfer` | `export-summary`, `import-summary` | Bounded summary DTO only |
+| `messaging.session` | `status`, `list-bindings`, `pair`, `unbind` | Current session; no bot credentials |
+| `automation.workspace` | `status`, `list`, `set-enabled` | Sanitized summaries and stable IDs |
+| `scheduler.workspace` | `status`, `list`, `set-enabled` | Sanitized scheduler summaries |
+| `webhook.workspace` | `status`, `list`, `set-enabled` | No URL, request body, test, replay, or execution access |
+
+The Craft host owns authorization, workspace/session routing, timeout,
+cancellation, audit logging, and platform support. A provider can return
+`denied`, `cancelled`, `unsupported`, or `failed`; extensions must handle these
+statuses without falling back to direct host access. Session and workspace
+identity always come from the host route and cannot be supplied in `input`.
+
+Host authorization is fail-closed and operation-specific. An extension must
+declare each capability and operation before invoking it; declarations are
+bound to the current session, runtime, and extension and are cleared when the
+runtime exits. Provider registration and declaration alone do not grant
+mutating operations: Host policy can still deny or prompt the user. OAuth token
+reads, page script evaluation, clipboard access, arbitrary file upload, and raw
+webhook execution are not part of the capability policy.
+
+Extension UI contributions use the versioned `ExtensionContributionV1` side
+channel. Contributions are declarative text/Markdown/JSON blocks, actions,
+prompts, or inspector panels. React components, DOM nodes, HTML, scripts, and
+executable renderer code are rejected by the Host validator.
+
 | Argument | Type | Description |
 |----------|------|-------------|
 | `key` | `string` | Stable widget identifier (e.g. `'plan-todos'`, `'repo-memory'`). Re-calling with the same `key` replaces the widget; calling with `content === undefined` removes it. |
@@ -149,3 +209,31 @@ export function activate(ctx) {
 
 - [themes.md](./themes.md) — TUI vs GUI theme boundary and the `string[]` decoupling protocol
 - [skills.md](./skills.md) — Craft workspace skills (separate from Pi extensions)
+
+## Host OAuth and Credential Capabilities
+
+Desktop extensions can request OAuth through `ctx.capabilities` without ever
+receiving OAuth codes or credential values:
+
+```ts
+const flow = await ctx.capabilities.invoke('oauth.flow', 'begin', {
+  sourceSlug: 'github',
+})
+// flow: { flowId, status: 'pending', userAction: 'open_authorization' }
+
+const current = await ctx.capabilities.invoke('oauth.flow', 'status', {
+  flowId: flow.flowId,
+})
+```
+
+`begin` and `revoke` require Host confirmation. The Electron Host opens the
+system browser, owns PKCE/state/callback handling, exchanges the code, and
+writes credentials. Extensions may only receive a flow reference, status,
+safe account label, or stable error code. `complete`, raw authorization URLs,
+OAuth state, codes, tokens, client secrets, and credential values are not part
+of the capability protocol.
+
+`credentials.keychain/has` and `credentials.keychain/remove` operate only on
+source credential references in the active session workspace. They return
+booleans and cannot read or write secret values. Removal requires Host
+confirmation.

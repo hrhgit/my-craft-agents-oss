@@ -11,3 +11,4 @@
 export { PiAgent } from '../../pi-agent.ts';
 export { PiEventAdapter } from './event-adapter.ts';
 export { PI_TOOL_NAME_MAP, THINKING_TO_PI } from './constants.ts';
+export { PiProjectionBuilder } from './projection-builder.ts';

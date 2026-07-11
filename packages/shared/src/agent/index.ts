@@ -23,6 +23,7 @@ export {
   registerSessionScopedToolCallbacks,
   unregisterSessionScopedToolCallbacks,
   mergeSessionScopedToolCallbacks,
+  getSessionScopedToolCallbacks,
   // Types
   type SessionScopedToolCallbacks,
   type BrowserPaneFns,
@@ -37,6 +38,9 @@ export {
   type MicrosoftOAuthAuthRequest,
   type CredentialInputMode,
 } from './session-scoped-tools.ts';
+
+export { executeBrowserToolCommand, getBrowserToolHelp } from './browser-tool-runtime.ts';
+export type { BrowserLifecycleActionResult } from './browser-tools.ts';
 
 // Export mode-manager - Centralized mode management
 export {
@@ -143,6 +147,7 @@ export {
   type ChatOptions,
   type RecoveryMessage,
   type SdkMcpServerConfig as BackendMcpServerConfig,
+  type PiExtensionCommand,
   // Enums
   AbortReason as BackendAbortReason,
 } from './backend/index.ts';

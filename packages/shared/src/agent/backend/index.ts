@@ -42,6 +42,8 @@ export type {
   LlmAuthType,
   LlmProviderType,
   PostInitResult,
+  ExtensionBridgeEvent,
+  PiExtensionCommand,
 } from './types.ts';
 
 // Enums need to be exported as values, not just types

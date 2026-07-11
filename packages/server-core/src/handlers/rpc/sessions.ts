@@ -50,6 +50,10 @@ function sessionWorkspaceDistribution(sessions: Array<{ workspaceId?: string }>)
   return distribution
 }
 
+function isPiNativeSession(session: Pick<Session, 'conversationFormat'>): boolean {
+  return session.conversationFormat === 'pi-projection-v1'
+}
+
 /**
  * Enforce that `sessionId` belongs to the calling client's authenticated
  * workspace.
@@ -225,7 +229,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       ? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId)
       : undefined
     const workspaceId = ctx.workspaceId ?? windowWorkspaceId
-    const sessions = sessionManager.getSessions(workspaceId ?? undefined)
+    // Legacy Craft transcripts remain on disk for data preservation and may
+    // still be used by Host-internal services, but are no longer user-visible.
+    const sessions = sessionManager
+      .getSessions(workspaceId ?? undefined)
+      .filter(isPiNativeSession)
     // Keep the startup list workspace-scoped. Global Pi CLI history can be
     // large; individual pi-* sessions are still loaded on demand below.
     end()
@@ -264,9 +272,13 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId, { allowMissingWithWorkspace: true })
 
     const session = await sessionManager.getSession(sessionId)
-    if (session) {
+    if (session && isPiNativeSession(session)) {
       end()
       return session
+    }
+    if (session) {
+      end()
+      throw new Error(`Legacy Craft session is not available in the Pi-first UI: ${sessionId}`)
     }
 
     // Pi-owned session projection (read-only): load from Pi's session bucket
@@ -284,7 +296,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       const projectedSession = projection
         ? projectTreeSessionProjectionAsStoredSession(projection, { workspaceRootPath: workspaceRoot })
         : null
-      if (projection && projectedSession) {
+      if (projection && projectedSession?.conversationFormat === 'pi-projection-v1') {
         const messages = projectedSession.messages.map(storedToMessage)
         const piSession: Session = {
           id: sessionId,
@@ -300,6 +312,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           messageCount: messages.length,
           workingDirectory: projectedSession.workingDirectory,
           sessionFolderPath: projection.path ?? projection.sessionDir,
+          conversationFormat: projectedSession.conversationFormat,
         }
         end()
         return piSession
@@ -307,6 +320,14 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       end()
       return null
     }
+  })
+
+  // Canonical Pi-first conversation state. Live updates arrive on
+  // PI_PROJECTION_EVENT; clients use this snapshot to initialize or recover
+  // after a sequence gap.
+  server.handle(RPC_CHANNELS.sessions.GET_PI_PROJECTION_SNAPSHOT, async (ctx, sessionId: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    return sessionManager.getPiProjectionSnapshot(sessionId)
   })
 
   // Create a new session
@@ -530,11 +551,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         return sessionPath ? { success: true, path: sessionPath } : { success: false }
       }
       case 'shareToViewer':
-        return sessionManager.shareToViewer(sessionId)
+        return sessionManager.shareTransferService.publish(sessionId)
       case 'updateShare':
-        return sessionManager.updateShare(sessionId)
+        return sessionManager.shareTransferService.refresh(sessionId)
       case 'revokeShare':
-        return sessionManager.revokeShare(sessionId)
+        return sessionManager.shareTransferService.revoke(sessionId)
       case 'refreshTitle':
         log.info(`IPC: refreshTitle received for session ${sessionId}`)
         return sessionManager.refreshTitle(sessionId)
@@ -757,7 +778,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
     if (!workspaceId) throw new Error('No workspace context')
 
-    const payload = await sessionManager.exportRemoteSessionTransfer(sessionId, workspaceId)
+    const payload = await sessionManager.shareTransferService.exportSummary(sessionId, workspaceId)
     if (!payload) throw new Error(`Failed to export remote transfer for session ${sessionId}`)
     return payload
   })
@@ -766,6 +787,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, async (_ctx, targetWorkspaceId: string, payload: import('@craft-agent/shared/protocol').RemoteSessionTransferPayload) => {
     await sessionManager.waitForInit()
     if (!targetWorkspaceId || typeof targetWorkspaceId !== 'string') throw new Error('targetWorkspaceId is required')
-    return sessionManager.importRemoteSessionTransfer(targetWorkspaceId, payload)
+    return sessionManager.shareTransferService.importSummary(targetWorkspaceId, payload)
   })
 }

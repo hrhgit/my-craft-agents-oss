@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
@@ -24,6 +24,7 @@ import {
   type RpcClientOptions as PiRpcClientOptions,
   type RpcCommandType as PiRpcCommandType,
   type RpcHostToolResult as PiRpcHostToolResult,
+  type RpcExtensionHostCapabilityResponse as PiRpcExtensionHostCapabilityResponse,
 } from '@earendil-works/pi-coding-agent/rpc';
 import { piHostManager, type PiHostLease } from './backend/pi-host-manager.ts';
 
@@ -32,6 +33,7 @@ import type {
   BackendRuntimeUpdate,
   ChatOptions,
   ExtensionBridgeEvent,
+  AuthProjectionPromptRequest,
   PiExtensionCommand,
   SdkMcpServerConfig,
 } from './backend/types.ts';
@@ -51,6 +53,7 @@ import type { Workspace } from '../config/storage.ts';
 
 // Event adapter
 import { PiEventAdapter } from './backend/pi/event-adapter.ts';
+import { PiProjectionBuilder } from './backend/pi/projection-builder.ts';
 import { EventQueue } from './backend/event-queue.ts';
 
 // System prompt for Craft Agent context
@@ -66,7 +69,6 @@ import {
   mergeSessionScopedToolCallbacks,
   unregisterSessionScopedToolCallbacks,
   setLastPlanFilePath,
-  getSessionScopedToolCallbacks,
 } from './session-scoped-tools.ts';
 import { attachSessionSelfManagementBindings } from './session-self-management-bindings.ts';
 
@@ -97,7 +99,7 @@ import { parseError, type AgentError } from './errors.ts';
 // Centralized PreToolUse pipeline
 import { runPreToolUseChecks, type PreToolUseCheckResult } from './core/pre-tool-use.ts';
 import { getRtkPath } from './core/rtk-detector.ts';
-import { getRtkEnabled, getBrowserToolEnabled, getPiShellFullPassthrough } from '../config/storage.ts';
+import { getRtkEnabled, getPiShellFullPassthrough } from '../config/storage.ts';
 import type { RtkContext } from './core/rtk-rewrite.ts';
 
 // Workspace slug extraction for skill qualification
@@ -105,8 +107,6 @@ import { extractWorkspaceSlug } from '../utils/workspace.ts';
 
 // LLM tool types
 import type { LLMQueryRequest, LLMQueryResult } from './llm-tool.ts';
-import { executeBrowserToolCommand } from './browser-tool-runtime.ts';
-import { saveBinaryResponse } from '../utils/binary-detection.ts';
 import { writeRuntimeLog, type RuntimeLogLevel } from '../utils/runtime-log.ts';
 
 // ============================================================
@@ -116,7 +116,6 @@ import { writeRuntimeLog, type RuntimeLogLevel } from '../utils/runtime-log.ts';
 /** Backend-executed session tools currently supported by PiAgent. */
 export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
   'spawn_session',
-  'browser_tool',
 ]);
 
 const PI_RPC_START_TIMEOUT_MS = 15_000;
@@ -158,7 +157,7 @@ type PiRpcHostToolDefinition = {
  * Receiver-side check: keyed on `err.code === 'X'`, never `instanceof CodedError` —
  * the transport reconstructs a plain `Error` with `.code` attached.
  */
-function mapBrowserToolErrorCode(code: string): string | null {
+export function mapBrowserToolErrorCode(code: string): string | null {
   switch (code) {
     case 'BROWSER_NO_CAPABLE_CLIENT':
     case 'CAPABILITY_UNAVAILABLE':
@@ -256,6 +255,7 @@ export class PiAgent extends BaseAgent {
 
   // Event adapter
   private adapter: PiEventAdapter;
+  private projectionBuilder: PiProjectionBuilder | null = null;
 
   // Event queue for streaming (AsyncGenerator pattern over RpcClient events)
   private eventQueue = new EventQueue();
@@ -373,6 +373,8 @@ export class PiAgent extends BaseAgent {
    */
   private assertBackendSessionToolParity(): void {
     const missing = [...SESSION_BACKEND_TOOL_NAMES].filter(
+      (name) => name !== 'browser_tool',
+    ).filter(
       (name) => !PI_BACKEND_SESSION_TOOL_NAMES.has(name),
     );
 
@@ -459,6 +461,14 @@ export class PiAgent extends BaseAgent {
 
   private buildRpcArgs(): string[] {
     const args: string[] = [];
+    const browserExtensionPath = process.env.CRAFT_BROWSER_EXTENSION_PATH;
+    if (browserExtensionPath && existsSync(browserExtensionPath)) {
+      args.push('--extension', browserExtensionPath);
+    }
+    const messagingExtensionPath = process.env.CRAFT_MESSAGING_EXTENSION_PATH;
+    if (messagingExtensionPath && existsSync(messagingExtensionPath)) {
+      args.push('--extension', messagingExtensionPath);
+    }
     const sessionId = this.config.session?.craftId;
     const branchFromPiSessionFile = this.config.session?.branchFromPiSessionFile;
     const sessionDir = this.config.session
@@ -481,6 +491,11 @@ export class PiAgent extends BaseAgent {
       args.push('--name', this.config.session.name);
     }
     return args;
+  }
+
+  private getCraftExtensionPaths(): string[] {
+    return [process.env.CRAFT_BROWSER_EXTENSION_PATH, process.env.CRAFT_MESSAGING_EXTENSION_PATH]
+      .filter((value): value is string => Boolean(value && existsSync(value)));
   }
 
   private startRpcClient(): Promise<void> {
@@ -521,9 +536,10 @@ export class PiAgent extends BaseAgent {
 
   private async startRpcClientUnlocked(): Promise<void> {
     const runtime = getBackendRuntime(this.config);
-    const nodePath = runtime.paths?.node || process.execPath;
     const cwd = this.resolvedCwd();
     const cliPath = this.resolvePiCliPath();
+    const usesCompiledBinary = basename(cliPath).toLowerCase() === (process.platform === 'win32' ? 'pi.exe' : 'pi');
+    const nodePath = usesCompiledBinary ? cliPath : (runtime.paths?.node || process.execPath);
 
     this.debug(`Starting Pi RpcClient: ${nodePath} ${cliPath}`);
     this.resetRpcErrorDedup();
@@ -565,6 +581,7 @@ export class PiAgent extends BaseAgent {
       command: nodePath,
       commandArgs,
       cliPath,
+      directExecutable: usesCompiledBinary,
       cwd,
       provider: runtime.piAuthProvider,
       model: this._model,
@@ -593,6 +610,7 @@ export class PiAgent extends BaseAgent {
             runtimeId,
             cwd,
             extensionTarget: 'craft',
+            extensionPaths: this.getCraftExtensionPaths(),
             sessionDir,
             sessionId: this.config.session?.craftId,
             forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
@@ -704,15 +722,14 @@ export class PiAgent extends BaseAgent {
     this.assertBackendSessionToolParity();
     let sessionToolDefs = getSessionToolProxyDefs();
 
-    // Mirror Claude's gate: hide `browser_tool` when the user has disabled
-    // the built-in browser tool. Without this filter, Pi would still advertise
-    // `mcp__session__browser_tool` while Claude doesn't — sessions would behave
-    // inconsistently depending on backend.
-    // F14: CLI 模式下强制禁用 browser_tool——CLI 无浏览器窗口，注册只会导致调用时返回运行时错误。
-    const cliMode = process.env.CRAFT_CLI_MODE === '1'
-    if (cliMode || !getBrowserToolEnabled()) {
-      sessionToolDefs = sessionToolDefs.filter(d => d.name !== 'mcp__session__browser_tool');
-    }
+    // Pi owns these tools through the messaging extension and the versioned
+    // Host capability protocol. Other backends keep the canonical registry handlers.
+    sessionToolDefs = sessionToolDefs.filter(d =>
+      d.name !== 'mcp__session__list_messaging_channels'
+      && d.name !== 'mcp__session__unbind_messaging_channel'
+    );
+
+    sessionToolDefs = sessionToolDefs.filter(d => d.name !== 'mcp__session__browser_tool');
 
     await rpcClient.registerTools(sessionToolDefs as PiRpcHostToolDefinition[], (request) => this.executeHostTool(request));
     this.debug(`Registered ${sessionToolDefs.length} session tools with Pi RpcClient`);
@@ -946,6 +963,29 @@ export class PiAgent extends BaseAgent {
       return;
     }
 
+    if (event.type === 'extension_host_capability_request') {
+      void this.handleExtensionHostCapabilityRequest(event);
+      return;
+    }
+
+    if (event.type === 'extension_host_capability_declaration') {
+      const sessionId = this.config.session?.craftId ?? this._sessionId;
+      const runtimeId = this.currentRpcRuntimeId() ?? `legacy:${sessionId}`;
+      this.config.onHostCapabilityDeclaration?.({
+        version: 1,
+        sessionId,
+        runtimeId,
+        extensionId: event.extensionId,
+        declarations: event.declarations,
+      });
+      return;
+    }
+
+    if (event.type === 'extension_host_capability_cancel') {
+      this.config.onHostCapabilityCancel?.(event.id, this.currentRpcRuntimeId() ?? `legacy:${this.config.session?.craftId ?? this._sessionId}`);
+      return;
+    }
+
     if (event.type === 'extension_error') {
       this.config.onExtensionEvent?.({
         type: 'extension_notify',
@@ -962,6 +1002,8 @@ export class PiAgent extends BaseAgent {
   ): void {
     if (this.rpcProcessFailureHandled) return;
     this.rpcProcessFailureHandled = true;
+    const failedRuntimeId = this.currentRpcRuntimeId();
+    if (failedRuntimeId) this.config.onHostCapabilityRuntimeReleased?.(failedRuntimeId);
 
     this.debug(`Pi RpcClient lifecycle failure: ${event.type}: ${event.message}`);
     this.writePiRuntimeLog('error', 'lifecycle.failure', {
@@ -992,6 +1034,71 @@ export class PiAgent extends BaseAgent {
       void failedHostLease.release().catch(error => {
         this.debug(`Failed to release crashed Pi runtime: ${error instanceof Error ? error.message : String(error)}`);
       });
+    }
+  }
+
+  private async handleExtensionHostCapabilityRequest(
+    event: Extract<PiRpcClientEvent, { type: 'extension_host_capability_request' }>,
+  ): Promise<void> {
+    const client = this.rpcClient;
+    if (!client) return;
+    const sessionId = this.config.session?.craftId ?? this._sessionId;
+    // Runtime identity is assigned by the Host client. Never accept an extension-supplied
+    // route value here: capability authorization and cleanup depend on this boundary.
+    const runtimeId = 'runtimeId' in client && typeof client.runtimeId === 'string'
+      ? client.runtimeId
+      : `legacy:${sessionId}`;
+    let response: PiRpcExtensionHostCapabilityResponse;
+    try {
+      const result = this.config.onHostCapabilityRequest
+        ? await this.config.onHostCapabilityRequest({
+            version: 1,
+            requestId: event.id,
+            capability: event.capability,
+            sessionId,
+            runtimeId,
+            extensionId: event.extensionId,
+            operation: event.operation,
+            input: event.input,
+            timeoutMs: event.timeoutMs,
+          }, (progress) => {
+            try {
+              client.reportExtensionHostCapabilityProgress({
+                type: 'extension_host_capability_progress',
+                version: 1,
+                id: event.id,
+                sequence: progress.sequence,
+                progress: progress.progress,
+              });
+            } catch (error) {
+              this.debug(`Failed to report host capability progress ${event.id}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          })
+        : {
+            requestId: event.id,
+            status: 'unsupported' as const,
+            error: { code: 'HOST_CAPABILITIES_UNAVAILABLE', message: 'Host capabilities are unavailable.' },
+          };
+      response = result.status === 'success'
+        ? { type: 'extension_host_capability_response', version: 1, id: event.id, status: 'success', output: result.output }
+        : {
+            type: 'extension_host_capability_response', version: 1, id: event.id, status: result.status,
+            error: result.error ? {
+              code: result.error.code,
+              message: result.error.message,
+              recoverable: result.error.retryable,
+            } : undefined,
+          };
+    } catch (error) {
+      response = {
+        type: 'extension_host_capability_response', version: 1, id: event.id, status: 'failed',
+        error: { code: 'HOST_CAPABILITY_BRIDGE_ERROR', message: error instanceof Error ? error.message : String(error) },
+      };
+    }
+    try {
+      client.respondToExtensionHostCapability(response);
+    } catch (error) {
+      this.debug(`Failed to respond to extension host capability ${event.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -1175,6 +1282,7 @@ export class PiAgent extends BaseAgent {
     // The event adapter expects typed PiAgentEvent/AgentSessionEvent objects,
     // but since we're receiving plain JSON, we cast through unknown.
     for (const agentEvent of this.adapter.adaptEvent(adaptedEvent as any)) {
+      this.emitPiProjectionEvents(agentEvent);
       // Track Read tool calls for prerequisite checking
       if (agentEvent.type === 'tool_start' && agentEvent.toolName === 'Read') {
         this.prerequisiteManager.trackReadTool(agentEvent.input as Record<string, unknown>);
@@ -1203,6 +1311,8 @@ export class PiAgent extends BaseAgent {
     if (eventType === 'agent_end') {
       this.eventQueue.complete();
     }
+
+    this.emitRawPiProjectionEvents(adaptedEvent);
   }
 
   /**
@@ -1385,8 +1495,29 @@ export class PiAgent extends BaseAgent {
           approvalTtlSeconds: checkResult.approvalTtlSeconds,
         });
 
+        for (const event of this.getProjectionBuilder()?.acceptPromptRequest({
+          requestId: permRequestId,
+          promptKind: 'permission',
+          toolName,
+          description: checkResult.description,
+          command: checkResult.command,
+          permissionType: checkResult.promptType,
+          appName: checkResult.appName,
+          reason: checkResult.reason,
+          impact: checkResult.impact,
+          requiresSystemPrompt: checkResult.requiresSystemPrompt,
+          rememberForMinutes: checkResult.rememberForMinutes,
+          commandHash: checkResult.commandHash,
+          approvalTtlSeconds: checkResult.approvalTtlSeconds,
+        }) ?? []) {
+          this.config.onPiProjectionEvent?.(event);
+        }
+
         const allowed = await permissionPromise;
         this.pendingPermissions.delete(permRequestId);
+        for (const event of this.getProjectionBuilder()?.acceptPromptResolution(permRequestId, allowed ? 'allowed' : 'denied') ?? []) {
+          this.config.onPiProjectionEvent?.(event);
+        }
 
         if (!allowed) {
           return { action: 'block', reason: 'Permission denied by user.' };
@@ -1501,58 +1632,6 @@ export class PiAgent extends BaseAgent {
         }
       }
 
-      // browser_tool — single CLI-like tool for all browser actions
-      if (toolName === 'browser_tool') {
-        const callbacks = getSessionScopedToolCallbacks(this._sessionId);
-        const browserFns = callbacks?.browserPaneFns;
-        if (!browserFns) {
-          return { content: 'Browser window controls are not available. This tool requires the desktop app.', isError: true };
-        }
-
-        try {
-          const result = await executeBrowserToolCommand({
-            command: (args.command as string | string[]) ?? '',
-            fns: browserFns,
-            sessionId: this._sessionId,
-          });
-
-          let content = result.output;
-          if (result.image) {
-            const sessionPath = getSessionPath(this.config.workspace.rootPath, this._sessionId);
-            const imageBuffer = Buffer.from(result.image.data, 'base64');
-            const ext = result.image.mimeType === 'image/jpeg' ? 'jpg' : 'png';
-            const saved = saveBinaryResponse(sessionPath, `browser-screenshot.${ext}`, imageBuffer, result.image.mimeType);
-
-            if (saved.type === 'file_download') {
-              content += [
-                '',
-                `Saved screenshot: ${saved.path}`,
-                '',
-                '```image-preview',
-                JSON.stringify({
-                  src: saved.path,
-                  title: 'Browser Screenshot',
-                }, null, 2),
-                '```',
-              ].join('\n');
-            } else {
-              content += `\n\n[Screenshot captured (${Math.round(result.image.sizeBytes / 1024)}KB ${result.image.mimeType}) but failed to save: ${saved.error}]`;
-            }
-          }
-
-          return { content, isError: false };
-        } catch (error) {
-          // Branch on `err.code` (string), not `instanceof CodedError` — the
-          // transport reconstructs a plain Error on the receiving side, so
-          // class identity is lost across the wire.
-          const rawCode = (error as { code?: unknown } | null)?.code;
-          const code = typeof rawCode === 'string' ? rawCode : '';
-          const msg = error instanceof Error ? error.message : String(error);
-          const friendly = mapBrowserToolErrorCode(code) ?? msg;
-          return { content: friendly, isError: true };
-        }
-      }
-
       const def = SESSION_TOOL_REGISTRY.get(toolName);
       if (!def) {
         return { content: `Unknown session tool: ${toolName}`, isError: true };
@@ -1651,6 +1730,45 @@ export class PiAgent extends BaseAgent {
         }
       }
     }
+  }
+
+  private emitPiProjectionEvents(event: AgentEvent): void {
+    const builder = this.getProjectionBuilder();
+    const emit = this.config.onPiProjectionEvent;
+    if (!builder || !emit) return;
+    for (const projectionEvent of builder.accept(event)) emit(projectionEvent);
+  }
+
+  projectAuthPromptRequest(request: AuthProjectionPromptRequest): void {
+    for (const event of this.getProjectionBuilder()?.acceptAuthPromptRequest(request) ?? []) {
+      this.config.onPiProjectionEvent?.(event);
+    }
+  }
+
+  projectAuthPromptResolution(requestId: string, resolution: 'completed' | 'failed' | 'cancelled'): void {
+    for (const event of this.getProjectionBuilder()?.acceptAuthPromptResolution(requestId, resolution) ?? []) {
+      this.config.onPiProjectionEvent?.(event);
+    }
+  }
+
+  private emitRawPiProjectionEvents(event: Record<string, unknown>): void {
+    const builder = this.getProjectionBuilder();
+    const emit = this.config.onPiProjectionEvent;
+    if (!builder || !emit) return;
+    for (const projectionEvent of builder.acceptRuntimeEvent(event)) emit(projectionEvent);
+  }
+
+  private getProjectionBuilder(): PiProjectionBuilder | null {
+    const sessionId = this.config.session?.craftId;
+    if (!this.config.onPiProjectionEvent || !sessionId) return null;
+    const client = this.rpcClient;
+    const runtimeId = client && 'runtimeId' in client && typeof client.runtimeId === 'string'
+      ? client.runtimeId
+      : `legacy:${sessionId}`;
+    if (!this.projectionBuilder || this.projectionBuilder.runtimeId !== runtimeId) {
+      this.projectionBuilder = new PiProjectionBuilder(sessionId, runtimeId);
+    }
+    return this.projectionBuilder;
   }
 
   /**
@@ -1844,9 +1962,7 @@ export class PiAgent extends BaseAgent {
       prompt: message,
     });
 
-    // Refresh session-scoped tool callbacks (for source auth, etc.)
-    // IMPORTANT: merge (don't replace) so SessionManager-provided browserPaneFns
-    // survives across turns.
+    // Refresh session-scoped callbacks used by source auth and plan review.
     const sessionId = this.config.session?.craftId;
     if (sessionId) {
       mergeSessionScopedToolCallbacks(sessionId, {
@@ -1993,7 +2109,11 @@ export class PiAgent extends BaseAgent {
       await client.prompt(
         userMessage,
         images.length > 0 ? images as any : undefined,
-        { systemPrompt: fullSystemPrompt || undefined },
+        {
+          systemPrompt: fullSystemPrompt || undefined,
+          clientMutationId: options?.clientMutationId,
+          attachments: options?.attachmentRefs,
+        },
       );
 
       // Yield events as they arrive. The source-activation drain controller
@@ -2216,14 +2336,14 @@ export class PiAgent extends BaseAgent {
    * queued tools, and continues with full context intact.
    * Events flow through the existing generator — no abort needed.
    */
-  override redirect(message: string): boolean {
+  override redirect(message: string, clientMutationId?: string): boolean {
     if (!this._isProcessing || !this.rpcClient) {
       // Not streaming or no client — fall back to abort
       this.forceAbort(AbortReason.Redirect);
       return false;
     }
     this.debug(`Steering mid-stream: "${message.slice(0, 100)}"`);
-    void this.rpcClient.steer(message).catch(error => this.handleRpcError(error));
+    void this.rpcClient.steer(message, undefined, { clientMutationId }).catch(error => this.handleRpcError(error));
     return true;
   }
 
@@ -2289,6 +2409,8 @@ export class PiAgent extends BaseAgent {
 
   private async stopRpcClient(): Promise<void> {
     const client = this.rpcClient;
+    const runtimeId = this.currentRpcRuntimeId();
+    if (runtimeId) this.config.onHostCapabilityRuntimeReleased?.(runtimeId);
     const hostLease = this.rpcHostLease;
     this.unsubscribePiEvent?.();
     this.unsubscribePiEvent = null;
@@ -2310,6 +2432,13 @@ export class PiAgent extends BaseAgent {
         this.debug(`Failed to stop Pi RpcClient cleanly: ${error instanceof Error ? error.message : String(error)}`);
       });
     }
+  }
+
+  private currentRpcRuntimeId(): string | undefined {
+    const client = this.rpcClient;
+    return client && 'runtimeId' in client && typeof client.runtimeId === 'string'
+      ? client.runtimeId
+      : undefined;
   }
 
   // ============================================================

@@ -81,10 +81,24 @@ if (persistedUiLanguage) {
 const machineId = createHash('sha256').update(hostname() + homedir()).digest('hex').slice(0, 16)
 Sentry.setUser({ id: machineId })
 
+function redactBrowserUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return ''
+  }
+}
+
 import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@craft-agent/server-core/sessions'
+import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createKeychainCapabilityProvider, createMessagingSessionCapabilityProvider, createOAuthCapabilityProvider, createScopedAutomationCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@craft-agent/server-core'
+import { completeOAuthFlow } from '@craft-agent/server-core/handlers/rpc/oauth'
+import { listWorkspaceAutomationsForCapability, setWorkspaceAutomationEnabledById } from '@craft-agent/server-core/handlers/rpc/automations'
 import { registerAllRpcHandlers } from './handlers/index'
 import { registerCoreRpcHandlers, cleanupSessionFileWatchForClient } from '@craft-agent/server-core/handlers/rpc'
 import type { PlatformServices } from '../runtime/platform'
@@ -109,13 +123,15 @@ import { initializeBackendHostRuntime } from '@craft-agent/shared/agent/backend'
 import { setPowerShellValidatorRoot } from '@craft-agent/shared/agent'
 import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
-import { OAuthFlowStore } from '@craft-agent/shared/auth'
+import { createBrowserCapabilityAdapter } from './browser-capability-adapter'
+import { createCallbackServer, createPendingFlow, OAuthFlowStore } from '@craft-agent/shared/auth'
+import { getSourceCredentialManager, loadSource } from '@craft-agent/shared/sources'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog } from './logger'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 import { registerPiModelResolver } from '@craft-agent/shared/config'
 import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/config/models-pi'
-import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount } from './notifications'
+import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount, showNotification } from './notifications'
 import { checkForUpdatesOnLaunch, setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './auto-update'
 import type { EventSink } from '@craft-agent/server-core/transport'
 import { validateGitBashPath, checkVCRedistInstalled } from '@craft-agent/server-core/services'
@@ -124,6 +140,14 @@ import { spawnWorkspaceServer, type SpawnedWorkspaceServer } from './workspace-s
 
 // Initialize electron-log for renderer process support
 log.initialize()
+
+// Host-capability tools are Pi extensions, explicitly injected into every Craft runtime.
+process.env.CRAFT_BROWSER_EXTENSION_PATH = app.isPackaged
+  ? join(process.resourcesPath, 'app', 'resources', 'pi-extensions', 'browser.js')
+  : join(__dirname, '../resources/pi-extensions/browser.js')
+process.env.CRAFT_MESSAGING_EXTENSION_PATH = app.isPackaged
+  ? join(process.resourcesPath, 'app', 'resources', 'pi-extensions', 'messaging.js')
+  : join(__dirname, '../resources/pi-extensions/messaging.js')
 
 // Diagnostic: report main-process i18n hydration result. We log here (not inline
 // at the hydration site above) because mainLog is only available after this point.
@@ -213,6 +237,18 @@ let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
 let browserPaneManager: BrowserPaneManager | null = null
 let oauthFlowStore: OAuthFlowStore | null = null
+const capabilityOAuthFlows = new Map<string, {
+  sessionId: string
+  state: string
+  status: 'pending' | 'completed' | 'cancelled' | 'failed'
+  accountLabel?: string
+  errorCode?: string
+  close(): void
+}>()
+function disposeCapabilityOAuthFlows(): void {
+  for (const flow of capabilityOAuthFlows.values()) flow.close()
+  capabilityOAuthFlows.clear()
+}
 let moduleSink: EventSink | null = null
 let moduleClientResolver: ((webContentsId: number) => string | undefined) | null = null
 let workspaceServer: SpawnedWorkspaceServer | null = null
@@ -668,7 +704,296 @@ app.whenReady().then(async () => {
         },
         createSessionManager: () => {
           const sm = new SessionManager()
+          if (isHeadless) return sm
           sm.setBrowserPaneManager(browserPaneManager!)
+          sm.setCapabilityPrompt(async (request) => {
+            const result = await dialog.showMessageBox({
+              type: 'question',
+              title: 'Extension permission',
+              message: `Allow ${request.extensionId} to use ${request.capability}?`,
+              detail: `Operation: ${request.operation}\nSession: ${request.sessionId}`,
+              buttons: ['Deny', 'Allow'],
+              defaultId: 0,
+              cancelId: 0,
+              noLink: true,
+            })
+            return result.response === 1
+          })
+          sm.registerCapabilityProvider(createSystemNotificationProvider(async ({ title, body }, route) => {
+            const session = await sm.getSession(route.sessionId)
+            showNotification(title, body, session?.workspaceId ?? '', route.sessionId)
+          }))
+          sm.registerCapabilityProvider(createFilesProvider(async ({ title, mode = 'file', multiple = false, extensions }) => {
+            const properties: Array<'openFile' | 'openDirectory' | 'multiSelections'> = [mode === 'directory' ? 'openDirectory' : 'openFile']
+            if (multiple) properties.push('multiSelections')
+            const result = await dialog.showOpenDialog({
+              title,
+              properties,
+              ...(extensions?.length ? { filters: [{ name: 'Allowed files', extensions }] } : {}),
+            })
+            return { cancelled: result.canceled, paths: result.filePaths }
+          }))
+          sm.registerCapabilityProvider(createFilePreviewProvider(async ({ path, maxBytes }, route) => {
+            const session = await sm.getSession(route.sessionId)
+            if (!session) throw new Error('Session not found')
+            const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(session.workspaceId))
+            const { readFile, stat } = await import('fs/promises')
+            const info = await stat(safePath)
+            if (!info.isFile()) throw new Error('Preview path must be a file')
+            if (info.size > maxBytes) throw new Error(`Preview exceeds ${maxBytes} bytes`)
+            const ext = safePath.split('.').pop()?.toLowerCase() ?? ''
+            const mimeType = ({
+              png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+              webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon',
+              avif: 'image/avif', txt: 'text/plain', md: 'text/markdown', json: 'application/json',
+            } as Record<string, string>)[ext] ?? 'application/octet-stream'
+            const buffer = await readFile(safePath)
+            return { mimeType, size: buffer.byteLength, dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}` }
+          }))
+          sm.registerCapabilityProvider(createBrowserProvider(async ({ url, focus }, route) => {
+            const session = await sm.getSession(route.sessionId)
+            if (!session) throw new Error('Session not found')
+            const instanceId = await browserPaneManager!.getOrCreateForSessionAsync(route.sessionId, { workspaceId: session.workspaceId })
+            const navigated = await browserPaneManager!.navigate(instanceId, url)
+            if (focus) browserPaneManager!.focus(instanceId)
+            return { instanceId, ...navigated }
+          }))
+          sm.registerCapabilityProvider(createBrowserControlProvider(async (operation, { instanceId }, route) => {
+            const instance = await browserPaneManager!.getInstanceAsync(instanceId)
+            if (!instance || instance.ownerSessionId !== route.sessionId) {
+              throw new Error('Browser instance is not owned by this session')
+            }
+            switch (operation) {
+              case 'back': await browserPaneManager!.goBack(instanceId); break
+              case 'forward': await browserPaneManager!.goForward(instanceId); break
+              case 'focus': browserPaneManager!.focus(instanceId); break
+              case 'hide': browserPaneManager!.hide(instanceId); break
+              case 'close': browserPaneManager!.destroyInstance(instanceId); break
+            }
+          }))
+          sm.registerCapabilityProvider(createBrowserCommandProvider(
+            async ({ sessionId }) => {
+              const session = await sm.getSession(sessionId)
+              if (!session) return undefined
+              return createBrowserCapabilityAdapter(browserPaneManager!, sessionId, session.workspaceId)
+            },
+            async (image, { sessionId }) => {
+              const sessionPath = sm.getSessionPath(sessionId)
+              if (!sessionPath) throw new Error('Session not found')
+              const { mkdir, writeFile } = await import('fs/promises')
+              const artifactsDir = join(sessionPath, 'artifacts')
+              await mkdir(artifactsDir, { recursive: true })
+              const extension = image.mimeType === 'image/jpeg' ? 'jpg' : 'png'
+              const path = join(artifactsDir, `browser-${randomUUID()}.${extension}`)
+              await writeFile(path, Buffer.from(image.data, 'base64'))
+              return { path }
+            },
+          ))
+          sm.registerCapabilityProvider(createBrowserOperationsProvider(async (operation, input, route) => {
+            const instanceId = String(input.instanceId)
+            const instance = await browserPaneManager!.getInstanceAsync(instanceId)
+            if (!instance || instance.ownerSessionId !== route.sessionId) throw new Error('Browser instance is not owned by this session')
+            if (route.signal.aborted) throw route.signal.reason
+            switch (operation) {
+              case 'snapshot': return browserPaneManager!.getAccessibilitySnapshot(instanceId)
+              case 'click': await browserPaneManager!.clickElement(instanceId, String(input.ref), { waitFor: input.waitFor as 'none' | 'navigation' | 'network-idle' | undefined, timeoutMs: input.timeoutMs as number | undefined }); return { completed: true }
+              case 'click-at': await browserPaneManager!.clickAtCoordinates(instanceId, Number(input.x), Number(input.y)); return { completed: true }
+              case 'drag': await browserPaneManager!.drag(instanceId, Number(input.x1), Number(input.y1), Number(input.x2), Number(input.y2)); return { completed: true }
+              case 'fill': await browserPaneManager!.fillElement(instanceId, String(input.ref), String(input.value)); return { completed: true }
+              case 'type': await browserPaneManager!.typeText(instanceId, String(input.text)); return { completed: true }
+              case 'select': await browserPaneManager!.selectOption(instanceId, String(input.ref), String(input.value)); return { completed: true }
+              case 'screenshot': {
+                const result = await browserPaneManager!.screenshot(instanceId, { format: input.format as 'png' | 'jpeg' | undefined, jpegQuality: input.jpegQuality as number | undefined, annotate: input.annotate as boolean | undefined })
+                return { format: result.imageFormat, dataUrl: `data:image/${result.imageFormat};base64,${result.imageBuffer.toString('base64')}`, metadata: result.metadata }
+              }
+              case 'screenshot-region': {
+                const result = await browserPaneManager!.screenshotRegion(instanceId, input as never)
+                return { format: result.imageFormat, dataUrl: `data:image/${result.imageFormat};base64,${result.imageBuffer.toString('base64')}`, metadata: result.metadata }
+              }
+              case 'wait': return browserPaneManager!.waitFor(instanceId, { kind: input.kind as 'selector' | 'text' | 'url' | 'network-idle', value: input.value as string | undefined, timeoutMs: input.timeoutMs as number | undefined })
+              case 'key': await browserPaneManager!.sendKey(instanceId, { key: String(input.key), modifiers: input.modifiers as Array<'shift' | 'control' | 'alt' | 'meta'> | undefined }); return { completed: true }
+              case 'scroll': await browserPaneManager!.scroll(instanceId, input.direction as 'up' | 'down' | 'left' | 'right', input.amount as number | undefined); return { completed: true }
+              case 'console': return browserPaneManager!.getConsoleLogs(instanceId, { level: input.level as never, limit: input.limit as number | undefined }).map(entry => ({ timestamp: entry.timestamp, level: entry.level, message: entry.message.slice(0, 10_000) }))
+              case 'network': return browserPaneManager!.getNetworkLogs(instanceId, { status: input.status as never, method: input.method as string | undefined, resourceType: input.resourceType as string | undefined, limit: input.limit as number | undefined }).map(entry => ({ ...entry, url: redactBrowserUrl(entry.url) }))
+              case 'downloads': return (await browserPaneManager!.getDownloads(instanceId, { action: input.action as never, limit: input.limit as number | undefined, timeoutMs: input.timeoutMs as number | undefined })).map(({ savePath: _savePath, url, ...entry }) => ({ ...entry, url: redactBrowserUrl(url) }))
+              case 'resize': return browserPaneManager!.windowResize(instanceId, Number(input.width), Number(input.height))
+              case 'challenge': return browserPaneManager!.detectSecurityChallenge(instanceId)
+            }
+          }))
+          sm.registerCapabilityProvider(createOAuthCapabilityProvider({
+            async begin({ sourceSlug, sessionId }, signal) {
+              const session = await sm.getSession(sessionId)
+              if (!session) throw new Error('Session not found')
+              const workspace = getWorkspaceByNameOrId(session.workspaceId)
+              if (!workspace) throw new Error('Workspace not found')
+              const source = loadSource(workspace.rootPath, sourceSlug)
+              if (!source) throw new Error(`Source not found: ${sourceSlug}`)
+              const flowStore = oauthFlowStore
+              if (!flowStore) throw new Error('OAuth service is not ready')
+
+              const callbackServer = await createCallbackServer({ appType: 'electron' })
+              const prepared = await getSourceCredentialManager().prepareOAuth(source, {
+                callbackUrl: `${callbackServer.url}/callback`,
+              })
+              const flowId = randomUUID()
+              flowStore.store(createPendingFlow({
+                flowId,
+                state: prepared.state,
+                codeVerifier: prepared.codeVerifier,
+                redirectUri: prepared.redirectUri,
+                source,
+                clientId: prepared.clientId,
+                clientSecret: prepared.clientSecret,
+                tokenEndpoint: prepared.tokenEndpoint,
+                provider: prepared.provider,
+                ownerClientId: `pi-extension:${sessionId}`,
+                workspaceId: session.workspaceId,
+                sourceSlug,
+                sessionId,
+              }))
+              const tracked: {
+                sessionId: string
+                state: string
+                status: 'pending' | 'completed' | 'cancelled' | 'failed'
+                accountLabel?: string
+                errorCode?: string
+                close(): void
+              } = {
+                sessionId,
+                state: prepared.state,
+                status: 'pending',
+                close: () => callbackServer.close(),
+              }
+              capabilityOAuthFlows.set(flowId, tracked)
+
+              const cancel = () => {
+                if (tracked.status !== 'pending') return
+                flowStore.remove(prepared.state)
+                tracked.status = 'cancelled'
+                callbackServer.close()
+              }
+              signal.addEventListener('abort', cancel, { once: true })
+
+              void (async () => {
+                try {
+                  await shell.openExternal(prepared.authUrl)
+                  const callback = await callbackServer.promise
+                  if (callback.query.error) {
+                    flowStore.remove(prepared.state)
+                    tracked.status = 'failed'
+                    Object.assign(tracked, { errorCode: 'OAUTH_PROVIDER_REJECTED' })
+                    return
+                  }
+                  const code = callback.query.code
+                  if (!code) throw new Error('OAuth callback did not include an authorization code')
+                  const result = await completeOAuthFlow({
+                    code,
+                    state: prepared.state,
+                    flowStore,
+                    credManager: getSourceCredentialManager(),
+                    sessionManager: sm,
+                    pushSourcesChanged: () => {},
+                    logger: mainLog,
+                  })
+                  tracked.status = result.success ? 'completed' : 'failed'
+                  if (result.email) Object.assign(tracked, { accountLabel: result.email })
+                  if (!result.success) Object.assign(tracked, { errorCode: 'OAUTH_EXCHANGE_FAILED' })
+                } catch {
+                  flowStore.remove(prepared.state)
+                  tracked.status = 'failed'
+                  Object.assign(tracked, { errorCode: 'OAUTH_FLOW_FAILED' })
+                } finally {
+                  callbackServer.close()
+                }
+              })()
+
+              return { flowId, status: 'pending', userAction: 'open_authorization' }
+            },
+            async status({ flowId, sessionId }) {
+              const flow = capabilityOAuthFlows.get(flowId)
+              if (!flow || flow.sessionId !== sessionId) throw new Error('OAuth flow not found for this session')
+              const result = {
+                flowId,
+                status: flow.status,
+                ...(flow.accountLabel ? { accountLabel: flow.accountLabel } : {}),
+                ...(flow.errorCode ? { errorCode: flow.errorCode } : {}),
+              }
+              if (flow.status !== 'pending') capabilityOAuthFlows.delete(flowId)
+              return result
+            },
+            async cancel({ flowId, sessionId }) {
+              const flow = capabilityOAuthFlows.get(flowId)
+              if (!flow || flow.sessionId !== sessionId) throw new Error('OAuth flow not found for this session')
+              oauthFlowStore?.remove(flow.state)
+              flow.close()
+              flow.status = 'cancelled'
+              capabilityOAuthFlows.delete(flowId)
+              return { flowId, status: 'cancelled' }
+            },
+            async revoke({ sourceSlug, sessionId }) {
+              const session = await sm.getSession(sessionId)
+              if (!session) throw new Error('Session not found')
+              const workspace = getWorkspaceByNameOrId(session.workspaceId)
+              if (!workspace) throw new Error('Workspace not found')
+              const source = loadSource(workspace.rootPath, sourceSlug)
+              if (!source) throw new Error(`Source not found: ${sourceSlug}`)
+              await getSourceCredentialManager().delete(source)
+              getSourceCredentialManager().markSourceNeedsReauth(source, 'Signed out by extension request')
+              return { sourceSlug, revoked: true }
+            },
+          }))
+          sm.registerCapabilityProvider(createKeychainCapabilityProvider({
+            async has(input, sessionId) {
+              const session = await sm.getSession(sessionId)
+              if (!session) throw new Error('Session not found')
+              if (!input.sourceId || !['source_oauth', 'source_bearer', 'source_apikey', 'source_basic'].includes(input.type)) {
+                throw new Error('Only session-workspace source credential references are supported')
+              }
+              const credential = await getCredentialManager().get({
+                type: input.type as 'source_oauth' | 'source_bearer' | 'source_apikey' | 'source_basic',
+                workspaceId: session.workspaceId,
+                sourceId: input.sourceId,
+              })
+              return { present: credential !== null }
+            },
+            async remove(input, sessionId) {
+              const session = await sm.getSession(sessionId)
+              if (!session) throw new Error('Session not found')
+              if (!input.sourceId || !['source_oauth', 'source_bearer', 'source_apikey', 'source_basic'].includes(input.type)) {
+                throw new Error('Only session-workspace source credential references are supported')
+              }
+              const removed = await getCredentialManager().delete({
+                type: input.type as 'source_oauth' | 'source_bearer' | 'source_apikey' | 'source_basic',
+                workspaceId: session.workspaceId,
+                sourceId: input.sourceId,
+              })
+              return { removed }
+            },
+          }))
+          sm.registerCapabilityProvider(createSessionShareCapabilityProvider({
+            async status(sessionId: string) {
+              const session = await sm.getSession(sessionId)
+              if (!session) throw new Error('Session not found')
+              return session.sharedUrl
+                ? { published: true, url: session.sharedUrl }
+                : { published: false }
+            },
+            publish: sessionId => sm.shareTransferService.publish(sessionId),
+            refresh: sessionId => sm.shareTransferService.refresh(sessionId),
+            revoke: sessionId => sm.shareTransferService.revoke(sessionId),
+          }))
+          sm.registerCapabilityProvider(createSessionTransferCapabilityProvider({
+            async exportSummary(sessionId) {
+              const session = await sm.getSession(sessionId)
+              if (!session) throw new Error('Session not found')
+              return sm.shareTransferService.exportSummary(sessionId, session.workspaceId)
+            },
+            async importSummary(sessionId, payload) {
+              const session = await sm.getSession(sessionId)
+              if (!session) throw new Error('Session not found')
+              return sm.shareTransferService.importSummary(session.workspaceId, payload)
+            },
+          }))
           return sm
         },
         bindRpcServer: (sm, server) => sm.setRpcServer(server),
@@ -700,6 +1025,95 @@ app.whenReady().then(async () => {
               pairingMode: 'qr',
             },
           })
+          const resolveCapabilitySession = async (sessionId: string) => {
+            const session = await sm.getSession(sessionId)
+            if (!session) throw new Error('Session not found')
+            const workspace = getWorkspaceByNameOrId(session.workspaceId)
+            if (!workspace) throw new Error('Workspace not found')
+            return { session, workspace }
+          }
+          if (!isHeadless) sm.registerCapabilityProvider(createMessagingSessionCapabilityProvider({
+            async status(sessionId: string) {
+              const { session } = await resolveCapabilitySession(sessionId)
+              const config = messagingHandle!.registry.getConfig(session.workspaceId)
+              return {
+                enabled: config?.enabled ?? false,
+                platforms: Object.entries(config?.runtime ?? {}).flatMap(([platform, runtime]) => runtime ? [{
+                  platform,
+                  configured: runtime.configured,
+                  connected: runtime.connected,
+                  state: runtime.state,
+                }] : []),
+              }
+            },
+            async listBindings(sessionId) {
+              const { session } = await resolveCapabilitySession(sessionId)
+              return messagingHandle!.registry.getBindings(session.workspaceId)
+                .filter(binding => binding.sessionId === sessionId)
+                .map(binding => ({
+                  id: binding.id,
+                  platform: binding.platform,
+                  channelId: binding.channelId,
+                  ...(binding.threadId !== undefined ? { threadId: binding.threadId } : {}),
+                  ...(binding.channelName ? { channelName: binding.channelName } : {}),
+                  enabled: binding.enabled,
+                  createdAt: binding.createdAt,
+                }))
+            },
+            async pair(sessionId, platform) {
+              const { session } = await resolveCapabilitySession(sessionId)
+              return messagingHandle!.registry.generatePairingCode(session.workspaceId, sessionId, platform)
+            },
+            async unbind(sessionId, platform) {
+              const { session } = await resolveCapabilitySession(sessionId)
+              const before = messagingHandle!.registry.getBindings(session.workspaceId)
+                .filter(binding => binding.sessionId === sessionId && (!platform || binding.platform === platform)).length
+              messagingHandle!.registry.unbindSession(session.workspaceId, sessionId, platform)
+              return { removed: before }
+            },
+          }))
+          const automationCapabilityAdapter = {
+            async status(sessionId: string) {
+              const { session } = await resolveCapabilitySession(sessionId)
+              return sm.getWorkspaceAutomationSummary(session.workspaceId)
+            },
+            async list(sessionId: string) {
+              const { workspace } = await resolveCapabilitySession(sessionId)
+              return listWorkspaceAutomationsForCapability(workspace.rootPath)
+            },
+            async setEnabled(sessionId: string, automationId: string, enabled: boolean) {
+              const { workspace } = await resolveCapabilitySession(sessionId)
+              await setWorkspaceAutomationEnabledById(workspace.rootPath, automationId, enabled)
+              sm.notifyConfigFileChange(workspace.rootPath, 'automations.json')
+              return { id: automationId, enabled }
+            },
+          }
+          if (!isHeadless) {
+            sm.registerCapabilityProvider(createAutomationWorkspaceCapabilityProvider(automationCapabilityAdapter))
+            const scopedAdapter = (kind: 'scheduler' | 'webhook') => ({
+              async status(sessionId: string) {
+                const all = await automationCapabilityAdapter.list(sessionId)
+                const matches = all.filter(item => kind === 'scheduler'
+                  ? /schedule|cron/i.test(item.event)
+                  : item.actionTypes.includes('webhook'))
+                const base = await automationCapabilityAdapter.status(sessionId)
+                return { automationCount: matches.length, schedulerRunning: kind === 'scheduler' && base.schedulerRunning }
+              },
+              async list(sessionId: string) {
+                const all = await automationCapabilityAdapter.list(sessionId)
+                return all.filter(item => kind === 'scheduler'
+                  ? /schedule|cron/i.test(item.event)
+                  : item.actionTypes.includes('webhook'))
+              },
+              async setEnabled(sessionId: string, automationId: string, enabled: boolean) {
+                const matches = await this.list(sessionId)
+                if (!matches.some(item => item.id === automationId)) throw new Error(`${kind} automation not found`)
+                return automationCapabilityAdapter.setEnabled(sessionId, automationId, enabled)
+              },
+            })
+            sm.registerCapabilityProvider(createScopedAutomationCapabilityProvider('scheduler', scopedAdapter('scheduler')))
+            sm.registerCapabilityProvider(createScopedAutomationCapabilityProvider('webhook', scopedAdapter('webhook')))
+          }
           return {
             sessionManager: sm,
             platform: p,
@@ -849,7 +1263,7 @@ app.whenReady().then(async () => {
 
           try {
             console.log('[Transfer] Generating conversation summary...')
-            const transferPayload = await sessionManager.exportRemoteSessionTransfer(sessionId, sourceWorkspace.id)
+            const transferPayload = await sessionManager.shareTransferService.exportSummary(sessionId, sourceWorkspace.id)
             if (transferPayload?.summary && bundle.session?.header) {
               ;(bundle.session.header as any).transferredSessionSummary = transferPayload.summary
               ;(bundle.session.header as any).transferredSessionSummaryApplied = false
@@ -1286,6 +1700,7 @@ app.on('before-quit', async (event) => {
     }
 
     // Clean up OAuth flow store (stop periodic cleanup timer)
+    disposeCapabilityOAuthFlows()
     if (oauthFlowStore) {
       oauthFlowStore.dispose()
     }

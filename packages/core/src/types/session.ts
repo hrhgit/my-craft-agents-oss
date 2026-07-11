@@ -12,6 +12,8 @@ import type { StoredMessage, TokenUsage } from './message.ts';
  */
 export interface Session {
   id: string;                    // Unique identifier (stable, known immediately)
+  /** Missing identifies a pre-Pi-projection Craft transcript. */
+  conversationFormat?: 'pi-projection-v1';
   sdkSessionId?: string;         // SDK session ID (captured after first message)
   workspaceId: string;           // Which workspace this session belongs to
   name?: string;                 // Optional user-defined name
@@ -45,6 +47,8 @@ export interface StoredSession extends Session {
  */
 export interface SessionMetadata {
   id: string;
+  /** Missing identifies a pre-Pi-projection Craft transcript. */
+  conversationFormat?: 'pi-projection-v1';
   workspaceId: string;
   name?: string;
   createdAt: number;

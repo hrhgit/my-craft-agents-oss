@@ -27,6 +27,9 @@ type RecoverablePiClient = {
   prompt: (message: string) => Promise<void>;
   getStderr: () => string;
   stop: () => Promise<void>;
+  runtimeId?: string;
+  respondToExtensionHostCapability?: (response: unknown) => void;
+  reportExtensionHostCapabilityProgress?: (progress: unknown) => void;
 };
 
 type PiAgentRecoveryInternals = {
@@ -43,6 +46,7 @@ type PiAgentRecoveryInternals = {
     message: string;
     stderr: string;
   }) => void;
+  handlePiClientEvent: (event: Record<string, unknown>) => void;
 };
 
 describe('PiAgent GlobalHost recovery', () => {
@@ -67,6 +71,7 @@ describe('PiAgent GlobalHost recovery', () => {
         toolExecutionMetadata: true,
         hostToolResults: 'content',
         extensionCommandResult: true,
+        extensionHostCapabilities: true,
         secondaryLlmQuery: true,
         childSessionListing: true,
         multiRuntime: true,
@@ -117,5 +122,69 @@ describe('PiAgent GlobalHost recovery', () => {
     expect(prompt).not.toHaveBeenCalled();
 
     agent.destroy();
+  });
+
+  it('routes extension host capability requests through the Craft host callback', async () => {
+    const onHostCapabilityRequest = mock(async (_request, onProgress) => {
+      onProgress({ version: 1, requestId: 'cap-1', sequence: 1, progress: { phase: 'picking' } });
+      return { requestId: 'cap-1', status: 'success' as const, output: { paths: ['C:/picked.txt'] } };
+    });
+    const onHostCapabilityCancel = mock(() => undefined);
+    const onHostCapabilityDeclaration = mock(() => undefined);
+    const onHostCapabilityRuntimeReleased = mock(() => undefined);
+    const agent = new PiAgent({
+      ...createConfig(), onHostCapabilityRequest, onHostCapabilityDeclaration, onHostCapabilityCancel, onHostCapabilityRuntimeReleased,
+    });
+    const internals = agent as unknown as PiAgentRecoveryInternals;
+    const respond = mock(() => undefined);
+    const reportProgress = mock(() => undefined);
+    internals.rpcClient = {
+      invokeExtensionCommandResult: mock(async () => ({ invoked: true })),
+      prompt: mock(async () => undefined),
+      getStderr: () => '',
+      stop: mock(async () => undefined),
+      runtimeId: 'runtime-1',
+      respondToExtensionHostCapability: respond,
+      reportExtensionHostCapabilityProgress: reportProgress,
+    };
+
+    internals.handlePiClientEvent({
+      type: 'extension_host_capability_declaration', version: 1,
+      extensionId: 'files-extension', runtimeId: 'spoofed-runtime',
+      declarations: [{ capability: 'files.pick', operations: ['open'] }],
+    });
+    expect(onHostCapabilityDeclaration).toHaveBeenCalledWith({
+      version: 1, sessionId: 'session-host-recovery', runtimeId: 'runtime-1',
+      extensionId: 'files-extension', declarations: [{ capability: 'files.pick', operations: ['open'] }],
+    });
+
+    internals.handlePiClientEvent({
+      type: 'extension_host_capability_request', version: 1, id: 'cap-1',
+      extensionId: 'files-extension', capability: 'files.pick', operation: 'open',
+      input: { mode: 'file' }, runtimeId: 'spoofed-runtime',
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(onHostCapabilityRequest).toHaveBeenCalledWith({
+      version: 1, requestId: 'cap-1', capability: 'files.pick',
+      sessionId: 'session-host-recovery', runtimeId: 'runtime-1',
+      extensionId: 'files-extension', operation: 'open', input: { mode: 'file' }, timeoutMs: undefined,
+    }, expect.any(Function));
+    expect(reportProgress).toHaveBeenCalledWith({
+      type: 'extension_host_capability_progress', version: 1, id: 'cap-1',
+      sequence: 1, progress: { phase: 'picking' },
+    });
+    expect(respond).toHaveBeenCalledWith({
+      type: 'extension_host_capability_response', version: 1, id: 'cap-1',
+      status: 'success', output: { paths: ['C:/picked.txt'] },
+    });
+    internals.handlePiClientEvent({
+      type: 'extension_host_capability_cancel', version: 1, id: 'cap-1',
+      extensionId: 'files-extension', runtimeId: 'runtime-1',
+    });
+    expect(onHostCapabilityCancel).toHaveBeenCalledWith('cap-1', 'runtime-1');
+
+    await agent.disposeForRestart();
+    expect(onHostCapabilityRuntimeReleased).toHaveBeenCalledWith('runtime-1');
   });
 });

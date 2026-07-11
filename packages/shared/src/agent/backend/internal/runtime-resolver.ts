@@ -94,7 +94,16 @@ function resolvePiCliPath(hostRuntime: BackendHostRuntimeContext): string | unde
   );
 
   if (hostRuntime.isPackaged) {
+    const externalRuntimeCandidates = hostRuntime.resourcesPath
+      ? [
+          join(hostRuntime.resourcesPath, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi'),
+          join(hostRuntime.resourcesPath, 'pi-runtime', bundledCli),
+          join(hostRuntime.resourcesPath, 'pi-runtime', bundledFullCli),
+          join(hostRuntime.resourcesPath, 'pi-runtime', packageCli),
+        ]
+      : [];
     return firstExistingPath([
+      ...externalRuntimeCandidates,
       join(hostRuntime.appRootPath, 'dist', 'resources', 'pi-runtime', bundledCli),
       join(hostRuntime.appRootPath, 'resources', 'pi-runtime', bundledCli),
       join(hostRuntime.appRootPath, 'dist', 'resources', 'pi-runtime', bundledFullCli),

@@ -6,6 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
+import { toExtensionBlock, type ExtensionBlockContribution } from './extension-contribution-model'
 import type { PiExtensionSettings } from '@craft-agent/shared/config'
 
 type BackgroundAgentName = 'trace-audit' | 'yourself' | 'repo-memory'
@@ -64,7 +65,7 @@ function isVisibleBySettings(name: BackgroundAgentName, settings: PiExtensionSet
 
 function applyWidgetEvent(
   prev: Map<BackgroundAgentName, BackgroundAgentBadgeState>,
-  event: Extract<ExtensionBridgeEvent, { type: 'extension_widget' }>,
+  event: ExtensionBlockContribution,
 ): Map<BackgroundAgentName, BackgroundAgentBadgeState> {
   const name = BACKGROUND_AGENT_WIDGET_KEYS[event.key]
   if (!name) return prev
@@ -125,9 +126,11 @@ export function BackgroundAgentBadges({ sessionId, className }: BackgroundAgentB
     if (typeof subscribe !== 'function') return
 
     const unsubscribe = subscribe((event) => {
-      if (event.type !== 'extension_widget') return
-      if (event.sessionId !== sessionId) return
-      setAgents(prev => applyWidgetEvent(prev, event))
+      if (event.type !== 'extension_contribution') return
+      if (event.contribution.sessionId !== sessionId) return
+      const block = toExtensionBlock(event.contribution)
+      if (!block) return
+      setAgents(prev => applyWidgetEvent(prev, block))
     })
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()

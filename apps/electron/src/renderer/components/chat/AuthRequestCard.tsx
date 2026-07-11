@@ -139,8 +139,29 @@ function AuthCardActions({ primary, secondary, hint }: AuthCardActionsProps) {
 // Main Component
 // ============================================================================
 
+export interface NormalizedAuthRequest {
+  requestId?: string
+  type?: AuthRequestType
+  sourceSlug?: string
+  sourceName?: string
+  status?: AuthStatus
+  credentialMode?: Message['authCredentialMode']
+  headerName?: string
+  headerNames?: string[]
+  labels?: Message['authLabels']
+  description?: string
+  hint?: string
+  sourceUrl?: string
+  passwordRequired?: boolean
+  error?: string
+  email?: string
+  workspace?: string
+}
+
 interface AuthRequestCardProps {
-  message: Message
+  /** Legacy transcript adapter; Pi-native callers pass request directly. */
+  message?: Message
+  request?: NormalizedAuthRequest
   /** Callback to respond to credential request */
   onRespondToCredential?: (sessionId: string, requestId: string, response: CredentialResponse) => void
   /** Session ID for this auth request */
@@ -162,31 +183,39 @@ interface AuthRequestCardProps {
  * - cancelled: Show cancelled state
  * - failed: Show error state
  */
-export function AuthRequestCard({ message, onRespondToCredential, sessionId, isInteractive = true }: AuthRequestCardProps) {
+export function AuthRequestCard({ message, request, onRespondToCredential, sessionId, isInteractive = true }: AuthRequestCardProps) {
   const [value, setValue] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  const normalized: NormalizedAuthRequest = request ?? {
+    requestId: message?.authRequestId,
+    type: message?.authRequestType,
+    sourceSlug: message?.authSourceSlug,
+    sourceName: message?.authSourceName,
+    status: message?.authStatus,
+    credentialMode: message?.authCredentialMode,
+    headerName: message?.authHeaderName,
+    headerNames: message?.authHeaderNames,
+    labels: message?.authLabels,
+    description: message?.authDescription,
+    hint: message?.authHint,
+    sourceUrl: message?.authSourceUrl,
+    passwordRequired: message?.authPasswordRequired,
+    error: message?.authError,
+    email: message?.authEmail,
+    workspace: message?.authWorkspace,
+  }
   const {
-    authRequestId,
-    authRequestType,
-    authSourceSlug,
-    authSourceName,
-    authStatus,
-    authCredentialMode,
-    authHeaderName,
-    authHeaderNames,
-    authLabels,
-    authDescription,
-    authHint,
-    authSourceUrl,
-    authPasswordRequired,
-    authError,
-    authEmail,
-    authWorkspace,
-  } = message
+    requestId: authRequestId, type: authRequestType, sourceSlug: authSourceSlug,
+    sourceName: authSourceName = 'Authentication', status: authStatus = 'pending',
+    credentialMode: authCredentialMode, headerName: authHeaderName,
+    headerNames: authHeaderNames, labels: authLabels, description: authDescription,
+    hint: authHint, sourceUrl: authSourceUrl, passwordRequired: authPasswordRequired,
+    error: authError, email: authEmail, workspace: authWorkspace,
+  } = normalized
 
   // Multi-header state: { "DD-API-KEY": "", "DD-APPLICATION-KEY": "" }
   const [headerValues, setHeaderValues] = useState<Record<string, string>>(() => {
@@ -667,8 +696,10 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
  */
 export const MemoizedAuthRequestCard = React.memo(AuthRequestCard, (prev, next) => {
   return (
-    prev.message.id === next.message.id &&
-    prev.message.authStatus === next.message.authStatus &&
+    prev.message?.id === next.message?.id &&
+    prev.message?.authStatus === next.message?.authStatus &&
+    prev.request?.requestId === next.request?.requestId &&
+    prev.request?.status === next.request?.status &&
     prev.sessionId === next.sessionId &&
     prev.isInteractive === next.isInteractive
   )

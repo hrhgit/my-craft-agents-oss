@@ -7,7 +7,7 @@ import { createExtensionEventForwarder } from '../handlers/pi-extension-bridge'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
 import { basename, dirname, join } from 'path'
 import { existsSync, readdirSync } from 'fs'
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { readFile, writeFile, mkdir, rename } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
 import type { AgentEvent, PlanModeStateV1 } from '@craft-agent/core/types'
@@ -22,7 +22,7 @@ import {
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
 import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
-import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
+import { PrivilegedExecutionBroker, SessionShareTransferService } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
 import { i18n } from '@craft-agent/shared/i18n'
@@ -75,6 +75,7 @@ import {
   type SessionHeader,
   pickCraftSessionMetadata,
   applyPlanCustomMessageToRuntime,
+  parsePlanCustomMessage,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/config'
@@ -83,7 +84,9 @@ import { inferToolResultError, isParentTaskOrTaskOutputTool } from '@craft-agent
 import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
+import { ConversationProjector, type ProjectionApplyResult } from '../projection'
+import { CapabilityRouter, ELECTRON_CAPABILITY_POLICY_V1, createCapabilityAuthorizationPolicy, type CapabilityProvider } from '../capabilities'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
 import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, normalizePathForComparison, writeRuntimeLog } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
@@ -675,6 +678,8 @@ interface ManagedSession {
   workspace: Workspace
   agent: AgentInstance | null  // Lazy-loaded - null until first message
   messages: Message[]
+  /** New sessions use Pi projection as their transcript; Craft messages are legacy-only. */
+  conversationFormat?: 'pi-projection-v1'
   isProcessing: boolean
   /** Set when user requests stop - allows event loop to drain before clearing isProcessing */
   stopRequested?: boolean
@@ -963,6 +968,40 @@ export function createManagedSession(
   return managed
 }
 
+export function usesPiProjectionTranscript(session: Pick<ManagedSession, 'conversationFormat'>): boolean {
+  return session.conversationFormat === 'pi-projection-v1'
+}
+
+export function getPiProjectionRecoveryMessages(
+  snapshot: PiProjectionSnapshotV1 | undefined,
+): Array<{ type: 'user' | 'assistant'; content: string }> {
+  if (!snapshot) return []
+  return snapshot.entities
+    .filter(entity => entity.entityType === 'content_block'
+      && (entity.kind === 'user_text' || entity.kind === 'assistant_text'))
+    .sort((a, b) => a.createdSeq - b.createdSeq)
+    .slice(-6)
+    .flatMap(entity => {
+      const payload = entity.payload as { text?: unknown }
+      return typeof payload.text === 'string' && payload.text
+        ? [{
+            type: entity.kind === 'user_text' ? 'user' as const : 'assistant' as const,
+            content: payload.text,
+          }]
+        : []
+    })
+}
+
+export function appendLegacyAuthRequestMessage(
+  session: Pick<ManagedSession, 'conversationFormat' | 'messages'>,
+  createMessage: () => Message,
+): Message | undefined {
+  if (usesPiProjectionTranscript(session)) return undefined
+  const message = createMessage()
+  session.messages.push(message)
+  return message
+}
+
 /**
  * Resolve supportsBranching for a managed session.
  * Prefers the live agent instance; falls back to true for all backends.
@@ -1019,6 +1058,80 @@ interface PendingDelta {
 
 export class SessionManager implements ISessionManager {
   private sessions: Map<string, ManagedSession> = new Map()
+  private piProjectionBySession = new Map<string, ConversationProjector>()
+  private piProjectionWrites = new Map<string, Promise<void>>()
+  private piProjectionPendingSnapshots = new Map<string, PiProjectionSnapshotV1>()
+  private capabilityPrompt?: (request: import('@craft-agent/shared/protocol').CapabilityRequestV1) => Promise<boolean>
+  private readonly capabilityRouter = new CapabilityRouter({
+    requireDeclarations: true,
+    authorize: createCapabilityAuthorizationPolicy({
+      rules: ELECTRON_CAPABILITY_POLICY_V1,
+      sessionExists: (sessionId) => this.sessions.has(sessionId),
+      prompt: (request) => this.capabilityPrompt?.(request) ?? Promise.resolve(false),
+    }),
+    audit: (event) => sessionLog.info('[HostCapability]', event),
+  })
+  readonly shareTransferService = new SessionShareTransferService({
+    logger: sessionLog,
+    store: {
+      resolve: (sessionId) => {
+        const managed = this.sessions.get(sessionId)
+        if (!managed) return null
+        return {
+          id: managed.id,
+          workspaceId: managed.workspace.id,
+          workspaceRootPath: managed.workspace.rootPath,
+          isProcessing: managed.isProcessing,
+          sharedId: managed.sharedId,
+          sharedUrl: managed.sharedUrl,
+          name: managed.name,
+          sessionStatus: managed.sessionStatus,
+          labels: managed.labels,
+          permissionMode: managed.permissionMode,
+        }
+      },
+      loadStoredSession: session => loadStoredSession(session.workspaceRootPath, session.id),
+      setAsyncOperation: (sessionId, ongoing) => {
+        const managed = this.sessions.get(sessionId)
+        if (!managed) return
+        managed.isAsyncOperationOngoing = ongoing
+        this.sendEvent({ type: 'async_operation', sessionId, isOngoing: ongoing }, managed.workspace.id)
+      },
+      updateShareMetadata: async (sessionId, metadata) => {
+        const managed = this.sessions.get(sessionId)
+        if (!managed) throw new Error('Session not found')
+        managed.sharedId = metadata.sharedId
+        managed.sharedUrl = metadata.sharedUrl
+        await updateSessionMetadata(managed.workspace.rootPath, sessionId, metadata)
+      },
+      emitShareEvent: (event, workspaceId) => this.sendEvent(event, workspaceId),
+      persistAndFlush: async sessionId => {
+        const managed = this.sessions.get(sessionId)
+        if (!managed) throw new Error('Session not found')
+        this.persistSession(managed)
+        await sessionPersistenceQueue.flush(sessionId)
+      },
+      summarize: async sessionId => {
+        const managed = this.sessions.get(sessionId)
+        return managed ? this.generateRemoteTransferSummary(managed) : null
+      },
+      createImported: async (workspaceId, payload) => {
+        const session = await this.createSession(workspaceId, {
+          name: payload.name,
+          permissionMode: payload.permissionMode,
+          sessionStatus: payload.sessionStatus,
+          labels: payload.labels,
+        })
+        const managed = this.sessions.get(session.id)
+        if (!managed) throw new Error(`Transferred session ${session.id} was not created`)
+        managed.transferredSessionSummary = payload.summary
+        managed.transferredSessionSummaryApplied = false
+        this.persistSession(managed)
+        await sessionPersistenceQueue.flush(session.id)
+        return { sessionId: session.id }
+      },
+    },
+  })
   // Delta batching for performance - reduces IPC events from 50+/sec to ~20/sec
   private pendingDeltas: Map<string, PendingDelta> = new Map()
   private deltaFlushTimers: Map<string, NodeJS.Timeout> = new Map()
@@ -1120,6 +1233,14 @@ export class SessionManager implements ISessionManager {
 
   setEventSink(sink: EventSink): void {
     this.eventSink = sink
+  }
+
+  registerCapabilityProvider(provider: CapabilityProvider): () => void {
+    return this.capabilityRouter.register(provider)
+  }
+
+  setCapabilityPrompt(prompt: (request: import('@craft-agent/shared/protocol').CapabilityRequestV1) => Promise<boolean>): void {
+    this.capabilityPrompt = prompt
   }
 
   setBrowserPaneManager(bpm: IBrowserPaneManager): void {
@@ -1727,6 +1848,92 @@ export class SessionManager implements ISessionManager {
     }
   }
 
+  async getPiProjectionSnapshot(sessionId: string): Promise<PiProjectionSnapshotV1 | null> {
+    const current = this.piProjectionBySession.get(sessionId)
+    if (current) return current.createSnapshot()
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return null
+    try {
+      const raw = await readFile(this.getPiProjectionSnapshotPath(managed), 'utf8')
+      const snapshot = JSON.parse(raw) as PiProjectionSnapshotV1
+      const projector = new ConversationProjector(snapshot.sessionId, snapshot.runtimeId, snapshot)
+      this.piProjectionBySession.set(sessionId, projector)
+      return projector.createSnapshot()
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        sessionLog.warn(`Failed to load Pi projection snapshot for ${sessionId}: ${error instanceof Error ? error.message : error}`)
+      }
+      return null
+    }
+  }
+
+  /**
+   * Commit one Pi-native projection event and publish only the contiguous
+   * events accepted by the host projector. Runtime replacement starts a new
+   * projection only at sequence 1 so stale runtimes cannot erase live state.
+   */
+  applyPiProjectionEvent(event: PiProjectionEventV1): ProjectionApplyResult {
+    const managed = this.sessions.get(event.sessionId)
+    if (!managed) throw new Error(`Session not found: ${event.sessionId}`)
+
+    let projector = this.piProjectionBySession.get(event.sessionId)
+    if (!projector || projector.runtimeId !== event.runtimeId) {
+      if (event.seq !== 1) {
+        throw new Error(`New Pi projection runtime must start at sequence 1: ${event.runtimeId}`)
+      }
+      projector = new ConversationProjector(event.sessionId, event.runtimeId)
+      this.piProjectionBySession.set(event.sessionId, projector)
+    }
+
+    const result = projector.apply(event)
+    if (result.status === 'applied') {
+      for (const applied of result.events) {
+        if (applied.kind === 'user_text') managed.lastMessageRole = 'user'
+        if (applied.kind === 'assistant_text') {
+          managed.lastMessageRole = 'assistant'
+          managed.lastFinalMessageId = applied.entityId
+        }
+        if (applied.kind === 'runtime_error') managed.lastMessageRole = 'error'
+        this.eventSink?.(
+          RPC_CHANNELS.sessions.PI_PROJECTION_EVENT,
+          { to: 'workspace', workspaceId: managed.workspace.id },
+          applied,
+        )
+      }
+    }
+    if (result.status === 'applied' || result.status === 'stale') {
+      this.persistPiProjection(managed, projector.createSnapshot())
+    }
+    return result
+  }
+
+  private getPiProjectionSnapshotPath(managed: ManagedSession): string {
+    return join(getSessionStoragePath(managed.workspace.rootPath, managed.id), 'pi-projection-v1.json')
+  }
+
+  private persistPiProjection(managed: ManagedSession, snapshot: PiProjectionSnapshotV1): void {
+    this.piProjectionPendingSnapshots.set(managed.id, snapshot)
+    if (this.piProjectionWrites.has(managed.id)) return
+
+    const write = (async () => {
+      while (true) {
+        const latest = this.piProjectionPendingSnapshots.get(managed.id)
+        if (!latest) break
+        this.piProjectionPendingSnapshots.delete(managed.id)
+        const target = this.getPiProjectionSnapshotPath(managed)
+        await mkdir(dirname(target), { recursive: true })
+        const temporary = `${target}.${randomUUID()}.tmp`
+        await writeFile(temporary, JSON.stringify(latest), 'utf8')
+        await rename(temporary, target)
+      }
+    })().catch((error) => {
+      sessionLog.warn(`Failed to persist Pi projection snapshot for ${managed.id}: ${error instanceof Error ? error.message : error}`)
+    }).finally(() => {
+      if (this.piProjectionWrites.get(managed.id) === write) this.piProjectionWrites.delete(managed.id)
+    })
+    this.piProjectionWrites.set(managed.id, write)
+  }
+
   private migrateWorkspaceCwdUnification(): void {
     const workspaces = getWorkspaces()
     const knownRoots = new Set(workspaces.map(workspace => normalizePathForComparison(workspace.rootPath)))
@@ -2069,6 +2276,11 @@ export class SessionManager implements ISessionManager {
       authMessage.authEmail = result.email
       authMessage.authWorkspace = result.workspace
     }
+
+    managed.agent?.projectAuthPromptResolution?.(
+      result.requestId,
+      result.cancelled ? 'cancelled' : result.success ? 'completed' : 'failed',
+    )
 
     // Emit auth_completed event to update UI
     this.sendEvent({
@@ -2688,6 +2900,14 @@ export class SessionManager implements ISessionManager {
 
       const sourceMessages = validatedBranch.sourceSession.messages.slice(0, validatedBranch.branchIdx + 1)
 
+      // A branch inherits transcript ownership from its parent. In particular,
+      // copying legacy Craft messages into a newly allocated session must not
+      // make it Pi-native merely because createStoredSession marks fresh empty
+      // conversations that way.
+      if (validatedBranch.sourceSession.conversationFormat !== 'pi-projection-v1') {
+        delete branchedStored.conversationFormat
+      }
+
       // Re-map embedded paths: source messages were loaded with expandSessionPath(sourceDir),
       // so they contain absolute paths to the *source* session directory. When saved to the
       // branch session, makeSessionPathPortable uses the *branch* dir — which won't match.
@@ -3039,6 +3259,13 @@ export class SessionManager implements ISessionManager {
    * 4. fallback: no connection configured
    */
   private async getOrCreateAgent(managed: ManagedSession): Promise<AgentInstance> {
+    // Recovery callbacks are synchronous once the agent is constructed. Load
+    // the durable Pi projection first so restarted Pi-native sessions never
+    // fall back to the intentionally empty legacy message array.
+    if (usesPiProjectionTranscript(managed) && !this.piProjectionBySession.has(managed.id)) {
+      await this.getPiProjectionSnapshot(managed.id)
+    }
+
     // Refresh runtime config in-place when the connection has drifted since
     // the agent was created. May null out `managed.agent` if the in-place
     // refresh fails, in which case the create branch below rebuilds it.
@@ -3195,8 +3422,32 @@ export class SessionManager implements ISessionManager {
 
       // 扩展事件桥接：将 Pi RpcClient的扩展事件转发到渲染进程
       const onExtensionEvent = createExtensionEventForwarder(this.eventSink, managed.workspace.id, managed.id)
+      const onPiProjectionEvent = (event: PiProjectionEventV1) => {
+        try {
+          this.applyPiProjectionEvent(event)
+        } catch (error) {
+          sessionLog.error(`Failed to apply Pi projection event for ${managed.id}:`, error)
+        }
+      }
+      const onHostCapabilityRequest = (
+        request: import('@craft-agent/shared/protocol').CapabilityRequestV1,
+        onProgress: (event: import('@craft-agent/shared/protocol').CapabilityProgressV1) => void,
+      ) => this.capabilityRouter.invoke(request, onProgress)
+      const onHostCapabilityDeclaration = (declaration: import('@craft-agent/shared/protocol').ExtensionCapabilityDeclarationV1) => {
+        this.capabilityRouter.declare(declaration)
+      }
+      const onHostCapabilityCancel = (requestId: string, runtimeId: string) => {
+        this.capabilityRouter.cancel(requestId, runtimeId)
+      }
+      const onHostCapabilityRuntimeReleased = (runtimeId: string) => {
+        this.capabilityRouter.releaseRuntime(runtimeId)
+      }
 
       const getRecoveryMessages = () => {
+        if (usesPiProjectionTranscript(managed)) {
+          const snapshot = this.piProjectionBySession.get(managed.id)?.createSnapshot()
+          return getPiProjectionRecoveryMessages(snapshot)
+        }
         const relevantMessages = managed.messages
           .filter(m => m.role === 'user' || m.role === 'assistant')
           .filter(m => !m.isIntermediate)
@@ -3318,6 +3569,11 @@ export class SessionManager implements ISessionManager {
         },
         // 扩展事件桥接回调：将 Pi RpcClient的扩展事件转发到渲染进程
         onExtensionEvent,
+        onPiProjectionEvent,
+        onHostCapabilityRequest,
+        onHostCapabilityDeclaration,
+        onHostCapabilityCancel,
+        onHostCapabilityRuntimeReleased,
         },
       }) as AgentInstance
 
@@ -3378,321 +3634,6 @@ export class SessionManager implements ISessionManager {
       // Wire up large response handling in the MCP pool (all backends)
       if (managed.mcpPool && managed.agent) {
         managed.mcpPool.setSummarizeCallback(managed.agent.getSummarizeCallback())
-      }
-
-      // Wire up browser pane tools — merge BrowserPaneFns into session callbacks
-      // so browser_* tools can delegate to BrowserPaneManager.
-      //
-      // Always register when EITHER a local BPM is set OR an RPC server is
-      // available (which lets `getBrowserPaneManagerForSession` lazily build a
-      // RemoteBrowserPaneManager). Calls fail per-method with
-      // BROWSER_NO_CAPABLE_CLIENT if no desktop client is connected, instead
-      // of "tool unavailable".
-      sessionLog.info('[browser-pane] BPF gate check', {
-        sessionId: managed.id,
-        hasLocalBpm: !!this.browserPaneManager,
-        hasRpcServer: !!this.rpcServer,
-      })
-      if (this.browserPaneManager || this.rpcServer) {
-        const sid = managed.id
-        const bpm = this.getBrowserPaneManagerForSession(sid)
-        if (!bpm) {
-          throw new Error('Browser pane manager unavailable despite passing the gate — this is a bug.')
-        }
-        sessionLog.info('[browser-pane] BPF block resolved BPM', {
-          sessionId: sid,
-          bpmKind: this.browserPaneManager === bpm ? 'local' : 'remote',
-        })
-
-        const workspaceId = managed.workspace.id
-        const resolveSessionBrowserInstance = async (toolName: string, options?: { show?: boolean }): Promise<string> => {
-          const instanceId = await bpm.createForSessionAsync(sid, {
-            show: options?.show ?? false,
-            workspaceId,
-          })
-          const info = await bpm.getInstanceAsync(instanceId)
-          sessionLog.info(`[browser-pane] tool target resolved: ${toolName} session=${sid} instance=${instanceId} ownerType=${info?.ownerType ?? 'unknown'} ownerSessionId=${info?.ownerSessionId ?? 'none'} visible=${info?.isVisible ?? false}`)
-          return instanceId
-        }
-
-        const resolveLifecycleWindowTarget = async (command: 'release' | 'close' | 'hide', requestedInstanceId?: string) => {
-          const windows = await bpm.listInstancesAsync()
-
-          if (windows.length === 0) {
-            return { windows, reason: 'No browser windows are available. Use "open" first.' }
-          }
-
-          const validateTarget = (target: (typeof windows)[number] | undefined) => {
-            if (!target) {
-              return { ok: false as const, reason: `Browser window "${requestedInstanceId}" not found. Use "windows" to list available windows.` }
-            }
-
-            if (target.boundSessionId && target.boundSessionId !== sid) {
-              return { ok: false as const, reason: `Browser window "${target.id}" is locked to session ${target.boundSessionId}.` }
-            }
-
-            if (!target.boundSessionId && target.ownerSessionId && target.ownerSessionId !== sid) {
-              return { ok: false as const, reason: `Browser window "${target.id}" is currently owned by session ${target.ownerSessionId}.` }
-            }
-
-            return { ok: true as const, target }
-          }
-
-          if (requestedInstanceId) {
-            const validated = validateTarget(windows.find((w) => w.id === requestedInstanceId))
-            if (!validated.ok) {
-              return { windows, reason: validated.reason }
-            }
-            return { windows, target: validated.target }
-          }
-
-          const fallbackTarget = windows.find((w) => w.boundSessionId === sid)
-            ?? windows.find((w) => w.ownerSessionId === sid)
-
-          if (!fallbackTarget) {
-            return { windows, reason: `No ${command} target is currently associated with this session. Use "windows", then "${command} <id>".` }
-          }
-
-          const validated = validateTarget(fallbackTarget)
-          if (!validated.ok) {
-            return { windows, reason: validated.reason }
-          }
-
-          return { windows, target: validated.target }
-        }
-
-        sessionLog.info('[browser-pane] BPF registering browserPaneFns', { sessionId: sid })
-        mergeSessionScopedToolCallbacks(sid, {
-          browserPaneFns: {
-            openPanel: async (options) => {
-              const instanceId = options?.background
-                ? await bpm.createForSessionAsync(sid, { show: false, workspaceId })
-                : await bpm.focusBoundForSessionAsync(sid, { workspaceId })
-              const info = await bpm.getInstanceAsync(instanceId)
-              sessionLog.info(`[browser-pane] route decision: browser_open session=${sid} instance=${instanceId} background=${options?.background ?? false} ownerType=${info?.ownerType ?? 'unknown'} ownerSessionId=${info?.ownerSessionId ?? 'none'} visible=${info?.isVisible ?? false}`)
-              return { instanceId }
-            },
-            navigate: async (url) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_navigate')
-              return bpm.navigate(instanceId, url)
-            },
-            snapshot: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_snapshot')
-              return bpm.getAccessibilitySnapshot(instanceId)
-            },
-            click: async (ref, options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_click')
-              return bpm.clickElement(instanceId, ref, options)
-            },
-            clickAt: async (x, y) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_click_at')
-              return bpm.clickAtCoordinates(instanceId, x, y)
-            },
-            drag: async (x1, y1, x2, y2) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_drag')
-              return bpm.drag(instanceId, x1, y1, x2, y2)
-            },
-            fill: async (ref, value) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_fill')
-              return bpm.fillElement(instanceId, ref, value)
-            },
-            type: async (text) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_type')
-              return bpm.typeText(instanceId, text)
-            },
-            select: async (ref, value) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_select')
-              return bpm.selectOption(instanceId, ref, value)
-            },
-            setClipboard: async (text) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_set_clipboard')
-              return bpm.setClipboard(instanceId, text)
-            },
-            getClipboard: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_get_clipboard')
-              return bpm.getClipboard(instanceId)
-            },
-            screenshot: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_screenshot')
-              return bpm.screenshot(instanceId, options)
-            },
-            screenshotRegion: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_screenshot_region')
-              return bpm.screenshotRegion(instanceId, options)
-            },
-            getConsoleLogs: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_console')
-              return bpm.getConsoleLogs(instanceId, options)
-            },
-            windowResize: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_window_resize')
-              return bpm.windowResize(instanceId, options.width, options.height)
-            },
-            getNetworkLogs: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_network')
-              return bpm.getNetworkLogs(instanceId, options)
-            },
-            waitFor: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_wait')
-              return bpm.waitFor(instanceId, options)
-            },
-            sendKey: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_key')
-              return bpm.sendKey(instanceId, options)
-            },
-            getDownloads: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_downloads')
-              return bpm.getDownloads(instanceId, options)
-            },
-            upload: async (ref, filePaths) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_upload')
-              return bpm.uploadFile(instanceId, ref, filePaths).then(() => {})
-            },
-            scroll: async (direction, amount) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_scroll')
-              return bpm.scroll(instanceId, direction, amount)
-            },
-            goBack: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_back')
-              return bpm.goBack(instanceId)
-            },
-            goForward: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_forward')
-              return bpm.goForward(instanceId)
-            },
-            evaluate: async (expression) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_evaluate')
-              return bpm.evaluate(instanceId, expression)
-            },
-            focusWindow: async (targetInstanceId) => {
-              const windows = await bpm.listInstancesAsync()
-              if (windows.length === 0) {
-                throw new Error('No browser windows available to focus. Use "open" first.')
-              }
-
-              const target = targetInstanceId
-                ? windows.find(w => w.id === targetInstanceId)
-                : windows.find(w => w.boundSessionId === sid || w.ownerSessionId === sid)
-
-              if (!target) {
-                if (targetInstanceId) {
-                  throw new Error(`Browser window "${targetInstanceId}" not found. Use "windows" to list available windows.`)
-                }
-                throw new Error('No browser window is currently bound to this session. Use "open --foreground" to create or reuse one.')
-              }
-
-              const availableToSession = !target.boundSessionId || target.boundSessionId === sid
-              if (!availableToSession) {
-                throw new Error(`Browser window "${target.id}" is locked to session ${target.boundSessionId}.`)
-              }
-
-              if (!target.boundSessionId) {
-                bpm.bindSession(target.id, sid, { workspaceId })
-              }
-
-              bpm.focus(target.id)
-              const focused = await bpm.getInstanceAsync(target.id)
-              return {
-                instanceId: target.id,
-                title: focused?.title ?? target.title,
-                url: focused?.currentUrl ?? target.url,
-              }
-            },
-            releaseControl: async (requestedInstanceId) => {
-              if (requestedInstanceId === 'all') {
-                const before = await bpm.listInstancesAsync()
-                const beforeActive = before.filter((w) => !!w.agentControlActive).length
-                bpm.clearAgentControl(sid)
-                const after = await bpm.listInstancesAsync()
-                const afterActive = after.filter((w) => !!w.agentControlActive).length
-                const released = afterActive < beforeActive
-
-                sessionLog.info(`[browser-pane] lifecycle release-all session=${sid} overlays=${beforeActive}->${afterActive}`)
-
-                return {
-                  action: released ? 'released' : 'noop',
-                  requestedInstanceId,
-                  affectedIds: released ? before.filter((w) => !!w.agentControlActive).map((w) => w.id) : [],
-                  reason: released ? undefined : 'No active overlay was found for this session.',
-                }
-              }
-
-              const resolution = await resolveLifecycleWindowTarget('release', requestedInstanceId)
-              if (!resolution.target) {
-                sessionLog.info(`[browser-pane] lifecycle release session=${sid} requested=${requestedInstanceId ?? 'auto'} result=noop reason=${resolution.reason}`)
-                return {
-                  action: 'noop',
-                  requestedInstanceId,
-                  affectedIds: [],
-                  reason: resolution.reason,
-                }
-              }
-
-              const result = bpm.clearAgentControlForInstance(resolution.target.id, sid)
-              const action = result.released ? 'released' : 'noop'
-              sessionLog.info(`[browser-pane] lifecycle release session=${sid} requested=${requestedInstanceId ?? 'auto'} resolved=${resolution.target.id} result=${action} reason=${result.reason ?? 'none'}`)
-
-              return {
-                action,
-                requestedInstanceId,
-                resolvedInstanceId: resolution.target.id,
-                affectedIds: result.released ? [resolution.target.id] : [],
-                reason: result.reason,
-              }
-            },
-            closeWindow: async (requestedInstanceId) => {
-              const resolution = await resolveLifecycleWindowTarget('close', requestedInstanceId)
-              if (!resolution.target) {
-                sessionLog.info(`[browser-pane] lifecycle close session=${sid} requested=${requestedInstanceId ?? 'auto'} result=noop reason=${resolution.reason}`)
-                return {
-                  action: 'noop',
-                  requestedInstanceId,
-                  affectedIds: [],
-                  reason: resolution.reason,
-                }
-              }
-
-              bpm.destroyInstance(resolution.target.id)
-              sessionLog.info(`[browser-pane] lifecycle close session=${sid} requested=${requestedInstanceId ?? 'auto'} resolved=${resolution.target.id} result=closed`)
-
-              return {
-                action: 'closed',
-                requestedInstanceId,
-                resolvedInstanceId: resolution.target.id,
-                affectedIds: [resolution.target.id],
-              }
-            },
-            hideWindow: async (requestedInstanceId) => {
-              const resolution = await resolveLifecycleWindowTarget('hide', requestedInstanceId)
-              if (!resolution.target) {
-                sessionLog.info(`[browser-pane] lifecycle hide session=${sid} requested=${requestedInstanceId ?? 'auto'} result=noop reason=${resolution.reason}`)
-                return {
-                  action: 'noop',
-                  requestedInstanceId,
-                  affectedIds: [],
-                  reason: resolution.reason,
-                }
-              }
-
-              bpm.hide(resolution.target.id)
-              sessionLog.info(`[browser-pane] lifecycle hide session=${sid} requested=${requestedInstanceId ?? 'auto'} resolved=${resolution.target.id} result=hidden`)
-
-              return {
-                action: 'hidden',
-                requestedInstanceId,
-                resolvedInstanceId: resolution.target.id,
-                affectedIds: [resolution.target.id],
-              }
-            },
-            listWindows: async () => {
-              return bpm.listInstancesAsync()
-            },
-            detectChallenge: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_detect_challenge')
-              return bpm.detectSecurityChallenge(instanceId)
-            },
-          } satisfies BrowserPaneFns,
-        })
       }
 
       // Signal that the agent instance is ready (unblocks title generation)
@@ -3868,8 +3809,9 @@ export class SessionManager implements ISessionManager {
       managed.agent.onAuthRequest = (request) => {
         sessionLog.info(`Auth request for session ${managed.id}:`, request.type, request.sourceSlug)
 
-        // Create auth-request message
-        const authMessage: Message = {
+        // Pi-native sessions project this prompt directly and never construct a
+        // parallel Craft Message. Legacy sessions still need their old DTO.
+        const authMessage = appendLegacyAuthRequestMessage(managed, () => ({
           id: generateMessageId(),
           role: 'auth-request',
           content: this.getAuthRequestDescription(request),
@@ -3890,14 +3832,25 @@ export class SessionManager implements ISessionManager {
             authSourceUrl: request.sourceUrl,
             authPasswordRequired: request.passwordRequired,
           }),
-        }
-
-        // Add to session messages
-        managed.messages.push(authMessage)
+        }))
 
         // Store pending auth request for later resolution
         managed.pendingAuthRequestId = request.requestId
         managed.pendingAuthRequest = request
+
+        managed.agent?.projectAuthPromptRequest?.({
+          requestId: request.requestId,
+          authType: request.type,
+          sourceSlug: request.sourceSlug,
+          sourceName: request.sourceName,
+          ...(request.type === 'credential' ? {
+            mode: request.mode,
+            labels: request.labels,
+            headerNames: request.headerNames,
+            passwordRequired: request.passwordRequired,
+          } : {}),
+          ...('service' in request && typeof request.service === 'string' ? { service: request.service } : {}),
+        })
 
         // Interrupt execution
         if (managed.isProcessing && managed.agent) {
@@ -3915,13 +3868,14 @@ export class SessionManager implements ISessionManager {
           this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage }, managed.workspace.id)
         }
 
-        // Emit auth_request event to renderer
-        this.sendEvent({
-          type: 'auth_request',
-          sessionId: managed.id,
-          message: authMessage,
-          request: request,
-        }, managed.workspace.id)
+        if (authMessage) {
+          this.sendEvent({
+            type: 'auth_request',
+            sessionId: managed.id,
+            message: authMessage,
+            request: request,
+          }, managed.workspace.id)
+        }
 
         // Persist session state
         this.persistSession(managed)
@@ -4433,174 +4387,6 @@ export class SessionManager implements ISessionManager {
     }
 
     await this.sendMessage(sessionId, PLAN_APPROVAL_MESSAGE)
-  }
-
-  // ============================================
-  // Session Sharing
-  // ============================================
-
-  /**
-   * Share session to the web viewer
-   * Uploads session data and returns shareable URL
-   */
-  async shareToViewer(sessionId: string): Promise<import('@craft-agent/shared/protocol').ShareResult> {
-    const managed = this.sessions.get(sessionId)
-    if (!managed) {
-      return { success: false, error: 'Session not found' }
-    }
-
-    // Signal async operation start for shimmer effect
-    managed.isAsyncOperationOngoing = true
-    this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
-
-    try {
-      // Load session directly from disk (already in correct format)
-      const storedSession = loadStoredSession(managed.workspace.rootPath, sessionId)
-      if (!storedSession) {
-        return { success: false, error: 'Session file not found' }
-      }
-
-      const { VIEWER_URL } = await import('@craft-agent/shared/branding')
-      const response = await fetch(`${VIEWER_URL}/s/api`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(storedSession)
-      })
-
-      if (!response.ok) {
-        sessionLog.error(`Share failed with status ${response.status}`)
-        if (response.status === 413) {
-          return { success: false, error: 'Session file is too large to share' }
-        }
-        return { success: false, error: 'Failed to upload session' }
-      }
-
-      const data = await response.json() as { id: string; url: string }
-
-      // Store shared info in session
-      managed.sharedUrl = data.url
-      managed.sharedId = data.id
-      const workspaceRootPath = managed.workspace.rootPath
-      await updateSessionMetadata(workspaceRootPath, sessionId, {
-        sharedUrl: data.url,
-        sharedId: data.id,
-      })
-
-      sessionLog.info(`Session ${sessionId} shared at ${data.url}`)
-      // Notify all windows for this workspace
-      this.sendEvent({ type: 'session_shared', sessionId, sharedUrl: data.url }, managed.workspace.id)
-      return { success: true, url: data.url }
-    } catch (error) {
-      sessionLog.error('Share error:', error)
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
-    } finally {
-      // Signal async operation end
-      managed.isAsyncOperationOngoing = false
-      this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
-    }
-  }
-
-  /**
-   * Update an existing shared session
-   * Re-uploads session data to the same URL
-   */
-  async updateShare(sessionId: string): Promise<import('@craft-agent/shared/protocol').ShareResult> {
-    const managed = this.sessions.get(sessionId)
-    if (!managed) {
-      return { success: false, error: 'Session not found' }
-    }
-    if (!managed.sharedId) {
-      return { success: false, error: 'Session not shared' }
-    }
-
-    // Signal async operation start for shimmer effect
-    managed.isAsyncOperationOngoing = true
-    this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
-
-    try {
-      // Load session directly from disk (already in correct format)
-      const storedSession = loadStoredSession(managed.workspace.rootPath, sessionId)
-      if (!storedSession) {
-        return { success: false, error: 'Session file not found' }
-      }
-
-      const { VIEWER_URL } = await import('@craft-agent/shared/branding')
-      const response = await fetch(`${VIEWER_URL}/s/api/${managed.sharedId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(storedSession)
-      })
-
-      if (!response.ok) {
-        sessionLog.error(`Update share failed with status ${response.status}`)
-        if (response.status === 413) {
-          return { success: false, error: 'Session file is too large to share' }
-        }
-        return { success: false, error: 'Failed to update shared session' }
-      }
-
-      sessionLog.info(`Session ${sessionId} share updated at ${managed.sharedUrl}`)
-      return { success: true, url: managed.sharedUrl }
-    } catch (error) {
-      sessionLog.error('Update share error:', error)
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
-    } finally {
-      // Signal async operation end
-      managed.isAsyncOperationOngoing = false
-      this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
-    }
-  }
-
-  /**
-   * Revoke a shared session
-   * Deletes from viewer and clears local shared state
-   */
-  async revokeShare(sessionId: string): Promise<import('@craft-agent/shared/protocol').ShareResult> {
-    const managed = this.sessions.get(sessionId)
-    if (!managed) {
-      return { success: false, error: 'Session not found' }
-    }
-    if (!managed.sharedId) {
-      return { success: false, error: 'Session not shared' }
-    }
-
-    // Signal async operation start for shimmer effect
-    managed.isAsyncOperationOngoing = true
-    this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
-
-    try {
-      const { VIEWER_URL } = await import('@craft-agent/shared/branding')
-      const response = await fetch(
-        `${VIEWER_URL}/s/api/${managed.sharedId}`,
-        { method: 'DELETE' }
-      )
-
-      if (!response.ok) {
-        sessionLog.error(`Revoke failed with status ${response.status}`)
-        return { success: false, error: 'Failed to revoke share' }
-      }
-
-      // Clear shared info
-      delete managed.sharedUrl
-      delete managed.sharedId
-      const workspaceRootPath = managed.workspace.rootPath
-      await updateSessionMetadata(workspaceRootPath, sessionId, {
-        sharedUrl: undefined,
-        sharedId: undefined,
-      })
-
-      sessionLog.info(`Session ${sessionId} share revoked`)
-      // Notify all windows for this workspace
-      this.sendEvent({ type: 'session_unshared', sessionId }, managed.workspace.id)
-      return { success: true }
-    } catch (error) {
-      sessionLog.error('Revoke error:', error)
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
-    } finally {
-      // Signal async operation end
-      managed.isAsyncOperationOngoing = false
-      this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
-    }
   }
 
   // ============================================
@@ -5297,6 +5083,9 @@ export class SessionManager implements ISessionManager {
     managed.autoRetryPending = undefined
 
     this.sessions.delete(sessionId)
+    this.piProjectionBySession.delete(sessionId)
+    this.piProjectionWrites.delete(sessionId)
+    this.piProjectionPendingSnapshots.delete(sessionId)
 
     // Clean up session metadata in AutomationSystem (prevents memory leak)
     const automationSystem = this.automationSystems.get(workspaceRootPath)
@@ -5401,7 +5190,7 @@ export class SessionManager implements ISessionManager {
       const agent = managed.agent
       let steered = false
       if (behavior === 'steer') {
-        steered = agent?.redirect(message) ?? false
+        steered = agent?.redirect(message, options?.optimisticMessageId) ?? false
       }
       // For 'queue': skip redirect entirely. The current turn is undisturbed.
 
@@ -5414,33 +5203,39 @@ export class SessionManager implements ISessionManager {
         connectionSlug: connection?.slug,
       })
 
-      // Create user message for UI
-      const userMessage: Message = {
-        id: generateMessageId(),
-        role: 'user',
-        content: message,
-        timestamp: this.monotonic(),
-        attachments: storedAttachments,
-        badges: options?.badges,
-      }
-      managed.messages.push(userMessage)
+      const persistLegacyTranscript = !usesPiProjectionTranscript(managed)
+      const messageId = generateMessageId()
+      // Legacy sessions persist and announce the queued input here. Pi-native
+      // sessions wait for Pi's user_text projection confirmation instead.
+      const userMessage: Message | undefined = persistLegacyTranscript ? {
+          id: messageId,
+          role: 'user',
+          content: message,
+          timestamp: this.monotonic(),
+          attachments: storedAttachments,
+          badges: options?.badges,
+        } : undefined
+      if (userMessage) managed.messages.push(userMessage)
+      managed.lastMessageRole = 'user'
 
       // Emit to UI — 'accepted' iff a steer succeeded; 'queued' otherwise
       // (covers both queue-direct and queue-after-abort paths).
-      this.sendEvent({
-        type: 'user_message',
-        sessionId,
-        message: userMessage,
-        status: steered ? 'accepted' : 'queued',
-        optimisticMessageId: options?.optimisticMessageId
-      }, managed.workspace.id)
+      if (userMessage) {
+        this.sendEvent({
+          type: 'user_message',
+          sessionId,
+          message: userMessage,
+          status: steered ? 'accepted' : 'queued',
+          optimisticMessageId: options?.optimisticMessageId
+        }, managed.workspace.id)
+      }
 
       if (!steered) {
         // Push for FIFO replay on next onProcessingStopped tick. Same shape
         // for both queue-direct (current turn still running) and
         // queue-after-abort (backend already aborted) — the replay path in
         // processNextQueuedMessage is identical.
-        managed.messageQueue.push({ message, attachments, storedAttachments, options, messageId: userMessage.id, optimisticMessageId: options?.optimisticMessageId })
+        managed.messageQueue.push({ message, attachments, storedAttachments, options, messageId, optimisticMessageId: options?.optimisticMessageId })
         managed.wasInterrupted = true
       }
 
@@ -5449,14 +5244,14 @@ export class SessionManager implements ISessionManager {
       // before we tell the renderer "accepted" — `persistSession` only
       // enqueues with a 500ms debounce. (#616 reliability fix.)
       await this.flushSession(managed.id)
-      onAck?.(userMessage.id)
+      onAck?.(messageId)
       writeRuntimeLog('info', {
         scope: 'session',
         event: 'send_message.accepted',
         meta: {
           sessionId,
           workspaceId: managed.workspace.id,
-          messageId: userMessage.id,
+          messageId,
           optimisticMessageId: options?.optimisticMessageId,
           status: steered ? 'accepted' : 'queued',
           llmConnection: managed.llmConnection,
@@ -5468,24 +5263,28 @@ export class SessionManager implements ISessionManager {
 
     // Add user message with stored attachments for persistence
     // Skip if existingMessageId is provided (message was already created when queued)
-    let userMessage: Message
-    if (existingMessageId) {
+    const persistLegacyTranscript = !usesPiProjectionTranscript(managed)
+    const messageId = existingMessageId ?? generateMessageId()
+    let userMessage: Message | undefined
+    if (existingMessageId && persistLegacyTranscript) {
       // Find existing message (already added when queued)
-      userMessage = managed.messages.find(m => m.id === existingMessageId)!
+      userMessage = managed.messages.find(m => m.id === existingMessageId)
       if (!userMessage) {
         throw new Error(`Existing message ${existingMessageId} not found`)
       }
-    } else {
+    } else if (!existingMessageId) {
       // Create new message
-      userMessage = {
-        id: generateMessageId(),
-        role: 'user',
-        content: message,
-        timestamp: this.monotonic(),
-        attachments: storedAttachments, // Include for persistence (has thumbnailBase64)
-        badges: options?.badges,  // Include content badges (sources, skills with embedded icons)
+      if (persistLegacyTranscript) {
+        userMessage = {
+          id: messageId,
+          role: 'user',
+          content: message,
+          timestamp: this.monotonic(),
+          attachments: storedAttachments, // Include for persistence (has thumbnailBase64)
+          badges: options?.badges,  // Include content badges (sources, skills with embedded icons)
+        }
+        managed.messages.push(userMessage)
       }
-      managed.messages.push(userMessage)
 
       // Update lastMessageRole for badge display
       managed.lastMessageRole = 'user'
@@ -5497,22 +5296,24 @@ export class SessionManager implements ISessionManager {
       await this.flushSession(managed.id)
 
       // Emit user_message event so UI can confirm the optimistic message
-      this.sendEvent({
-        type: 'user_message',
-        sessionId,
-        message: userMessage,
-        status: 'accepted',
-        optimisticMessageId: options?.optimisticMessageId
-      }, managed.workspace.id)
+      if (userMessage) {
+        this.sendEvent({
+          type: 'user_message',
+          sessionId,
+          message: userMessage,
+          status: 'accepted',
+          optimisticMessageId: options?.optimisticMessageId
+        }, managed.workspace.id)
+      }
 
-      onAck?.(userMessage.id)
+      onAck?.(messageId)
       writeRuntimeLog('info', {
         scope: 'session',
         event: 'send_message.accepted',
         meta: {
           sessionId,
           workspaceId: managed.workspace.id,
-          messageId: userMessage.id,
+          messageId,
           optimisticMessageId: options?.optimisticMessageId,
           llmConnection: managed.llmConnection,
           model: managed.model,
@@ -5522,7 +5323,9 @@ export class SessionManager implements ISessionManager {
       // If this is the first user message and no title exists, set one immediately
       // AI generation will enhance it later, but we always have a title from the start
       // Automation sessions (triggeredBy set) already have a title and skip AI generation entirely
-      const isFirstUserMessage = managed.messages.filter(m => m.role === 'user').length === 1
+      const isFirstUserMessage = persistLegacyTranscript
+        ? managed.messages.filter(m => m.role === 'user').length === 1
+        : !managed.name
       if (isFirstUserMessage && !managed.name && !managed.triggeredBy) {
         // Replace bracket mentions with their display labels (e.g. [skill:ws:commit] -> "Commit")
         // so titles show human-readable names instead of raw IDs
@@ -5584,7 +5387,9 @@ export class SessionManager implements ISessionManager {
     this.setProcessing(managed, true)
     managed.streamingText = ''
     managed.processingGeneration++
-    managed.turnStartFinalMessageId = this.getLastFinalAssistantMessageId(managed.messages)
+    managed.turnStartFinalMessageId = usesPiProjectionTranscript(managed)
+      ? managed.lastFinalMessageId
+      : this.getLastFinalAssistantMessageId(managed.messages)
 
     // Reset auth retry flag for this new message (allows one retry per message)
     // IMPORTANT: Skip reset if this is an auth retry call - the flag is already true
@@ -5771,7 +5576,15 @@ export class SessionManager implements ISessionManager {
       }
 
       sendSpan.mark('chat.starting')
-      const chatIterator = agent.chat(effectiveMessage, modelInputAttachments.attachments)
+      const chatIterator = agent.chat(effectiveMessage, modelInputAttachments.attachments, {
+        clientMutationId: options?.optimisticMessageId,
+        attachmentRefs: storedAttachments?.map(attachment => ({
+          id: attachment.id,
+          name: attachment.name,
+          mediaType: attachment.mimeType,
+          size: attachment.size,
+        })),
+      })
       sessionLog.info('Got chat iterator, starting iteration...')
 
       for await (const event of chatIterator) {
@@ -5796,7 +5609,7 @@ export class SessionManager implements ISessionManager {
             meta: {
               sessionId,
               workspaceId: managed.workspace.id,
-              messageId: userMessage.id,
+              messageId,
               llmConnection: managed.llmConnection,
               model: managed.model,
             },
@@ -5884,8 +5697,9 @@ export class SessionManager implements ISessionManager {
                   : [apiError.message],
                 errorCanRetry: false,
               }
-              managed.messages.push(errorMessage)
-              this.sendEvent({
+              if (!usesPiProjectionTranscript(managed)) {
+                managed.messages.push(errorMessage)
+                this.sendEvent({
                 type: 'typed_error',
                 sessionId,
                 error: {
@@ -5896,7 +5710,8 @@ export class SessionManager implements ISessionManager {
                   canRetry: false,
                   details: errorMessage.errorDetails,
                 },
-              }, managed.workspace.id)
+                }, managed.workspace.id)
+              }
             }
           }
 
@@ -5969,11 +5784,13 @@ export class SessionManager implements ISessionManager {
         sendSpan.mark('chat.error')
         sendSpan.setMetadata('error', error instanceof Error ? error.message : String(error))
         sendSpan.end()
-        this.sendEvent({
-          type: 'error',
-          sessionId,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }, managed.workspace.id)
+        if (!usesPiProjectionTranscript(managed)) {
+          this.sendEvent({
+            type: 'error',
+            sessionId,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }, managed.workspace.id)
+        }
         // Handle error via centralized handler
         this.onProcessingStopped(sessionId, 'error')
       }
@@ -6142,13 +5959,15 @@ export class SessionManager implements ISessionManager {
           timestamp: this.monotonic(),
           errorCode: failureErrorCode,
         }
-        managed.messages.push(failedMessage)
-        this.sendEvent({
-          type: 'error',
-          sessionId,
-          error: 'Authentication failed. Please check your credentials.',
-          timestamp: failedMessage.timestamp,
-        }, workspaceId)
+        if (!usesPiProjectionTranscript(managed)) {
+          managed.messages.push(failedMessage)
+          this.sendEvent({
+            type: 'error',
+            sessionId,
+            error: 'Authentication failed. Please check your credentials.',
+            timestamp: failedMessage.timestamp,
+          }, workspaceId)
+        }
         this.onProcessingStopped(sessionId, 'error')
       }
     })
@@ -6194,7 +6013,9 @@ export class SessionManager implements ISessionManager {
     //    - If user is NOT viewing: mark as unread (they have new content)
     //    IMPORTANT: only apply this when the turn produced a NEW final assistant message.
     const isViewing = this.isSessionBeingViewed(sessionId, managed.workspace.id)
-    const currentFinalMessageId = this.getLastFinalAssistantMessageId(managed.messages)
+    const currentFinalMessageId = usesPiProjectionTranscript(managed)
+      ? managed.lastFinalMessageId
+      : this.getLastFinalAssistantMessageId(managed.messages)
     const didReceiveNewFinalMessage = !!currentFinalMessageId && currentFinalMessageId !== turnStartFinalMessageId
 
     if (reason === 'complete' && didReceiveNewFinalMessage) {
@@ -6242,12 +6063,14 @@ export class SessionManager implements ISessionManager {
       }
 
       // No queue - emit complete to UI (include tokenUsage and hasUnread for state updates)
-      this.sendEvent({
-        type: 'complete',
-        sessionId,
-        tokenUsage: managed.tokenUsage,
-        hasUnread: managed.hasUnread,  // Propagate unread state to renderer
-      }, managed.workspace.id)
+      if (!usesPiProjectionTranscript(managed)) {
+        this.sendEvent({
+          type: 'complete',
+          sessionId,
+          tokenUsage: managed.tokenUsage,
+          hasUnread: managed.hasUnread,  // Propagate unread state to renderer
+        }, managed.workspace.id)
+      }
     }
 
     // 6. Always persist
@@ -6312,18 +6135,20 @@ export class SessionManager implements ISessionManager {
         sessionRuntimeHooks.captureException(err, { errorSource: 'chat-queue', sessionId })
         // Surface a typed error so the UI can show a clear, actionable banner
         // instead of a generic "Unknown error" (#616).
-        this.sendEvent({
-          type: 'typed_error',
-          sessionId,
-          error: {
-            code: 'queued_message_replay_failed',
-            title: 'Queued message could not be sent',
-            message: 'A message you sent while the agent was running could not be re-sent automatically. Tap retry to send it now.',
-            actions: [{ key: 'r', label: 'Retry', action: 'retry' }],
-            canRetry: true,
-            originalError: err instanceof Error ? err.message : String(err),
-          },
-        }, managed.workspace.id)
+        if (!usesPiProjectionTranscript(managed)) {
+          this.sendEvent({
+            type: 'typed_error',
+            sessionId,
+            error: {
+              code: 'queued_message_replay_failed',
+              title: 'Queued message could not be sent',
+              message: 'A message you sent while the agent was running could not be re-sent automatically. Tap retry to send it now.',
+              actions: [{ key: 'r', label: 'Retry', action: 'retry' }],
+              canRetry: true,
+              originalError: err instanceof Error ? err.message : String(err),
+            },
+          }, managed.workspace.id)
+        }
         // Call onProcessingStopped to handle cleanup and check for more queued messages
         this.onProcessingStopped(sessionId, 'error')
       })
@@ -6557,7 +6382,7 @@ export class SessionManager implements ISessionManager {
   /**
    * 查询当前会话已注册的 Pi 扩展 slash commands。
    */
-  async listExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent/backend/types').PiExtensionCommand[]> {
+  async listExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent').PiExtensionCommand[]> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       sessionLog.warn(`[ExtensionBridge] No session for command listing: ${sessionId}`)
@@ -6950,7 +6775,8 @@ export class SessionManager implements ISessionManager {
 
       // Surface quota/auth errors to the user — these indicate the main chat call will also fail
       const errorMsg = error instanceof Error ? error.message : String(error)
-      if (errorMsg.includes('quota') || errorMsg.includes('429') || errorMsg.includes('401') || errorMsg.includes('insufficient')) {
+      if (!usesPiProjectionTranscript(managed)
+        && (errorMsg.includes('quota') || errorMsg.includes('429') || errorMsg.includes('401') || errorMsg.includes('insufficient'))) {
         this.sendEvent({
           type: 'typed_error',
           sessionId: managed.id,
@@ -6981,12 +6807,18 @@ export class SessionManager implements ISessionManager {
         break
 
       case 'text_delta':
+        if (usesPiProjectionTranscript(managed)) break
         managed.streamingText += event.text
         // Queue delta for batched sending (performance: reduces IPC from 50+/sec to ~20/sec)
         this.queueDelta(sessionId, workspaceId, event.text, event.turnId)
         break
 
       case 'text_complete': {
+        if (usesPiProjectionTranscript(managed)) {
+          managed.streamingText = ''
+          if (!event.isIntermediate) managed.lastMessageRole = 'assistant'
+          break
+        }
         // Flush any pending deltas before sending complete (ensures renderer has all content)
         this.flushDelta(sessionId, workspaceId)
 
@@ -7030,18 +6862,24 @@ export class SessionManager implements ISessionManager {
 
       case 'custom_message': {
         const customId = event.id ?? generateMessageId()
-        const beforeReady = new Set(
-          managed.messages
-            .filter(message => message.artifact?.state === 'ready')
-            .map(message => message.artifact!.artifactId),
-        )
-        const result = applyPlanCustomMessageToRuntime(managed.messages, {
+        const planInput = {
           id: customId,
           customType: event.customType,
           content: event.content,
           details: event.details,
           timestamp: event.timestamp ?? this.monotonic(),
-        })
+        }
+        const isPiProjection = usesPiProjectionTranscript(managed)
+        const beforeReady = isPiProjection ? new Set<string>() : new Set(
+          managed.messages
+            .filter(message => message.artifact?.state === 'ready')
+            .map(message => message.artifact!.artifactId),
+        )
+        // Pi owns plan artifacts in projection. Parsing retains Host runtime
+        // state/cleanup without creating or mutating a Craft Message.
+        const result = isPiProjection
+          ? { projection: parsePlanCustomMessage(planInput) }
+          : applyPlanCustomMessageToRuntime(managed.messages, planInput)
 
         if (result.projection.kind === 'state') {
           managed.planModeState = result.projection.state
@@ -7059,29 +6897,36 @@ export class SessionManager implements ISessionManager {
           break
         }
 
-        if (result.projection.kind === 'artifact' && result.message) {
+        if (result.projection.kind === 'artifact') {
           const artifactProjection = result.projection
-          const afterReady = new Set(
+          const legacyMessage = 'message' in result ? result.message : undefined
+          const afterReady = legacyMessage ? new Set(
             managed.messages
               .filter(message => message.artifact?.state === 'ready')
               .map(message => message.artifact!.artifactId),
-          )
-          const supersededArtifactIds = [...beforeReady].filter(id => !afterReady.has(id) && id !== artifactProjection.artifact.artifactId)
-          managed.lastMessageRole = 'assistant'
-          managed.lastFinalMessageId = result.message.id
+          ) : new Set<string>()
+          const supersededArtifactIds = legacyMessage
+            ? [...beforeReady].filter(id => !afterReady.has(id) && id !== artifactProjection.artifact.artifactId)
+            : []
+          if (legacyMessage) {
+            managed.lastMessageRole = 'assistant'
+            managed.lastFinalMessageId = legacyMessage.id
+          }
           sessionLog.info('[PlanMode] artifact bound', {
             sessionId,
             artifactId: artifactProjection.artifact.artifactId,
-            messageId: result.message.id,
+            messageId: legacyMessage?.id,
             state: artifactProjection.artifact.state,
             isUpdate: artifactProjection.isUpdate,
           })
-          this.sendEvent({
-            type: 'plan_artifact_changed',
-            sessionId,
-            message: result.message,
-            supersededArtifactIds,
-          }, workspaceId)
+          if (legacyMessage) {
+            this.sendEvent({
+              type: 'plan_artifact_changed',
+              sessionId,
+              message: legacyMessage,
+              supersededArtifactIds,
+            }, workspaceId)
+          }
           if (artifactProjection.artifact.state === 'executing' || artifactProjection.artifact.state === 'completed') {
             await clearStoredPendingPlanExecution(managed.workspace.rootPath, sessionId)
           }
@@ -7112,6 +6957,7 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'tool_start': {
+        const persistLegacyTranscript = !usesPiProjectionTranscript(managed)
         // Format tool input paths to relative for better readability
         const formattedToolInput = formatToolInputPaths(event.input)
 
@@ -7127,7 +6973,9 @@ export class SessionManager implements ISessionManager {
         // Check if a message with this toolUseId already exists FIRST
         // SDK sends two events per tool: first from stream_event (empty input),
         // second from assistant message (complete input)
-        const existingStartMsg = managed.messages.find(m => m.toolUseId === event.toolUseId)
+        const existingStartMsg = persistLegacyTranscript
+          ? managed.messages.find(m => m.toolUseId === event.toolUseId)
+          : undefined
         const isDuplicateEvent = !!existingStartMsg
 
         // Use parentToolUseId directly from the event — CraftAgent resolves this
@@ -7137,7 +6985,7 @@ export class SessionManager implements ISessionManager {
 
         // Track if we need to send an event to the renderer
         // Send on: first occurrence OR when we have new input data to update
-        let shouldSendEvent = !isDuplicateEvent
+        let shouldSendEvent = persistLegacyTranscript && !isDuplicateEvent
 
         if (existingStartMsg) {
           // Update existing message with complete input (second event has full input)
@@ -7165,7 +7013,7 @@ export class SessionManager implements ISessionManager {
           if (event.displayName && !existingStartMsg.toolDisplayName) {
             existingStartMsg.toolDisplayName = event.displayName
           }
-        } else {
+        } else if (persistLegacyTranscript) {
           // Add tool message immediately (will be updated on tool_result)
           // This ensures tool calls are persisted even if they don't complete
           const toolStartMessage: Message = {
@@ -7229,6 +7077,7 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'tool_result': {
+        const persistLegacyTranscript = !usesPiProjectionTranscript(managed)
         // toolName comes directly from CraftAgent (resolved via ToolIndex)
         const toolName = event.toolName || 'unknown'
 
@@ -7246,7 +7095,9 @@ export class SessionManager implements ISessionManager {
         const inferredError = inferToolResultError(formattedResult, event.isError)
 
         // Update existing tool message (created on tool_start) instead of creating new one
-        const existingToolMsg = managed.messages.find(m => m.toolUseId === event.toolUseId)
+        const existingToolMsg = persistLegacyTranscript
+          ? managed.messages.find(m => m.toolUseId === event.toolUseId)
+          : undefined
         // Track if already completed to avoid sending duplicate events
         const wasAlreadyComplete = existingToolMsg?.toolStatus === 'completed'
 
@@ -7264,7 +7115,7 @@ export class SessionManager implements ISessionManager {
           if (!existingToolMsg.parentToolUseId && event.parentToolUseId) {
             existingToolMsg.parentToolUseId = event.parentToolUseId
           }
-        } else {
+        } else if (persistLegacyTranscript) {
           // No matching tool_start found — create message from result.
           // This is normal for background subagent child tools where tool_result arrives
           // without a prior tool_start. If tool_start arrives later, findToolMessage will
@@ -7293,7 +7144,7 @@ export class SessionManager implements ISessionManager {
         // Send event to renderer if: (a) first completion, or (b) result content changed
         // (e.g., safety net auto-completed with empty result, then real result arrived later)
         const resultChanged = wasAlreadyComplete && formattedResult && existingToolMsg?.toolResult !== formattedResult
-        if (!wasAlreadyComplete || resultChanged) {
+        if (persistLegacyTranscript && (!wasAlreadyComplete || resultChanged)) {
           // Use existing tool message timestamp, or fallback message timestamp for ordering
           const toolResultTimestamp = existingToolMsg?.timestamp ?? (managed.messages.find(m => m.toolUseId === event.toolUseId)?.timestamp)
           this.sendEvent({
@@ -7312,7 +7163,7 @@ export class SessionManager implements ISessionManager {
         // Safety net: when a parent Task completes, mark all its still-pending child tools as completed.
         // This handles the case where child tool_result events never arrive (e.g., subagent internal tools
         // whose results aren't surfaced through the parent stream).
-        if (isParentTaskOrTaskOutputTool(toolName)) {
+        if (persistLegacyTranscript && isParentTaskOrTaskOutputTool(toolName)) {
           const pendingChildren = managed.messages.filter(
             m => m.parentToolUseId === event.toolUseId
               && m.toolStatus !== 'completed'
@@ -7335,7 +7186,7 @@ export class SessionManager implements ISessionManager {
         }
 
         // Persist session after tool completes to prevent data loss on quit
-        this.persistSession(managed)
+        if (persistLegacyTranscript) this.persistSession(managed)
         break
       }
 
@@ -7350,6 +7201,7 @@ export class SessionManager implements ISessionManager {
         break
 
       case 'status':
+        if (usesPiProjectionTranscript(managed) && event.message.includes('Compacting')) break
         this.sendEvent({
           type: 'status',
           sessionId,
@@ -7365,14 +7217,16 @@ export class SessionManager implements ISessionManager {
         // Persist compaction messages so they survive reload
         // Other info messages are transient (just sent to renderer)
         if (isCompactionComplete) {
-          const compactionMessage: Message = {
-            id: generateMessageId(),
-            role: 'info',
-            content: event.message,
-            timestamp: infoTimestamp,
-            statusType: 'compaction_complete',
+          if (!usesPiProjectionTranscript(managed)) {
+            const compactionMessage: Message = {
+              id: generateMessageId(),
+              role: 'info',
+              content: event.message,
+              timestamp: infoTimestamp,
+              statusType: 'compaction_complete',
+            }
+            managed.messages.push(compactionMessage)
           }
-          managed.messages.push(compactionMessage)
 
           // Mark compaction complete in the session state.
           // This is done here (backend) rather than in the renderer so it's
@@ -7395,13 +7249,15 @@ export class SessionManager implements ISessionManager {
           }
         }
 
-        this.sendEvent({
-          type: 'info',
-          sessionId,
-          message: event.message,
-          statusType: isCompactionComplete ? 'compaction_complete' : undefined,
-          timestamp: infoTimestamp,
-        }, workspaceId)
+        if (!isCompactionComplete || !usesPiProjectionTranscript(managed)) {
+          this.sendEvent({
+            type: 'info',
+            sessionId,
+            message: event.message,
+            statusType: isCompactionComplete ? 'compaction_complete' : undefined,
+            timestamp: infoTimestamp,
+          }, workspaceId)
+        }
         break
       }
 
@@ -7432,15 +7288,17 @@ export class SessionManager implements ISessionManager {
           break
         }
 
-        // AgentEvent uses `message` not `error`
-        const errorMessage: Message = {
-          id: generateMessageId(),
-          role: 'error',
-          content: event.message,
-          timestamp: this.monotonic()
+        if (!usesPiProjectionTranscript(managed)) {
+          // AgentEvent uses `message` not `error`
+          const errorMessage: Message = {
+            id: generateMessageId(),
+            role: 'error',
+            content: event.message,
+            timestamp: this.monotonic()
+          }
+          managed.messages.push(errorMessage)
+          this.sendEvent({ type: 'error', sessionId, error: event.message, timestamp: errorMessage.timestamp }, workspaceId)
         }
-        managed.messages.push(errorMessage)
-        this.sendEvent({ type: 'error', sessionId, error: event.message, timestamp: errorMessage.timestamp }, workspaceId)
         break
       }
 
@@ -7474,6 +7332,7 @@ export class SessionManager implements ISessionManager {
           break
         }
 
+        if (usesPiProjectionTranscript(managed)) break
         // Build rich error message with all diagnostic fields for persistence and UI display
         const typedErrorMessage: Message = {
           id: generateMessageId(),
@@ -7938,70 +7797,6 @@ export class SessionManager implements ISessionManager {
     } finally {
       agent.destroy()
     }
-  }
-
-  async exportRemoteSessionTransfer(sessionId: string, workspaceId: string): Promise<RemoteSessionTransferPayload | null> {
-    const managed = this.sessions.get(sessionId)
-    if (!managed) {
-      sessionLog.warn(`[dispatch] Cannot export remote transfer: ${sessionId} not found`)
-      return null
-    }
-
-    if (managed.workspace.id !== workspaceId) {
-      sessionLog.warn(`[dispatch] Session ${sessionId} does not belong to workspace ${workspaceId}`)
-      return null
-    }
-
-    if (managed.isProcessing) {
-      sessionLog.warn(`[dispatch] Cannot export remote transfer ${sessionId}: still processing`)
-      return null
-    }
-
-    this.persistSession(managed)
-    await sessionPersistenceQueue.flush(sessionId)
-
-    const summary = await this.generateRemoteTransferSummary(managed)
-    if (!summary) {
-      sessionLog.warn(`[dispatch] Failed to generate remote transfer summary for ${sessionId}`)
-      return null
-    }
-
-    return {
-      sourceSessionId: managed.id,
-      name: managed.name,
-      sessionStatus: managed.sessionStatus,
-      labels: managed.labels,
-      permissionMode: managed.permissionMode,
-      summary,
-    }
-  }
-
-  async importRemoteSessionTransfer(
-    workspaceId: string,
-    payload: RemoteSessionTransferPayload,
-  ): Promise<ImportRemoteSessionTransferResult> {
-    if (!payload || typeof payload !== 'object' || typeof payload.summary !== 'string' || !payload.summary.trim()) {
-      throw new Error('Invalid remote session transfer payload')
-    }
-
-    const session = await this.createSession(workspaceId, {
-      name: payload.name,
-      permissionMode: payload.permissionMode,
-      sessionStatus: payload.sessionStatus,
-      labels: payload.labels,
-    })
-
-    const managed = this.sessions.get(session.id)
-    if (!managed) {
-      throw new Error(`Transferred session ${session.id} was not created`)
-    }
-
-    managed.transferredSessionSummary = payload.summary.trim()
-    managed.transferredSessionSummaryApplied = false
-    this.persistSession(managed)
-    await sessionPersistenceQueue.flush(session.id)
-
-    return { sessionId: session.id }
   }
 
   /**

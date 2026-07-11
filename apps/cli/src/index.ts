@@ -11,6 +11,7 @@ import { resolve } from 'path'
 import { resolveCustomEndpointSetup } from '@craft-agent/server-core/domain'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { CliRpcClient } from './client.ts'
+import { subscribeToConversationStream } from './conversation-stream.ts'
 import {
   asRemoteUIRequest,
   handleRemoteUIInteractive,
@@ -421,29 +422,47 @@ async function sendAndStream(
 ): Promise<number> {
   let exitCode = 0
   let finished = false
+  let emittedAssistantText = ''
   const streamJson = args.outputFormat === 'stream-json'
 
-  const unsub = client.on('session:event', (event: unknown) => {
+  const unsub = subscribeToConversationStream(client, sessionId, (event) => {
     // F24: Wrap the entire handler body in try/catch so a thrown error in
     // event processing (e.g. malformed payload, stdout write failure) cannot
     // crash the streaming loop or leave `finished` unset, which would hang
     // the CLI until the send timeout. Errors are surfaced to stderr but do
     // not abort the subscription.
     try {
-      const ev = event as { type: string; sessionId: string; [key: string]: unknown }
-      if (ev.sessionId !== sessionId) return
+      const ev = event.payload
 
       if (streamJson) {
-        process.stdout.write(JSON.stringify(ev) + '\n')
+        process.stdout.write(JSON.stringify(event.raw) + '\n')
       }
 
-      switch (ev.type) {
+      switch (event.kind) {
+        case 'assistant_text_delta':
         case 'text_delta':
-          if (!streamJson) process.stdout.write(ev.delta as string)
+          if (!streamJson) {
+            const delta = String(ev.delta ?? '')
+            emittedAssistantText += delta
+            process.stdout.write(delta)
+          }
           break
+        case 'assistant_text': {
+          if (!streamJson) {
+            const finalText = String(ev.text ?? '')
+            const missing = finalText.startsWith(emittedAssistantText)
+              ? finalText.slice(emittedAssistantText.length)
+              : emittedAssistantText ? '' : finalText
+            if (missing) process.stdout.write(missing)
+            emittedAssistantText = finalText || emittedAssistantText
+          }
+          break
+        }
+        case 'tool_execution_start':
         case 'tool_start':
-          if (!streamJson) process.stdout.write(`\n[tool: ${ev.toolName}${ev.toolIntent ? ` — ${ev.toolIntent}` : ''}]\n`)
+          if (!streamJson) process.stdout.write(`\n[tool: ${ev.toolName}${ev.intent || ev.toolIntent ? ` — ${ev.intent ?? ev.toolIntent}` : ''}]\n`)
           break
+        case 'tool_execution_end':
         case 'tool_result': {
           if (!streamJson) {
             const result = String(ev.result ?? '')
@@ -455,11 +474,20 @@ async function sendAndStream(
           }
           break
         }
+        case 'runtime_error':
         case 'error':
-          if (!streamJson) err(String(ev.error))
+          if (!streamJson) err(String(ev.message ?? ev.error ?? 'Agent runtime error'))
           exitCode = 1
           finished = true
           break
+        case 'agent_end': {
+          const status = String(ev.status ?? 'completed')
+          if (!streamJson && status === 'interrupted') process.stdout.write('\n[interrupted]\n')
+          else if (!streamJson) process.stdout.write('\n')
+          exitCode = status === 'interrupted' || status === 'cancelled' ? 130 : status === 'completed' ? exitCode : 1
+          finished = true
+          break
+        }
         case 'complete':
           if (!streamJson) process.stdout.write('\n')
           finished = true
@@ -471,7 +499,7 @@ async function sendAndStream(
           break
       }
     } catch (e) {
-      err(`session:event handler error: ${e instanceof Error ? e.message : String(e)}`)
+      err(`conversation stream handler error: ${e instanceof Error ? e.message : String(e)}`)
     }
   })
 
@@ -1021,17 +1049,16 @@ async function waitForSendEvents(
   let toolName = ''
   let finished = false
 
-  const unsub = client.on('session:event', (event: unknown) => {
-    const ev = event as { type: string; sessionId: string; [key: string]: unknown }
-    if (ev.sessionId !== sessionId) return
-
-    seen.add(ev.type)
-    if (ev.type === 'text_delta') textChunks++
-    if (ev.type === 'tool_start') toolName = String(ev.toolName ?? '')
-    if (ev.type === 'complete' || ev.type === 'error' || ev.type === 'interrupted') {
+  const unsub = subscribeToConversationStream(client, sessionId, (event) => {
+    const ev = event.payload
+    seen.add(event.kind)
+    if (event.kind === 'assistant_text_delta' || event.kind === 'text_delta') textChunks++
+    if (event.kind === 'tool_execution_start' || event.kind === 'tool_start') toolName = String(ev.toolName ?? '')
+    if (event.kind === 'agent_end' || event.kind === 'runtime_error'
+      || event.kind === 'complete' || event.kind === 'error' || event.kind === 'interrupted') {
       finished = true
     }
-    onEvent?.(ev)
+    onEvent?.({ type: event.kind, ...ev })
   })
 
   try {
@@ -1046,18 +1073,18 @@ async function waitForSendEvents(
     if (!finished) throw new Error('Timed out waiting for completion')
 
     // Only treat as failure if error was the terminal event (no complete followed)
-    if (seen.has('error') && !seen.has('complete')) throw new Error('Session returned an error event')
+    if ((seen.has('runtime_error') || seen.has('error')) && !seen.has('agent_end') && !seen.has('complete')) throw new Error('Session returned an error event')
 
     if (expectTool) {
-      if (!seen.has('tool_start')) throw new Error('No tool_start event received')
-      if (!seen.has('tool_result')) throw new Error('No tool_result event received')
+      if (!seen.has('tool_execution_start') && !seen.has('tool_start')) throw new Error('No tool start event received')
+      if (!seen.has('tool_execution_end') && !seen.has('tool_result')) throw new Error('No tool result event received')
       if (expectToolName && !toolName.includes(expectToolName)) {
         throw new Error(`Expected tool containing "${expectToolName}", got "${toolName}"`)
       }
       return `tool=${toolName}, ${textChunks} text deltas, events: ${[...seen].join(', ')}`
     }
 
-    if (!seen.has('text_delta')) throw new Error('No text_delta events received')
+    if (!seen.has('assistant_text_delta') && !seen.has('text_delta')) throw new Error('No assistant text delta events received')
     return `${textChunks} text deltas, events: ${[...seen].join(', ')}`
   } finally {
     unsub()
@@ -1854,7 +1881,7 @@ export async function runValidation(
     const plainLen = num.length + 1 + step.name.length
 
     // Spinner + live event printer
-    // Spinner keeps running until the agent produces real output (text_delta/tool_start).
+    // Spinner keeps running until the agent produces real output.
     // Early events (user_message, connection_changed, usage_update) are buffered or ignored
     // so the spinner stays visible while the agent is thinking.
     let spinner: { stop(): void } | undefined
@@ -1890,7 +1917,13 @@ export async function runValidation(
       ctx.onEvent = (ev) => {
         switch (ev.type) {
           // Buffer prompt — shown when agent starts responding
+          case 'user_text':
           case 'user_message': {
+            if (ev.type === 'user_text') {
+              const clean = String(ev.text ?? '').replace(/\n/g, ' ').trim()
+              bufferedPrompt = clean.length > 100 ? clean.slice(0, 100) + '…' : clean
+              break
+            }
             const msg = ev.message as any
             let text = ''
             if (typeof msg?.content === 'string') {
@@ -1903,21 +1936,25 @@ export async function runValidation(
             break
           }
           // Agent text — stop spinner, show header + prompt + text
+          case 'assistant_text_delta':
           case 'text_delta':
             ensureHeader()
             accText += String(ev.delta ?? '')
             if (!textFlushed && accText.length > 40) flushText()
             break
+          case 'assistant_text':
           case 'text_complete':
             ensureHeader()
             flushText()
             break
           // Tool use — stop spinner, show header + prompt + tool
+          case 'tool_execution_start':
           case 'tool_start': {
             ensureHeader()
             flushText()
             const name = String(ev.toolName ?? '?')
-            const intent = ev.toolIntent ? ` — "${ev.toolIntent}"` : ''
+            const toolIntent = ev.intent ?? ev.toolIntent
+            const intent = toolIntent ? ` — "${toolIntent}"` : ''
             process.stdout.write(`    ${c.dim('↳')} ${c.dim(`tool: ${name}${intent}`)}\n`)
             accText = ''
             textFlushed = false

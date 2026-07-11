@@ -210,6 +210,8 @@ import type {
   DirectoryListingResult,
   RemoteSessionTransferPayload,
   ImportRemoteSessionTransferResult,
+  PiProjectionEventV1,
+  PiProjectionSnapshotV1,
 } from '@craft-agent/shared/protocol'
 
 export interface ElectronAPI {
@@ -218,6 +220,7 @@ export interface ElectronAPI {
   getUnreadSummary(): Promise<UnreadSummary>
   markAllSessionsRead(workspaceId: string): Promise<void>
   getSessionMessages(sessionId: string): Promise<Session | null>
+  getPiProjectionSnapshot(sessionId: string): Promise<PiProjectionSnapshotV1 | null>
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
   deleteSession(sessionId: string): Promise<void>
   sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
@@ -301,6 +304,7 @@ export interface ElectronAPI {
 
   // Event listeners
   onSessionEvent(callback: (event: SessionEvent) => void): () => void
+  onPiProjectionEvent(callback: (event: PiProjectionEventV1) => void): () => void
   onUnreadSummaryChanged(callback: (summary: UnreadSummary) => void): () => void
 
   // File operations

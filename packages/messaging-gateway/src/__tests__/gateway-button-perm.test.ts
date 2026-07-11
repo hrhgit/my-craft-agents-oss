@@ -206,6 +206,46 @@ function pressFor(buttonId: string, overrides: Partial<ButtonPress> = {}): Butto
 }
 
 describe('MessagingGateway — perm: button (#726)', () => {
+  it('uses Pi projection and always ignores legacy transcript events', async () => {
+    const h = await makeHarness()
+    const binding = h.gateway.getBindingStore().findBySession('sess-A')[0]!
+    h.gateway.getBindingStore().updateBindingConfig(binding.id, { responseMode: 'streaming' })
+
+    h.gateway.onSessionEvent(
+      'session:event',
+      { to: 'workspace', workspaceId: 'ws-test' },
+      { type: 'text_complete', sessionId: 'sess-A', text: 'legacy-before-projection' } as SessionEvent,
+    )
+
+    h.gateway.onSessionEvent(
+      'session:piProjectionEvent',
+      { to: 'workspace', workspaceId: 'ws-test' },
+      {
+        schemaVersion: 1,
+        eventId: 'runtime-1:1',
+        seq: 1,
+        sessionId: 'sess-A',
+        runtimeId: 'runtime-1',
+        entityId: 'content:turn-1',
+        entityType: 'content_block',
+        entityVersion: 1,
+        kind: 'assistant_text',
+        payload: { role: 'assistant', text: 'Pi-native answer', streaming: false },
+      },
+    )
+    h.gateway.onSessionEvent(
+      'session:event',
+      { to: 'workspace', workspaceId: 'ws-test' },
+      { type: 'text_complete', sessionId: 'sess-A', text: 'Pi-native answer' } as SessionEvent,
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const sends = h.adapter.calls.filter((call) => call.kind === 'sendText')
+    expect(sends).toHaveLength(1)
+    expect(sends[0]?.text).toBe('Pi-native answer')
+  })
+
   it('happy path: clears keyboard, calls respondToPermission once, posts ✅ Allowed', async () => {
     const h = await makeHarness()
     await registerPrompt(h.gateway, { requestId: 'req-1' })

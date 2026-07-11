@@ -90,6 +90,7 @@ const ctx: RequestContext = {
 
 const protectedCalls: Array<{ channel: string; args: unknown[] }> = [
   { channel: RPC_CHANNELS.sessions.GET_MESSAGES, args: ['session-1'] },
+  { channel: RPC_CHANNELS.sessions.GET_PI_PROJECTION_SNAPSHOT, args: ['session-1'] },
   { channel: RPC_CHANNELS.sessions.DELETE, args: ['session-1'] },
   { channel: RPC_CHANNELS.sessions.SEND_MESSAGE, args: ['session-1', 'attacker prompt'] },
   { channel: RPC_CHANNELS.sessions.CANCEL, args: ['session-1'] },

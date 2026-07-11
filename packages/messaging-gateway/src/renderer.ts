@@ -45,6 +45,7 @@ function bindingOpts(binding: ChannelBinding): SendOptions {
 }
 import type { PlanTokenRegistry } from './plan-tokens'
 import type { PermissionRequest } from '@craft-agent/core/types'
+import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
 
 /** Session event shape (subset of the full SessionEvent from server-core). */
 export interface SessionEvent {
@@ -192,6 +193,59 @@ export class Renderer {
         return this.handleProgress(event, binding, adapter)
       case 'final_only':
         return this.handleFinalOnly(event, binding, adapter)
+    }
+  }
+
+  /** Render the Pi-native conversation envelope without depending on Craft transcript events. */
+  async handleProjection(
+    event: PiProjectionEventV1,
+    binding: ChannelBinding,
+    adapter: PlatformAdapter,
+  ): Promise<void> {
+    const payload = isRecord(event.payload) ? event.payload : {}
+    switch (event.kind) {
+      case 'assistant_text_delta':
+        return this.handle(
+          { type: 'text_delta', sessionId: event.sessionId, delta: stringValue(payload.delta) },
+          binding,
+          adapter,
+        )
+      case 'assistant_text':
+        return this.handle(
+          {
+            type: 'text_complete',
+            sessionId: event.sessionId,
+            text: stringValue(payload.text),
+            isIntermediate: payload.intermediate === true,
+          },
+          binding,
+          adapter,
+        )
+      case 'tool_execution_start':
+        return this.handle(
+          {
+            type: 'tool_start',
+            sessionId: event.sessionId,
+            toolName: stringValue(payload.toolName) || 'tool',
+            toolDisplayName: stringValue(payload.displayName) || undefined,
+          },
+          binding,
+          adapter,
+        )
+      case 'tool_execution_end':
+        return this.handle(
+          { type: 'tool_result', sessionId: event.sessionId },
+          binding,
+          adapter,
+        )
+      case 'agent_end':
+        return this.handle({ type: 'complete', sessionId: event.sessionId }, binding, adapter)
+      case 'runtime_error':
+        return this.handle(
+          { type: 'error', sessionId: event.sessionId, error: projectionError(payload) },
+          binding,
+          adapter,
+        )
     }
   }
 
@@ -716,6 +770,19 @@ Approve in the desktop app to continue.`,
 function appendFinal(existing: string, next: string): string {
   if (!existing) return next
   return existing.endsWith('\n') ? existing + next : existing + '\n\n' + next
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function projectionError(payload: Record<string, unknown>): unknown {
+  if (typeof payload.message === 'string') return payload.message
+  return payload.error ?? 'Agent runtime error'
 }
 
 function truncateForAdapter(text: string, adapter: PlatformAdapter): string {

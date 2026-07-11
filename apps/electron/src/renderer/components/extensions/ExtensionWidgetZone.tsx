@@ -27,6 +27,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import { cn } from '@/lib/utils'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
 import type { PiExtensionSettings } from '@craft-agent/shared/config'
+import { toExtensionBlock, type ExtensionBlockContribution } from './extension-contribution-model'
 
 // ============================================================================
 // 类型定义
@@ -59,7 +60,7 @@ interface ExtensionWidgetEntry {
  */
 function applyWidgetEvent(
   prev: Map<string, ExtensionWidgetEntry>,
-  event: Extract<ExtensionBridgeEvent, { type: 'extension_widget' }>,
+  event: ExtensionBlockContribution,
 ): Map<string, ExtensionWidgetEntry> {
   const next = new Map(prev)
   if (event.content === undefined) {
@@ -129,10 +130,11 @@ export function ExtensionWidgetZone({ className, sessionId }: ExtensionWidgetZon
     }
 
     const unsubscribe = subscribe((event: ExtensionBridgeEvent) => {
-      if (event.type !== 'extension_widget') return
-      if (event.sessionId !== sessionId) return
-      if (BACKGROUND_AGENT_WIDGET_KEYS.has(event.key)) return
-      setWidgets(prev => applyWidgetEvent(prev, event))
+      if (event.type !== 'extension_contribution') return
+      if (event.contribution.sessionId !== sessionId) return
+      const block = toExtensionBlock(event.contribution)
+      if (!block || BACKGROUND_AGENT_WIDGET_KEYS.has(block.key)) return
+      setWidgets(prev => applyWidgetEvent(prev, block))
     })
 
     return () => {

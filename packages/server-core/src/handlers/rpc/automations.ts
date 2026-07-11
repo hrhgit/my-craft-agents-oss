@@ -23,6 +23,64 @@ function withConfigMutex<T>(workspaceRoot: string, fn: () => Promise<T>): Promis
 
 // Shared helper: resolve workspace, read automations.json, validate matcher, mutate, write back
 interface AutomationsConfigJson { automations?: Record<string, Record<string, unknown>[]>; [key: string]: unknown }
+
+export interface AutomationCapabilityListItem {
+  id: string
+  event: string
+  name?: string
+  enabled: boolean
+  actionTypes: string[]
+}
+
+export async function listWorkspaceAutomationsForCapability(workspaceRoot: string): Promise<AutomationCapabilityListItem[]> {
+  const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
+  try {
+    const config = JSON.parse(await readFile(resolveAutomationsConfigPath(workspaceRoot), 'utf-8')) as AutomationsConfigJson
+    const result: AutomationCapabilityListItem[] = []
+    for (const [event, matchers] of Object.entries(config.automations ?? {})) {
+      if (!Array.isArray(matchers)) continue
+      for (const matcher of matchers) {
+        if (typeof matcher.id !== 'string' || !matcher.id) continue
+        const actions = Array.isArray(matcher.actions) ? matcher.actions : []
+        const actionTypes = [...new Set(actions.flatMap(action =>
+          action && typeof action === 'object' && typeof (action as Record<string, unknown>).type === 'string'
+            ? [(action as Record<string, unknown>).type as string]
+            : []))]
+        result.push({
+          id: matcher.id,
+          event,
+          ...(typeof matcher.name === 'string' ? { name: matcher.name } : {}),
+          enabled: matcher.enabled !== false,
+          actionTypes,
+        })
+      }
+    }
+    return result
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+export async function setWorkspaceAutomationEnabledById(workspaceRoot: string, id: string, enabled: boolean): Promise<void> {
+  await withConfigMutex(workspaceRoot, async () => {
+    const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
+    const configPath = resolveAutomationsConfigPath(workspaceRoot)
+    const config = JSON.parse(await readFile(configPath, 'utf-8')) as AutomationsConfigJson
+    let found = false
+    for (const matchers of Object.values(config.automations ?? {})) {
+      if (!Array.isArray(matchers)) continue
+      const matcher = matchers.find(candidate => candidate.id === id)
+      if (!matcher) continue
+      if (found) throw new Error('Automation ID is not unique')
+      found = true
+      if (enabled) delete matcher.enabled
+      else matcher.enabled = false
+    }
+    if (!found) throw new Error('Automation not found')
+    await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8')
+  })
+}
 async function withAutomationMatcher(workspaceId: string, eventName: string, matcherIndex: number, mutate: (matchers: Record<string, unknown>[], index: number, config: AutomationsConfigJson, genId: () => string) => void) {
   const workspace = getWorkspaceOrThrow(workspaceId)
 

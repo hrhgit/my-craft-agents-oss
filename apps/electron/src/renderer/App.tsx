@@ -11,6 +11,7 @@ import { generateMessageId } from '../shared/types'
 import { useEventProcessor } from './event-processor'
 import type { AgentEvent, Effect } from './event-processor'
 import { normalizeSessionEvent } from './event-processor/normalize-session-event'
+import { isPiNativeConversation, shouldSuppressLegacyTranscriptEvent } from './event-processor/projection-migration'
 import { AppShell } from '@/components/app-shell/AppShell'
 import type { AppShellContextType } from '@/context/AppShellContext'
 import { OnboardingWizard, ReauthScreen } from '@/components/onboarding'
@@ -31,6 +32,7 @@ import { navigate, routes } from './lib/navigate'
 import { attachmentFromContentRef, toDraftRef } from './lib/drafts'
 import { stripMarkdown } from './utils/text'
 import { coerceInputText } from './lib/input-text'
+import { getPiAgentEndHandoff } from './lib/pi-projection-handoff'
 import { getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
 import { formatSessionLoadFailure, shouldTreatSessionLoadFailureAsTransportFallback } from './lib/session-load'
 import { extractWorkspaceSlugFromPath } from '@craft-agent/shared/utils/workspace-slug'
@@ -55,6 +57,11 @@ import {
   type SessionMeta,
 } from '@/atoms/sessions'
 import { sourcesAtom } from '@/atoms/sources'
+import {
+  insertOptimisticPiUser,
+  piProjectionAtomFamily,
+  removeOptimisticPiUser,
+} from '@/atoms/pi-projection'
 import { skillsAtom } from '@/atoms/skills'
 import { extractBadges } from '@/lib/mentions'
 import { getDefaultStore } from 'jotai'
@@ -70,6 +77,7 @@ import {
 import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
 import { useStaleSessionRecovery } from '@/hooks/useStaleSessionRecovery'
+import { usePiProjectionSync, type PiProjectionEventApplied } from '@/hooks/usePiProjectionSync'
 import { TransportConnectionBanner, shouldShowTransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
 import { getFileManagerName } from '@/lib/platform'
 import { rendererLog } from '@/lib/logger'
@@ -696,6 +704,49 @@ export default function App() {
     enabled: notificationsEnabled,
   })
 
+  const handlePiProjectionEventApplied = useCallback<PiProjectionEventApplied>((event, previous, current) => {
+    const handoff = getPiAgentEndHandoff(previous, current, event)
+    if (!handoff) return
+
+    const session = store.get(sessionAtomFamily(handoff.sessionId))
+    if (!session || !isPiNativeConversation(session)) return
+
+    trackSessionActivity(handoff.sessionId)
+    const updatedSession: Session = {
+      ...session,
+      isProcessing: false,
+      currentStatus: undefined,
+    }
+    updateSessionDirect(handoff.sessionId, () => updatedSession)
+
+    const metaMap = store.get(sessionMetaMapAtom)
+    const nextMetaMap = new Map(metaMap)
+    nextMetaMap.set(handoff.sessionId, extractSessionMeta(updatedSession))
+    store.set(sessionMetaMapAtom, nextMetaMap)
+
+    setPendingPermissions(previousPermissions => {
+      if (!previousPermissions.has(handoff.sessionId)) return previousPermissions
+      const next = new Map(previousPermissions)
+      next.delete(handoff.sessionId)
+      return next
+    })
+    setPendingCredentials(previousCredentials => {
+      if (!previousCredentials.has(handoff.sessionId)) return previousCredentials
+      const next = new Map(previousCredentials)
+      next.delete(handoff.sessionId)
+      return next
+    })
+
+    if (!updatedSession.hidden) {
+      const preview = handoff.preview
+        ? stripMarkdown(handoff.preview.substring(0, 200)).substring(0, 100) || undefined
+        : undefined
+      showSessionNotification(updatedSession, preview)
+    }
+  }, [showSessionNotification, store, trackSessionActivity, updateSessionDirect])
+
+  usePiProjectionSync(sessionSelection.selected, handlePiProjectionEventApplied)
+
   // Load workspaces, sessions, model, notifications setting, and drafts when app is ready
   useEffect(() => {
     if (appState !== 'ready') return
@@ -909,6 +960,13 @@ export default function App() {
 
       if (event.type === 'session_deleted') {
         removeSession(sessionId)
+        return
+      }
+
+      const projection = store.get(piProjectionAtomFamily(sessionId))
+      const sessionOwnsPiProjection = isPiNativeConversation(store.get(sessionAtomFamily(sessionId)))
+      if (shouldSuppressLegacyTranscriptEvent(sessionOwnsPiProjection, event.type)) {
+        trackSessionActivity(sessionId)
         return
       }
 
@@ -1362,6 +1420,16 @@ export default function App() {
       // which confirms it). Cleared by 'processing' status or when the current
       // turn ends.
       optimisticMessageId = generateMessageId()
+      const sessionOwnsPiProjection = isPiNativeConversation(store.get(sessionAtomFamily(sessionId)))
+      if (sessionOwnsPiProjection) {
+        const projectionAtom = piProjectionAtomFamily(sessionId)
+        store.set(projectionAtom, current => insertOptimisticPiUser(current, optimisticMessageId!, message, storedAttachments?.map(attachment => ({
+          id: attachment.id,
+          name: attachment.name,
+          mediaType: attachment.mimeType,
+          size: attachment.size,
+        }))))
+      }
       const userMessage: Message = {
         id: optimisticMessageId,
         role: 'user',
@@ -1375,7 +1443,7 @@ export default function App() {
 
       // Optimistic UI update - add user message and set processing state
       updateSessionById(sessionId, (s) => ({
-        messages: [...s.messages, userMessage],
+        messages: sessionOwnsPiProjection ? s.messages : [...s.messages, userMessage],
         isProcessing: true,
         lastMessageAt: Date.now()
       }))
@@ -1388,6 +1456,11 @@ export default function App() {
       })
     } catch (error) {
       console.error('Failed to send message:', error)
+      const sessionOwnsPiProjection = isPiNativeConversation(store.get(sessionAtomFamily(sessionId)))
+      if (sessionOwnsPiProjection && optimisticMessageId) {
+        const projectionAtom = piProjectionAtomFamily(sessionId)
+        store.set(projectionAtom, current => removeOptimisticPiUser(current, optimisticMessageId!))
+      }
       updateSessionById(sessionId, (s) => ({
         isProcessing: false,
         messages: [
@@ -1396,12 +1469,12 @@ export default function App() {
               ? { ...m, isPending: false, isQueued: false }
               : m
           ),
-          {
+          ...(!sessionOwnsPiProjection ? [{
             id: generateMessageId(),
             role: 'error' as const,
             content: `Failed to send message: ${error instanceof Error ? error.message : 'Unknown error'}`,
             timestamp: Date.now()
-          }
+          }] : [])
         ]
       }))
     }

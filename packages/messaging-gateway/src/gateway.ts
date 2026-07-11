@@ -6,7 +6,7 @@
  */
 
 import type { ISessionManager } from '@craft-agent/server-core/handlers'
-import type { PushTarget } from '@craft-agent/shared/protocol'
+import type { PiProjectionEventV1, PushTarget } from '@craft-agent/shared/protocol'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import {
   evaluateBindingAccess,
@@ -125,6 +125,21 @@ interface PendingCompactAccept {
 }
 
 const COMPACT_ACCEPT_TTL_MS = 10 * 60 * 1000
+
+const LEGACY_TRANSCRIPT_EVENT_TYPES = new Set([
+  'text_delta',
+  'text_complete',
+  'tool_start',
+  'tool_result',
+  'complete',
+  'error',
+  'typed_error',
+  'interrupted',
+])
+
+function isLegacyTranscriptEvent(type: string): boolean {
+  return LEGACY_TRANSCRIPT_EVENT_TYPES.has(type)
+}
 
 export class MessagingGateway {
   private readonly sessionManager: ISessionManager
@@ -340,6 +355,11 @@ export class MessagingGateway {
   // -------------------------------------------------------------------------
 
   onSessionEvent(channel: string, _target: PushTarget, ...args: any[]): void {
+    if (channel === RPC_CHANNELS.sessions.PI_PROJECTION_EVENT) {
+      const event = args[0] as PiProjectionEventV1 | undefined
+      if (event?.schemaVersion === 1 && event.sessionId) this.onPiProjectionEvent(event)
+      return
+    }
     if (channel !== RPC_CHANNELS.sessions.EVENT) return
 
     const event = args[0] as SessionEvent | undefined
@@ -362,6 +382,10 @@ export class MessagingGateway {
     // keyboard stays live in Telegram and users keep tapping stale buttons,
     // which is the visible side of #726.
     this.sweepStalePermissions(event)
+
+    // Transcript semantics are projection-only. Legacy transcript events may
+    // still close stale Host prompts above, but never reach the chat renderer.
+    if (isLegacyTranscriptEvent(event.type)) return
 
     const bindings = this.bindingStore.findBySession(event.sessionId)
     if (bindings.length === 0) return
@@ -387,6 +411,43 @@ export class MessagingGateway {
           error: err,
         })
       })
+    }
+  }
+
+  private onPiProjectionEvent(event: PiProjectionEventV1): void {
+    if (event.kind === 'compaction_end') void this.finishPendingCompactAccept(event.sessionId)
+    if (event.kind === 'prompt_resolved') this.sweepResolvedProjectionPrompt(event)
+
+    const bindings = this.bindingStore.findBySession(event.sessionId)
+    for (const binding of bindings) {
+      const adapter = this.adapters.get(binding.platform)
+      if (!adapter || !adapter.isConnected()) continue
+      this.renderer.handleProjection(event, binding, adapter).catch((error) => {
+        this.log.error('renderer failed to emit Pi projection to chat', {
+          event: 'projection_renderer_failed',
+          sessionId: event.sessionId,
+          projectionKind: event.kind,
+          bindingId: binding.id,
+          platform: binding.platform,
+          channelId: binding.channelId,
+          error,
+        })
+      })
+    }
+  }
+
+  private sweepResolvedProjectionPrompt(event: PiProjectionEventV1): void {
+    const payload = event.payload && typeof event.payload === 'object'
+      ? event.payload as { requestId?: unknown }
+      : undefined
+    const requestId = typeof payload?.requestId === 'string' ? payload.requestId : null
+    if (!requestId) return
+    const record = this.permissionMessages.get(requestId)
+    if (!record || record.sessionId !== event.sessionId) return
+    this.permissionMessages.delete(requestId)
+    const adapter = this.adapters.get(record.platform)
+    if (adapter?.clearButtons && adapter.isConnected()) {
+      adapter.clearButtons(record.channelId, record.messageId).catch(() => {})
     }
   }
 

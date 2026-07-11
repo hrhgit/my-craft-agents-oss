@@ -32,7 +32,6 @@ import { TelegramAdapter } from './adapters/telegram/index'
 import { WhatsAppAdapter, type WhatsAppEvent } from './adapters/whatsapp/index'
 import { LarkAdapter, parseLarkCredentials, type LarkCredentials } from './adapters/lark/index'
 import { TopicRegistry } from './topic-registry'
-import type { SessionEvent } from './renderer'
 import type { EventSinkFn } from './event-fanout'
 import type {
   BindingAccessMode,
@@ -932,9 +931,12 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   // -------------------------------------------------------------------------
 
   onSessionEvent: EventSinkFn = (channel: string, target: PushTarget, ...args: unknown[]) => {
-    if (channel !== RPC_CHANNELS.sessions.EVENT) return
+    if (
+      channel !== RPC_CHANNELS.sessions.EVENT &&
+      channel !== RPC_CHANNELS.sessions.PI_PROJECTION_EVENT
+    ) return
 
-    const event = args[0] as SessionEvent | undefined
+    const event = args[0] as { sessionId?: string } | undefined
     if (!event?.sessionId) return
 
     const workspaceId =

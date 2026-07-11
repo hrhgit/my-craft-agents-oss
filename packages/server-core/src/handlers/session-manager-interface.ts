@@ -21,12 +21,16 @@ import type {
   CredentialResponse,
   PermissionModeState,
   UnreadSummary,
-  ShareResult,
+  PiProjectionEventV1,
+  PiProjectionSnapshotV1,
 } from '@craft-agent/shared/protocol'
+import type { ProjectionApplyResult } from '../projection'
 import type { SessionBundle, DispatchMode } from '@craft-agent/shared/sessions'
+import type { SessionShareTransferService } from '../services/session-share-transfer'
 import type { EventSink } from '../transport'
 
 export interface ISessionManager {
+  readonly shareTransferService: SessionShareTransferService
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
@@ -43,6 +47,8 @@ export interface ISessionManager {
 
   getSessions(workspaceId?: string): Session[]
   getSession(sessionId: string): Promise<Session | null>
+  getPiProjectionSnapshot(sessionId: string): Promise<PiProjectionSnapshotV1 | null>
+  applyPiProjectionEvent(event: PiProjectionEventV1): ProjectionApplyResult
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
   deleteSession(sessionId: string): Promise<void>
 
@@ -145,7 +151,7 @@ export interface ISessionManager {
    * 查询当前会话已注册的 Pi 扩展 slash commands。
    * 非 Pi 后端或会话未就绪时返回空数组。
    */
-  listExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent/backend/types').PiExtensionCommand[]>
+  listExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent').PiExtensionCommand[]>
 
   /**
    * List child sessions in pi's session tree spawned from the given session.
@@ -178,14 +184,6 @@ export interface ISessionManager {
   acceptPlan(sessionId: string, planPath?: string): Promise<void>
 
   // ---------------------------------------------------------------------------
-  // Sharing
-  // ---------------------------------------------------------------------------
-
-  shareToViewer(sessionId: string): Promise<ShareResult>
-  updateShare(sessionId: string): Promise<ShareResult>
-  revokeShare(sessionId: string): Promise<ShareResult>
-
-  // ---------------------------------------------------------------------------
   // Export / Import
   // ---------------------------------------------------------------------------
 
@@ -197,15 +195,6 @@ export interface ISessionManager {
   exportSession(sessionId: string, workspaceId: string): Promise<SessionBundle | null>
 
   /**
-   * Export a session as a summary-based payload for cross-server transfer.
-   * Generates a mini-model summary instead of shipping the full transcript.
-   */
-  exportRemoteSessionTransfer(
-    sessionId: string,
-    workspaceId: string,
-  ): Promise<import('@craft-agent/shared/protocol').RemoteSessionTransferPayload | null>
-
-  /**
    * Import a session bundle into a target workspace.
    * Creates session directory, writes JSONL + files, registers in memory.
    * Returns the new session ID and any compatibility warnings.
@@ -215,14 +204,6 @@ export interface ISessionManager {
     bundle: SessionBundle,
     mode: DispatchMode,
   ): Promise<{ sessionId: string; warnings?: string[] }>
-
-  /**
-   * Import a summary-based remote transfer payload into a target workspace.
-   */
-  importRemoteSessionTransfer(
-    workspaceId: string,
-    payload: import('@craft-agent/shared/protocol').RemoteSessionTransferPayload,
-  ): Promise<import('@craft-agent/shared/protocol').ImportRemoteSessionTransferResult>
 
   // ---------------------------------------------------------------------------
   // Utilities

@@ -3,6 +3,7 @@ productName: Craft Agents
 copyright: Copyright © 2026 Craft Docs Ltd.
 
 electronVersion: "39.2.7"
+compression: normal
 
 # Hook to compile macOS 26+ Liquid Glass icon after packaging
 afterPack: scripts/afterPack.cjs
@@ -15,6 +16,13 @@ files:
   - dist/**/*
   - "!dist/renderer/src/**"
   - "!**/*.map"
+  # Runtime subprocess assets are staged once through extraResources on each
+  # platform. Keeping them in files as well duplicates the installer payload.
+  - "!dist/resources/pi-runtime/**/*"
+  - "!dist/resources/bridge-mcp-server/**/*"
+  - "!dist/resources/session-mcp-server/**/*"
+  - "!dist/resources/scripts/**/*"
+  - "!dist/resources/bin/**/*"
   - package.json
   # Include bundled MCP servers (bridge + session) for Codex sessions
   - resources/bridge-mcp-server/**/*
@@ -89,7 +97,9 @@ mac:
   extraResources:
     # Pi RpcClient CLI subprocess runtime (private node_modules tree).
     - from: dist/resources/pi-runtime
-      to: app/dist/resources/pi-runtime
+      to: pi-runtime
+      filter:
+        - "**/*"
     # ripgrep (used by packages/server-core/src/services/search.ts).
     - from: node_modules/@vscode/ripgrep
       to: app/node_modules/@vscode/ripgrep
@@ -136,6 +146,37 @@ win:
   # Use predictable naming: Craft-Agents-x64.exe
   artifactName: "Craft-Agents-${arch}.${ext}"
   files:
+    # Platform-level files replace the global matcher in electron-builder.
+    # Keep this as an explicit allowlist; exclusion-only rules cause the
+    # generated Windows matcher to start with **/* and package the source tree.
+    - dist/**/*
+    - "!dist/renderer/src/**"
+    - "!**/*.map"
+    - "!dist/resources/pi-runtime/**/*"
+    - "!dist/resources/bridge-mcp-server/**/*"
+    - "!dist/resources/session-mcp-server/**/*"
+    - "!dist/resources/scripts/**/*"
+    - "!dist/resources/bin/**/*"
+    - package.json
+    - resources/bridge-mcp-server/**/*
+    - resources/session-mcp-server/**/*
+    - resources/scripts/**/*
+    - resources/bin/markitdown
+    - resources/bin/markitdown.cmd
+    - resources/bin/pdf-tool
+    - resources/bin/pdf-tool.cmd
+    - resources/bin/xlsx-tool
+    - resources/bin/xlsx-tool.cmd
+    - resources/bin/doc-diff
+    - resources/bin/doc-diff.cmd
+    - resources/bin/img-tool
+    - resources/bin/img-tool.cmd
+    - resources/bin/docx-tool
+    - resources/bin/docx-tool.cmd
+    - resources/bin/pptx-tool
+    - resources/bin/pptx-tool.cmd
+    - resources/bin/ical-tool
+    - resources/bin/ical-tool.cmd
     # Exclude binaries for other platforms
     - "!**/resources/bin/darwin-*/**"
     - "!**/resources/bin/linux-*/**"
@@ -149,7 +190,9 @@ win:
   # Copy executables as extraResources to avoid EBUSY file locking (see comment above)
   extraResources:
     - from: dist/resources/pi-runtime
-      to: app/dist/resources/pi-runtime
+      to: pi-runtime
+      filter:
+        - "**/*"
     - from: node_modules/@vscode/ripgrep
       to: app/node_modules/@vscode/ripgrep
     - from: vendor/bun/bun.exe
@@ -181,7 +224,9 @@ linux:
   artifactName: "Craft-Agents-${arch}.${ext}"
   extraResources:
     - from: dist/resources/pi-runtime
-      to: app/dist/resources/pi-runtime
+      to: pi-runtime
+      filter:
+        - "**/*"
     - from: node_modules/@vscode/ripgrep
       to: app/node_modules/@vscode/ripgrep
     # WhatsApp worker subprocess (self-contained; Baileys bundled in).

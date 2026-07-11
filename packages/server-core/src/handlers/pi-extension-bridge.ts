@@ -8,10 +8,10 @@
  * 事件流：
  *   pi 扩展 → Pi RpcClient extension_ui_request
  *   → PiAgent.handlePiClientEvent → onExtensionEvent 回调
- *   → 此桥接层 → eventSink → RPC_CHANNELS.extensions.EVENT → 渲染进程
+ *   → 此桥接层 → versioned contribution/eventSink → RPC_CHANNELS.extensions.EVENT → 渲染进程
  */
 
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type ExtensionContributionV1, validateExtensionContributionV1 } from '@craft-agent/shared/protocol'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
 import type { EventSink } from '@craft-agent/server-core/transport'
 
@@ -41,6 +41,29 @@ export function createExtensionEventForwarder(
     // 为 remoteui_request 注入 sessionId（渲染进程回传响应时需要）
     if (event.type === 'remoteui_request' && sessionId) {
       event = { ...event, sessionId }
+    }
+
+    if (event.type === 'extension_widget' && sessionId) {
+      const contribution: ExtensionContributionV1 = {
+        schemaVersion: 1,
+        contributionId: `widget:${event.key}`,
+        extensionId: event.extensionId,
+        sessionId,
+        runtimeId: event.runtimeId,
+        kind: 'block',
+        placement: event.placement === 'aboveEditor' ? 'above_editor' : 'below_editor',
+        payload: { format: 'text', content: event.content?.join('\n') ?? '', removed: event.content === undefined, source: event.source },
+      }
+      if (validateExtensionContributionV1(contribution) === null) {
+        eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, {
+          type: 'extension_contribution',
+          extensionId: event.extensionId,
+          runtimeId: event.runtimeId,
+          sessionId,
+          contribution,
+        })
+        return
+      }
     }
 
     // 所有扩展事件统一通过 extensions:EVENT 频道广播；renderer 只将
