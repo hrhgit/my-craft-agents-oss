@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { createWebApi } from './adapter/web-api'
 import type { WsRpcClient } from '@craft-agent/server-core/transport/client'
 import { errorMessage } from '@craft-agent/shared/utils/text'
+import { waitForInitialConnection } from './connection'
 
 // Lazy-load the Electron App after window.electronAPI is set up.
 // This prevents any Electron component from accessing window.electronAPI
@@ -118,6 +119,7 @@ export default function App() {
 
       // 5. Connect the WebSocket client
       client.connect()
+      await waitForInitialConnection(client)
 
       setPhase('ready')
     } catch (err) {

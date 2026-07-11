@@ -27,26 +27,4 @@
  */
 @import "../../electron/src/renderer/index.css";
 
-/*
- * Web UI responsive layout is handled by container queries and isAutoCompact
- * in the shared renderer components. No webui-specific CSS overrides needed.
- *
- * The only webui-specific styles are safe-area insets for mobile browsers.
- */
-
-/* Safe area insets for mobile browsers (notch, home indicator) */
-html, body, #root {
-  overflow: hidden;
-  max-width: 100%;
-}
-
-body {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-/* 120% zoom on mobile viewports for better readability */
-@media (max-width: 768px) {
-  html {
-    zoom: 1.2;
-  }
-}
+/* Responsive layout and safe-area handling live in the shared renderer CSS. */

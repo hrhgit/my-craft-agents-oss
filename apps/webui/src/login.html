@@ -250,6 +250,16 @@
     const errorEl = document.getElementById('error');
     const submitBtn = document.getElementById('submit-btn');
 
+    // The local launcher enables this route so development starts without
+    // copying a server token into the browser. Production servers leave it off.
+    fetch('/api/auth/auto', { method: 'POST' })
+      .then((res) => {
+        if (res.ok) window.location.href = '/';
+      })
+      .catch(() => {
+        // Keep the manual login form available when auto-login is disabled.
+      });
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       errorEl.classList.remove('visible');

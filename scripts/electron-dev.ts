@@ -4,7 +4,7 @@
  */
 
 import { spawn, type Subprocess } from "bun";
-import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync } from "fs";
+import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync, readdirSync } from "fs";
 import { join, basename } from "path";
 import * as esbuild from "esbuild";
 import { downloadUv, type Platform, type Arch } from "./build/common";
@@ -35,6 +35,8 @@ const MAIN_PROCESS_IMPORT_META_BANNER =
 // MCP server paths
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
+const WHATSAPP_WORKER_DIR = join(ROOT_DIR, "packages/messaging-whatsapp-worker");
+const WHATSAPP_WORKER_OUTPUT = join(WHATSAPP_WORKER_DIR, "dist/worker.cjs");
 
 // Platform-specific binary paths (bun creates .exe on Windows, no extension on Unix)
 const IS_WINDOWS = process.platform === "win32";
@@ -192,20 +194,68 @@ function cleanViteCache(): void {
   }
 }
 
+function latestMtime(rootPath: string): number {
+  if (!existsSync(rootPath)) return 0;
+
+  const stats = statSync(rootPath);
+  if (!stats.isDirectory()) return stats.mtimeMs;
+
+  let latest = stats.mtimeMs;
+  for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
+    latest = Math.max(latest, latestMtime(join(rootPath, entry.name)));
+  }
+  return latest;
+}
+
+function needsBuild(outputPath: string, sourcePaths: string[]): boolean {
+  if (!existsSync(outputPath)) return true;
+  const outputMtime = statSync(outputPath).mtimeMs;
+  return sourcePaths.some(sourcePath => latestMtime(sourcePath) > outputMtime);
+}
+
+async function waitForFilesReady(filePaths: string[], timeoutMs = 10000): Promise<boolean> {
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    if (filePaths.every(filePath => existsSync(filePath) && statSync(filePath).size > 0)) {
+      return true;
+    }
+    await Bun.sleep(50);
+  }
+  return false;
+}
+
 // Copy resources to dist
 function copyResources(): void {
   const srcDir = join(ELECTRON_DIR, "resources");
   const destDir = join(ELECTRON_DIR, "dist/resources");
-  if (existsSync(srcDir)) {
-    cpSync(srcDir, destDir, { recursive: true, force: true });
-    console.log("📦 Copied resources to dist");
+  if (!existsSync(srcDir)) return;
+
+  const forceCopy = process.env.CRAFT_DEV_FORCE_COPY_RESOURCES === "1";
+  if (!forceCopy && existsSync(destDir) && latestMtime(destDir) >= latestMtime(srcDir)) {
+    console.log("📦 Resources unchanged, reusing dist/resources");
+    return;
   }
+
+  cpSync(srcDir, destDir, { recursive: true, force: true });
+  console.log("📦 Copied resources to dist");
 }
 
 // Build the WhatsApp worker bundle (dist/worker.cjs). Runs the canonical
 // `scripts/build-wa-worker.ts` as a subprocess so the dev path stays in
-// sync with the packaged/CI build. Cheap (~70ms) so we always rebuild.
+// sync with the packaged/CI build. Rebuild only when its inputs changed.
 async function buildWaWorker(): Promise<void> {
+  if (
+    process.env.CRAFT_DEV_FORCE_REBUILD_WORKER !== "1" &&
+    !needsBuild(WHATSAPP_WORKER_OUTPUT, [
+      join(WHATSAPP_WORKER_DIR, "src"),
+      join(WHATSAPP_WORKER_DIR, "package.json"),
+      join(ROOT_DIR, "scripts/build-wa-worker.ts"),
+    ])
+  ) {
+    console.log("📨 WhatsApp worker unchanged, reusing dist/worker.cjs");
+    return;
+  }
+
   console.log("📨 Building WhatsApp worker...");
   const proc = spawn({
     cmd: ["bun", "run", "scripts/build-wa-worker.ts"],
@@ -222,6 +272,17 @@ async function buildWaWorker(): Promise<void> {
 
 // Build MCP servers for sessions (one-time, no watch needed)
 async function buildMcpServers(): Promise<void> {
+  if (
+    process.env.CRAFT_DEV_FORCE_REBUILD_MCP !== "1" &&
+    !needsBuild(SESSION_SERVER_OUTPUT, [
+      join(SESSION_SERVER_DIR, "src"),
+      join(SESSION_SERVER_DIR, "package.json"),
+    ])
+  ) {
+    console.log("🌉 MCP server unchanged, reusing dist/index.js");
+    return;
+  }
+
   console.log("🌉 Building MCP servers...");
 
   // Ensure dist directories exist
@@ -346,43 +407,15 @@ async function verifyJsFile(filePath: string): Promise<{ valid: boolean; error?:
   }
 }
 
-// Wait for file to stabilize (no size changes)
-async function waitForFileStable(filePath: string, timeoutMs = 10000): Promise<boolean> {
-  const startTime = Date.now();
-  let lastSize = -1;
-  let stableCount = 0;
-
-  while (Date.now() - startTime < timeoutMs) {
-    if (!existsSync(filePath)) {
-      await Bun.sleep(100);
-      continue;
-    }
-
-    const stats = statSync(filePath);
-    if (stats.size === lastSize) {
-      stableCount++;
-      // File size unchanged for 3 checks (300ms) - consider it stable
-      if (stableCount >= 3) {
-        return true;
-      }
-    } else {
-      stableCount = 0;
-      lastSize = stats.size;
-    }
-
-    await Bun.sleep(100);
-  }
-
-  return false;
-}
-
 async function main(): Promise<void> {
   console.log("🚀 Starting Electron dev environment...\n");
 
   // Setup
   detectInstance();
   loadEnvFile();
-  cleanViteCache();
+  if (process.env.CRAFT_DEV_CLEAN_VITE_CACHE === "1") {
+    cleanViteCache();
+  }
 
   // Ensure dist directory exists
   if (!existsSync(DIST_DIR)) {
@@ -393,11 +426,8 @@ async function main(): Promise<void> {
 
   copyResources();
 
-  // Build MCP servers for Codex sessions
-  await buildMcpServers();
-
-  // Build WhatsApp worker bundle so the adapter can spawn it on demand
-  await buildWaWorker();
+  // These independent artifacts can be checked/built concurrently.
+  await Promise.all([buildMcpServers(), buildWaWorker()]);
 
   const vitePort = process.env.CRAFT_VITE_PORT || "5173";
   const oauthDefines = getOAuthDefines();
@@ -405,94 +435,9 @@ async function main(): Promise<void> {
   // Kill any existing process on the Vite port
   await killProcessOnPort(vitePort);
 
-  // =========================================================
-  // PHASE 1: Initial build (one-shot, wait for completion)
-  // =========================================================
-  console.log("🔨 Building main process...");
-
   const mainCjsPath = join(DIST_DIR, "main.cjs");
   const preloadCjsPath = join(DIST_DIR, "bootstrap-preload.cjs");
   const toolbarPreloadCjsPath = join(DIST_DIR, "browser-toolbar-preload.cjs");
-
-  // Remove old build files to ensure fresh build
-  if (existsSync(mainCjsPath)) rmSync(mainCjsPath);
-  if (existsSync(preloadCjsPath)) rmSync(preloadCjsPath);
-  if (existsSync(toolbarPreloadCjsPath)) rmSync(toolbarPreloadCjsPath);
-
-  // Build main and preload entries in parallel
-  const [mainResult, preloadResult, toolbarPreloadResult] = await Promise.all([
-    runEsbuild(
-      "apps/electron/src/main/index.ts",
-      "apps/electron/dist/main.cjs",
-      oauthDefines,
-      { alias: MAIN_PROCESS_ALIAS, importMetaCompat: true }
-    ),
-    runEsbuild(
-      "apps/electron/src/preload/bootstrap.ts",
-      "apps/electron/dist/bootstrap-preload.cjs"
-    ),
-    runEsbuild(
-      "apps/electron/src/preload/browser-toolbar.ts",
-      "apps/electron/dist/browser-toolbar-preload.cjs"
-    ),
-  ]);
-
-  if (!mainResult.success) {
-    console.error("❌ Main process build failed:", mainResult.error);
-    process.exit(1);
-  }
-
-  if (!preloadResult.success) {
-    console.error("❌ Preload build failed:", preloadResult.error);
-    process.exit(1);
-  }
-
-  if (!toolbarPreloadResult.success) {
-    console.error("❌ Browser toolbar preload build failed:", toolbarPreloadResult.error);
-    process.exit(1);
-  }
-
-  // Wait for files to stabilize (filesystem flush)
-  console.log("⏳ Waiting for build files to stabilize...");
-  const [mainStable, preloadStable, toolbarPreloadStable] = await Promise.all([
-    waitForFileStable(mainCjsPath),
-    waitForFileStable(preloadCjsPath),
-    waitForFileStable(toolbarPreloadCjsPath),
-  ]);
-
-  if (!mainStable || !preloadStable || !toolbarPreloadStable) {
-    console.error("❌ Build files did not stabilize");
-    process.exit(1);
-  }
-
-  // Verify the built files are valid JavaScript
-  console.log("🔍 Verifying build output...");
-  const [mainValid, preloadValid, toolbarPreloadValid] = await Promise.all([
-    verifyJsFile(mainCjsPath),
-    verifyJsFile(preloadCjsPath),
-    verifyJsFile(toolbarPreloadCjsPath),
-  ]);
-
-  if (!mainValid.valid) {
-    console.error("❌ main.cjs is invalid:", mainValid.error);
-    process.exit(1);
-  }
-
-  if (!preloadValid.valid) {
-    console.error("❌ bootstrap-preload.cjs is invalid:", preloadValid.error);
-    process.exit(1);
-  }
-
-  if (!toolbarPreloadValid.valid) {
-    console.error("❌ browser-toolbar-preload.cjs is invalid:", toolbarPreloadValid.error);
-    process.exit(1);
-  }
-
-  console.log("✅ Initial build complete and verified\n");
-
-  // =========================================================
-  // PHASE 2: Start dev servers with watch mode
-  // =========================================================
   console.log("📡 Starting dev servers...\n");
 
   const processes: Subprocess[] = [];
@@ -525,9 +470,7 @@ async function main(): Promise<void> {
     banner: { js: MAIN_PROCESS_IMPORT_META_BANNER },
     logLevel: "info",
   });
-  await mainContext.watch();
   esbuildContexts.push(mainContext);
-  console.log("👀 Watching main process...");
 
   // 3. Preload watcher (using esbuild watch API)
   const preloadContext = await esbuild.context({
@@ -539,9 +482,7 @@ async function main(): Promise<void> {
     external: ["electron"],
     logLevel: "info",
   });
-  await preloadContext.watch();
   esbuildContexts.push(preloadContext);
-  console.log("👀 Watching preload...");
 
   // 4. Browser toolbar preload watcher (dedicated browser window bridge)
   const toolbarPreloadContext = await esbuild.context({
@@ -553,11 +494,38 @@ async function main(): Promise<void> {
     external: ["electron"],
     logLevel: "info",
   });
-  await toolbarPreloadContext.watch();
   esbuildContexts.push(toolbarPreloadContext);
-  console.log("👀 Watching browser toolbar preload...");
 
-  // 5. Start Electron (build already verified)
+  // Let watch mode perform the first build and keep the same contexts alive.
+  // Removing stale outputs lets us wait for this build without a fixed delay.
+  for (const outputPath of [mainCjsPath, preloadCjsPath, toolbarPreloadCjsPath]) {
+    if (existsSync(outputPath)) rmSync(outputPath);
+  }
+
+  console.log("🔨 Building Electron process bundles...");
+  await Promise.all(esbuildContexts.map(context => context.watch()));
+
+  if (!await waitForFilesReady([mainCjsPath, preloadCjsPath, toolbarPreloadCjsPath])) {
+    console.error("❌ Electron process bundles were not produced in time");
+    process.exit(1);
+  }
+
+  if (process.env.CRAFT_DEV_VERIFY_BUILDS === "1") {
+    console.log("🔍 Verifying build output...");
+    const [mainValid, preloadValid, toolbarPreloadValid] = await Promise.all([
+      verifyJsFile(mainCjsPath),
+      verifyJsFile(preloadCjsPath),
+      verifyJsFile(toolbarPreloadCjsPath),
+    ]);
+    if (!mainValid.valid || !preloadValid.valid || !toolbarPreloadValid.valid) {
+      console.error("❌ Electron build verification failed", { mainValid, preloadValid, toolbarPreloadValid });
+      process.exit(1);
+    }
+  }
+
+  console.log("👀 Watching main process, preload, and browser toolbar preload...");
+
+  // 5. Start Electron (initial build completed above)
   console.log("🚀 Starting Electron...\n");
 
   const electronProc = spawn({

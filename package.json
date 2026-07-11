@@ -21,7 +21,9 @@
     "!apps/online-docs"
   ],
   "scripts": {
-    "test": "bun test && for f in $(find . -name '*.isolated.ts' -not -path './node_modules/*'); do bun test \"$f\" || exit 1; done",
+    "test": "bun run test:unit && bun run test:isolated",
+    "test:unit": "bun test",
+    "test:isolated": "bun run scripts/run-isolated-tests.ts",
     "test:electron:chat-real": "bun run scripts/e2e/electron-chat/run.ts",
     "typecheck": "bun run typecheck:shared",
     "typecheck:shared": "cd packages/shared && bun run tsc --noEmit",

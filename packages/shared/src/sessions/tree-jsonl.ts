@@ -23,6 +23,7 @@ import { sanitizeSessionId } from './validation.ts';
 import { debug } from '../utils/debug.ts';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { atomicWriteFileSync } from '../utils/files.ts';
+import { stripLeadingCraftInjectedUserContext } from '../prompts/strip-injected-user-context.ts';
 import { applyPlanCustomMessageToStored } from './plan-artifact-projection.ts';
 import type { PlanModeStateV1 } from '@craft-agent/core/types';
 
@@ -804,33 +805,6 @@ function extractTextFromContent(content: unknown): string {
     })
     .filter(Boolean)
     .join('\n');
-}
-
-const LEADING_USER_DATE_CONTEXT_RE =
-  /^\s*\*\*USER'S DATE AND TIME:[\s\S]*?\*\*\s*-\s*ALWAYS use this as the authoritative current date\/time\. Ignore any\s+other date information\.\s*/i;
-
-const LEADING_CRAFT_CONTEXT_BLOCK_RE =
-  /^\s*<(session_state|sources|source_issue)(?:\s[^>]*)?>[\s\S]*?<\/\1>\s*/i;
-
-function stripLeadingCraftInjectedUserContext(content: string): string {
-  let stripped = false;
-  let next = content;
-
-  for (;;) {
-    const before = next;
-    next = next.replace(LEADING_USER_DATE_CONTEXT_RE, () => {
-      stripped = true;
-      return '';
-    });
-    next = next.replace(LEADING_CRAFT_CONTEXT_BLOCK_RE, () => {
-      stripped = true;
-      return '';
-    });
-    if (next === before) break;
-  }
-
-  const cleaned = next.trimStart();
-  return stripped && cleaned ? cleaned : content;
 }
 
 function normalizeToolInput(value: unknown): Record<string, unknown> | undefined {

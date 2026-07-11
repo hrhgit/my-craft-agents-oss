@@ -10,6 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentEvent } from '@craft-agent/core/types';
@@ -108,6 +109,28 @@ import { extractWorkspaceSlug } from '../utils/workspace.ts';
 // LLM tool types
 import type { LLMQueryRequest, LLMQueryResult } from './llm-tool.ts';
 import { writeRuntimeLog, type RuntimeLogLevel } from '../utils/runtime-log.ts';
+
+/**
+ * Convert the renderer's typed RemoteUI payload back to Pi's scalar dialog
+ * protocol. Pi select/input/editor requests resolve with a string, while the
+ * renderer uses result objects to support the richer ask_user interaction.
+ */
+function remoteUIResponseValue(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return String(payload ?? '');
+
+  const result = payload as {
+    text?: unknown;
+    freeformText?: unknown;
+    selections?: unknown;
+  };
+  if (typeof result.text === 'string') return result.text;
+  if (typeof result.freeformText === 'string') return result.freeformText;
+  if (Array.isArray(result.selections)) {
+    const first = result.selections.find((selection): selection is string => typeof selection === 'string');
+    if (first) return first;
+  }
+  return '';
+}
 
 // ============================================================
 // PiAgent Implementation
@@ -256,6 +279,9 @@ export class PiAgent extends BaseAgent {
   // Event adapter
   private adapter: PiEventAdapter;
   private projectionBuilder: PiProjectionBuilder | null = null;
+  private projectionEpoch = randomUUID();
+  /** Ignore late content events while Pi is acknowledging an abort. */
+  private suppressAbortedTurnEvents = false;
 
   // Event queue for streaming (AsyncGenerator pattern over RpcClient events)
   private eventQueue = new EventQueue();
@@ -1242,6 +1268,9 @@ export class PiAgent extends BaseAgent {
 
     // Detect session MCP tool completions (same pattern as in-process version)
     const eventType = event.type as string;
+    if (this.suppressAbortedTurnEvents && eventType !== 'turn_end' && eventType !== 'agent_end') {
+      return;
+    }
     let adaptedEvent = event;
 
     if (eventType === 'tool_execution_start') {
@@ -1763,7 +1792,7 @@ export class PiAgent extends BaseAgent {
     if (!this.config.onPiProjectionEvent || !sessionId) return null;
     const client = this.rpcClient;
     const runtimeId = client && 'runtimeId' in client && typeof client.runtimeId === 'string'
-      ? client.runtimeId
+      ? `${client.runtimeId}:${this.projectionEpoch}`
       : `legacy:${sessionId}`;
     if (!this.projectionBuilder || this.projectionBuilder.runtimeId !== runtimeId) {
       this.projectionBuilder = new PiProjectionBuilder(sessionId, runtimeId);
@@ -1844,7 +1873,11 @@ export class PiAgent extends BaseAgent {
     } else if (typeof payload === 'object' && payload && 'confirmed' in payload) {
       client.respondToExtensionUI({ type: 'extension_ui_response', id: requestId, confirmed: Boolean((payload as { confirmed?: unknown }).confirmed) });
     } else {
-      client.respondToExtensionUI({ type: 'extension_ui_response', id: requestId, value: String(payload ?? '') });
+      client.respondToExtensionUI({
+        type: 'extension_ui_response',
+        id: requestId,
+        value: remoteUIResponseValue(payload),
+      });
     }
   }
 
@@ -1952,6 +1985,7 @@ export class PiAgent extends BaseAgent {
     // Reset state for new turn
     this._isProcessing = true;
     this.abortReason = undefined;
+    this.suppressAbortedTurnEvents = false;
     this.eventQueue.reset();
     this.currentUserMessage = message;
     this.adapter.startTurn();
@@ -2294,8 +2328,23 @@ export class PiAgent extends BaseAgent {
     }
     this.pendingPermissions.clear();
 
-    void this.rpcClient?.abort().catch(error => this.handleRpcError(error));
-    this.eventQueue.complete();
+    this.abortReason = Object.values(AbortReason).includes(reason as AbortReason)
+      ? reason as AbortReason
+      : AbortReason.UserStop;
+    this._isProcessing = false;
+    this.suppressAbortedTurnEvents = true;
+
+    try {
+      await this.rpcClient?.abort();
+    } catch (error) {
+      this.writePiRuntimeLog('warn', 'chat.abort_failed', { error });
+      // If the cooperative abort command fails, release this runtime so the
+      // stopped generation cannot continue publishing events in the background.
+      await this.stopRpcClient();
+    } finally {
+      // Wake the chat consumer even if the transport failed while aborting.
+      this.eventQueue.complete();
+    }
 
     // Clear bridge cache for this interrupted turn.
     this.preToolMetadataByCallId.clear();
@@ -2308,6 +2357,7 @@ export class PiAgent extends BaseAgent {
 
     this.abortReason = reason;
     this._isProcessing = false;
+    this.suppressAbortedTurnEvents = true;
 
     // Reject all pending permissions
     for (const [, pending] of this.pendingPermissions) {
@@ -2420,6 +2470,8 @@ export class PiAgent extends BaseAgent {
     this.rpcHostLease = null;
     this.rpcClientReady = null;
     this.rpcCapabilities = null;
+    this.projectionBuilder = null;
+    this.projectionEpoch = randomUUID();
     this.preToolMetadataByCallId.clear();
     this.resetRpcErrorDedup();
 

@@ -127,7 +127,6 @@ import { PanelHeader } from "./PanelHeader"
 import { FabNewChat } from "./FabNewChat"
 import { SendToWorkspaceDialog } from "./SendToWorkspaceDialog"
 import { MessagingDialogHost } from "@/components/messaging/MessagingDialogHost"
-import { RemoteUIModal } from "@/components/extensions/RemoteUIModal"
 import { useRemoteUIRequests } from "@/hooks/useRemoteUIRequests"
 import { EditPopover, getEditConfig, type EditContextKey } from "@/components/ui/EditPopover"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
@@ -1584,6 +1583,8 @@ function AppShellContent({
     onSessionLabelsChange: handleSessionLabelsChange,
     enabledModes,
     sessionStatuses: effectiveSessionStatuses,
+    remoteUIRequest,
+    respondRemoteUI,
     onSessionSourcesChange: handleSessionSourcesChange,
     rightSidebarButton: null,
     isCompactMode: isAutoCompact,
@@ -1599,7 +1600,7 @@ function AppShellContent({
     automationTestResults,
     getAutomationHistory,
     onReplayAutomation: handleReplayAutomation,
-  }), [contextValue, handleDeleteSession, sources, skills, activeSessionWorkingDirectory, displayLabelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, handleSessionSourcesChange, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
+  }), [contextValue, handleDeleteSession, sources, skills, activeSessionWorkingDirectory, displayLabelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, remoteUIRequest, respondRemoteUI, handleSessionSourcesChange, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
@@ -3549,12 +3550,6 @@ function AppShellContent({
       {/* Messaging dialogs (pairing-code + WA connect) — driven by messagingDialogAtom.
           Mounted here so they survive context-menu / dropdown close. */}
       <MessagingDialogHost />
-
-      {/* Pi 扩展 RemoteUI modal（select / editor），由 remoteui:request 事件驱动。
-          全局唯一，同一时间只显示一个请求。 */}
-      {remoteUIRequest && (
-        <RemoteUIModal request={remoteUIRequest} onRespond={respondRemoteUI} />
-      )}
 
     </AppShellProvider>
   )

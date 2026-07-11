@@ -8,4 +8,6 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Bug Fixes
 
+- **Stop now truly interrupts a response** - Craft waits for Pi to acknowledge cancellation, suppresses late output from the stopped turn, and no longer copies submitted or queued prompts back into the composer.
+
 ## Breaking Changes

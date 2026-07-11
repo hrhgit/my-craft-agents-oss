@@ -386,6 +386,8 @@ bun run typecheck:all
 
 On Windows, you can also double-click [`start-quick-test.cmd`](./start-quick-test.cmd) from the repo root to launch the Electron hot-reload development build. To switch modes from a terminal, run `start-quick-test.cmd start`, `start-quick-test.cmd server-dev`, or `start-quick-test.cmd webui-dev`.
 
+To launch the complete browser UI development environment on Windows, double-click [`start-webui.cmd`](./start-webui.cmd) or run `portmux start`. It starts the authenticated headless server and Vite WebUI, automatically signs the local browser in, and opens the assigned URL. portmux assigns the Vite port through `CRAFT_WEBUI_PORT`; the local RPC server uses the next port. The launcher uses `.craft-agent\\webui-<port>` as an isolated config directory unless `CRAFT_CONFIG_DIR` is already set.
+
 ### Environment Variables
 
 OAuth integrations (Slack, Microsoft) require credentials baked into the build. Create a `.env` file:

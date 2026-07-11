@@ -16,7 +16,7 @@ function makeState(messages: any[]): SessionState {
 
 describe('handleInterrupted (#616)', () => {
   describe('user-initiated stop (event.message present)', () => {
-    it('removes queued bubbles AND emits restore_input', () => {
+    it('removes queued bubbles without restoring old prompts to the composer', () => {
       const state = makeState([
         { id: 'msg-1', role: 'user', content: 'first' },
         { id: 'msg-2', role: 'user', content: 'queued one', isQueued: true },
@@ -38,10 +38,7 @@ describe('handleInterrupted (#616)', () => {
       expect(ids).not.toContain('msg-3')
       // info message appended
       expect(ids).toContain('info-1')
-      // restore_input effect emitted with combined text
-      expect(next.effects).toEqual([
-        { type: 'restore_input', text: 'queued one\n\nqueued two' },
-      ])
+      expect(next.effects).toEqual([])
       // isProcessing cleared
       expect(next.state.session.isProcessing).toBe(false)
     })

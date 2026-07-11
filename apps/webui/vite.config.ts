@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
+const requestedPort = Number.parseInt(process.env.CRAFT_WEBUI_PORT ?? process.env.PORT ?? '5175', 10)
+const webuiPort = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
+  ? requestedPort
+  : 5175
+
 export default defineConfig({
   plugins: [
     react({
@@ -83,9 +88,10 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5175,
+    port: webuiPort,
+    strictPort: true,
     open: false,
-    host: true,
+    host: process.env.CRAFT_WEBUI_HOST ?? true,
     // Proxy API + WS to the headless server so the dev bundle on :5175 works
     // end-to-end with HMR. Target port follows CRAFT_RPC_PORT (default 9100).
     // Auto-detects TLS: if the server has CRAFT_RPC_TLS_KEY/CERT set, we proxy

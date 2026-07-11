@@ -26,6 +26,7 @@ function createTestWebuiDir(): string {
 
 async function createServer(overrides?: {
   secureCookies?: boolean
+  autoLogin?: boolean
   publicWsUrl?: string
   wsProtocol?: 'ws' | 'wss'
   wsPort?: number
@@ -36,6 +37,7 @@ async function createServer(overrides?: {
     secret: SECRET,
     password: PASSWORD,
     secureCookies: overrides?.secureCookies,
+    autoLogin: overrides?.autoLogin,
     publicWsUrl: overrides?.publicWsUrl,
     wsProtocol: overrides?.wsProtocol ?? 'wss',
     wsPort: overrides?.wsPort ?? 9100,
@@ -106,6 +108,23 @@ describe('startWebuiHttpServer', () => {
 
     expect(res.status).toBe(401)
     expect(await res.json()).toEqual({ error: 'Invalid credentials' })
+  })
+
+  it('supports opt-in automatic local development login', async () => {
+    const { baseUrl } = await createServer({ autoLogin: true })
+
+    const res = await fetch(`${baseUrl}/api/auth/auto`, { method: 'POST' })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('set-cookie')).toContain('craft_session=')
+  })
+
+  it('does not expose automatic login unless explicitly enabled', async () => {
+    const { baseUrl } = await createServer()
+
+    const res = await fetch(`${baseUrl}/api/auth/auto`, { method: 'POST' })
+
+    expect(res.status).toBe(404)
   })
 
   it('honors an explicit secure-cookie override', async () => {

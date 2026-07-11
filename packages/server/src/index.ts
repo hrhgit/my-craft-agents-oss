@@ -117,6 +117,8 @@ const webuiEnabled = webuiDir && existsSync(webuiDir)
 const webuiSecureCookies = parseOptionalBooleanEnv('CRAFT_WEBUI_SECURE_COOKIE', process.env.CRAFT_WEBUI_SECURE_COOKIE)
 const webuiWsUrl = parseOptionalWebSocketUrl('CRAFT_WEBUI_WS_URL', process.env.CRAFT_WEBUI_WS_URL)
 const serverToken = process.env.CRAFT_SERVER_TOKEN
+const rpcHost = process.env.CRAFT_RPC_HOST ?? '127.0.0.1'
+const isLoopbackRpcHost = ['127.0.0.1', 'localhost', '::1'].includes(rpcHost)
 
 // ---------------------------------------------------------------------------
 // Create WebUI handler early so it can be embedded in the WsRpcServer.
@@ -139,6 +141,7 @@ if (webuiEnabled && serverToken) {
     webuiDir: webuiDir!,
     secret: serverToken,
     password: process.env.CRAFT_WEBUI_PASSWORD || undefined,
+    autoLogin: process.env.CRAFT_WEBUI_AUTO_LOGIN === 'true' && isLoopbackRpcHost,
     secureCookies: webuiSecureCookies,
     publicWsUrl: webuiWsUrl,
     wsProtocol: rpcProtocol,

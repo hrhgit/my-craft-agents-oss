@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import {
   createSession,
   getSessionFilePath,
+  getSessionPlansPath,
   listSessions,
   setSharedPiSessionsDirForTests,
 } from '../storage'
@@ -633,5 +634,19 @@ Active: none
     const listed = listSessions(workspaceRoot)
     expect(listed.map(s => s.craftId)).toContain(session.craftId)
     expect(listed.find(s => s.craftId === session.craftId)?.workingDirectory).toBe(workspaceRoot)
+  })
+
+  it('preserves plan counts while reusing resolved session sidecar paths', async () => {
+    const piRoot = join(dir, 'pi-sessions-plan-count')
+    const workspaceRoot = join(dir, 'workspace-plan-count')
+    mkdirSync(workspaceRoot, { recursive: true })
+    setSharedPiSessionsDirForTests(piRoot)
+
+    const session = await createSession(workspaceRoot, { name: 'Plan count' })
+    const plansDir = getSessionPlansPath(workspaceRoot, session.craftId)
+    writeFileSync(join(plansDir, 'plan.md'), '# Plan\n')
+
+    const listed = listSessions(workspaceRoot)
+    expect(listed.find(s => s.craftId === session.craftId)?.planCount).toBe(1)
   })
 })

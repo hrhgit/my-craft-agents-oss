@@ -7,7 +7,7 @@
  * otherwise wrong guesses would cost nothing.
  */
 import { describe, it, expect } from 'bun:test'
-import { PairingCodeManager, PAIR_CONSUME_RATE_PER_MINUTE } from './pairing'
+import { PairingCodeManager, PAIR_CONSUME_RATE_PER_MINUTE } from '../pairing'
 
 describe('PairingCodeManager.canConsume', () => {
   it('allows up to PAIR_CONSUME_RATE_PER_MINUTE attempts per minute per sender', () => {

@@ -8,12 +8,11 @@
       "safe",
       "allow-all"
     ],
-    "enabledSourceSlugs": [],
-    "defaultLlmConnection": "pi-myapi-gpt"
+    "enabledSourceSlugs": []
   },
   "localMcpServers": {
     "enabled": true
   },
   "createdAt": 1783415164451,
-  "updatedAt": 1783774192165
+  "updatedAt": 1783775888144
 }

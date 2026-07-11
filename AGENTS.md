@@ -27,3 +27,15 @@ Do not treat these as runtime failure logs:
 - `C:\Users\32858\.pi\agent\sessions\...` stores Pi/Craft session JSONL and sidecar data, not Craft main-process diagnostics.
 
 When investigating "Pi Process Exited", `get_capabilities`, or Windows `EPERM` startup failures, check `runtime.log` first and filter for `scope == "pi-rpc"`.
+
+## Web UI Validation Workflow
+
+For renderer and UI changes, validate in the browser first, then run the relevant Electron smoke check.
+
+- Start the complete local WebUI with `start-webui.cmd` from the repository root.
+- The script starts the headless RPC server and Vite WebUI, automatically signs the local browser in, then opens `http://localhost:5175`.
+- Automatic login is a development-only localhost flow enabled by the launcher; do not enable it for shared or production servers.
+- Keep reusable UI in `apps/electron/src/renderer` or `packages/ui` so WebUI and Electron share the same components and styles.
+- Treat `apps/webui/src` as the browser adapter/bootstrap layer. Do not duplicate the main application layout there.
+- Browser-only behavior belongs in the Web API adapter or explicit browser shims; native dialogs, menus, IPC, filesystem, subprocess, and window behavior still require Electron verification.
+- When comparing the two surfaces, check the same viewport sizes and states in both before changing platform-specific code.

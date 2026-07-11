@@ -29,6 +29,11 @@ import type { SessionStatus as SessionStatusConfig } from '@/config/session-stat
 import type { SessionOptions, SessionOptionUpdates } from '../hooks/useSessionOptions'
 import { defaultSessionOptions } from '../hooks/useSessionOptions'
 import { sessionAtomFamily } from '../atoms/sessions'
+import type {
+  RemoteUICancelReason,
+  RemoteUIRequest,
+  RemoteUIResult,
+} from '@/components/extensions/RemoteUIModal'
 
 export interface AppShellContextType {
   // Data
@@ -67,6 +72,10 @@ export interface AppShellContextType {
   enabledModes?: PermissionMode[]
   /** Dynamic todo states from workspace config (provided by AppShell, defaults to empty) */
   sessionStatuses?: SessionStatusConfig[]
+
+  /** Pi extension input currently replacing the composer for its owning session. */
+  remoteUIRequest?: RemoteUIRequest | null
+  respondRemoteUI?: (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => void
 
   // Unified session options map
   /** All session-scoped options in one map. Use useSessionOptionsFor() hook for easy access. */

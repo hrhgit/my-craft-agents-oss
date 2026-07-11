@@ -5809,14 +5809,12 @@ export class SessionManager implements ISessionManager {
 
   async cancelProcessing(sessionId: string, silent = false): Promise<void> {
     const managed = this.sessions.get(sessionId)
-    if (!managed?.isProcessing) {
+    const projectionWasProcessing = managed ? this.isPiProjectionProcessing(managed.id) : false
+    if (!managed || (!managed.isProcessing && !projectionWasProcessing)) {
       return // Not processing, nothing to cancel
     }
 
     sessionLog.info('Cancelling processing for session:', sessionId, silent ? '(silent)' : '')
-
-    // Collect queued message text for input restoration before clearing
-    const queuedTexts = managed.messageQueue.map(q => q.message)
 
     // Collect queued message IDs so we can remove them from the messages array
     // (they were added when sendMessage was called during processing)
@@ -5840,9 +5838,17 @@ export class SessionManager implements ISessionManager {
     // telling the LLM the previous response was cut short
     managed.wasInterrupted = true
 
-    // Force-abort via Query.close() - sends soft interrupt to the backend
+    // Wait for the backend to acknowledge the abort before reporting success to
+    // the renderer. This prevents a stopped Pi turn from leaking late events.
     if (managed.agent) {
-      managed.agent.forceAbort(AbortReason.UserStop)
+      await managed.agent.abort(AbortReason.UserStop)
+    }
+
+    // A restored projection can say "running" after its host process is gone.
+    // Close that old projection explicitly when Pi has no live turn capable of
+    // emitting agent_end itself.
+    if (projectionWasProcessing && this.isPiProjectionProcessing(sessionId)) {
+      this.closeStalePiProjection(sessionId)
     }
 
     // Only show "Response interrupted" message when user explicitly clicked Stop
@@ -5859,16 +5865,12 @@ export class SessionManager implements ISessionManager {
         type: 'interrupted',
         sessionId,
         message: interruptedMessage,
-        // Include queued texts so the UI can restore them to the input field
-        ...(queuedTexts.length > 0 ? { queuedMessages: queuedTexts } : {}),
       }, managed.workspace.id)
     } else {
       // Still send interrupted event but without the message (for UI state update)
       this.sendEvent({
         type: 'interrupted',
         sessionId,
-        // Include queued texts so the UI can restore them to the input field
-        ...(queuedTexts.length > 0 ? { queuedMessages: queuedTexts } : {}),
       }, managed.workspace.id)
     }
 
@@ -6367,6 +6369,38 @@ export class SessionManager implements ISessionManager {
       sessionLog.warn(`[ExtensionBridge] Extension command ${commandId} failed for session ${sessionId}: ${message}`)
       return { invoked: false, error: message }
     }
+  }
+
+  private isPiProjectionProcessing(sessionId: string): boolean {
+    const snapshot = this.piProjectionBySession.get(sessionId)?.createSnapshot()
+    if (!snapshot) return false
+    const lifecycle = snapshot.entities
+      .filter(entity => entity.kind === 'agent_start' || entity.kind === 'agent_end'
+        || entity.kind === 'turn_start' || entity.kind === 'turn_end'
+        || entity.kind === 'compaction_start' || entity.kind === 'compaction_end'
+        || entity.kind === 'runtime_error')
+      .sort((a, b) => b.lastSeq - a.lastSeq)[0]
+    return lifecycle?.kind === 'agent_start'
+      || lifecycle?.kind === 'turn_start'
+      || lifecycle?.kind === 'compaction_start'
+  }
+
+  private closeStalePiProjection(sessionId: string): void {
+    const snapshot = this.piProjectionBySession.get(sessionId)?.createSnapshot()
+    if (!snapshot) return
+    const seq = snapshot.lastSeq + 1
+    this.applyPiProjectionEvent({
+      schemaVersion: 1,
+      eventId: `${snapshot.runtimeId}:host-interrupted:${seq}`,
+      seq,
+      sessionId,
+      runtimeId: snapshot.runtimeId,
+      entityId: `lifecycle:agent_end:host:${seq}`,
+      entityType: 'conversation',
+      entityVersion: 1,
+      kind: 'agent_end',
+      payload: { status: 'interrupted' },
+    })
   }
 
   async reloadExtensions(): Promise<void> {

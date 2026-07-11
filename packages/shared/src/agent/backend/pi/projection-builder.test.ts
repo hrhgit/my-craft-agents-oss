@@ -149,6 +149,50 @@ describe('PiProjectionBuilder', () => {
     expect(user.payload).toEqual({ role: 'user', text: 'hello', streaming: false })
   })
 
+  it('omits Craft-injected context from Pi-native user message projections', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    const user = builder.acceptRuntimeEvent({
+      type: 'message_end',
+      message: {
+        id: 'user-1',
+        role: 'user',
+        content: `**USER'S DATE AND TIME: Saturday, July 11, 2026 at 10:42 PM GMT+8** - ALWAYS use this as the authoritative current date/time. Ignore any other date information.
+
+<session_state>
+sessionId: session-1
+permissionMode: execute
+</session_state>
+
+<sources>
+Active: none
+</sources>
+
+Ask me a question`,
+      },
+    })[0]!
+
+    expect(user.payload).toEqual({ role: 'user', text: 'Ask me a question', streaming: false })
+  })
+
+  it('does not project injected context as text for attachment-only messages', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    const projected = builder.acceptRuntimeEvent({
+      type: 'message_end',
+      message: {
+        role: 'user',
+        content: `**USER'S DATE AND TIME: Saturday, July 11, 2026 at 10:42 PM GMT+8** - ALWAYS use this as the authoritative current date/time. Ignore any other date information.
+
+<session_state>
+sessionId: session-1
+</session_state>`,
+        attachments: [{ id: 'file-1', name: 'note.txt' }],
+      },
+    })
+
+    expect(projected).toHaveLength(1)
+    expect(projected[0]).toMatchObject({ kind: 'user_attachment' })
+  })
+
   it('projects Pi-native thinking updates onto one stable content entity', () => {
     const builder = new PiProjectionBuilder('session-1', 'runtime-1')
     const base = { type: 'message_update', message: { id: 'assistant-1', role: 'assistant' } }

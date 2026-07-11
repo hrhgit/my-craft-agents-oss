@@ -14,7 +14,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { BindingStore } from './binding-store'
+import { BindingStore } from '../binding-store'
 
 const testRoots: string[] = []
 

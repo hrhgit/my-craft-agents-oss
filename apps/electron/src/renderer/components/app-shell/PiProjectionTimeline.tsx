@@ -1,9 +1,9 @@
 import * as React from 'react'
-import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, File, Image, LoaderCircle, Wrench } from 'lucide-react'
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, File, Image, LoaderCircle, MessageCircleDashed, Wrench } from 'lucide-react'
 import type { PiProjectionState } from '@/atoms/pi-projection'
 import { cn } from '@/lib/utils'
 import { CollapsibleMarkdownProvider, Markdown, StreamingMarkdown } from '@/components/markdown'
-import { ActivityCardsOverlay, PlanArtifactCard, extractOverlayCards, type ActivityItem } from '@craft-agent/ui'
+import { ActivityCardsOverlay, PlanArtifactCard, UserMessageBubble, extractOverlayCards, type ActivityItem } from '@craft-agent/ui'
 import type { ExtensionCommandResult } from '@craft-agent/core'
 import type { CredentialResponse } from '../../../shared/types'
 import { MemoizedAuthRequestCard } from '@/components/chat/AuthRequestCard'
@@ -85,14 +85,31 @@ function ContentBlock({ item, onOpenFile, onOpenUrl }: {
 
   if (item.contentKind === 'thinking') {
     return (
-      <details open={item.streaming} data-pi-entity-id={item.id} className="border-l border-border/60 pl-3 text-muted-foreground">
-        <summary className="cursor-pointer py-1 text-xs">Thinking</summary>
+      <div data-pi-entity-id={item.id} className="border-l border-border/60 py-1 pl-3 text-muted-foreground">
+        <div className="mb-1 flex items-center gap-2 text-xs font-medium">
+          {item.streaming
+            ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+            : <MessageCircleDashed className="h-3.5 w-3.5" />}
+          <span>Thinking</span>
+        </div>
         <div className="text-sm opacity-80">{content}</div>
-      </details>
+      </div>
     )
   }
 
-  return <div data-pi-entity-id={item.id} className={cn(item.role === 'user' && 'ml-auto max-w-[85%] rounded-[8px] bg-foreground/[0.06] px-3 py-2')}>{content}</div>
+  if (item.role === 'user') {
+    return (
+      <div data-pi-entity-id={item.id}>
+        <UserMessageBubble
+          content={item.text}
+          onUrlClick={onOpenUrl}
+          onFileClick={onOpenFile}
+        />
+      </div>
+    )
+  }
+
+  return <div data-pi-entity-id={item.id}>{content}</div>
 }
 
 function formatFileSize(size?: number): string {
@@ -151,15 +168,15 @@ export function PiProjectionTimeline({
 
   return (
     <CollapsibleMarkdownProvider>
-      <div className="space-y-3" data-testid="pi-projection-timeline">
+      <div data-testid="pi-projection-timeline">
         {pageStart > 0 && <button type="button" className="w-full py-2 text-xs text-muted-foreground hover:text-foreground" onClick={() => setVisibleItemCount(value => value + pageSize)}>Show {Math.min(pageSize, pageStart)} earlier items</button>}
         {visibleItems.map(item => {
           const matchClass = item.id === activeMatchId ? 'ring-2 ring-info ring-offset-2 ring-offset-background rounded-[6px]' : matches.some(match => match.itemId === item.id) ? 'ring-1 ring-info/30 rounded-[6px]' : undefined
           if (item.type === 'tool') return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={matchClass}><ToolRow item={item} onOpenFile={onOpenFile} onOpenUrl={onOpenUrl} /></div>
-          if (item.type === 'attachment') return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={matchClass}><AttachmentRef item={item} /></div>
+          if (item.type === 'attachment') return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={cn('my-3', matchClass)}><AttachmentRef item={item} /></div>
           if (item.type === 'artifact') {
             return (
-              <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={matchClass}>
+              <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('my-3', matchClass)}>
                 <PlanArtifactCard
                   artifact={item.artifact}
                   content={item.content}
@@ -175,7 +192,7 @@ export function PiProjectionTimeline({
           if (item.type === 'auth') {
             if (!projection.sessionId) return null
             return (
-              <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={matchClass}>
+              <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('my-3', matchClass)}>
                 <MemoizedAuthRequestCard
                   request={item.request}
                   sessionId={projection.sessionId}
@@ -186,9 +203,9 @@ export function PiProjectionTimeline({
             )
           }
           if (item.type === 'error') {
-            return <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('flex items-start gap-2 border-l border-destructive/50 py-1 pl-3 text-sm text-destructive', matchClass)}><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{item.message}</span></div>
+            return <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('my-3 flex items-start gap-2 border-l border-destructive/50 py-1 pl-3 text-sm text-destructive', matchClass)}><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{item.message}</span></div>
           }
-          return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={matchClass}><ContentBlock item={item} onOpenFile={onOpenFile} onOpenUrl={onOpenUrl} /></div>
+          return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={cn(item.contentKind === 'thinking' ? undefined : 'my-3', matchClass)}><ContentBlock item={item} onOpenFile={onOpenFile} onOpenUrl={onOpenUrl} /></div>
         })}
         {items.length === 0 && <div className="flex h-64 items-center justify-center text-xs text-muted-foreground"><Wrench className="mr-2 h-4 w-4" />Waiting for Pi events</div>}
       </div>

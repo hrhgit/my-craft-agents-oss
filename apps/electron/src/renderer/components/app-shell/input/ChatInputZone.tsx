@@ -14,6 +14,8 @@ import type { PlanArtifactV1, PlanModeStateV1 } from '@craft-agent/core/types'
 import { canFinalizePlan, conversationModeFromPlanState } from './plan-mode-ui-state'
 import { InputContainer } from './InputContainer'
 import { InputErrorBoundary } from './InputErrorBoundary'
+import { useOptionalAppShellContext } from '@/context/AppShellContext'
+import { RemoteUIComposer } from '@/components/extensions/RemoteUIModal'
 
 interface ChatInputZoneProps {
   compactMode?: boolean
@@ -61,6 +63,7 @@ export function ChatInputZone({
   inputProps,
 }: ChatInputZoneProps) {
   const { t } = useTranslation()
+  const appShellContext = useOptionalAppShellContext()
   const { triggerCommand: triggerExtensionCommand } = useExtensionCommands(sessionId)
   const [autoOpenLabelId, setAutoOpenLabelId] = React.useState<string | null>(null)
   const [planCommandError, setPlanCommandError] = React.useState<string | null>(null)
@@ -68,6 +71,9 @@ export function ChatInputZone({
   const [piExtensionSettings, setPiExtensionSettings] = React.useState<import('../../../../shared/types').PiExtensionSettings | null>(null)
   const shouldShowOptionBadges = showOptionBadges ?? !compactMode
   const inputResetKey = `${sessionId}::${inputProps.structuredInput?.type ?? 'freeform'}`
+  const remoteUIRequest = appShellContext?.remoteUIRequest?.sessionId === sessionId
+    ? appShellContext.remoteUIRequest
+    : null
 
   const conversationMode = React.useMemo(() => conversationModeFromPlanState(planModeState), [planModeState])
 
@@ -208,24 +214,31 @@ export function ChatInputZone({
         </div>
       )}
 
-      <InputErrorBoundary
-        sessionId={sessionId}
-        resetKey={inputResetKey}
-        onClearDraft={handleClearDraft}
-      >
-        <InputContainer
-          {...inputProps}
-          compactMode={compactMode}
-          permissionMode={permissionMode}
-          onPermissionModeChange={onPermissionModeChange}
-          labels={labels}
-          sessionLabels={sessionLabels}
-          onLabelAdd={handleLabelAdd}
-          sessionFolderPath={sessionFolderPath}
-          sessionId={sessionId}
-          currentSessionStatus={currentSessionStatus}
+      {remoteUIRequest && appShellContext?.respondRemoteUI ? (
+        <RemoteUIComposer
+          request={remoteUIRequest}
+          onRespond={appShellContext.respondRemoteUI}
         />
-      </InputErrorBoundary>
+      ) : (
+        <InputErrorBoundary
+          sessionId={sessionId}
+          resetKey={inputResetKey}
+          onClearDraft={handleClearDraft}
+        >
+          <InputContainer
+            {...inputProps}
+            compactMode={compactMode}
+            permissionMode={permissionMode}
+            onPermissionModeChange={onPermissionModeChange}
+            labels={labels}
+            sessionLabels={sessionLabels}
+            onLabelAdd={handleLabelAdd}
+            sessionFolderPath={sessionFolderPath}
+            sessionId={sessionId}
+            currentSessionStatus={currentSessionStatus}
+          />
+        </InputErrorBoundary>
+      )}
     </div>
   )
 }

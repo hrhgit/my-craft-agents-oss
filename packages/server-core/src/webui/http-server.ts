@@ -125,6 +125,8 @@ export interface WebuiHandlerOptions {
   secret: string
   /** Optional separate web UI password. Falls back to `secret` for verification. */
   password?: string
+  /** Enable localhost-only automatic login for local development. */
+  autoLogin?: boolean
   /** Explicit Secure-cookie override. When unset, infer from the request / proxy headers. */
   secureCookies?: boolean
   /** Optional browser-facing WebSocket URL override for reverse-proxy deployments. */
@@ -171,6 +173,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
     webuiDir,
     secret,
     password,
+    autoLogin,
     secureCookies,
     publicWsUrl,
     wsProtocol,
@@ -266,6 +269,23 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       const jwt = await createSessionToken(secret)
       logger.info(`[webui] Successful auth from ${ip}`)
 
+      return Response.json({ ok: true }, {
+        status: 200,
+        headers: {
+          'Set-Cookie': buildSessionCookie(jwt, useSecureCookies),
+        },
+      })
+    }
+
+    // ── Local development auto-login ──
+    // This route is opt-in and only enabled by the local WebUI launcher. It
+    // issues the same HttpOnly session cookie as the password flow without
+    // exposing the server token to the browser or URL.
+    if (path === '/api/auth/auto' && req.method === 'POST') {
+      if (!autoLogin) return new Response('Not Found', { status: 404 })
+
+      const jwt = await createSessionToken(secret)
+      logger.info('[webui] Automatic local development auth')
       return Response.json({ ok: true }, {
         status: 200,
         headers: {

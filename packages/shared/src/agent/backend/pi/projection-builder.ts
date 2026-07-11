@@ -7,6 +7,7 @@ import {
   parsePlanModeStateMessageDetails,
 } from '@craft-agent/core/types'
 import type { PiProjectionEntityType, PiProjectionEventV1 } from '../../../protocol/pi-projection.ts'
+import { stripLeadingCraftInjectedUserContext } from '../../../prompts/strip-injected-user-context.ts'
 
 type ProjectableAgentEvent = Extract<
   AgentEvent,
@@ -232,7 +233,10 @@ export class PiProjectionBuilder {
     const value = message as { id?: unknown; timestamp?: unknown; role?: unknown; customType?: unknown; content?: unknown; details?: unknown; clientMutationId?: unknown; attachments?: unknown }
     if (value.role === 'custom') return this.acceptCustomMessage(value)
     if (value.role !== 'user') return []
-    const text = this.extractText(value.content)
+    // Pi stores the full model input, including Craft's volatile date, session
+    // state, and source blocks. Projection payloads are user-visible, so only
+    // retain the original user-authored tail.
+    const text = stripLeadingCraftInjectedUserContext(this.extractText(value.content))
     const attachments = this.sanitizeUserAttachments(value.attachments)
     if (!text && attachments.length === 0) return []
     const clientMutationId = typeof value.clientMutationId === 'string' && value.clientMutationId.length > 0

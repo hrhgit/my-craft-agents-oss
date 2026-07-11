@@ -16,7 +16,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import type {
   RemoteUIRequest,
   RemoteUIResult,
@@ -67,12 +66,6 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
   const respondingRef = useRef<Set<string>>(new Set())
   const timeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
-  // 服务器是否支持扩展事件桥接（旧版本服务器无此频道）
-  const hasExtensionsChannel =
-    typeof window !== 'undefined' &&
-    typeof window.electronAPI?.isChannelAvailable === 'function' &&
-    window.electronAPI.isChannelAvailable(RPC_CHANNELS.extensions.EVENT)
-
   activeSessionIdRef.current = activeSessionId
 
   useEffect(() => {
@@ -113,7 +106,7 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
   }, [activeSessionId])
 
   useEffect(() => {
-    if (!hasExtensionsChannel) return
+    if (typeof window.electronAPI?.onExtensionEvent !== 'function') return
 
     const cleanup = window.electronAPI.onExtensionEvent((event) => {
       const request = asRemoteUIRequest(event)
@@ -159,7 +152,7 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
     })
 
     return cleanup
-  }, [activeSessionId, hasExtensionsChannel, sendResponse])
+  }, [activeSessionId, sendResponse])
 
   useEffect(() => () => {
     const pending = [currentRequestRef.current, ...queueRef.current].filter(

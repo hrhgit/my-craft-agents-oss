@@ -18,7 +18,6 @@ import { useAtomValue } from "jotai"
 
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
-import { coerceInputText, appendRestoredInput } from "@/lib/input-text"
 import { Markdown, CollapsibleMarkdownProvider, StreamingMarkdown, type RenderMode } from "@/components/markdown"
 import { AnimatedCollapsibleContent } from "@/components/ui/collapsible"
 import {
@@ -1395,26 +1394,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // silent=true when redirecting (sending new message), silent=false when user clicks Stop button
   const handleStop = (silent = false) => {
     if (!session || !effectiveIsProcessing) return
-
-    // Explicit Stop (not a redirect/new-message send): put the in-flight prompt
-    // back in the input so the user can tweak and resend. Append to any draft.
-    // Exclude isQueued messages — those are restored separately by the backend
-    // `restore_input` effect (App.tsx) and would otherwise double up here.
-    if (!silent) {
-      const projectedUserItem = sessionOwnsPiProjection
-        ? [...projectedTimelineItems].reverse().find(item => item.type === 'content' && item.role === 'user')
-        : undefined
-      const projectedUserText = projectedUserItem?.type === 'content'
-        ? projectedUserItem.text
-        : undefined
-      const lastUserMsg = sessionOwnsPiProjection
-        ? undefined
-        : [...session.messages].reverse().find(m => m.role === 'user' && !m.isQueued)
-      const restoredText = projectedUserText ?? coerceInputText(lastUserMsg?.content)
-      if (restoredText) {
-        onInputChange?.(appendRestoredInput(inputValue, restoredText))
-      }
-    }
 
     window.electronAPI.cancelProcessing(session.id, silent).catch(error => {
       console.error('[ChatDisplay] Failed to cancel processing:', error)

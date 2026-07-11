@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs'
 import { uptime as osUptime } from 'node:os'
 import { isAbsolute, join } from 'node:path'
@@ -132,7 +133,12 @@ const DEFAULT_LOCK_NAME = '.server.lock'
 interface LockPayload {
   pid: number
   startedAt: number
+  /** OS process creation time, used to detect same-boot PID reuse on Windows. */
+  processStartedAt?: number
 }
+
+const WINDOWS_EPOCH_TICKS = 116444736000000000
+const PROCESS_START_TIME_TOLERANCE_MS = 2_000
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -140,6 +146,34 @@ function isProcessAlive(pid: number): boolean {
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Read a process creation time on Windows. PID liveness alone is insufficient
+ * because Windows can reuse a PID during the same boot session.
+ */
+function getProcessStartTime(pid: number): number | null {
+  if (process.platform !== 'win32') return null
+
+  try {
+    const output = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$process = Get-Process -Id ${pid} -ErrorAction Stop; $process.StartTime.ToUniversalTime().Ticks`,
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
+    ).trim()
+    const ticks = Number(output)
+    if (!Number.isFinite(ticks) || ticks <= WINDOWS_EPOCH_TICKS) return null
+    return (ticks - WINDOWS_EPOCH_TICKS) / 10_000
+  } catch {
+    // Access to another process can be denied. Keep the conservative lock
+    // behavior when its identity cannot be verified.
+    return null
   }
 }
 
@@ -153,9 +187,31 @@ function parseLockContent(raw: string): LockPayload | null {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>
     const pid = typeof parsed.pid === 'number' ? parsed.pid : NaN
     const startedAt = typeof parsed.startedAt === 'number' ? parsed.startedAt : 0
-    if (!isNaN(pid)) return { pid, startedAt }
+    const processStartedAt = typeof parsed.processStartedAt === 'number' && Number.isFinite(parsed.processStartedAt)
+      ? parsed.processStartedAt
+      : undefined
+    if (!isNaN(pid)) return { pid, startedAt, ...(processStartedAt !== undefined ? { processStartedAt } : {}) }
   } catch { /* invalid JSON */ }
   return null
+}
+
+/**
+ * Detect a live PID that no longer represents the process which wrote a lock.
+ * Legacy locks have no processStartedAt, so a process created after the lock
+ * was written is definitively a reused PID while older processes remain
+ * ambiguous and are treated as active by the caller.
+ */
+export function isProcessIdentityMismatch(
+  lock: Pick<LockPayload, 'startedAt' | 'processStartedAt'>,
+  observedProcessStartedAt: number | null,
+): boolean {
+  if (observedProcessStartedAt == null) return false
+
+  if (lock.processStartedAt != null) {
+    return Math.abs(observedProcessStartedAt - lock.processStartedAt) > PROCESS_START_TIME_TOLERANCE_MS
+  }
+
+  return lock.startedAt > 0 && observedProcessStartedAt > lock.startedAt + PROCESS_START_TIME_TOLERANCE_MS
 }
 
 /**
@@ -186,17 +242,22 @@ function acquireServerLock(logger: PlatformServices['logger'], lockFile: string)
         if (lock.pid === process.pid) {
           logger.warn(`[bootstrap] Lock file holds current PID ${lock.pid} (stale from previous container lifecycle), overwriting`)
         } else if (isProcessAlive(lock.pid)) {
-          // PID is alive — but is it actually from a previous boot?
-          // If the lock was written before the current boot, the OS has
-          // recycled the PID and the process is unrelated.
-          if (isLockFromPreviousBoot(lock.startedAt)) {
-            logger.warn(`[bootstrap] Lock PID ${lock.pid} is alive but lock predates current boot (stale due to PID reuse), overwriting`)
+          const observedProcessStartedAt = getProcessStartTime(lock.pid)
+          if (isProcessIdentityMismatch(lock, observedProcessStartedAt)) {
+            logger.warn(`[bootstrap] Lock PID ${lock.pid} belongs to a different process, overwriting stale lock`)
           } else {
-            throw new Error(
-              `Another server instance is already running (PID ${lock.pid}). ` +
-              `If this is stale, delete ${lockFile} and retry. ` +
-              `To run a parallel instance (e.g. for dev), set CRAFT_CONFIG_DIR to a different path.`
-            )
+            // PID is alive — but is it actually from a previous boot?
+            // If the lock was written before the current boot, the OS has
+            // recycled the PID and the process is unrelated.
+            if (isLockFromPreviousBoot(lock.startedAt)) {
+              logger.warn(`[bootstrap] Lock PID ${lock.pid} is alive but lock predates current boot (stale due to PID reuse), overwriting`)
+            } else {
+              throw new Error(
+                `Another server instance is already running (PID ${lock.pid}). ` +
+                `If this is stale, delete ${lockFile} and retry. ` +
+                `To run a parallel instance (e.g. for dev), set CRAFT_CONFIG_DIR to a different path.`
+              )
+            }
           }
         } else {
           logger.warn(`[bootstrap] Stale lock file found (PID ${lock.pid}), overwriting`)
@@ -210,7 +271,12 @@ function acquireServerLock(logger: PlatformServices['logger'], lockFile: string)
     }
   }
 
-  const payload: LockPayload = { pid: process.pid, startedAt: Date.now() }
+  const processStartedAt = getProcessStartTime(process.pid)
+  const payload: LockPayload = {
+    pid: process.pid,
+    startedAt: Date.now(),
+    ...(processStartedAt != null ? { processStartedAt } : {}),
+  }
   writeFileSync(lockFile, JSON.stringify(payload), 'utf-8')
 
   // Safety net: release the lock on unexpected exits (SIGKILL, uncaught exceptions, etc.).

@@ -584,7 +584,7 @@ export function listSessions(workspaceRootPath: string): SessionHeader[] {
   span.mark('readdir');
   const sessions: SessionHeader[] = [];
 
-  for (const { jsonlFile } of sessionDirs) {
+  for (const { jsonlFile, sessionDir } of sessionDirs) {
     // Clean up orphaned .tmp files from crashed atomic writes.
     // These are harmless but waste disk space.
     const tmpFile = jsonlFile + '.tmp';
@@ -595,7 +595,7 @@ export function listSessions(workspaceRootPath: string): SessionHeader[] {
     if (existsSync(jsonlFile)) {
       const header = readSessionHeader(jsonlFile);
       if (header) {
-        const metadata = headerToMetadata(header, workspaceRootPath);
+        const metadata = headerToMetadata(header, workspaceRootPath, sessionDir);
         if (metadata) sessions.push(metadata);
       }
     }
@@ -624,7 +624,11 @@ export async function findPiSessionProjectionById(
  * Enrich SessionHeader with UI-only metadata (planCount) and validate fields.
  * Used for fast session list loading from JSONL format.
  */
-function headerToMetadata(header: SessionHeader, workspaceRootPath: string): SessionHeader | null {
+function headerToMetadata(
+  header: SessionHeader,
+  workspaceRootPath: string,
+  sessionDir?: string,
+): SessionHeader | null {
   try {
     // Migration: accept old 'todoState' field from pre-rename session files
     const rawStatus = header.sessionStatus ?? (header as unknown as { todoState?: string }).todoState;
@@ -632,7 +636,11 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
     const validatedStatus = validateSessionStatus(workspaceRootPath, rawStatus);
 
     // Count plan files for this session
-    const planCount = listPlanFiles(workspaceRootPath, header.craftId).length;
+    // listCraftSessionDirs already resolved the sidecar directory. Reusing it
+    // avoids rescanning the whole workspace bucket once per session.
+    const planCount = listPlanFilesInDirectory(
+      sessionDir ? join(sessionDir, 'plans') : getSessionPlansPath(workspaceRootPath, header.craftId),
+    ).length;
 
     const workingDir = workspaceRootPath;
     const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workspaceRootPath;
@@ -1105,7 +1113,12 @@ export function listPlanFiles(
   workspaceRootPath: string,
   sessionId: string
 ): Array<{ name: string; path: string; modifiedAt: number }> {
-  const plansDir = getSessionPlansPath(workspaceRootPath, sessionId);
+  return listPlanFilesInDirectory(getSessionPlansPath(workspaceRootPath, sessionId));
+}
+
+function listPlanFilesInDirectory(
+  plansDir: string,
+): Array<{ name: string; path: string; modifiedAt: number }> {
   if (!existsSync(plansDir)) {
     return [];
   }

@@ -49,11 +49,17 @@ if (-not (Test-Path $nodeModulesPath)) {
   }
 }
 
+if ($Mode -eq "webui-dev") {
+  Ensure-Command "portmux"
+  Write-Step "Starting portmux-managed WebUI development mode"
+  & portmux start
+  exit $LASTEXITCODE
+}
+
 $bunArgs = switch ($Mode) {
   "dev" { @("run", "electron:dev") }
   "start" { @("run", "electron:start") }
   "server-dev" { @("run", "server:dev") }
-  "webui-dev" { @("run", "webui:dev") }
   default { throw "Unsupported mode: $Mode" }
 }
 
@@ -61,7 +67,6 @@ $modeLabel = switch ($Mode) {
   "dev" { "Electron hot-reload dev mode" }
   "start" { "Electron local build-and-run mode" }
   "server-dev" { "Server development mode" }
-  "webui-dev" { "Web UI development mode" }
 }
 
 Write-Step "Repository: $repoRoot"
