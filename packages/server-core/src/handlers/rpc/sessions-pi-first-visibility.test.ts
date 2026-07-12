@@ -21,12 +21,11 @@ const ctx: RequestContext = {
   webContentsId: null,
 }
 
-function session(id: string, piNative: boolean): Session {
+function session(id: string): Session {
   return {
     id,
     workspaceId: 'workspace-a',
     workspaceName: 'Workspace A',
-    conversationFormat: piNative ? 'pi-projection-v1' : undefined,
     messages: [],
     isProcessing: false,
     messageCount: 0,
@@ -67,29 +66,18 @@ function handlerFor(deps: HandlerDeps, channel: string): HandlerFn {
 }
 
 describe('Pi-first session visibility', () => {
-  it('hides legacy Craft sessions from the renderer session list', async () => {
-    const legacy = session('legacy-session', false)
-    const piNative = session('pi-session', true)
-    const handler = handlerFor(createDeps([legacy, piNative]), RPC_CHANNELS.sessions.GET)
+  it('returns all managed sessions to the renderer session list', async () => {
+    const first = session('session-a')
+    const second = session('session-b')
+    const handler = handlerFor(createDeps([first, second]), RPC_CHANNELS.sessions.GET)
 
     const result = await handler(ctx) as Session[]
 
-    expect(result.map(item => item.id)).toEqual(['pi-session'])
+    expect(result.map(item => item.id)).toEqual(['session-a', 'session-b'])
   })
 
-  it('refuses to load a legacy Craft transcript by id', async () => {
-    const handler = handlerFor(
-      createDeps([session('legacy-session', false)]),
-      RPC_CHANNELS.sessions.GET_MESSAGES,
-    )
-
-    await expect(handler(ctx, 'legacy-session')).rejects.toThrow(
-      'Legacy Craft session is not available in the Pi-first UI',
-    )
-  })
-
-  it('loads a Pi-native session by id', async () => {
-    const piNative = session('pi-session', true)
+  it('loads a managed session by id', async () => {
+    const piNative = session('pi-session')
     const handler = handlerFor(createDeps([piNative]), RPC_CHANNELS.sessions.GET_MESSAGES)
 
     await expect(handler(ctx, 'pi-session')).resolves.toEqual(piNative)

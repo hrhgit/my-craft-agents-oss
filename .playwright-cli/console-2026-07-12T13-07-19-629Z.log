@@ -1,0 +1,516 @@
+[    1423ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[    1946ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:26325/api/config:0
+[    2411ms] [VERBOSE] [DOM] Password forms should have (optionally hidden) username fields for accessibility: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:26325/login:0
+[    2890ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[    4480ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[    4481ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[    5541ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783860179757:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783861512035:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783861512035:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783861512035:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783861512035:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783861512035:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783861512035:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783861566716:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783861566716:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[   20758ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[   21895ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[   21895ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[   22541ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783860179757:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783861512035:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783861512035:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783861512035:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783861512035:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783861512035:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783861512035:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783861566716:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783861566716:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[   92215ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[   96815ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[   96815ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[   97864ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783860179757:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783861512035:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783861710313:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783861710313:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783861512035:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783861710313:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783861710313:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783861728097:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783861728097:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[  481662ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[  485570ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  485571ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  486259ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783860179757:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783861512035:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783862091893:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783862091893:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783861512035:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783862091893:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783862091893:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783862118185:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783862118185:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[  559735ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[  560626ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  560627ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  561252ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783860179757:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783861512035:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783862091893:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783862091893:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783861512035:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783862091893:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783862091893:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783862118185:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783862118185:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[  831961ms] Error: useNavigation must be used within NavigationProvider
+    at useNavigation (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783861512035:865:11)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783862091893:776:95)
+    at renderWithHooks (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:11596:26)
+    at mountIndeterminateComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:14974:21)
+    at beginWork (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:15962:22)
+    at HTMLUnknownElement.callCallback2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:3680:22)
+    at Object.invokeGuardedCallbackDev (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:3705:24)
+    at invokeGuardedCallback (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:3739:39)
+    at beginWork$1 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:19818:15)
+    at performUnitOfWork (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:19251:20)
+[  831968ms] Error: useNavigation must be used within NavigationProvider
+    at useNavigation (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783861512035:865:11)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783862091893:776:95)
+    at renderWithHooks (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:11596:26)
+    at mountIndeterminateComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:14974:21)
+    at beginWork (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:15962:22)
+    at HTMLUnknownElement.callCallback2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:3680:22)
+    at Object.invokeGuardedCallbackDev (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:3705:24)
+    at invokeGuardedCallback (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:3739:39)
+    at beginWork$1 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:19818:15)
+    at performUnitOfWork (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:19251:20)
+[  831989ms] [ERROR] The above error occurred in the <AppShellContent> component:
+
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783862091893:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783862469529:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783862469529:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783862469529:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783862118185:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783862118185:63:26)
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://reactjs.org/link/error-boundaries to learn more about error boundaries. @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:14079
+[  832041ms] Error: useNavigation must be used within NavigationProvider
+    at useNavigation (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783861512035:865:11)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783862091893:776:95)
+    at renderWithHooks (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:11596:26)
+    at mountIndeterminateComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:14974:21)
+    at beginWork (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:15962:22)
+    at beginWork$1 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:19806:22)
+    at performUnitOfWork (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:19251:20)
+    at workLoopSync (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:19190:13)
+    at renderRootSync (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:19169:15)
+    at recoverFromConcurrentError (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18786:28)
+[  837785ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  837786ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19

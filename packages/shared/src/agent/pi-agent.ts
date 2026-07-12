@@ -35,6 +35,8 @@ import type {
   ChatOptions,
   ExtensionBridgeEvent,
   AuthProjectionPromptRequest,
+  HostQueuedUserProjection,
+  HostRuntimeErrorProjection,
   PiExtensionCommand,
   SdkMcpServerConfig,
 } from './backend/types.ts';
@@ -126,10 +128,40 @@ function remoteUIResponseValue(payload: unknown): string {
   if (typeof result.text === 'string') return result.text;
   if (typeof result.freeformText === 'string') return result.freeformText;
   if (Array.isArray(result.selections)) {
-    const first = result.selections.find((selection): selection is string => typeof selection === 'string');
-    if (first) return first;
+    // The ask_user fallback parses multi-select responses as comma-separated
+    // values. Preserve every selected option instead of dropping all but one.
+    const selections = result.selections.filter((selection): selection is string => typeof selection === 'string');
+    if (selections.length > 0) return selections.join(', ');
   }
   return '';
+}
+
+const ASK_USER_MULTIPLE_OPTIONS_PREFIX = '\n\nOptions (select one or more):\n';
+
+function parseAskUserMultipleChoiceInput(title: string): {
+  title: string;
+  message?: string;
+  options: Array<{ title: string; description?: string }>;
+} | null {
+  const optionsStart = title.indexOf(ASK_USER_MULTIPLE_OPTIONS_PREFIX);
+  if (optionsStart < 0) return null;
+
+  const prompt = title.slice(0, optionsStart).trim();
+  const rawOptions = title.slice(optionsStart + ASK_USER_MULTIPLE_OPTIONS_PREFIX.length).split(/\r?\n/);
+  const options = rawOptions.map((line) => {
+    const match = /^(\d+)\.\s+(.+?)(?:\s+\u2014\s+(.+))?$/.exec(line.trim());
+    if (!match) return null;
+    return { title: match[2]!, ...(match[3] ? { description: match[3] } : {}) };
+  });
+  if (options.length === 0 || options.some((option) => option === null)) return null;
+
+  const contextPrefix = '\n\nContext:\n';
+  const contextStart = prompt.indexOf(contextPrefix);
+  return {
+    title: (contextStart < 0 ? prompt : prompt.slice(0, contextStart)).trim(),
+    ...(contextStart < 0 ? {} : { message: prompt.slice(contextStart + contextPrefix.length).trim() }),
+    options: options as Array<{ title: string; description?: string }>,
+  };
 }
 
 // ============================================================
@@ -1175,12 +1207,17 @@ export class PiAgent extends BaseAgent {
       };
     }
     if (event.method === 'select') {
+      const isAskUser = extensionId === 'ask_user';
+      const hasFreeformOption = isAskUser && event.options.some(option => /write my own answer/i.test(option));
       return {
         type: 'remoteui_request',
         requestId: event.id,
         kind: 'select',
         title: event.title,
-        options: event.options.map(title => ({ title })),
+        options: event.options
+          .filter(option => !isAskUser || !/write my own answer/i.test(option))
+          .map(title => ({ title })),
+        ...(hasFreeformOption ? { allowFreeform: true } : {}),
         timeout: event.timeout,
         source: extensionId,
         ...route,
@@ -1198,14 +1235,41 @@ export class PiAgent extends BaseAgent {
         ...route,
       };
     }
-    if (event.method === 'editor' || event.method === 'input') {
+    if (event.method === 'input') {
+      const multipleChoice = extensionId === 'ask_user'
+        ? parseAskUserMultipleChoiceInput(event.title)
+        : null;
+      if (multipleChoice) {
+        return {
+          type: 'remoteui_request',
+          requestId: event.id,
+          kind: 'select',
+          ...multipleChoice,
+          allowMultiple: true,
+          allowFreeform: true,
+          timeout: event.timeout,
+          source: extensionId,
+          ...route,
+        };
+      }
       return {
         type: 'remoteui_request',
         requestId: event.id,
         kind: 'editor',
         title: event.title,
-        prefill: event.method === 'editor' ? event.prefill : event.placeholder,
-        timeout: event.method === 'input' ? event.timeout : undefined,
+        placeholder: event.placeholder,
+        timeout: event.timeout,
+        source: extensionId,
+        ...route,
+      };
+    }
+    if (event.method === 'editor') {
+      return {
+        type: 'remoteui_request',
+        requestId: event.id,
+        kind: 'editor',
+        title: event.title,
+        prefill: event.prefill,
         source: extensionId,
         ...route,
       };
@@ -1780,6 +1844,18 @@ export class PiAgent extends BaseAgent {
     }
   }
 
+  projectQueuedUser(message: HostQueuedUserProjection): void {
+    for (const event of this.getProjectionBuilder()?.acceptHostQueuedUser(message) ?? []) {
+      this.config.onPiProjectionEvent?.(event);
+    }
+  }
+
+  projectRuntimeError(error: HostRuntimeErrorProjection): void {
+    for (const event of this.getProjectionBuilder()?.acceptHostRuntimeError(error) ?? []) {
+      this.config.onPiProjectionEvent?.(event);
+    }
+  }
+
   private emitRawPiProjectionEvents(event: Record<string, unknown>): void {
     const builder = this.getProjectionBuilder();
     const emit = this.config.onPiProjectionEvent;
@@ -1795,7 +1871,11 @@ export class PiAgent extends BaseAgent {
       ? `${client.runtimeId}:${this.projectionEpoch}`
       : `legacy:${sessionId}`;
     if (!this.projectionBuilder || this.projectionBuilder.runtimeId !== runtimeId) {
-      this.projectionBuilder = new PiProjectionBuilder(sessionId, runtimeId);
+      this.projectionBuilder = new PiProjectionBuilder(
+        sessionId,
+        runtimeId,
+        this.config.getPiProjectionSnapshot?.(),
+      );
     }
     return this.projectionBuilder;
   }
@@ -2159,6 +2239,7 @@ export class PiAgent extends BaseAgent {
       // source_test calls are lost (#790).
       const sourceActivationDrain = new SourceActivationDrainController('fire-on-non-tool-result');
       for await (const event of this.eventQueue.drain()) {
+        if (event.type === 'queue_overflow') this.emitPiProjectionEvents(event);
         // Pre-yield check: when we're past capture and the incoming event is
         // not a tool_result, fire BEFORE yielding it (the event belongs to
         // the about-to-be-aborted next turn — letting it through would leak

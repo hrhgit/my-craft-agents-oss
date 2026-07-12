@@ -3,10 +3,8 @@
  *
  * Workspace-scoped session CRUD operations.
  * Sessions are stored at ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl
- * (Pi tree JSONL v3 format; legacy {workspaceRootPath}/sessions/{id}/session.jsonl
- * retained for backward compatibility).
- * Each session folder contains:
- * - session.jsonl (main data in JSONL format: line 1 = header, lines 2+ = messages)
+ * (Pi tree JSONL v3 format).
+ * Craft sidecar directories next to those flat Pi JSONL files contain:
  * - attachments/ (file attachments)
  * - plans/ (plan files for Safe Mode)
  * - data/ (transform_data tool output: JSON files for datatable/spreadsheet blocks)
@@ -65,9 +63,7 @@ function getPiSessionsRoot(): string {
 }
 
 /**
- * Session storage root is ALWAYS under the Pi sessions directory now.
- * The legacy `~/.craft-agent/workspaces/{id}/sessions/` path is only read by
- * the migration tool (migration tool) and is never written to.
+ * Session storage root is always under the Pi sessions directory.
  */
 function getSessionStorageRootPath(workspaceRootPath: string, _workingDirectory?: string): string {
   return join(getPiSessionsRoot(), encodePiSessionCwd(workspaceRootPath));
@@ -83,8 +79,7 @@ export function getSharedPiSidecarPathForFile(sessionFile: string, sessionId: st
 
 /**
  * Build the Pi session file name (`{ISO-timestamp}_{safeId}.jsonl`).
- * Shared by `getPiNativeSessionFilePath` and the one-shot migration tool to
- * keep a single source of truth for the file-name layout.
+ * Shared by the Pi session projection helpers.
  */
 export function buildPiSessionFileName(sessionId: string, createdAt?: number): string {
   const timestampMs = typeof createdAt === 'number' && Number.isFinite(createdAt) ? createdAt : Date.now();
@@ -120,13 +115,6 @@ function findSharedPiSessionFileInDir(cwdPath: string, sessionId: string): strin
         const header = readTreeSessionHeader(filePath);
         if (header?.id === sessionId || header?.craft?.id === sessionId) {
           return filePath;
-        }
-      } else if (entry.isDirectory()) {
-        // Backward compatibility for the earlier shared-storage experiment:
-        // ~/.pi/agent/sessions/<cwd>/<craft-id>/session.jsonl
-        const candidate = join(cwdPath, entry.name, 'session.jsonl');
-        if (entry.name === safeSessionId && existsSync(candidate)) {
-          return candidate;
         }
       }
     }
@@ -165,7 +153,7 @@ function findSharedPiSessionFile(sessionId: string, workspaceRootPath?: string, 
  *
  * Complete-unification semantics require the Craft owner metadata to match the
  * workspace root. Sessions in other cwd buckets belong to the workspace rooted
- * at that cwd (or are legacy orphans until migrated).
+ * at that cwd.
  */
 function sameWorkspacePath(a: string | undefined, b: string): boolean {
   if (!a) return false;
@@ -188,15 +176,9 @@ function listCraftSessionDirs(workspaceRootPath: string): Array<{ sessionId: str
     const treeHeader = readTreeSessionHeader(jsonlFile);
     let sessionId: string | undefined;
     let headerWorkspaceRootPath: string | undefined;
-    if (treeHeader) {
-      sessionId = treeHeader.craft?.id ?? treeHeader.id;
-      headerWorkspaceRootPath = treeHeader.craft?.workspaceRootPath;
-    } else {
-      const header = readSessionHeader(jsonlFile);
-      if (!header) return;
-      sessionId = header.craftId;
-      headerWorkspaceRootPath = header.workspaceRootPath;
-    }
+    if (!treeHeader) return;
+    sessionId = treeHeader.craft?.id ?? treeHeader.id;
+    headerWorkspaceRootPath = treeHeader.craft?.workspaceRootPath;
 
     if (!sessionId) {
       sessionId = basename(jsonlFile, '.jsonl');
@@ -219,13 +201,6 @@ function listCraftSessionDirs(workspaceRootPath: string): Array<{ sessionId: str
       for (const entry of entries) {
         if (entry.isFile() && entry.name.endsWith('.jsonl')) {
           addSessionFile(join(cwdPath, entry.name));
-        } else if (entry.isDirectory()) {
-          // Backward compatibility for legacy Craft-managed session folders
-          // stored below the Pi cwd bucket (early shared-storage experiment).
-          const jsonlFile = join(cwdPath, entry.name, 'session.jsonl');
-          if (existsSync(jsonlFile)) {
-            addSessionFile(jsonlFile);
-          }
         }
       }
     } catch {
@@ -257,8 +232,7 @@ export function ensureSessionsDir(workspaceRootPath: string, workingDirectory?: 
  * Get path to a session's directory (the .craft/{sessionId}/ sidecar dir).
  *
  * Always resolves to the sidecar directory next to the Pi
- * session JSONL file. The legacy `~/.craft-agent/workspaces/{id}/sessions/{id}/`
- * path is no longer used for new sessions.
+ * session JSONL file.
  *
  * SECURITY: Uses sanitizeSessionId() as defense-in-depth to prevent path traversal.
  * Callers should still validate sessionId before calling this function.
@@ -491,7 +465,6 @@ export async function createSession(
   const session: SessionHeader = {
     craftId: sessionId,
     workspaceRootPath,
-    conversationFormat: 'pi-projection-v1',
     name: options?.name,
     createdAt: now,
     lastUsedAt: now,
@@ -531,7 +504,7 @@ export async function createSession(
  * This unified approach ensures all session writes go through the same
  * async code path, which is more reliable on Windows.
  *
- * Writes in JSONL format: line 1 = header, lines 2+ = messages
+ * Writes Craft metadata through the Pi tree JSONL persistence path.
  */
 export async function saveSession(session: StoredSession): Promise<void> {
   sessionPersistenceQueue.enqueue(session);
@@ -714,22 +687,6 @@ export async function getOrCreateLatestSession(workspaceRootPath: string): Promi
 // ============================================================
 // Session Metadata Updates
 // ============================================================
-
-/**
- * Check if sdkCwd can be safely updated for a session.
- *
- * sdkCwd is normally immutable because the SDK stores session transcripts at
- * ~/.claude/projects/{cwd-slugified}/. However, it's safe to update sdkCwd if
- * no SDK interaction has occurred yet (no transcripts to preserve).
- *
- * @returns true if sdkCwd can be updated (no messages and no SDK session ID)
- */
-export function canUpdateSdkCwd(session: StoredSession): boolean {
-  // Safe to update if:
-  // 1. No messages have been sent yet (no conversation to preserve)
-  // 2. No SDK session ID (no transcript exists at the sdkCwd path)
-  return session.messages.length === 0 && !session.sdkSessionId;
-}
 
 /**
  * Update session metadata

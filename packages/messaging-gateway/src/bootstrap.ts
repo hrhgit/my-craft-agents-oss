@@ -30,8 +30,6 @@ export interface MessagingBootstrapOptions {
   credentialManager: CredentialManager
   /** Absolute path to the messaging storage directory for the given workspace. */
   getMessagingDir: (workspaceId: string) => string
-  /** Optional legacy dir (pre-relocation) for one-shot migration. Headless omits this. */
-  getLegacyMessagingDir?: (workspaceId: string) => string | undefined
   logger?: MessagingLogger
   whatsapp: {
     /** Absolute path to the bundled worker.cjs. */
@@ -70,7 +68,6 @@ export function createMessagingBootstrap(opts: MessagingBootstrapOptions): Messa
     sessionManager: opts.sessionManager,
     credentialManager: opts.credentialManager,
     getMessagingDir: opts.getMessagingDir,
-    getLegacyMessagingDir: opts.getLegacyMessagingDir,
     logger: opts.logger,
     whatsapp: {
       workerEntry: opts.whatsapp.workerEntry,

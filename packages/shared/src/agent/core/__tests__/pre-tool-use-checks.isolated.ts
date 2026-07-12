@@ -605,13 +605,13 @@ describe('runPreToolUseChecks', () => {
       mockDetectConfigFileType.mockImplementation(() => ({
         type: 'skill',
         slug: 'commit-helper',
-        displayFile: 'skills/commit-helper/SKILL.md',
+        displayFile: '.pi/skills/commit-helper/SKILL.md',
       }));
 
       const result = runPreToolUseChecks(createInput({
         toolName: 'Edit',
         input: {
-          file_path: '/test/workspace/skills/commit-helper/SKILL.md',
+          file_path: '/test/workspace/.pi/skills/commit-helper/SKILL.md',
           old_string: 'A',
           new_string: 'B',
         },
@@ -620,7 +620,7 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('block');
       if (result.type === 'block') {
         expect(result.reason).toContain('craft-agent skill');
-        expect(result.reason).toContain('skills/commit-helper/SKILL.md');
+        expect(result.reason).toContain('.pi/skills/commit-helper/SKILL.md');
       }
     });
 

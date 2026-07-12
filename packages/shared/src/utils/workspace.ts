@@ -34,6 +34,8 @@ export { extractWorkspaceSlugFromPath } from './workspace-slug.ts';
  * from './workspace-slug.ts' instead.
  */
 export function extractWorkspaceSlug(rootPath: string, fallbackId: string): string {
+  if (!rootPath) return fallbackId;
+
   // Read the actual SDK plugin name — this is what the SDK uses to resolve skills
   const pluginName = readPluginName(rootPath);
   if (pluginName) return pluginName;

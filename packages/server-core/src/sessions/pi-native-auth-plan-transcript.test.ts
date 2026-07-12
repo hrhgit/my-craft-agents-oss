@@ -1,9 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test'
 import type { PiProjectionSnapshotV1 } from '@craft-agent/shared/protocol'
-import type { Message } from '@craft-agent/core/types'
 import {
   SessionManager,
-  appendLegacyAuthRequestMessage,
   createManagedSession,
   getPiProjectionRecoveryMessages,
 } from './SessionManager.ts'
@@ -28,33 +26,8 @@ const artifact = {
   finalizedAt: 2,
 }
 
-describe('Pi-native auth and plan transcript boundary', () => {
-  it('does not construct or append an auth Message for Pi-native sessions', () => {
-    const managed = createManagedSession(
-      { craftId: 'native-auth', conversationFormat: 'pi-projection-v1' },
-      workspace as never,
-    )
-    let constructions = 0
-
-    const result = appendLegacyAuthRequestMessage(managed, () => {
-      constructions += 1
-      return { id: 'auth-1', role: 'auth-request', content: 'Authenticate', timestamp: 1 }
-    })
-
-    expect(result).toBeUndefined()
-    expect(constructions).toBe(0)
-    expect(managed.messages).toEqual([])
-  })
-
-  it('continues appending auth Messages for unmarked legacy sessions', () => {
-    const managed = createManagedSession({ craftId: 'legacy-auth' }, workspace as never)
-    const message: Message = { id: 'auth-1', role: 'auth-request', content: 'Authenticate', timestamp: 1 }
-
-    expect(appendLegacyAuthRequestMessage(managed, () => message)).toBe(message)
-    expect(managed.messages).toEqual([message])
-  })
-
-  it('does not append a plan Message for Pi-native sessions while legacy sessions still do', async () => {
+describe('Pi projection transcript boundary', () => {
+  it('does not append a plan Message for managed sessions', async () => {
     const manager = new SessionManager()
     ;(manager as unknown as { persistSession: () => void }).persistSession = () => {}
     ;(manager as unknown as { sendEvent: () => void }).sendEvent = () => {}
@@ -69,27 +42,15 @@ describe('Pi-native auth and plan transcript boundary', () => {
       timestamp: 3,
     })
 
-    const native = createManagedSession(
-      { craftId: 'native-plan', conversationFormat: 'pi-projection-v1' },
-      workspace as never,
-      { messagesLoaded: true },
-    )
-    const legacy = createManagedSession(
-      { craftId: 'legacy-plan' },
+    const managed = createManagedSession(
+      { craftId: 'plan' },
       workspace as never,
       { messagesLoaded: true },
     )
 
-    await processEvent(native)
-    await processEvent(legacy)
+    await processEvent(managed)
 
-    expect(native.messages).toEqual([])
-    expect(legacy.messages).toHaveLength(1)
-    expect(legacy.messages[0]).toMatchObject({
-      role: 'assistant',
-      content: '# Plan',
-      artifact: { artifactId: 'plan-1' },
-    })
+    expect(managed.messages).toEqual([])
   })
 
   it('suppresses legacy transcript persistence and events for Pi-native agent slices', async () => {
@@ -101,7 +62,7 @@ describe('Pi-native auth and plan transcript boundary', () => {
       manager as unknown as { processEvent: (session: unknown, value: unknown) => Promise<void> }
     ).processEvent(managed, event)
     const native = createManagedSession(
-      { craftId: 'native-slices', conversationFormat: 'pi-projection-v1' },
+      { craftId: 'native-slices' },
       workspace as never,
       { messagesLoaded: true, isProcessing: true },
     )
@@ -118,41 +79,14 @@ describe('Pi-native auth and plan transcript boundary', () => {
     expect(emitted.map(event => event.type)).toEqual([])
   })
 
-  it('retains legacy transcript persistence and events for unmarked sessions', async () => {
-    const manager = new SessionManager()
-    const emitted: Array<{ type: string }> = []
-    ;(manager as unknown as { persistSession: () => void }).persistSession = () => {}
-    ;(manager as unknown as { sendEvent: (event: { type: string }) => void }).sendEvent = event => emitted.push(event)
-    const processEvent = (managed: unknown, event: unknown) => (
-      manager as unknown as { processEvent: (session: unknown, value: unknown) => Promise<void> }
-    ).processEvent(managed, event)
-    const legacy = createManagedSession(
-      { craftId: 'legacy-slices' },
-      workspace as never,
-      { messagesLoaded: true, isProcessing: true },
-    )
-
-    await processEvent(legacy, { type: 'text_delta', text: 'hel', turnId: 'turn-1' })
-    await processEvent(legacy, { type: 'text_complete', text: 'hello', turnId: 'turn-1' })
-    await processEvent(legacy, { type: 'tool_start', toolName: 'Read', toolUseId: 'tool-1', input: {} })
-    await processEvent(legacy, { type: 'tool_result', toolName: 'Read', toolUseId: 'tool-1', result: 'done' })
-    await processEvent(legacy, { type: 'info', message: 'Compacted 12 messages' })
-    await processEvent(legacy, { type: 'error', message: 'runtime failed' })
-
-    expect(legacy.messages.map(message => message.role)).toEqual(['assistant', 'tool', 'info', 'error'])
-    expect(emitted.map(event => event.type)).toEqual([
-      'text_delta', 'text_complete', 'tool_start', 'tool_result', 'info', 'error',
-    ])
-  })
-
-  it('queues and replays Pi-native input without requiring a stored user Message', async () => {
+  it('queues and replays input without requiring a stored user Message', async () => {
     const manager = new SessionManager()
     const emitted: Array<{ type: string }> = []
     ;(manager as unknown as { persistSession: () => void }).persistSession = () => {}
     ;(manager as unknown as { flushSession: () => Promise<void> }).flushSession = async () => {}
     ;(manager as unknown as { sendEvent: (event: { type: string }) => void }).sendEvent = event => emitted.push(event)
     const native = createManagedSession(
-      { craftId: 'native-queue', conversationFormat: 'pi-projection-v1', name: 'Native' },
+      { craftId: 'queue', name: 'Queue' },
       workspace as never,
       { messagesLoaded: true, isProcessing: true },
     )
@@ -179,12 +113,13 @@ describe('Pi-native auth and plan transcript boundary', () => {
       schemaVersion: 1,
       sessionId: 'native-recovery',
       runtimeId: 'runtime-1',
-      lastSeq: 4,
+      lastSeq: 5,
       entities: [
         { entityId: 'a', entityType: 'content_block', entityVersion: 1, createdSeq: 2, kind: 'assistant_text', payload: { text: 'answer' }, lastEventId: 'e2', lastSeq: 2 },
         { entityId: 'tool', entityType: 'tool_run', entityVersion: 1, createdSeq: 3, kind: 'tool_result', payload: { result: 'ignored' }, lastEventId: 'e3', lastSeq: 3 },
         { entityId: 'u', entityType: 'content_block', entityVersion: 1, createdSeq: 1, kind: 'user_text', payload: { text: 'question' }, lastEventId: 'e1', lastSeq: 1 },
         { entityId: 'delta', entityType: 'content_block', entityVersion: 1, createdSeq: 4, kind: 'assistant_text_delta', payload: { text: 'ignored partial' }, lastEventId: 'e4', lastSeq: 4 },
+        { entityId: 'intermediate', entityType: 'content_block', entityVersion: 1, createdSeq: 5, kind: 'assistant_text', payload: { text: 'ignored tool preamble', isIntermediate: true }, lastEventId: 'e5', lastSeq: 5 },
       ],
     }
 

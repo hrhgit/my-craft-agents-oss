@@ -13,7 +13,7 @@
  */
 
 import type { AgentEvent, ExtensionCommandResult } from '@craft-agent/core/types';
-import type { PiProjectionEventV1 } from '../../protocol/pi-projection.ts';
+import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '../../protocol/pi-projection.ts';
 import type { CapabilityRequestV1, CapabilityResultV1 } from '../../protocol/capabilities.ts';
 import type { ExtensionContributionV1 } from '../../protocol/extension-contributions.ts';
 import type { FileAttachment } from '../../utils/files.ts';
@@ -43,6 +43,26 @@ export interface AuthProjectionPromptRequest {
   headerNames?: string[];
   passwordRequired?: boolean;
   service?: string;
+}
+
+export interface HostRuntimeErrorProjection {
+  phase: 'startup' | 'send' | 'queue' | 'recovery';
+  message: string;
+  code?: string;
+  retryable?: boolean;
+}
+
+export interface HostQueuedUserProjection {
+  message: string;
+  clientMutationId: string;
+  messageId?: string;
+  timestamp?: number;
+  attachments?: Array<{
+    id: string;
+    name: string;
+    mediaType?: string;
+    size?: number;
+  }>;
 }
 
 // Import LLM connection types for auth
@@ -94,6 +114,7 @@ export type ExtensionBridgeEvent = {
       allowFreeform?: boolean;
       allowComment?: boolean;
       prefill?: string;
+      placeholder?: string;
       timeout?: number;
       source: string;
     }
@@ -286,6 +307,9 @@ export interface CoreBackendConfig {
 
   /** Callback to get recent messages for recovery context */
   getRecoveryMessages?: () => RecoveryMessage[];
+
+  /** Latest Host-authored projection state used to seed a replacement Pi runtime. */
+  getPiProjectionSnapshot?: () => PiProjectionSnapshotV1 | undefined;
 
   /**
    * Get ALL parent messages for branch fork fallback (not limited to 6).
@@ -718,6 +742,12 @@ export interface AgentBackend {
     requestId: string,
     resolution: 'completed' | 'failed' | 'cancelled',
   ): void;
+
+  /** Project a Host failure through Pi's sequence-owning projection builder. */
+  projectRuntimeError?(error: HostRuntimeErrorProjection): void;
+
+  /** Keep a Host-queued user message visible until Pi accepts it. */
+  projectQueuedUser?(message: HostQueuedUserProjection): void;
 
   // ============================================================
   // Callbacks (set by facade after construction)

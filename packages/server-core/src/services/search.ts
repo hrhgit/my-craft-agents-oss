@@ -87,6 +87,23 @@ export interface SearchOptions {
   searchId?: string;
 }
 
+/** Extract a Craft session id from a flat Pi session JSONL filename. */
+export function extractPiSessionIdFromPath(filePath: string): string | null {
+  const fileName = filePath.split(/[/\\]/).pop();
+  if (!fileName?.endsWith('.jsonl') || fileName === 'session.jsonl') return null;
+
+  const withoutExt = fileName.slice(0, -'.jsonl'.length);
+  const firstUnderscore = withoutExt.indexOf('_');
+  const sessionId = firstUnderscore >= 0 ? withoutExt.slice(firstUnderscore + 1) : withoutExt;
+  return sessionId || null;
+}
+
+/** Build the ripgrep pattern for Pi tree message entries. */
+export function buildPiMessageSearchPattern(query: string): string {
+  const escapedQuery = escapeRegex(query);
+  return `"type"\\s*:\\s*"message".*"role"\\s*:\\s*"(user|assistant)".*${escapedQuery}`;
+}
+
 /**
  * Get the path to the ripgrep binary.
  * Path discovery is delegated to backend runtime tooling resolvers.
@@ -229,22 +246,18 @@ export async function searchSessions(
     const args = [
       '--json',           // JSON output format (NDJSON)
       '--max-count', '10', // Limit matches per file to prevent huge results
-      '-g', '**/*.jsonl', // Match legacy {id}/session.jsonl and Pi flat {ts}_{id}.jsonl
+      '--max-depth', '1', // Pi sessions are flat files directly under the cwd bucket
+      '-g', '*.jsonl',    // Match Pi flat {timestamp}_{sessionId}.jsonl files only
     ];
 
     if (ignoreCase) {
       args.push('-i');
     }
 
-    // Use regex pattern that:
-    // 1. Only matches user/assistant message lines (skips huge tool_result lines)
-    // 2. Requires the query to appear somewhere in the line
-    // This filters at ripgrep level, avoiding 70x more data being sent to Node.js
-    //
-    // Note: "type" field position varies — messageToStored() uses rest-spread before
-    // adding type, so "type" can appear anywhere in the JSON line, not just after "id".
-    const escapedQuery = escapeRegex(query);
-    args.push('-e', `"type":"(user|assistant)".*${escapedQuery}|${escapedQuery}.*"type":"(user|assistant)"`);
+    // Pi flat JSONL stores transcript entries as type="message" with the role
+    // nested inside `message`. Entry serialization places content after role,
+    // so ripgrep can discard toolResult/custom lines before they reach Node.
+    args.push('-e', buildPiMessageSearchPattern(query));
     args.push(...existingTargets);
 
     // Cancel previous search if still running. Per the single-search-at-a-time
@@ -298,23 +311,7 @@ export async function searchSessions(
           const filePath = data.path?.text;
           if (!filePath) continue;
 
-          // Extract session ID from path. Two formats:
-          //   Legacy:  .../sessions/{sessionId}/session.jsonl
-          //   Pi flat: .../sessions/{timestamp}_{sessionId}.jsonl
-          const pathParts = filePath.split(/[/\\]/);
-          const jsonlIndex = pathParts.findIndex((p: string) => p === 'session.jsonl');
-          let sessionId: string;
-          if (jsonlIndex >= 1) {
-            // Legacy subdirectory format
-            sessionId = pathParts[jsonlIndex - 1];
-          } else {
-            // Pi flat format: {timestamp}_{sessionId}.jsonl. The fileTimestamp
-            // (ISO date with :/. → -) contains no "_", so the first underscore
-            // separates the timestamp from the session id.
-            const withoutExt = pathParts[pathParts.length - 1].replace(/\.jsonl$/, '');
-            const firstUnderscore = withoutExt.indexOf('_');
-            sessionId = firstUnderscore >= 0 ? withoutExt.slice(firstUnderscore + 1) : withoutExt;
-          }
+          const sessionId = extractPiSessionIdFromPath(filePath);
           if (!sessionId) continue;
 
           // Skip header line (line 1)

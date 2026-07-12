@@ -198,7 +198,7 @@ describe('turn grouping stability across reload', () => {
     expect(lastReload?.response?.text).toBe('Here are the results.')
   })
 
-  it('plan message turn: planPath survives reload', () => {
+  it('legacy plan messages reload as assistant artifacts, not Craft plan turns', () => {
     const messages: Message[] = [
       createMessage('user', { content: 'Plan it' }),
       createMessage('plan', {
@@ -210,10 +210,12 @@ describe('turn grouping stability across reload', () => {
     ]
 
     const reloaded = simulatePersistAndReload(messages)
-    const planMsg = reloaded.find(m => m.role === 'plan')
+    const legacyPlan = reloaded.find(m => m.artifact?.legacy)
 
-    expect(planMsg).toBeDefined()
-    expect(planMsg?.planPath).toBe('/sessions/123/plans/plan.md')
+    expect(reloaded.some(m => m.role === 'plan')).toBe(false)
+    expect(legacyPlan?.role).toBe('assistant')
+    expect(legacyPlan?.planPath).toBe('/sessions/123/plans/plan.md')
+    expect(legacyPlan?.artifact).toMatchObject({ kind: 'plan', legacy: true })
   })
 
   it('error turn: typed error fields survive reload', () => {

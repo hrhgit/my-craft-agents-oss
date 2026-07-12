@@ -5,6 +5,24 @@ import { useTransportConnectionState } from './useTransportConnectionState'
 import { toast } from 'sonner'
 
 type ServerBrowserMode = 'browse' | 'manual'
+type DirectoryPickerHost = 'workspace' | 'client'
+
+export function resolveDirectoryPickerTarget(
+  connectionMode: 'local' | 'remote' | undefined,
+  runtimeEnvironment: 'electron' | 'web',
+  canBrowseServer: boolean,
+  host: DirectoryPickerHost = 'workspace',
+): { isRemote: boolean; serverBrowserMode: ServerBrowserMode } {
+  const isRemote = host === 'client'
+    ? runtimeEnvironment === 'web'
+    : connectionMode === 'remote' ||
+      (connectionMode === undefined && runtimeEnvironment === 'web')
+
+  return {
+    isRemote,
+    serverBrowserMode: isRemote && canBrowseServer ? 'browse' : 'manual',
+  }
+}
 
 interface DirectoryPickerResult {
   /** Open the picker (native dialog in local mode, ServerDirectoryBrowser in remote mode). */
@@ -22,21 +40,45 @@ interface DirectoryPickerResult {
 }
 
 export function useDirectoryPicker(
-  onSelect: (path: string) => void
+  onSelect: (path: string) => void,
+  options: { host?: DirectoryPickerHost } = {},
 ): DirectoryPickerResult {
   const { t } = useTranslation()
   const connectionState = useTransportConnectionState()
-  const isRemote = connectionState?.mode === 'remote'
-  const canBrowse = isRemote &&
-    window.electronAPI.isChannelAvailable(RPC_CHANNELS.fs.LIST_DIRECTORY)
+  const runtimeEnvironment = window.electronAPI.getRuntimeEnvironment()
+  const canBrowseServer = window.electronAPI.isChannelAvailable(RPC_CHANNELS.fs.LIST_DIRECTORY)
+  const initialTarget = resolveDirectoryPickerTarget(
+    connectionState?.mode,
+    runtimeEnvironment,
+    canBrowseServer,
+    options.host,
+  )
 
   const [showServerBrowser, setShowServerBrowser] = useState(false)
-
-  const serverBrowserMode: ServerBrowserMode = canBrowse ? 'browse' : 'manual'
+  const [serverBrowserMode, setServerBrowserMode] = useState<ServerBrowserMode>(
+    initialTarget.serverBrowserMode,
+  )
 
   const pickDirectory = useCallback(async () => {
-    if (isRemote) {
+    // Read the state at click time. The hook's initial state is populated
+    // asynchronously and can otherwise send early clicks down the local-dialog path.
+    let connectionMode = connectionState?.mode
+    try {
+      connectionMode = (await window.electronAPI.getTransportConnectionState())?.mode
+    } catch {
+      // Use the latest observed state (or the runtime fallback) below.
+    }
+
+    const target = resolveDirectoryPickerTarget(
+      connectionMode,
+      runtimeEnvironment,
+      window.electronAPI.isChannelAvailable(RPC_CHANNELS.fs.LIST_DIRECTORY),
+      options.host,
+    )
+
+    if (target.isRemote) {
       // Remote mode — open ServerDirectoryBrowser (browse or manual depending on server support)
+      setServerBrowserMode(target.serverBrowserMode)
       setShowServerBrowser(true)
       return
     }
@@ -51,7 +93,7 @@ export function useDirectoryPicker(
         description: message,
       })
     }
-  }, [isRemote, onSelect])
+  }, [connectionState?.mode, onSelect, options.host, runtimeEnvironment, t])
 
   const cancelServerBrowser = useCallback(() => {
     setShowServerBrowser(false)
@@ -68,6 +110,6 @@ export function useDirectoryPicker(
     serverBrowserMode,
     cancelServerBrowser,
     confirmServerBrowser,
-    isRemote,
+    isRemote: initialTarget.isRemote,
   }
 }

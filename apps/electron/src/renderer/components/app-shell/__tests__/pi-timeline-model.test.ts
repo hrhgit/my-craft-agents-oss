@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { PiProjectionEntityV1 } from '@craft-agent/shared/protocol'
-import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, selectActivePiPlanArtifact, selectPendingPiCredential, selectPendingPiPermission, selectPiPlanModeState, selectPiRuntimeState } from '../pi-timeline-model'
+import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, selectActivePiPlanArtifact, selectPendingPiCredential, selectPendingPiPermission, selectPiPlanModeState, selectPiProcessingStatusMessage, selectPiRuntimeState } from '../pi-timeline-model'
 
 function entity(overrides: Partial<PiProjectionEntityV1>): PiProjectionEntityV1 {
   return {
@@ -167,6 +167,17 @@ describe('buildPiTimelineItems', () => {
     expect(selectPiRuntimeState([start, end])).toEqual({ isProcessing: false, isCompacting: false })
     expect(buildPiTimelineItems([entity({ entityId: 'error:3', entityType: 'conversation', kind: 'runtime_error', payload: { message: 'boom' }, lastSeq: 3 })]))
       .toEqual([{ type: 'error', id: 'error:3', turnId: undefined, seq: 3, message: 'boom' }])
+  })
+
+  it('selects processing status only from the current projected runtime', () => {
+    const oldStatus = entity({ entityId: 'status-old', kind: 'host_status', payload: { message: 'Old status' }, lastSeq: 1 })
+    const start = entity({ entityId: 'agent-start', entityType: 'conversation', kind: 'agent_start', payload: { status: 'running' }, lastSeq: 2 })
+    const currentStatus = entity({ entityId: 'status-current', kind: 'host_status', payload: { message: 'Reading files' }, lastSeq: 3 })
+    const end = entity({ entityId: 'agent-end', entityType: 'conversation', kind: 'agent_end', payload: { status: 'completed' }, lastSeq: 4 })
+
+    expect(selectPiProcessingStatusMessage([oldStatus, start])).toBeUndefined()
+    expect(selectPiProcessingStatusMessage([oldStatus, start, currentStatus])).toBe('Reading files')
+    expect(selectPiProcessingStatusMessage([oldStatus, start, currentStatus, end])).toBeUndefined()
   })
 })
 

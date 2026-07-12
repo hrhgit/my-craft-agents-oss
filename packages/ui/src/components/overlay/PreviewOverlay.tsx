@@ -171,6 +171,7 @@ export function PreviewOverlay({
       <FullscreenOverlayBase
         isOpen={isOpen}
         onClose={onClose}
+        dismissOnOutsideClick
         typeBadge={typeBadge}
         filePath={filePath}
         title={title}

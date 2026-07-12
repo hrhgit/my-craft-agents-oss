@@ -10,6 +10,8 @@ const workspace = {
 let idCounter = 0
 const storedById = new Map<string, any>()
 const deletedIds: string[] = []
+let appendFailure: Error | null = null
+let appendedMessages: any[] = []
 
 // Partial-mock baseline: import real modules via file paths (avoids recursive mock imports)
 const actualSharedAgentModule = await import('../../../../../packages/shared/src/agent/index.ts')
@@ -76,8 +78,7 @@ mock.module('@craft-agent/shared/config', () => ({
     start() {}
     stop() {}
   },
-  migrateLegacyLlmConnectionsConfig: async () => {},
-  migrateOrphanedDefaultConnections: async () => {},
+  repairDefaultLlmConnectionReferences: async () => {},
   MODEL_REGISTRY: [],
   // Targeted stubs: prevent SyntaxError in tests that import these from the barrel
   DEFAULT_MODEL: 'claude-sonnet-4-20250514',
@@ -238,6 +239,49 @@ mock.module('@craft-agent/shared/sessions', () => ({
   getPendingPlanExecution: async () => null,
   getSessionAttachmentsPath: () => '/tmp/attachments',
   getSessionPath: (_root: string, id: string) => `${workspaceRootPath}/sessions/${id}`,
+  getSessionFilePath: (_root: string, id: string) => `${workspaceRootPath}/${id}.jsonl`,
+  findPiSessionProjectionById: async (_root: string, id: string) => {
+    const source = storedById.get(id)
+    if (!source) return null
+    const entries = source.messages.map((message: any, index: number) => ({
+      type: 'message',
+      id: message.id,
+      parentId: index > 0 ? source.messages[index - 1]!.id : null,
+      timestamp: new Date(message.timestamp).toISOString(),
+      message: {
+        role: message.type,
+        content: [{ type: 'text', text: message.content }],
+        timestamp: message.timestamp,
+      },
+    }))
+    return {
+      header: {
+        type: 'session',
+        version: 3,
+        id,
+        timestamp: new Date(source.createdAt).toISOString(),
+        cwd: workspaceRootPath,
+        craft: { id },
+      },
+      path: `${workspaceRootPath}/${id}.jsonl`,
+      cwd: workspaceRootPath,
+      leafId: entries.at(-1)?.id ?? null,
+      entries,
+    }
+  },
+  projectTreeSessionProjectionAsStoredSession: (projection: any, options: { leafId?: string }) => {
+    const source = storedById.get(projection.header.craft.id)
+    const index = source?.messages.findIndex((message: any) => message.id === options.leafId) ?? -1
+    return source && index >= 0 ? { ...source, messages: source.messages.slice(0, index + 1) } : null
+  },
+  appendStoredMessagesViaPiSessionManager: (_file: string, _dir: string, _cwd: string, messages: any[]) => {
+    return new Map(messages.map(message => [message.id, `pi-${message.id}`]))
+  },
+  appendPiBranchMessagesViaSessionManager: (_file: string, _dir: string, _cwd: string, entries: any[]) => {
+    if (appendFailure) throw appendFailure
+    appendedMessages = entries
+    return new Map(entries.map(entry => [entry.id, `pi-${entry.id}`]))
+  },
   getOrCreateLatestSession: async () => null,
   sessionPersistenceQueue: { flush: async () => {} },
   // 使用真实实现，避免手工维护字段列表与 Craft metadata fields 不同步
@@ -247,11 +291,13 @@ mock.module('@craft-agent/shared/sessions', () => ({
 
 const { SessionManager } = await import('@craft-agent/server-core/sessions')
 
-describe('session branch rollback on preflight failure', () => {
+describe('Pi projection branch creation', () => {
   beforeEach(() => {
     idCounter = 0
     storedById.clear()
     deletedIds.length = 0
+    appendFailure = null
+    appendedMessages = []
 
     storedById.set('source-1', {
       id: 'source-1',
@@ -268,87 +314,85 @@ describe('session branch rollback on preflight failure', () => {
     })
   })
 
-  it('deletes newly created child session when ensureBranchReady throws', async () => {
+  it('deletes the new child when Pi canonical append fails', async () => {
     const manager = new SessionManager()
-
-    let destroyCalled = false
-    let poolStopCalled = false
-
-    ;(manager as any).ensureMessagesLoaded = async (_managed: any) => {}
-    ;(manager as any).getOrCreateAgent = async (managed: any) => {
-      managed.poolServer = { stop: () => { poolStopCalled = true } }
-      managed.agent = {
-        supportsBranching: true,
-        ensureBranchReady: async () => {
-          throw new Error('preflight boom')
-        },
-        destroy: () => {
-          destroyCalled = true
-        },
-      }
-      return managed.agent
-    }
+    appendFailure = new Error('append boom')
 
     await expect(
       manager.createSession('ws-1', {
         branchFromSessionId: 'source-1',
         branchFromMessageId: 'm1',
       } as any)
-    ).rejects.toThrow('Could not create branch: preflight boom')
+    ).rejects.toThrow('Could not create branch: append boom')
 
     expect(deletedIds).toEqual(['child-1'])
     expect(storedById.has('child-1')).toBe(false)
     expect((manager as any).sessions.has('child-1')).toBe(false)
-    expect(destroyCalled).toBe(true)
-    expect(poolStopCalled).toBe(true)
   })
 
-  it('fails branch creation when parent provider session id is missing', async () => {
+  it('branches from Pi projection without requiring a parent SDK id or backend preflight', async () => {
     const source = storedById.get('source-1')
     source.sdkSessionId = undefined
     storedById.set('source-1', source)
 
     const manager = new SessionManager()
-
-    await expect(
-      manager.createSession('ws-1', {
-        branchFromSessionId: 'source-1',
-        branchFromMessageId: 'm1',
-      } as any)
-    ).rejects.toThrow('parent session SDK context is not initialized')
-
-    expect(deletedIds).toEqual([])
-    expect(storedById.has('child-1')).toBe(false)
-  })
-
-  it('runs backend preflight for pi branches and rolls back on failure', async () => {
-
-    const manager = new SessionManager()
-    let getOrCreateAgentCalled = false
-
-    ;(manager as any).ensureMessagesLoaded = async (_managed: any) => {}
-    ;(manager as any).getOrCreateAgent = async (managed: any) => {
-      getOrCreateAgentCalled = true
-      managed.poolServer = { stop: () => {} }
-      managed.agent = {
-        supportsBranching: true,
-        ensureBranchReady: async () => {
-          throw new Error('pi preflight boom')
-        },
-        destroy: () => {},
-      }
-      return managed.agent
+    let preflightCalled = false
+    ;(manager as any).getOrCreateAgent = async () => {
+      preflightCalled = true
+      throw new Error('must not run')
     }
 
+    const child = await manager.createSession('ws-1', {
+      branchFromSessionId: 'source-1',
+      branchFromMessageId: 'm1',
+    } as any)
+
+    expect(child.id).toBe('child-1')
+    expect(preflightCalled).toBe(false)
+    expect(appendedMessages.map(entry => entry.id)).toEqual(['m1'])
+    expect(deletedIds).toEqual([])
+    expect(storedById.get('child-1')?.branchFromMessageId).toBe('m1')
+  })
+
+  it('remaps copied annotations to the child Pi message identity', async () => {
+    const source = storedById.get('source-1')
+    source.messages[1].annotations = [{
+      id: 'ann-1',
+      schemaVersion: 1,
+      createdAt: 1,
+      body: [{ type: 'highlight' }],
+      target: {
+        source: { sessionId: 'source-1', messageId: 'm2' },
+        selectors: [{ type: 'text-quote', exact: 'hi' }],
+      },
+    }]
+    storedById.set('source-1', source)
+
+    const manager = new SessionManager()
+    await manager.createSession('ws-1', {
+      branchFromSessionId: 'source-1',
+      branchFromMessageId: 'm2',
+    } as any)
+
+    const child = storedById.get('child-1')
+    expect(child.messages.map((message: any) => message.id)).toEqual(['pi-m1', 'pi-m2'])
+    expect(child.messages[1].annotations[0].target.source).toEqual({
+      sessionId: 'child-1',
+      messageId: 'pi-m2',
+    })
+  })
+
+  it('rejects an unknown projection target before creating a child', async () => {
+    const manager = new SessionManager()
+
     await expect(
       manager.createSession('ws-1', {
         branchFromSessionId: 'source-1',
-        branchFromMessageId: 'm1',
+        branchFromMessageId: 'missing',
       } as any)
-    ).rejects.toThrow('Could not create branch: pi preflight boom')
+    ).rejects.toThrow('message missing not found')
 
-    expect(getOrCreateAgentCalled).toBe(true)
-    expect(deletedIds).toEqual(['child-1'])
-    expect(storedById.has('child-1')).toBe(false)
+    expect(idCounter).toBe(0)
+    expect(deletedIds).toEqual([])
   })
 })

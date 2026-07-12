@@ -100,6 +100,7 @@ export function MermaidPreviewOverlay({
       >
         <div
           dangerouslySetInnerHTML={{ __html: svg }}
+          data-fullscreen-overlay-dismiss-boundary
           onTransitionEnd={() => setIsAnimating(false)}
           style={{
             transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,

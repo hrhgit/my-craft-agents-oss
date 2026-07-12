@@ -13,9 +13,24 @@ import {
   groupActivitiesByParent,
   computeLastChildSet,
   isActivityGroup,
+  formatCompletionClock,
+  formatRequestDuration,
   type ActivityGroup,
 } from '../turn-utils'
 import type { ActivityItem } from '../TurnCard'
+
+describe('turn completion timing formatters', () => {
+  it('formats duration compactly without leading zero units', () => {
+    expect(formatRequestDuration(8_900)).toBe('8s')
+    expect(formatRequestDuration(65_432)).toBe('1m05s')
+    expect(formatRequestDuration(3 * 3600_000 + 2 * 60_000 + 9_000)).toBe('3h02m09s')
+    expect(formatRequestDuration(2 * 3600_000)).toBe('2h')
+  })
+
+  it('formats completion time as a local 24-hour clock value', () => {
+    expect(formatCompletionClock(1_783_861_200_000)).toMatch(/^\d{2}:\d{2}$/)
+  })
+})
 
 // ============================================================================
 // Test Helpers

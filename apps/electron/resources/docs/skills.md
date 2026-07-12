@@ -33,19 +33,19 @@ Craft Agent uses **the identical SKILL.md format** as the Claude Code SDK. This 
 
 When a skill is invoked (e.g., `/commit`):
 
-1. **Workspace skill checked first** - If `~/.craft-agent/workspaces/{id}/skills/commit/SKILL.md` exists, it's used
-2. **SDK skill as fallback** - If no workspace skill exists, the built-in SDK skill is used
+1. **Project skill checked first** - If `{projectRoot}/.pi/skills/commit/SKILL.md` exists, it's used
+2. **Global Pi skill as fallback** - Otherwise `~/.pi/agent/skills/commit/SKILL.md` is checked
 
 This allows you to:
-- **Override SDK skills** - Create a workspace skill with the same slug to replace built-in behavior
-- **Extend SDK skills** - Reference SDK behavior in your custom skill and add workspace-specific instructions
+- **Override global skills** - Create a project skill with the same slug to replace global behavior
+- **Extend global skills** - Reference global behavior in your custom skill and add project-specific instructions
 - **Create new skills** - Add entirely new skills not in the SDK
 
 ## Skill Storage
 
 Skills are stored as folders:
 ```
-~/.craft-agent/workspaces/{workspaceId}/skills/{slug}/
+{projectRoot}/.pi/skills/{slug}/
 ├── SKILL.md          # Required: Skill definition (same format as Claude Code SDK)
 ├── icon.svg          # Recommended: Skill icon for UI display
 ├── icon.png          # Alternative: PNG icon
@@ -131,7 +131,7 @@ requiredSources:
 ### 1. Create the skill directory
 
 ```bash
-mkdir -p ~/.craft-agent/workspaces/{ws}/skills/my-skill
+mkdir -p {projectRoot}/.pi/skills/my-skill
 ```
 
 ### 2. Write SKILL.md
@@ -292,16 +292,16 @@ When triaging issues:
 When this skill is invoked, the `linear` source is automatically enabled for the
 session — no manual toggle needed.
 
-## Overriding SDK Skills
+## Overriding Global Skills
 
-To customize a built-in SDK skill like `/commit`:
+To customize a global skill like `/commit`:
 
-1. Create `~/.craft-agent/workspaces/{ws}/skills/commit/SKILL.md`
+1. Create `{projectRoot}/.pi/skills/commit/SKILL.md`
 2. Write your custom instructions
 3. Add an icon
 4. Run `skill_validate({ skillSlug: "commit" })`
 
-Your skill will be used instead of the SDK's built-in version.
+Your project skill will be used instead of the global version.
 
 This is useful for:
 - Adding team-specific commit message formats

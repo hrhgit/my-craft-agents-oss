@@ -141,22 +141,24 @@ export function PDFPreviewOverlay({
           <div className="text-muted-foreground text-sm">{t('preview.loadingPdf')}</div>
         )}
         {fileObj && (
-          <Document
-            file={fileObj}
-            onLoadSuccess={onDocumentLoadSuccess}
-            onLoadError={onDocumentLoadError}
-            loading={<div className="text-muted-foreground text-sm">{t('common.rendering')}</div>}
-          >
-            {Array.from({ length: numPages }, (_, i) => (
-              <Page
-                key={i + 1}
-                pageNumber={i + 1}
-                renderTextLayer={true}
-                renderAnnotationLayer={true}
-                className="pdf-page"
-              />
-            ))}
-          </Document>
+          <div data-fullscreen-overlay-dismiss-boundary>
+            <Document
+              file={fileObj}
+              onLoadSuccess={onDocumentLoadSuccess}
+              onLoadError={onDocumentLoadError}
+              loading={<div className="text-muted-foreground text-sm">{t('common.rendering')}</div>}
+            >
+              {Array.from({ length: numPages }, (_, i) => (
+                <Page
+                  key={i + 1}
+                  pageNumber={i + 1}
+                  renderTextLayer={true}
+                  renderAnnotationLayer={true}
+                  className="pdf-page"
+                />
+              ))}
+            </Document>
+          </div>
         )}
       </div>
     </PreviewOverlay>

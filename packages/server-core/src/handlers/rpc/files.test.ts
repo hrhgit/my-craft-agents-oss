@@ -76,7 +76,12 @@ function createTestHarness(options?: { withWindowManager?: boolean }) {
     webContentsId: 101,
   }
 
-  return { readUserAttachment, ctx, warnings }
+  const listDirectory = handlers.get(RPC_CHANNELS.fs.LIST_DIRECTORY)
+  if (!listDirectory) {
+    throw new Error('LIST_DIRECTORY handler not registered')
+  }
+
+  return { readUserAttachment, listDirectory, ctx, warnings }
 }
 
 describe('registerFilesHandlers READ_USER_ATTACHMENT', () => {
@@ -117,6 +122,20 @@ describe('registerFilesHandlers READ_USER_ATTACHMENT', () => {
     } finally {
       await rm(tmp, { recursive: true, force: true })
     }
+  })
+})
+
+describe('registerFilesHandlers LIST_DIRECTORY', () => {
+  it('allows a remote client to browse the server home directory', async () => {
+    const { listDirectory } = createTestHarness({ withWindowManager: false })
+    const result = await listDirectory({
+      clientId: 'remote-client',
+      workspaceId: null,
+      webContentsId: null,
+    }, homedir())
+
+    expect(result.currentPath).toBe(homedir())
+    expect(Array.isArray(result.entries)).toBe(true)
   })
 })
 

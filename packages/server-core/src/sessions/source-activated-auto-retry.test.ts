@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { ConversationProjector } from '../projection/conversation-projector.ts'
 import { SessionManager, createManagedSession, claimAutoRetryPending } from './SessionManager.ts'
 
 // Regression test for craft-agents-oss#804.
@@ -66,10 +67,12 @@ describe('claimAutoRetryPending', () => {
 describe('source_activated auto-retry', () => {
   let tmpRoot: string
   let sm: SessionManager
+  let projectionSequenceBySession: Map<string, number>
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'sm-autoretry-'))
     sm = new SessionManager()
+    projectionSequenceBySession = new Map()
   })
 
   afterEach(() => {
@@ -89,24 +92,52 @@ describe('source_activated auto-retry', () => {
       { messagesLoaded: true },
     )
     ;(sm as unknown as { sessions: Map<string, unknown> }).sessions.set(id, managed)
+    ;(sm as unknown as { piProjectionBySession: Map<string, ConversationProjector> })
+      .piProjectionBySession.set(id, new ConversationProjector(id, `runtime-${id}`))
+    projectionSequenceBySession.set(id, 0)
     return managed
   }
 
+  function projectUserMessage(sessionId: string, messageId: string, content: string): void {
+    const seq = (projectionSequenceBySession.get(sessionId) ?? 0) + 1
+    projectionSequenceBySession.set(sessionId, seq)
+    const projector = (sm as unknown as {
+      piProjectionBySession: Map<string, ConversationProjector>
+    }).piProjectionBySession.get(sessionId)!
+    projector.apply({
+      schemaVersion: 1,
+      eventId: `event-${sessionId}-${seq}`,
+      seq,
+      sessionId,
+      runtimeId: projector.runtimeId,
+      turnId: `turn-${seq}`,
+      entityId: `content:user:${messageId}`,
+      entityType: 'content_block',
+      entityVersion: 1,
+      kind: 'user_text',
+      payload: {
+        role: 'user',
+        messageId,
+        text: content,
+        streaming: false,
+        queueStatus: 'accepted',
+        source: 'pi',
+      },
+    })
+  }
+
   /**
-   * Replace `sendMessage` with a spy that records the call and appends a
-   * placeholder user message to `managed.messages`. Appending makes the
-   * content-match dedup observable through the real code path — without it,
-   * subsequent "duplicate" calls wouldn't even reach the dedup check (no
-   * pending state would have been mutated by the first call).
+   * Replace `sendMessage` with a spy that records the call and advances the
+   * Pi-owned projection with the accepted user message. The auto-retry
+   * preemption check intentionally ignores Craft overlay messages.
    */
   function spyOnSendMessage(sessionId: string) {
     const calls: string[] = []
-    const managed = (sm as unknown as { sessions: Map<string, { messages: unknown[] }> }).sessions.get(sessionId)!
     ;(sm as unknown as { sendMessage: (id: string, msg: string) => Promise<void> }).sendMessage = async (id, msg) => {
-      const m = (sm as unknown as { sessions: Map<string, { autoRetryPending?: { content: string; deadlineMs: number; committed: boolean }; messages: unknown[] }> }).sessions.get(id)!
+      const m = (sm as unknown as { sessions: Map<string, { autoRetryPending?: { content: string; deadlineMs: number; committed: boolean } }> }).sessions.get(id)!
       if (claimAutoRetryPending(m, msg) === 'drop') return
       calls.push(msg)
-      managed.messages.push({ id: `m-${calls.length}`, role: 'user', content: msg, timestamp: Date.now() })
+      projectUserMessage(id, `m-${calls.length}`, msg)
     }
     return calls
   }
@@ -163,14 +194,12 @@ describe('source_activated auto-retry', () => {
     const calls = spyOnSendMessage(sessionId)
 
     await fireSourceActivated(sessionId, 'github', 'check the repo')
-    // Simulate the user typing something brand new in the 100ms window — bumps
-    // messages.length past the schedule-time count.
-    managed.messages.push({
-      id: 'user-followup',
-      role: 'user',
-      content: 'actually check the issues instead',
-      timestamp: Date.now(),
-    } as never)
+    // Simulate Pi accepting a brand-new user message during the 100ms window.
+    projectUserMessage(
+      sessionId,
+      'user-followup',
+      'actually check the issues instead',
+    )
 
     await new Promise(r => setTimeout(r, 150))
 
@@ -224,10 +253,10 @@ describe('source_activated auto-retry', () => {
     await fireSourceActivated(sessionId, 'github', 'list repos')
     // User types something completely different in the dedup window — pending
     // content does not match, so the dedup gate falls through and the message
-    // goes through normally. (It also bumps messages.length, which causes the
-    // timer to skip the auto-retry as preempted — covered by the 'preempted'
-    // test. The unique guarantee here is: the unrelated message itself is
-    // never silently dropped by the dedup gate.)
+    // goes through normally. (It also adds a projection user entity, which
+    // causes the timer to skip the auto-retry as preempted — covered by the
+    // 'preempted' test. The unique guarantee here is: the unrelated message
+    // itself is never silently dropped by the dedup gate.)
     await (sm as unknown as { sendMessage: (id: string, msg: string) => Promise<void> }).sendMessage(
       sessionId,
       'never mind, what time is it',

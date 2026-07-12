@@ -19,7 +19,6 @@ import { CONFIG_DIR } from './paths.ts';
 import { safeJsonParse, readJsonFileSync } from '../utils/files.ts';
 import { EntityColorSchema } from '../colors/validate.ts';
 import { THINKING_LEVEL_IDS } from '../agent/thinking-levels.ts';
-import { isValidProviderAuthCombination } from './llm-connections.ts';
 import { SUPPORTED_LANGUAGE_CODES } from '../i18n/languages.ts';
 import type { LanguageCode } from '../i18n/languages.ts';
 
@@ -64,43 +63,10 @@ const WorkspaceSchema = z.object({
   iconUrl: z.string().optional(),
 });
 
-// --- LLM Connection schema for config validation ---
-
-const LlmProviderTypeSchema = z.enum([
-  'anthropic', 'openai', 'openai_compat', 'pi', 'pi_compat', 'copilot',
-  // Legacy values kept for config parsing tolerance (migrated at runtime):
-  'anthropic_compat', 'bedrock', 'vertex',
-]);
-
-const LlmAuthTypeSchema = z.enum([
-  'api_key', 'api_key_with_endpoint', 'oauth', 'iam_credentials',
-  'bearer_token', 'service_account_file', 'environment', 'none',
-]);
-
-const CustomEndpointSchema = z.object({
-  api: z.enum(['openai-completions', 'openai-responses', 'anthropic-messages', 'google-generative-ai']),
-  supportsImages: z.boolean().optional(),
-});
-
-const LlmConnectionSchema = z.object({
-  slug: z.string().min(1),
-  name: z.string().min(1),
-  providerType: LlmProviderTypeSchema,
-  authType: LlmAuthTypeSchema,
-  baseUrl: z.string().optional(),
-  models: z.array(z.union([z.string(), z.object({ id: z.string() }).passthrough()])).optional(),
-  defaultModel: z.string().optional(),
-  modelSelectionMode: z.enum(['automaticallySyncedFromProvider', 'userDefined3Tier']).optional(),
-  customEndpoint: CustomEndpointSchema.optional(),
-  createdAt: z.number(),
-  // Allow additional fields (codexPath, awsRegion, gcpProjectId, etc.)
-}).passthrough();
-
 export const StoredConfigSchema = z.object({
   workspaces: z.array(WorkspaceSchema).min(0),
   activeWorkspaceId: z.string().nullable(),
   activeSessionId: z.string().nullable(),
-  llmConnections: z.array(LlmConnectionSchema).optional(),
   defaultLlmConnection: z.string().optional(),
   defaultThinkingLevel: z.enum([...THINKING_LEVEL_IDS, 'think'] as [string, ...string[]]).transform(v => v === 'think' ? 'medium' : v).optional(),
   // Note: tokenDisplay, showCost, cumulativeUsage, defaultPermissionMode removed
@@ -200,49 +166,6 @@ export function validateConfig(): ValidationResult {
           severity: 'error',
           suggestion: 'Set activeWorkspaceId to an existing workspace ID or null',
         });
-      }
-    }
-
-    // Validate LLM connections
-    if (config.llmConnections) {
-      const seenSlugs = new Set<string>();
-      for (const [i, conn] of config.llmConnections.entries()) {
-        // Check for duplicate slugs
-        if (seenSlugs.has(conn.slug)) {
-          errors.push({
-            file: 'config.json',
-            path: `llmConnections[${i}].slug`,
-            message: `Duplicate connection slug '${conn.slug}'`,
-            severity: 'error',
-            suggestion: 'Each connection must have a unique slug',
-          });
-        }
-        seenSlugs.add(conn.slug);
-
-        // Validate provider/auth combination
-        if (!isValidProviderAuthCombination(conn.providerType as any, conn.authType as any)) {
-          warnings.push({
-            file: 'config.json',
-            path: `llmConnections[${i}]`,
-            message: `Invalid provider/auth combination: providerType='${conn.providerType}' with authType='${conn.authType}'`,
-            severity: 'warning',
-            suggestion: 'Check supported auth types for this provider',
-          });
-        }
-      }
-
-      // Validate defaultLlmConnection references an existing connection
-      if (config.defaultLlmConnection) {
-        const exists = config.llmConnections.some(c => c.slug === config.defaultLlmConnection);
-        if (!exists) {
-          warnings.push({
-            file: 'config.json',
-            path: 'defaultLlmConnection',
-            message: `Default LLM connection '${config.defaultLlmConnection}' does not exist in llmConnections array`,
-            severity: 'warning',
-            suggestion: 'Set defaultLlmConnection to an existing connection slug',
-          });
-        }
       }
     }
 
@@ -729,7 +652,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
   const skillsDir = getWorkspaceSkillsPath(workspaceRoot);
   const skillDir = join(skillsDir, slug);
   const skillFile = join(skillDir, 'SKILL.md');
-  const file = `skills/${slug}/SKILL.md`;
+  const file = `.pi/skills/${slug}/SKILL.md`;
 
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
@@ -739,7 +662,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
     return {
       valid: false,
       errors: [{
-        file: `skills/${slug}`,
+        file: `.pi/skills/${slug}`,
         path: '',
         message: `Skill folder '${slug}' does not exist`,
         severity: 'error',
@@ -790,7 +713,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
     const ext = extname(iconPath).toLowerCase();
     if (!['.svg', '.png', '.jpg', '.jpeg'].includes(ext)) {
       warnings.push({
-        file: `skills/${slug}/${basename(iconPath)}`,
+        file: `.pi/skills/${slug}/${basename(iconPath)}`,
         path: '',
         message: `Unexpected icon format: ${ext}`,
         severity: 'warning',
@@ -800,7 +723,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
   } else {
     const searchTerm = slug.replace(/-/g, ' ');
     warnings.push({
-      file: `skills/${slug}/`,
+      file: `.pi/skills/${slug}/`,
       path: 'icon',
       message: 'No icon found',
       severity: 'warning',
@@ -824,7 +747,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
  * @param slug - The skill slug (folder name), used for slug format validation
  */
 export function validateSkillContent(markdownContent: string, slug: string): ValidationResult {
-  const file = `skills/${slug}/SKILL.md`;
+  const file = `.pi/skills/${slug}/SKILL.md`;
   const errors: ValidationIssue[] = [];
 
   // 1. Validate slug format
@@ -835,7 +758,7 @@ export function validateSkillContent(markdownContent: string, slug: string): Val
       .replace(/^-+|-+$/g, '')
       .replace(/-+/g, '-');
     errors.push({
-      file: `skills/${slug}`,
+      file: `.pi/skills/${slug}`,
       path: 'slug',
       message: 'Slug must be lowercase alphanumeric with hyphens',
       severity: 'error',
@@ -902,7 +825,7 @@ export function validateAllSkills(workspaceRoot: string): ValidationResult {
       valid: true,
       errors: [],
       warnings: [{
-        file: 'skills/',
+        file: '.pi/skills/',
         path: '',
         message: 'Skills directory does not exist (no skills configured)',
         severity: 'warning',
@@ -921,7 +844,7 @@ export function validateAllSkills(workspaceRoot: string): ValidationResult {
       valid: true,
       errors: [],
       warnings: [{
-        file: 'skills/',
+        file: '.pi/skills/',
         path: '',
         message: 'No skills configured',
         severity: 'warning',
@@ -2015,7 +1938,7 @@ export interface ConfigFileDetection {
  *
  * Matches patterns:
  * - .../sources/{slug}/config.json → source config
- * - .../skills/{slug}/SKILL.md → skill definition
+ * - .../.pi/skills/{slug}/SKILL.md → skill definition
  * - .../statuses/config.json → status workflow config
  * - .../labels/config.json → label config
  * - .../permissions.json (workspace or source-level) → permission rules
@@ -2040,10 +1963,10 @@ export function detectConfigFileType(filePath: string, workspaceRootPath: string
     return { type: 'source', slug: sourceMatch[1], displayFile: `sources/${sourceMatch[1]}/config.json` };
   }
 
-  // Match: skills/{slug}/SKILL.md
-  const skillMatch = relativePath.match(/^skills\/([^/]+)\/SKILL\.md$/);
+  // Match: .pi/skills/{slug}/SKILL.md
+  const skillMatch = relativePath.match(/^\.pi\/skills\/([^/]+)\/SKILL\.md$/);
   if (skillMatch) {
-    return { type: 'skill', slug: skillMatch[1], displayFile: `skills/${skillMatch[1]}/SKILL.md` };
+    return { type: 'skill', slug: skillMatch[1], displayFile: `.pi/skills/${skillMatch[1]}/SKILL.md` };
   }
 
   // Match: statuses/config.json

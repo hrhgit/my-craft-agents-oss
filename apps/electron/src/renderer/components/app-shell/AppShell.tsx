@@ -89,6 +89,7 @@ import { getSessionTitle } from "@/utils/session"
 import { useSetAtom } from "jotai"
 import type { Session, Workspace, FileAttachment, PermissionRequest, LoadedSource, LoadedSkill, PermissionMode, SourceFilter, AutomationFilter } from "../../../shared/types"
 import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/atoms/sessions"
+import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
 import { sourcesAtom } from "@/atoms/sources"
 import { skillsAtom } from "@/atoms/skills"
 import { panelStackAtom, panelCountAtom, focusedPanelIdAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, parseSessionIdFromRoute } from "@/atoms/panel-stack"
@@ -1082,6 +1083,9 @@ function AppShellContent({
   // Shift+Tab cycles permission mode through enabled modes (textarea handles its own, this handles when focus is elsewhere)
   // In multi-panel, targets the focused panel's session
   const effectiveSessionId = focusedSessionId ?? session.selected
+  const effectiveSessionIsProcessing = useAtomValue(
+    piProjectionIsProcessingAtomFamily(effectiveSessionId ?? ''),
+  )
   // Pi extension dialogs are visible only for the active session. Requests for
   // other sessions remain queued until that session becomes active.
   const { currentRequest: remoteUIRequest, respond: respondRemoteUI } = useRemoteUIRequests(effectiveSessionId)
@@ -1162,16 +1166,13 @@ function AppShellContent({
   // First press shows warning overlay, second press interrupts
   // In multi-panel, targets the focused panel's session
   useAction('chat.stopProcessing', () => {
-    if (effectiveSessionId) {
-      const meta = sessionMetaMap.get(effectiveSessionId)
-      if (meta?.isProcessing) {
-        // handleEscapePress returns true on second press (within timeout)
-        const shouldInterrupt = handleEscapePress()
-        if (shouldInterrupt) {
-          window.electronAPI.cancelProcessing(effectiveSessionId, false).catch(err => {
-            console.error('[AppShell] Failed to cancel processing:', err)
-          })
-        }
+    if (effectiveSessionId && effectiveSessionIsProcessing) {
+      // handleEscapePress returns true on second press (within timeout)
+      const shouldInterrupt = handleEscapePress()
+      if (shouldInterrupt) {
+        window.electronAPI.cancelProcessing(effectiveSessionId, false).catch(err => {
+          console.error('[AppShell] Failed to cancel processing:', err)
+        })
       }
     }
   }, {
@@ -1180,10 +1181,9 @@ function AppShellContent({
     enabled: () => {
       if (hasOpenOverlay()) return false
       if (!effectiveSessionId) return false
-      const meta = sessionMetaMap.get(effectiveSessionId)
-      return meta?.isProcessing ?? false
+      return effectiveSessionIsProcessing
     }
-  }, [effectiveSessionId, handleEscapePress])
+  }, [effectiveSessionId, effectiveSessionIsProcessing, handleEscapePress])
 
   // Theme toggle (CMD+SHIFT+A)
   useAction('app.toggleTheme', () => setMode(resolvedMode === 'dark' ? 'light' : 'dark'))

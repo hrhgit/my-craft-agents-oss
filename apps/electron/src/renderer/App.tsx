@@ -11,7 +11,7 @@ import { generateMessageId } from '../shared/types'
 import { useEventProcessor } from './event-processor'
 import type { AgentEvent, Effect } from './event-processor'
 import { normalizeSessionEvent } from './event-processor/normalize-session-event'
-import { isPiNativeConversation, shouldSuppressLegacyTranscriptEvent } from './event-processor/projection-migration'
+import { isProjectionOwnedHostEvent } from './event-processor/projection-ownership'
 import { AppShell } from '@/components/app-shell/AppShell'
 import type { AppShellContextType } from '@/context/AppShellContext'
 import { OnboardingWizard, ReauthScreen } from '@/components/onboarding'
@@ -35,6 +35,11 @@ import { coerceInputText } from './lib/input-text'
 import { getPiAgentEndHandoff } from './lib/pi-projection-handoff'
 import { getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
 import { formatSessionLoadFailure, shouldTreatSessionLoadFailureAsTransportFallback } from './lib/session-load'
+import {
+  removePiUserOverlayCarrier,
+  settlePiUserOverlayCarrier,
+  upsertPiUserOverlayCarrier,
+} from './lib/pi-message-overlay'
 import { extractWorkspaceSlugFromPath } from '@craft-agent/shared/utils/workspace-slug'
 import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES } from '@craft-agent/shared/utils/attachment-limits'
 import { DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
@@ -709,7 +714,7 @@ export default function App() {
     if (!handoff) return
 
     const session = store.get(sessionAtomFamily(handoff.sessionId))
-    if (!session || !isPiNativeConversation(session)) return
+    if (!session) return
 
     trackSessionActivity(handoff.sessionId)
     const updatedSession: Session = {
@@ -963,9 +968,7 @@ export default function App() {
         return
       }
 
-      const projection = store.get(piProjectionAtomFamily(sessionId))
-      const sessionOwnsPiProjection = isPiNativeConversation(store.get(sessionAtomFamily(sessionId)))
-      if (shouldSuppressLegacyTranscriptEvent(sessionOwnsPiProjection, event.type)) {
+      if (isProjectionOwnedHostEvent(event.type)) {
         trackSessionActivity(sessionId)
         return
       }
@@ -1098,6 +1101,7 @@ export default function App() {
       })
       const metaMap = refreshedMetaMap ?? store.get(sessionMetaMapAtom)
       const refreshIds = getSessionsToRefreshAfterStaleReconnect(metaMap, sessionSelection.selected)
+      let activeSessionRefreshed = false
 
       console.info(`[App] Stale reconnect — refreshing ${refreshIds.length} session(s):`, refreshIds)
 
@@ -1115,18 +1119,16 @@ export default function App() {
             if (refreshResult === 'refreshed') break
           }
         }
+        if (sessionId === sessionSelection.selected) {
+          activeSessionRefreshed = refreshResult === 'refreshed'
+        }
       }
 
-      // Final fallback: if the active session is still empty, force a reload
-      // even when the session is already marked loaded.
-      if (sessionSelection.selected) {
-        const session = store.get(sessionAtomFamily(sessionSelection.selected))
-        if (session && (!session.messages || session.messages.length === 0)) {
-          console.warn('[App] Active session still has no messages after stale reconnect refresh — forcing message reload')
-          await store.set(forceSessionMessagesReloadAtom, sessionSelection.selected)
-        } else if (session) {
-          console.info(`[App] Stale reconnect recovery complete — active session has ${session.messages?.length ?? 0} messages`)
-        }
+      // Retry the Craft-owned overlay when the normal refresh failed. Pi
+      // transcript recovery is handled independently by usePiProjectionSync.
+      if (sessionSelection.selected && !activeSessionRefreshed) {
+        console.warn('[App] Active session overlay refresh failed after stale reconnect — forcing reload')
+        await store.set(forceSessionMessagesReloadAtom, sessionSelection.selected)
       }
 
     })
@@ -1411,29 +1413,21 @@ export default function App() {
         })
       }
 
-      // Step 5: Create user message with StoredAttachments (for UI display)
-      // Mark as isPending for optimistic UI — will be confirmed by user_message
-      // event. Flag mid-stream sends as queued so the bubble renders with the
-      // dashed-draft treatment immediately. Applies to both backends:
-      // Pi steers (server emits status: 'accepted' but the renderer preserves
-      // isQueued through that update) and Claude queues (server emits 'queued'
-      // which confirms it). Cleared by 'processing' status or when the current
-      // turn ends.
+      // Step 5: Create a Craft-owned UI overlay keyed by the projected message.
+      // Pi owns text and order; this carrier supplies persistent attachment paths,
+      // badges, and optimistic queue state until projection confirmation arrives.
       optimisticMessageId = generateMessageId()
-      const sessionOwnsPiProjection = isPiNativeConversation(store.get(sessionAtomFamily(sessionId)))
-      if (sessionOwnsPiProjection) {
-        const projectionAtom = piProjectionAtomFamily(sessionId)
-        store.set(projectionAtom, current => insertOptimisticPiUser(current, optimisticMessageId!, message, storedAttachments?.map(attachment => ({
-          id: attachment.id,
-          name: attachment.name,
-          mediaType: attachment.mimeType,
-          size: attachment.size,
-        }))))
-      }
-      const userMessage: Message = {
+      const projectionAtom = piProjectionAtomFamily(sessionId)
+      store.set(projectionAtom, current => insertOptimisticPiUser(current, optimisticMessageId!, message, storedAttachments?.map(attachment => ({
+        id: attachment.id,
+        name: attachment.name,
+        mediaType: attachment.mimeType,
+        size: attachment.size,
+      }))))
+      const userOverlayCarrier: Message = {
         id: optimisticMessageId,
         role: 'user',
-        content: message,
+        content: '',
         timestamp: Date.now(),
         attachments: storedAttachments,
         badges: badges.length > 0 ? badges : undefined,
@@ -1441,41 +1435,33 @@ export default function App() {
         isQueued: sendingMidStream,
       }
 
-      // Optimistic UI update - add user message and set processing state
+      // Optimistic UI update - upsert the overlay carrier and set processing state
       updateSessionById(sessionId, (s) => ({
-        messages: sessionOwnsPiProjection ? s.messages : [...s.messages, userMessage],
+        messages: upsertPiUserOverlayCarrier(s.messages, userOverlayCarrier),
         isProcessing: true,
         lastMessageAt: Date.now()
       }))
 
-      // Step 6: Send to Claude with processed attachments + stored attachments for persistence
+      // Step 6: Send to Pi with model attachments plus UI metadata for persistence
       await window.electronAPI.sendMessage(sessionId, message, processedAttachments, storedAttachments, {
         skillSlugs,
         badges: badges.length > 0 ? badges : undefined,
         optimisticMessageId,
       })
+      updateSessionById(sessionId, (s) => ({
+        messages: settlePiUserOverlayCarrier(s.messages, optimisticMessageId!),
+      }))
     } catch (error) {
       console.error('Failed to send message:', error)
-      const sessionOwnsPiProjection = isPiNativeConversation(store.get(sessionAtomFamily(sessionId)))
-      if (sessionOwnsPiProjection && optimisticMessageId) {
+      if (optimisticMessageId) {
         const projectionAtom = piProjectionAtomFamily(sessionId)
         store.set(projectionAtom, current => removeOptimisticPiUser(current, optimisticMessageId!))
       }
       updateSessionById(sessionId, (s) => ({
         isProcessing: false,
-        messages: [
-          ...s.messages.map(m =>
-            optimisticMessageId && m.id === optimisticMessageId
-              ? { ...m, isPending: false, isQueued: false }
-              : m
-          ),
-          ...(!sessionOwnsPiProjection ? [{
-            id: generateMessageId(),
-            role: 'error' as const,
-            content: `Failed to send message: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            timestamp: Date.now()
-          }] : [])
-        ]
+        messages: optimisticMessageId
+          ? removePiUserOverlayCarrier(s.messages, optimisticMessageId)
+          : s.messages,
       }))
     }
   }, [sessionOptions, updateSessionById, skills, sources, windowWorkspaceId, windowRemoteWorkspaceId])

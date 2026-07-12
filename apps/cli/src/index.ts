@@ -1519,7 +1519,7 @@ export function getValidateSteps(): ValidateStep[] {
         if (!ctx.createdSessionId || !ctx.workspaceRootPath) return 'skipped (no session or workspace)'
         ctx.createdSkillSlug = '__cli-validate-skill'
         const sourceSlug = ctx.createdSourceSlug ?? 'cat-facts'
-        const skillDir = `${ctx.workspaceRootPath}/skills/${ctx.createdSkillSlug}`
+        const skillDir = `${ctx.workspaceRootPath}/.pi/skills/${ctx.createdSkillSlug}`
         // Use bash to create the skill file deterministically
         return await waitForSendEvents(client, ctx.createdSessionId,
           `Use the Bash tool to run this exact command:

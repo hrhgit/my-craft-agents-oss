@@ -1,7 +1,13 @@
 import { useState, useEffect, type RefObject } from 'react'
 
+export function getResizeObserverInlineSize(
+  entry: Pick<ResizeObserverEntry, 'borderBoxSize' | 'target'>,
+): number {
+  return entry.borderBoxSize[0]?.inlineSize ?? entry.target.getBoundingClientRect().width
+}
+
 /**
- * Tracks the inline-size (width) of a DOM element using ResizeObserver.
+ * Tracks the border-box inline-size (width) of a DOM element using ResizeObserver.
  *
  * Used by AppShell to derive `isAutoCompact` — when the shell container
  * is narrower than the mobile threshold, sidebar/navigator auto-collapse
@@ -17,7 +23,7 @@ export function useContainerWidth(ref: RefObject<HTMLElement | null>): number {
     if (!el) return
 
     const ro = new ResizeObserver(([entry]) => {
-      setWidth(entry.contentBoxSize[0].inlineSize)
+      setWidth(getResizeObserverInlineSize(entry))
     })
     ro.observe(el)
     return () => ro.disconnect()

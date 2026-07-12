@@ -1006,10 +1006,6 @@ app.whenReady().then(async () => {
             credentialManager: getCredentialManager(),
             getMessagingDir: (wsId: string) =>
               join(process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent'), 'workspaces', wsId, 'messaging'),
-            getLegacyMessagingDir: (wsId: string) => {
-              const ws = getWorkspaces().find((w) => w.id === wsId)
-              return ws ? join(ws.rootPath, 'messaging') : undefined
-            },
             // Route messaging diagnostics through the dedicated messaging log
             // at ~/.craft-agent/logs/messaging-gateway.log.
             logger: messagingGatewayLog,

@@ -50,10 +50,6 @@ function sessionWorkspaceDistribution(sessions: Array<{ workspaceId?: string }>)
   return distribution
 }
 
-function isPiNativeSession(session: Pick<Session, 'conversationFormat'>): boolean {
-  return session.conversationFormat === 'pi-projection-v1'
-}
-
 /**
  * Enforce that `sessionId` belongs to the calling client's authenticated
  * workspace.
@@ -188,6 +184,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.CREATE,
   RPC_CHANNELS.sessions.DELETE,
   RPC_CHANNELS.sessions.GET_MESSAGES,
+  RPC_CHANNELS.sessions.GET_PI_PROJECTION_SNAPSHOT,
   RPC_CHANNELS.sessions.SEND_MESSAGE,
   RPC_CHANNELS.sessions.CANCEL,
   RPC_CHANNELS.sessions.KILL_SHELL,
@@ -196,6 +193,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL,
   RPC_CHANNELS.extensions.REMOTEUI_RESPONSE,
   RPC_CHANNELS.extensions.COMMAND_INVOKE,
+  RPC_CHANNELS.extensions.GET_COMMANDS,
   RPC_CHANNELS.sessions.COMMAND,
   RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION,
   RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE,
@@ -229,11 +227,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       ? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId)
       : undefined
     const workspaceId = ctx.workspaceId ?? windowWorkspaceId
-    // Legacy Craft transcripts remain on disk for data preservation and may
-    // still be used by Host-internal services, but are no longer user-visible.
-    const sessions = sessionManager
-      .getSessions(workspaceId ?? undefined)
-      .filter(isPiNativeSession)
+    const sessions = sessionManager.getSessions(workspaceId ?? undefined)
     // Keep the startup list workspace-scoped. Global Pi CLI history can be
     // large; individual pi-* sessions are still loaded on demand below.
     end()
@@ -272,13 +266,9 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId, { allowMissingWithWorkspace: true })
 
     const session = await sessionManager.getSession(sessionId)
-    if (session && isPiNativeSession(session)) {
-      end()
-      return session
-    }
     if (session) {
       end()
-      throw new Error(`Legacy Craft session is not available in the Pi-first UI: ${sessionId}`)
+      return session
     }
 
     // Pi-owned session projection (read-only): load from Pi's session bucket
@@ -296,7 +286,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       const projectedSession = projection
         ? projectTreeSessionProjectionAsStoredSession(projection, { workspaceRootPath: workspaceRoot })
         : null
-      if (projection && projectedSession?.conversationFormat === 'pi-projection-v1') {
+      if (projection && projectedSession) {
         const messages = projectedSession.messages.map(storedToMessage)
         const piSession: Session = {
           id: sessionId,
@@ -312,7 +302,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           messageCount: messages.length,
           workingDirectory: projectedSession.workingDirectory,
           sessionFolderPath: projection.path ?? projection.sessionDir,
-          conversationFormat: projectedSession.conversationFormat,
         }
         end()
         return piSession

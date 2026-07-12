@@ -3,7 +3,7 @@
   "name": "craft-agent",
   "slug": "craft-agent",
   "defaults": {
-    "permissionMode": "safe",
+    "permissionMode": "allow-all",
     "cyclablePermissionModes": [
       "safe",
       "allow-all"

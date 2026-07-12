@@ -2,7 +2,8 @@ import { describe, expect, it } from 'bun:test'
 import type { AgentEvent as PiAgentEvent } from '@craft-agent/core/types'
 import { PiProjectionBuilder } from '../../../../../../packages/shared/src/agent/backend/pi/projection-builder'
 import { applyPiProjectionEvent, createPiProjectionState } from '../../atoms/pi-projection'
-import { buildPiTimelineItems, selectPiRuntimeState } from '../../components/app-shell/pi-timeline-model'
+import { selectPiRuntimeState } from '../../components/app-shell/pi-timeline-model'
+import { buildPiTurns } from '../../components/app-shell/pi-turn-model'
 import { processEvent } from '../processor'
 import type { AgentEvent as LegacyEvent, SessionState } from '../types'
 
@@ -47,18 +48,22 @@ function visibleLegacy(state: SessionState): VisibleItem[] {
 
 function visibleProjection(state: ReturnType<typeof createPiProjectionState>): VisibleItem[] {
   const entities = state.entityIds.map(id => state.entitiesById[id]!).filter(Boolean)
-  return buildPiTimelineItems(entities).flatMap((item): VisibleItem[] => {
-    if (item.type === 'content' && item.contentKind === 'text' && item.role === 'assistant') {
-      return [{ type: 'text', text: item.text }]
+  return buildPiTurns(entities).flatMap((turn): VisibleItem[] => {
+    if (turn.type === 'system' && turn.message.role === 'error') {
+      return [{ type: 'error', message: turn.message.content }]
     }
-    if (item.type === 'tool') {
-      return [{
-        type: 'tool', toolCallId: item.toolCallId, toolName: item.toolName,
-        status: item.status, result: item.result, isError: item.isError,
-      }]
-    }
-    if (item.type === 'error') return [{ type: 'error', message: item.message }]
-    return []
+    if (turn.type !== 'assistant') return []
+    const tools = turn.activities.flatMap((activity): VisibleItem[] => activity.type === 'tool' ? [{
+      type: 'tool', toolCallId: activity.toolUseId ?? '', toolName: activity.toolName ?? 'tool',
+      status: activity.status === 'error' ? 'failed'
+        : activity.status === 'running' || activity.status === 'pending' || activity.status === 'backgrounded' ? 'running'
+        : 'completed',
+      result: activity.content,
+      isError: activity.status === 'error',
+    }] : [])
+    return turn.response?.text
+      ? [...tools, { type: 'text', text: turn.response.text }]
+      : tools
   })
 }
 

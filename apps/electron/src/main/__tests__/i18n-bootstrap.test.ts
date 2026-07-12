@@ -13,7 +13,7 @@
  *
  * `CONFIG_DIR` is captured at module-load, so each scenario runs in a
  * subprocess with `CRAFT_CONFIG_DIR` set in its env (same pattern as
- * `packages/shared/src/config/__tests__/storage-startup-migration.test.ts`).
+ * the configuration storage integration tests).
  */
 import { describe, it, expect } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'fs'

@@ -31,7 +31,6 @@ function setupWorkspaceConfigDir() {
       workspaces: [{ id: 'ws-1', name: 'My Workspace', rootPath: workspaceRoot, createdAt: Date.now() }],
       activeWorkspaceId: 'ws-1',
       activeSessionId: null,
-      llmConnections: [],
     }, null, 2),
     'utf-8',
   )

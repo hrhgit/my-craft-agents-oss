@@ -345,7 +345,7 @@ async function resolveSourceIcon(
  * 1. Emoji in metadata.icon → Return emoji marker
  * 2. URL in metadata.icon → Return URL directly
  * 3. Known iconPath → Load from file
- * 4. Auto-discover skills/{slug}/icon.{svg,png} → Load from file
+ * 4. Auto-discover .pi/skills/{slug}/icon.{svg,png} → Load from file
  */
 async function resolveSkillIcon(
   opts: LoadEntityIconOptions,
@@ -371,9 +371,9 @@ async function resolveSkillIcon(
 
   // Priority 3: Known icon path - load file
   if (skillConfig.iconPath) {
-    const skillsMatch = skillConfig.iconPath.match(/skills\/([^/]+)\/(.+)$/)
+    const skillsMatch = skillConfig.iconPath.replace(/\\/g, '/').match(/\.pi\/skills\/([^/]+)\/(.+)$/)
     if (skillsMatch) {
-      const relativePath = `skills/${skillsMatch[1]}/${skillsMatch[2]}`
+      const relativePath = `.pi/skills/${skillsMatch[1]}/${skillsMatch[2]}`
       const loaded = await loadWorkspaceIcon(workspaceId, relativePath)
       if (loaded) {
         iconCache.set(cacheKey, loaded)
@@ -384,13 +384,13 @@ async function resolveSkillIcon(
 
   // Priority 4: Auto-discover icon files (when no explicit icon configured)
   if (!iconValue) {
-    const svgIcon = await loadWorkspaceIcon(workspaceId, `skills/${identifier}/icon.svg`)
+    const svgIcon = await loadWorkspaceIcon(workspaceId, `.pi/skills/${identifier}/icon.svg`)
     if (svgIcon) {
       iconCache.set(cacheKey, svgIcon)
       return svgIcon
     }
 
-    const pngIcon = await loadWorkspaceIcon(workspaceId, `skills/${identifier}/icon.png`)
+    const pngIcon = await loadWorkspaceIcon(workspaceId, `.pi/skills/${identifier}/icon.png`)
     if (pngIcon) {
       iconCache.set(cacheKey, pngIcon)
       return pngIcon
@@ -579,10 +579,10 @@ const ICON_FILE_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg']
 
 /**
  * Pre-compiled regex for extracting workspace-relative icon paths from absolute paths.
- * Matches any known entity directory prefix (skills/, sources/, statuses/)
+ * Matches any known entity directory prefix (.pi/skills/, sources/, statuses/)
  * followed by the rest of the path.
  */
-const ICON_PATH_PATTERN = /(?:skills|sources|statuses)\/.+$/
+const ICON_PATH_PATTERN = /(?:\.pi\/skills|sources|statuses)\/.+$/
 
 /**
  * Options for the useEntityIcon hook.
@@ -596,7 +596,7 @@ export interface UseEntityIconOptions {
   identifier: string
   /**
    * Known relative path to icon file (for entities with pre-resolved paths).
-   * e.g. 'skills/my-skill/icon.svg'
+   * e.g. '.pi/skills/my-skill/icon.svg'
    * If provided, only this exact path is attempted (no auto-discovery).
    */
   iconPath?: string
@@ -716,8 +716,9 @@ export function useEntityIcon(opts: UseEntityIconOptions): ResolvedEntityIcon {
       if (iconPath) {
         // Known path - extract relative portion and load directly
         // iconPath may be absolute; extract the workspace-relative part
-        const relativeMatch = iconPath.match(ICON_PATH_PATTERN)
-        const relativePath = relativeMatch ? relativeMatch[0] : iconPath
+        const normalizedIconPath = iconPath.replace(/\\/g, '/')
+        const relativeMatch = normalizedIconPath.match(ICON_PATH_PATTERN)
+        const relativePath = relativeMatch ? relativeMatch[0] : normalizedIconPath
 
         result = await loadIconFile(workspaceId, relativePath)
       } else if (iconDir && !iconValue) {

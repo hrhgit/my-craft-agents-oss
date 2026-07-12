@@ -49,7 +49,6 @@ import type { Workspace } from '@craft-agent/core/types';
 
 // Import LLM connection types
 import type { LlmConnection } from './llm-connections.ts';
-import { modelSetEquals } from './migrations/model-helpers.ts';
 import {
   readPiCraftLlmConnections,
   upsertPiCraftLlmConnection,
@@ -68,10 +67,18 @@ import {
 } from './pi-global-config.ts';
 import type { ModelDefinition } from './models.ts';
 
+function modelSetEquals(a: string[], b: string[]): boolean {
+  const left = new Set(a);
+  const right = new Set(b);
+  if (left.size !== right.size) return false;
+  for (const id of left) {
+    if (!right.has(id)) return false;
+  }
+  return true;
+}
+
 // Config stored in JSON file (credentials stored in encrypted file, not here)
 export interface StoredConfig {
-  // LLM Connections (authoritative source for auth and model config)
-  llmConnections?: LlmConnection[];
   defaultLlmConnection?: string;  // Slug of default connection for new sessions
   defaultThinkingLevel?: ThinkingLevel;  // App-level default thinking level for new sessions
 
@@ -114,10 +121,6 @@ export interface StoredConfig {
   setupDeferred?: boolean;
   // Server mode — embedded remote server settings
   serverConfig?: import('./server-config.ts').ServerConfig;
-  // One-shot migration markers. Used by migrations that should run at most
-  // once per user (e.g. restoring a previously-removed model to connection
-  // lists without re-adding it if the user later removes it deliberately).
-  migrationsApplied?: string[];
 }
 
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -154,7 +157,7 @@ const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
   },
   workspaceDefaults: {
     thinkingLevel: 'medium',
-    permissionMode: 'ask',
+    permissionMode: 'allow-all',
     cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
     localMcpServers: { enabled: true },
   },
@@ -315,7 +318,15 @@ export function loadStoredConfig(): StoredConfig | null {
     if (!existsSync(CONFIG_FILE)) {
       return null;
     }
-    const config = readJsonFileSync<StoredConfig>(CONFIG_FILE);
+    const config = readJsonFileSync<StoredConfig & {
+      llmConnections?: unknown;
+      migrationsApplied?: unknown;
+    }>(CONFIG_FILE);
+
+    // Retired Craft-only connection storage is tolerated on read but never
+    // exposed or written back. Canonical connections live in Pi models.json.
+    delete config.llmConnections;
+    delete config.migrationsApplied;
 
     // Must have workspaces array
     if (!Array.isArray(config.workspaces)) {
@@ -1983,9 +1994,7 @@ function buildUpdatedConnection(
  * a compatibility fallback for legacy/manual entries that are not provider
  * projections.
  *
- * Exported for reuse by migrations/migrate-llm-connections.ts and
- * migrations/migrate-orphaned-defaults.ts (safe circular dep — calls
- * are inside function bodies, not at module evaluation time).
+ * Exported for reuse by the default-connection integrity repair.
  */
 export function ensureDefaultLlmConnection(config: StoredConfig): boolean {
   const connections = getLlmConnections();

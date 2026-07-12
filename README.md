@@ -371,7 +371,7 @@ craft-agent/
 ## Development
 
 ```bash
-# Hot reload development
+# Hot reload development (portmux-managed)
 bun run electron:dev
 
 # Build and run
@@ -384,9 +384,20 @@ bun run typecheck:all
 # Logs are automatically enabled in development
 ```
 
-On Windows, you can also double-click [`start-quick-test.cmd`](./start-quick-test.cmd) from the repo root to launch the Electron hot-reload development build. To switch modes from a terminal, run `start-quick-test.cmd start`, `start-quick-test.cmd server-dev`, or `start-quick-test.cmd webui-dev`.
+On Windows, you can also double-click [`start-quick-test.cmd`](./start-quick-test.cmd) from the repo root to launch the portmux-managed Electron hot-reload development build. To switch modes from a terminal, run `start-quick-test.cmd start`, `start-quick-test.cmd server-dev`, or `start-quick-test.cmd webui-dev`.
 
-To launch the complete browser UI development environment on Windows, double-click [`start-webui.cmd`](./start-webui.cmd) or run `portmux start`. It starts the authenticated headless server and Vite WebUI, automatically signs the local browser in, and opens the assigned URL. portmux assigns the Vite port through `CRAFT_WEBUI_PORT`; the local RPC server uses the next port. The launcher uses `.craft-agent\\webui-<port>` as an isolated config directory unless `CRAFT_CONFIG_DIR` is already set.
+To launch the complete browser UI development environment on Windows, double-click [`start-webui.cmd`](./start-webui.cmd) or run `portmux start`. It starts the authenticated headless server and Vite WebUI, automatically signs the local browser in, and opens the URL assigned by portmux. The RPC server uses the following port (`WebUI + 1`), and the launcher uses Electron's existing `~/.craft-agent` configuration by default.
+
+For parallel WebUI testing, start each additional instance with a positive instance number:
+
+```powershell
+start-webui.cmd 2
+start-webui.cmd 3
+```
+
+Each instance has a separate `portmux` project identity, so `portmux` allocates its own available WebUI port rather than deriving one from another instance. Its RPC server uses the following port. Instances 2 and higher use isolated, gitignored configuration directories under `.craft-agent/webui-instance-<n>`; set `CRAFT_CONFIG_DIR` explicitly to use a different profile.
+
+Electron, standalone WebUI, RPC development server, and the component playground have separate portmux identities. Start them with `bun run electron:dev`, `bun run webui:dev`, `bun run server:dev`, and `bun run playground:dev`; each listens directly on its own assigned port. Electron, the WebUI headless server, and standalone server modes all use `~/.craft-agent` by default. Set `CRAFT_CONFIG_DIR` when an isolated profile is needed.
 
 ### Environment Variables
 
@@ -505,11 +516,11 @@ Configuration is stored at `~/.craft-agent/`:
         ├── theme.json       # Workspace theme override
         ├── automations.json  # Event-driven automations
         ├── sources/         # Connected sources
-        ├── skills/          # Custom skills
         └── statuses/        # Status configuration
 ```
 
 Credentials are stored at `~/.pi/agent/auth.json`. Session data (JSONL) is stored at `~/.pi/agent/sessions/`.
+Project skills are stored at `<workspace>/.pi/skills/`; global skills are stored at `~/.pi/agent/skills/`.
 
 Legacy `~/.craft-agent/credentials.enc` files are not silently imported into `auth.json`; upgrade migration backs up and clears the old path. Re-enter API keys or re-authenticate OAuth connections after upgrading from a pre-unification build.
 

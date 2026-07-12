@@ -5,8 +5,6 @@
  *
  * Sessions are stored in Pi tree JSONL v3 format at
  * ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl.
- * Legacy JSONL format ({workspaceRootPath}/sessions/{id}/session.jsonl) is
- * supported for backward compatibility (Line 1: SessionHeader, Lines 2+: StoredMessage).
  */
 
 // Types
@@ -53,7 +51,6 @@ export {
   getOrCreateLatestSession,
   // Metadata updates
   updateSessionMetadata,
-  canUpdateSdkCwd,
   // Pending plan execution (Accept & Compact flow)
   setPendingPlanExecution,
   markCompactionComplete,
@@ -90,8 +87,10 @@ export {
   projectTreeSessionPlanData,
   writeTreeSessionCraftMetadata,
   writeCraftSessionOverlay,
+  appendPiBranchMessagesViaSessionManager,
   appendStoredMessagesViaPiSessionManager,
 } from './tree-jsonl.ts';
+export type { PiBranchMessageEntryInput } from './tree-jsonl.ts';
 export {
   applyPlanCustomMessageToRuntime,
   applyPlanCustomMessageToStored,

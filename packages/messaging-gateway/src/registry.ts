@@ -64,8 +64,6 @@ export interface MessagingGatewayRegistryOptions {
   credentialManager: CredentialManager
   /** Absolute path to the messaging storage directory for the given workspace. */
   getMessagingDir: (workspaceId: string) => string
-  /** Optional legacy messaging dir (pre-relocation) for one-shot migration. */
-  getLegacyMessagingDir?: (workspaceId: string) => string | undefined
   /** Broadcasts an RPC push event to UI clients. No-op if undefined. */
   publishEvent?: (channel: string, target: PushTarget, ...args: unknown[]) => void
   /** Optional WhatsApp worker config — required to enable the WhatsApp adapter. */
@@ -961,19 +959,13 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     if (existing) return existing
 
     const storageDir = this.opts.getMessagingDir(workspaceId)
-    const legacyStorageDir = this.opts.getLegacyMessagingDir?.(workspaceId)
     const baseLog = this.log.child({ workspaceId })
-    const configStore = new ConfigStore(
-      storageDir,
-      legacyStorageDir,
-      baseLog.child({ component: 'config-store' }),
-    )
+    const configStore = new ConfigStore(storageDir, baseLog.child({ component: 'config-store' }))
     const cfg = configStore.get()
     const gateway = new MessagingGateway({
       sessionManager: this.opts.sessionManager,
       workspaceId,
       storageDir,
-      legacyStorageDir,
       logger: baseLog,
       pairingConsumer: {
         canConsume: (platform, senderId) =>

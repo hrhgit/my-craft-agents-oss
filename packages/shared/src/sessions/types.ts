@@ -9,8 +9,6 @@
  * - 内部类型拆分为 PiSessionHeader / CraftSessionMetadata / SessionComputedMetadata
  * - renderer/RPC 兼容 DTO 仍可使用扁平 SessionHeader
  * - 序列化层（tree-jsonl.ts）负责扁平 DTO ↔ 嵌套 tree header 转换
- * Legacy JSONL ({workspaceRootPath}/sessions/{id}/session.jsonl) 仍支持读取：
- * - legacy 文件无 Pi 字段，读取时 piSessionId/piTimestamp/piCwd 等为 undefined
  */
 
 import type { PermissionMode } from '../agent/mode-manager.ts';
@@ -29,7 +27,7 @@ import type { PlanModeStateV1, StoredMessage } from '@craft-agent/core/types';
  */
 export const CRAFT_SESSION_METADATA_FIELDS = [
   // Identity
-  'craftId', 'workspaceRootPath', 'sdkSessionId', 'sdkCwd', 'conversationFormat',
+  'craftId', 'workspaceRootPath', 'sdkSessionId', 'sdkCwd',
   // Timestamps
   'createdAt', 'lastUsedAt', 'lastMessageAt',
   // Display
@@ -117,7 +115,7 @@ export type { StoredMessage } from '@craft-agent/core/types';
  * Pi tree top-level header fields.
  *
  * These fields are owned by Pi runtime and are only mirrored into Craft DTOs
- * for lookup/list rendering. Legacy Craft JSONL files do not have them.
+ * for lookup/list rendering.
  */
 export interface PiSessionHeader {
   /** Pi entry type，固定为 'session' */
@@ -152,13 +150,6 @@ export interface CraftSessionMetadata {
   sdkSessionId?: string;
   /** Craft workspace 根路径 */
   workspaceRootPath: string;
-  /**
-   * Declares which transcript contract owns this session. Missing means the
-   * pre-projection Craft format; it is intentionally never inferred from a
-   * projection sidecar because an old session can acquire one after resume.
-   */
-  conversationFormat?: 'pi-projection-v1';
-
   // ============================================
   // Craft 时间戳
   // ============================================

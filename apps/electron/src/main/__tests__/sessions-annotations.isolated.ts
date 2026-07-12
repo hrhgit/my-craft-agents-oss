@@ -47,8 +47,16 @@ function makeAnnotation(id: string, extraMeta?: Record<string, unknown>): Annota
 
 function createHarness(initialAnnotations: AnnotationV1[] = []) {
   const managed = {
-    workspace: { id: 'ws-1' },
-    messages: [{ id: 'msg-1', content: 'hello world', annotations: initialAnnotations }],
+    id: 'session-1',
+    workspace: { id: 'ws-1', rootPath: '/tmp/ws-1' },
+    messagesLoaded: true,
+    messages: [{
+      id: 'msg-1',
+      role: 'assistant',
+      content: 'hello world',
+      timestamp: 1,
+      annotations: initialAnnotations,
+    }],
   }
 
   let persistCalls = 0
@@ -56,6 +64,24 @@ function createHarness(initialAnnotations: AnnotationV1[] = []) {
 
   const manager = Object.create(SessionManager.prototype) as any
   manager.sessions = new Map([['session-1', managed]])
+  manager.piProjectionBySession = new Map([['session-1', {
+    createSnapshot: () => ({
+      schemaVersion: 1,
+      sessionId: 'session-1',
+      runtimeId: 'runtime-1',
+      lastSeq: 1,
+      entities: [{
+        entityId: 'content:text:msg-1:0',
+        entityType: 'content_block',
+        entityVersion: 1,
+        createdSeq: 1,
+        lastSeq: 1,
+        lastEventId: 'event-1',
+        kind: 'assistant_text',
+        payload: { role: 'assistant', messageId: 'msg-1', text: 'hello world' },
+      }],
+    }),
+  }]])
   manager.persistSession = () => { persistCalls += 1 }
   manager.sendEvent = (event: any, workspaceId: string) => {
     events.push({ event, workspaceId })
@@ -109,5 +135,20 @@ describe('SessionManager annotation validation', () => {
     expect(h.managed.messages[0].annotations[0]?.id).toBe('ann-1')
     expect(h.persistCalls).toBe(0)
     expect(h.events).toHaveLength(0)
+  })
+
+  it('creates a Craft overlay for a live projected message', () => {
+    const h = createHarness([])
+    h.managed.messages = []
+
+    h.manager.addMessageAnnotation('session-1', 'msg-1', makeAnnotation('ann-live'))
+
+    expect(h.managed.messages).toEqual([expect.objectContaining({
+      id: 'msg-1',
+      content: '',
+      annotations: [expect.objectContaining({ id: 'ann-live' })],
+    })])
+    expect(h.persistCalls).toBe(1)
+    expect(h.events).toHaveLength(1)
   })
 })

@@ -49,7 +49,6 @@ import type { ExtensionCommandResult } from "@craft-agent/core/types"
 import {
   TurnCard,
   UserMessageBubble,
-  groupMessagesByTurn,
   formatTurnAsMarkdown,
   formatActivityAsMarkdown,
   getAssistantTurnUiKey,
@@ -59,10 +58,6 @@ import {
   extractAnnotationSelectedText,
   normalizeFollowUpText,
   type Turn,
-  type AssistantTurn,
-  type UserTurn,
-  type SystemTurn,
-  type AuthRequestTurn,
 } from "@craft-agent/ui"
 import { MemoizedAuthRequestCard } from "@/components/chat/AuthRequestCard"
 import { ChatInputZone, type StructuredInputState, type StructuredResponse, type PermissionResponse, type AdminApprovalResponse } from "./input"
@@ -79,9 +74,8 @@ import { collectFileChangesFromActivities, getFirstFileChangeIdForActivity } fro
 import { resolveBranchNewPanelOption } from "./branching"
 import { handleErrorMessageAction } from "./error-message-actions"
 import { piProjectionAtomFamily } from "@/atoms/pi-projection"
-import { isPiNativeConversation } from "@/event-processor/projection-migration"
-import { PiProjectionTimeline } from "./PiProjectionTimeline"
-import { buildPiTimelineItems, findPiTimelineMatches, selectActivePiPlanArtifact, selectPendingPiCredential, selectPendingPiPermission, selectPiPlanModeState, selectPiRuntimeState } from "./pi-timeline-model"
+import { selectActivePiPlanArtifact, selectPendingPiCredential, selectPendingPiPermission, selectPiPlanModeState, selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
+import { buildPiTurnOverlay, buildPiTurns, getPiTurnSearchText } from "./pi-turn-model"
 
 // ============================================================================
 // CSS Custom Highlight API helper
@@ -333,6 +327,21 @@ function formatElapsed(seconds: number): string {
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
 }
 
+const MIN_REASONABLE_TIMESTAMP_MS = 1_000_000_000_000
+
+function resolveElapsedStartTime(startTime: number | undefined, now: number): number {
+  return typeof startTime === 'number'
+    && Number.isFinite(startTime)
+    && startTime >= MIN_REASONABLE_TIMESTAMP_MS
+    && startTime <= now
+    ? startTime
+    : now
+}
+
+function elapsedSecondsSince(startTime: number, now: number): number {
+  return Math.max(0, Math.floor((now - startTime) / 1000))
+}
+
 interface ProcessingIndicatorProps {
   /** Start timestamp (persists across remounts) */
   startTime?: number
@@ -353,12 +362,13 @@ function ProcessingIndicator({ startTime, statusMessage }: ProcessingIndicatorPr
 
   // Update elapsed time every second using provided startTime
   React.useEffect(() => {
-    const start = startTime || Date.now()
+    const mountedAt = Date.now()
+    const start = resolveElapsedStartTime(startTime, mountedAt)
     // Set initial elapsed immediately
-    setElapsed(Math.floor((Date.now() - start) / 1000))
+    setElapsed(elapsedSecondsSince(start, mountedAt))
 
     const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - start) / 1000))
+      setElapsed(elapsedSecondsSince(start, Date.now()))
     }, 1000)
     return () => clearInterval(interval)
   }, [startTime])
@@ -452,9 +462,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onConnectionChange,
   textareaRef: externalTextareaRef,
   disabled = false,
-  pendingPermission,
   onRespondToPermission,
-  pendingCredential,
   onRespondToCredential,
   // Thinking level
   thinkingLevel = 'medium',
@@ -504,38 +512,43 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   connectionUnavailable = false,
 }, ref) {
   const { t } = useTranslation()
-  const piProjection = useAtomValue(piProjectionAtomFamily(session?.id ?? ''))
-  const sessionOwnsPiProjection = isPiNativeConversation(session)
-  // Transcript ownership is persistent session state. A Pi-native session must
-  // never fall back to Craft messages while its projection is empty or syncing.
-  const showPiProjectionTimeline = sessionOwnsPiProjection
+  const activeSessionId = session?.id
+  const piProjection = useAtomValue(piProjectionAtomFamily(activeSessionId ?? ''))
   const projectionEntities = React.useMemo(
     () => piProjection.entityIds.map(id => piProjection.entitiesById[id]).filter(Boolean),
     [piProjection.entitiesById, piProjection.entityIds],
   )
   const projectedPermission = React.useMemo(() => {
-    if (!sessionOwnsPiProjection || !session || piProjection.syncState !== 'synced') return undefined
+    if (!activeSessionId || piProjection.syncState !== 'synced') return undefined
     return selectPendingPiPermission(
       projectionEntities,
-      session.id,
+      activeSessionId,
     )
-  }, [piProjection.syncState, projectionEntities, session?.id, sessionOwnsPiProjection])
-  const effectivePendingPermission = sessionOwnsPiProjection ? projectedPermission : pendingPermission
+  }, [activeSessionId, piProjection.syncState, projectionEntities])
+  const effectivePendingPermission = projectedPermission
   const projectedCredential = React.useMemo(() => {
-    if (!sessionOwnsPiProjection || !session || piProjection.syncState !== 'synced') return undefined
-    return selectPendingPiCredential(projectionEntities, session.id)
-  }, [piProjection.syncState, projectionEntities, session?.id, sessionOwnsPiProjection])
-  const effectivePendingCredential = sessionOwnsPiProjection ? projectedCredential : pendingCredential
+    if (!activeSessionId || piProjection.syncState !== 'synced') return undefined
+    return selectPendingPiCredential(projectionEntities, activeSessionId)
+  }, [activeSessionId, piProjection.syncState, projectionEntities])
+  const effectivePendingCredential = projectedCredential
   const projectedRuntimeState = React.useMemo(
-    () => sessionOwnsPiProjection && piProjection.syncState === 'synced' ? selectPiRuntimeState(projectionEntities) : undefined,
-    [piProjection.syncState, projectionEntities, sessionOwnsPiProjection],
+    () => piProjection.syncState === 'synced' ? selectPiRuntimeState(projectionEntities) : undefined,
+    [piProjection.syncState, projectionEntities],
   )
-  const effectiveIsProcessing = sessionOwnsPiProjection
-    ? projectedRuntimeState?.isProcessing ?? false
-    : session?.isProcessing ?? false
-  const projectedTimelineItems = React.useMemo(
-    () => showPiProjectionTimeline ? buildPiTimelineItems(projectionEntities) : [],
-    [projectionEntities, showPiProjectionTimeline],
+  const projectedProcessingStatus = React.useMemo(
+    () => piProjection.syncState === 'synced'
+      ? selectPiProcessingStatusMessage(projectionEntities)
+      : undefined,
+    [piProjection.syncState, projectionEntities],
+  )
+  const effectiveIsProcessing = projectedRuntimeState?.isProcessing ?? false
+  const projectionOverlay = React.useMemo(
+    () => buildPiTurnOverlay(session?.messages ?? []),
+    [session?.messages],
+  )
+  const allTurns = React.useMemo(
+    () => activeSessionId ? buildPiTurns(projectionEntities, projectionOverlay) : [],
+    [activeSessionId, projectionEntities, projectionOverlay],
   )
 
   // Panel focus state (for multi-panel auto-scroll behavior)
@@ -607,6 +620,13 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     expandedActivityGroups,
     setExpandedActivityGroups,
   } = useTurnCardExpansion(session?.id)
+  const [collapsedActiveTurns, setCollapsedActiveTurns] = React.useState<Set<string>>(new Set())
+  const [collapsedActiveActivityGroups, setCollapsedActiveActivityGroups] = React.useState<Set<string>>(new Set())
+
+  React.useEffect(() => {
+    setCollapsedActiveTurns(new Set())
+    setCollapsedActiveActivityGroups(new Set())
+  }, [session?.id])
 
 
   // ============================================================================
@@ -701,45 +721,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Find ALL individual match occurrences (not just turns)
   // Returns array with unique matchId for each occurrence
   const matchingOccurrences = useMemo(() => {
-    if (showPiProjectionTimeline) {
-      return findPiTimelineMatches(projectedTimelineItems, searchQuery).map(match => ({
-        matchId: match.matchId,
-        turnId: match.itemId,
-        turnIndex: match.itemIndex,
-        matchIndexInTurn: match.matchIndexInItem,
-      }))
-    }
-    if (!searchQuery.trim() || !session?.messages) return []
-    const startTime = performance.now()
+    if (!searchQuery.trim()) return []
     const query = searchQuery.toLowerCase()
-    const turns = groupMessagesByTurn(session.messages, { isSessionProcessing: session.isProcessing })
     const matches: { matchId: string; turnId: string; turnIndex: number; matchIndexInTurn: number }[] = []
 
-    for (let turnIndex = 0; turnIndex < turns.length; turnIndex++) {
-      const turn = turns[turnIndex]
-      let textContent = ''
-      let turnId = ''
-
-      // Use getTurnKey() for consistent IDs between text scan and DOM refs
-      turnId = getTurnKey(turn)
-
-      if (turn.type === 'user') {
-        const content = turn.message.content as unknown
-        if (typeof content === 'string') {
-          textContent = content
-        } else if (Array.isArray(content)) {
-          textContent = content
-            .filter((block: { type?: string }) => block.type === 'text')
-            .map((block: { text?: string }) => block.text || '')
-            .join('\n')
-        }
-      } else if (turn.type === 'assistant') {
-        if (turn.response?.text) {
-          textContent = turn.response.text
-        }
-      } else if (turn.type === 'system') {
-        textContent = turn.message.content
-      }
+    for (let turnIndex = 0; turnIndex < allTurns.length; turnIndex++) {
+      const turn = allTurns[turnIndex]
+      if (!turn) continue
+      const turnId = getTurnKey(turn)
+      const textContent = getPiTurnSearchText(turn)
 
       // Count occurrences in this turn's text content
       const occurrenceCount = countOccurrences(textContent, query)
@@ -753,7 +743,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       }
     }
     return matches
-  }, [showPiProjectionTimeline, projectedTimelineItems, searchQuery, session?.messages, session?.isProcessing, countOccurrences])
+  }, [allTurns, searchQuery, countOccurrences])
 
   // Auto-expand pagination when search is active to show all matching turns
   // This ensures match count is stable and all matches are highlightable from the start
@@ -765,9 +755,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       (min, m) => m.turnIndex < min ? m.turnIndex : min,
       matchingOccurrences[0]!.turnIndex
     )
-    const totalTurns = showPiProjectionTimeline
-      ? projectedTimelineItems.length
-      : groupMessagesByTurn(session?.messages || [], { isSessionProcessing: session?.isProcessing }).length
+    const totalTurns = allTurns.length
 
     // Calculate how many turns we need to show to include all matches
     // totalTurns - visibleTurnCount = startIndex, so we need visibleTurnCount = totalTurns - earliestMatchTurnIndex + buffer
@@ -776,7 +764,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     if (requiredVisibleCount > visibleTurnCount) {
       setVisibleTurnCount(requiredVisibleCount)
     }
-  }, [isSearchActive, matchingOccurrences, projectedTimelineItems.length, session?.messages, session?.isProcessing, showPiProjectionTimeline, visibleTurnCount])
+  }, [allTurns.length, isSearchActive, matchingOccurrences, visibleTurnCount])
 
   // Extract unique turn IDs that have matches (for highlighting)
   const matchingTurnIds = useMemo(() => {
@@ -1096,31 +1084,48 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Ref to track total turn count for scroll handler
   const totalTurnCountRef = React.useRef(0)
 
-  // Latest message metadata (for commit-time auto-scroll)
-  const messageCount = session?.messages.length ?? 0
-  const lastMessage = messageCount > 0 ? session?.messages[messageCount - 1] : undefined
-  const lastMessageId = lastMessage?.id
-  const lastMessageRole = lastMessage?.role
+  // Latest projected turn metadata (for commit-time auto-scroll)
+  const messageCount = allTurns.length
+  const lastTurn = allTurns.at(-1)
+  const lastMessageId = lastTurn
+    ? lastTurn.type === 'assistant'
+      ? lastTurn.response?.messageId ?? getTurnKey(lastTurn)
+      : lastTurn.message.id
+    : undefined
+  const lastMessageRole = lastTurn?.type === 'user' ? 'user' : lastTurn ? 'assistant' : undefined
 
   const pendingFollowUpAnnotations = useMemo<PendingFollowUpAnnotation[]>(() => {
-    if (!session?.messages?.length) return []
-
     const pending: PendingFollowUpAnnotation[] = []
+    const seen = new Set<string>()
 
-    for (const message of session.messages) {
-      if (message.role !== 'assistant' && message.role !== 'plan') continue
-      if (!message.annotations?.length) continue
+    for (const turn of allTurns) {
+      if (turn.type !== 'assistant') continue
+      const targets = [
+        ...(turn.response?.messageId ? [{
+          messageId: turn.response.messageId,
+          content: turn.response.text,
+          annotations: turn.response.annotations,
+        }] : []),
+        ...turn.activities.flatMap(activity => activity.messageId ? [{
+          messageId: activity.messageId,
+          content: activity.content ?? '',
+          annotations: activity.annotations,
+        }] : []),
+      ]
 
-      for (const annotation of message.annotations) {
+      for (const target of targets) for (const annotation of target.annotations ?? []) {
+        const identity = `${target.messageId}:${annotation.id}`
+        if (seen.has(identity)) continue
+        seen.add(identity)
         const note = getAnnotationNoteText(annotation)
         if (!note) continue
         if (isAnnotationFollowUpSent(annotation)) continue
 
         pending.push({
-          messageId: message.id,
+          messageId: target.messageId,
           annotationId: annotation.id,
           note,
-          selectedText: extractAnnotationSelectedText(annotation, message.content),
+          selectedText: extractAnnotationSelectedText(annotation, target.content),
           createdAt: annotation.updatedAt ?? annotation.createdAt,
           color: annotation.style?.color,
           meta: asRecord(annotation.meta) ?? undefined,
@@ -1129,7 +1134,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }
 
     return pending.sort((a, b) => a.createdAt - b.createdAt)
-  }, [session?.messages])
+  }, [allTurns])
 
   const followUpInputItems = useMemo(() => {
     return pendingFollowUpAnnotations.map((followUp, idx) => ({
@@ -1358,12 +1363,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   const refinePlanArtifact = useCallback(async (artifactId: string): Promise<ExtensionCommandResult> => {
     if (!session) return { invoked: false, error: 'Session is unavailable.' }
-    const message = session.messages.find(candidate => candidate.artifact?.artifactId === artifactId)
-    if (message?.artifact?.legacy) {
-      return window.electronAPI.invokeExtensionCommand(session.id, 'discuss', {
-        instructions: `Use this historical plan as the discussion baseline:\n\n${message.content}`,
-      })
-    }
     return invokePlanArtifactCommand('plan-refine', artifactId)
   }, [invokePlanArtifactCommand, session])
 
@@ -1466,35 +1465,21 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return undefined
   }, [effectivePendingCredential, effectivePendingPermission])
 
-  // Memoize turn grouping - avoids O(n) iteration on every render/keystroke
-  const allTurns = React.useMemo(() => {
-    if (!session || sessionOwnsPiProjection) return []
-    return groupMessagesByTurn(session.messages, { isSessionProcessing: session.isProcessing })
-  }, [session?.messages, session?.isProcessing, sessionOwnsPiProjection])
-
-  const legacyActivePlanArtifact = React.useMemo(() => {
-    if (!session || sessionOwnsPiProjection) return undefined
-    const activeId = session.planModeState?.activeArtifactId
-    if (activeId) {
-      return session.messages.find(message => message.artifact?.artifactId === activeId)?.artifact
-    }
-    return [...session.messages].reverse().find(message => message.artifact)?.artifact
-  }, [session?.messages, session?.planModeState?.activeArtifactId, sessionOwnsPiProjection])
   const projectedPlanModeState = React.useMemo(
-    () => sessionOwnsPiProjection && piProjection.syncState === 'synced' ? selectPiPlanModeState(projectionEntities) : undefined,
-    [piProjection.syncState, projectionEntities, sessionOwnsPiProjection],
+    () => piProjection.syncState === 'synced' ? selectPiPlanModeState(projectionEntities) : undefined,
+    [piProjection.syncState, projectionEntities],
   )
-  const effectivePlanModeState = sessionOwnsPiProjection ? projectedPlanModeState : session?.planModeState
+  const effectivePlanModeState = projectedPlanModeState
   const projectedActivePlanArtifact = React.useMemo(
-    () => sessionOwnsPiProjection && piProjection.syncState === 'synced'
+    () => piProjection.syncState === 'synced'
       ? selectActivePiPlanArtifact(projectionEntities, effectivePlanModeState?.activeArtifactId)
       : undefined,
-    [effectivePlanModeState?.activeArtifactId, piProjection.syncState, projectionEntities, sessionOwnsPiProjection],
+    [effectivePlanModeState?.activeArtifactId, piProjection.syncState, projectionEntities],
   )
-  const activePlanArtifact = sessionOwnsPiProjection ? projectedActivePlanArtifact : legacyActivePlanArtifact
+  const activePlanArtifact = projectedActivePlanArtifact
 
   // Keep ref in sync for scroll handler
-  totalTurnCountRef.current = showPiProjectionTimeline ? projectedTimelineItems.length : allTurns.length
+  totalTurnCountRef.current = allTurns.length
 
   // Reverse pagination: only render last N turns for fast initial render
   const startIndex = Math.max(0, allTurns.length - visibleTurnCount)
@@ -1587,9 +1572,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // At render time, prevSessionIdForScrollRef still has the OLD session ID, so we can detect the switch
   const isSessionSwitchForScroll = prevSessionIdForScrollRef.current !== null && prevSessionIdForScrollRef.current !== session?.id
   const skipScrollToBottom = isSessionSwitchForScroll && isSearchActive
-  const hasUnrenderedLoadedMessages = !sessionOwnsPiProjection && !messagesLoading
+  const hasUnrenderedLoadedMessages = piProjection.syncState === 'synced' && !messagesLoading
     && turns.length === 0
-    && ((session?.messages?.length ?? 0) > 0 || (session?.messageCount ?? 0) > 0)
+    && projectionEntities.length > 0
 
   return (
     <div ref={zoneRef} className="flex h-full flex-col min-w-0" data-focus-zone="chat">
@@ -1704,27 +1689,17 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                     </div>
                   )}
                   {/* Load more indicator - shown when there are older messages */}
-                  {!showPiProjectionTimeline && hasMoreAbove && (
+                  {hasMoreAbove && (
                     <div className="text-center text-muted-foreground/60 text-xs py-3 select-none">
                       ↑ {t('chat.scrollUpForEarlier', { count: startIndex })}
                     </div>
                   )}
-                  {showPiProjectionTimeline && (
-                    <PiProjectionTimeline
-                      projection={piProjection}
-                      searchQuery={searchQuery}
-                      currentMatchIndex={currentMatchIndex}
-                      pageSize={TURNS_PER_PAGE}
-                      onItemRef={(id, element) => { if (element) turnRefs.current.set(id, element); else turnRefs.current.delete(id) }}
-                      onOpenFile={onOpenFile}
-                      onOpenUrl={onOpenUrl}
-                      onExecutePlanArtifact={(artifactId) => invokePlanArtifactCommand('plan-execute', artifactId)}
-                      onExecutePlanArtifactWithCompact={executePlanArtifactWithCompact}
-                      onRefinePlanArtifact={refinePlanArtifact}
-                      onRespondToCredential={onRespondToCredential}
-                    />
+                  {piProjection.syncState === 'desynced' && (
+                    <div className="flex items-center gap-2 py-4 text-xs text-destructive">
+                      <AlertTriangle className="h-4 w-4" />Conversation is resynchronizing.
+                    </div>
                   )}
-                  {!showPiProjectionTimeline && turns.map((turn, index) => {
+                  {turns.map((turn, index) => {
                     // Compute turn key and check if it's a search match
                     const turnKey = getTurnKey(turn)
                     const isCurrentMatch = isSearchActive && matchingTurnIds[currentMatchIndex] === turnKey
@@ -1773,12 +1748,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             onOpenUrl={onOpenUrl}
                             sessionId={session?.id}
                             onRetry={turn.message.role === 'error' ? () => {
-                              const msgs = session?.messages
-                              if (!msgs) return
-                              const errorIdx = msgs.findIndex(m => m.id === turn.message.id)
-                              const lastUserMsg = msgs.slice(0, errorIdx).findLast(m => m.role === 'user')
-                              if (lastUserMsg) {
-                                onSendMessage(lastUserMsg.content)
+                              const lastUserTurn = allTurns.slice(0, startIndex + index).findLast(candidate => candidate.type === 'user')
+                              if (lastUserTurn?.type === 'user') {
+                                onSendMessage(lastUserTurn.message.content)
                               }
                             } : undefined}
                           />
@@ -1816,6 +1788,41 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
                     // Assistant turns - render with TurnCard (buffered streaming)
                     const assistantUiKey = getAssistantTurnUiKey(turn, index)
+                    const activeActivityGroupIds = turn.activities
+                      .filter(parent => parent.toolUseId && turn.activities.some(child => child.parentId === parent.toolUseId))
+                      .map(parent => parent.id)
+                    const autoExpandedActivityGroups = turn.isComplete
+                      ? expandedActivityGroups
+                      : new Set([
+                          ...expandedActivityGroups,
+                          ...activeActivityGroupIds.filter(groupId => !collapsedActiveActivityGroups.has(groupId)),
+                        ])
+                    const handleTurnExpandedChange = (expanded: boolean) => {
+                      if (turn.isComplete) {
+                        toggleTurn(assistantUiKey, expanded)
+                        return
+                      }
+                      setCollapsedActiveTurns(previous => {
+                        const next = new Set(previous)
+                        if (expanded) next.delete(assistantUiKey)
+                        else next.add(assistantUiKey)
+                        return next
+                      })
+                    }
+                    const handleActivityGroupsExpandedChange = (nextGroups: Set<string>) => {
+                      if (turn.isComplete) {
+                        setExpandedActivityGroups(nextGroups)
+                        return
+                      }
+                      setCollapsedActiveActivityGroups(previous => {
+                        const next = new Set(previous)
+                        for (const groupId of activeActivityGroupIds) {
+                          if (nextGroups.has(groupId)) next.delete(groupId)
+                          else next.add(groupId)
+                        }
+                        return next
+                      })
+                    }
                     return (
                       <div
                         key={turnKey}
@@ -1837,10 +1844,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         intent={turn.intent}
                         isStreaming={turn.isStreaming}
                         isComplete={turn.isComplete}
-                        isExpanded={expandedTurns.has(assistantUiKey)}
-                        onExpandedChange={(expanded) => toggleTurn(assistantUiKey, expanded)}
-                        expandedActivityGroups={expandedActivityGroups}
-                        onExpandedActivityGroupsChange={setExpandedActivityGroups}
+                        completedAt={turn.completedAt}
+                        durationMs={turn.durationMs}
+                        isExpanded={turn.isComplete
+                          ? expandedTurns.has(assistantUiKey)
+                          : !collapsedActiveTurns.has(assistantUiKey)}
+                        onExpandedChange={handleTurnExpandedChange}
+                        expandedActivityGroups={autoExpandedActivityGroups}
+                        onExpandedActivityGroupsChange={handleActivityGroupsExpandedChange}
                         todos={turn.todos}
                         onOpenFile={onOpenFile}
                         onOpenUrl={onOpenUrl}
@@ -1921,32 +1932,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           }
                         }}
                         onSaveAndSendFollowUp={handleSaveAndSendFollowUp}
-                        onAcceptPlan={() => {
-                          const planMessage = session?.messages.findLast(m => m.role === 'plan')
-                          const planPath = planMessage?.planPath
-
-                          window.dispatchEvent(new CustomEvent('craft:approve-plan', {
-                            detail: {
-                              sessionId: session?.id,
-                              planPath,
-                              includeDraftInput: true,
-                              source: 'plan-card',
-                            },
-                          }))
-                        }}
-                        onAcceptPlanWithCompact={() => {
-                          const planMessage = session?.messages.findLast(m => m.role === 'plan')
-                          const planPath = planMessage?.planPath
-
-                          window.dispatchEvent(new CustomEvent('craft:approve-plan-with-compact', {
-                            detail: {
-                              sessionId: session?.id,
-                              planPath,
-                              includeDraftInput: true,
-                              source: 'plan-card',
-                            },
-                          }))
-                        }}
                         onExecutePlanArtifact={(artifactId) => invokePlanArtifactCommand('plan-execute', artifactId)}
                         onExecutePlanArtifactWithCompact={executePlanArtifactWithCompact}
                         onRefinePlanArtifact={refinePlanArtifact}
@@ -2020,11 +2005,11 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                 {/* Processing Indicator - always visible while processing */}
                 {effectiveIsProcessing && (() => {
                   // Find the last user message timestamp for accurate elapsed time
-                  const lastUserMsg = [...session.messages].reverse().find(m => m.role === 'user')
+                  const lastUserTurn = [...allTurns].reverse().find(turn => turn.type === 'user')
                   return (
                     <ProcessingIndicator
-                      startTime={lastUserMsg?.timestamp}
-                      statusMessage={session.currentStatus?.message}
+                      startTime={lastUserTurn?.timestamp}
+                      statusMessage={projectedProcessingStatus}
                     />
                   )
                 })()}
@@ -2086,11 +2071,11 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               onWorkingDirectoryChange,
               disableSend: disableSend || connectionUnavailable,
               connectionUnavailable,
-              isEmptySession: session.messages.length === 0,
+              isEmptySession: allTurns.length === 0,
               currentConnection: session.llmConnection,
               onConnectionChange,
               contextStatus: {
-                isCompacting: session.currentStatus?.statusType === 'compacting',
+                isCompacting: projectedRuntimeState?.isCompacting ?? false,
                 inputTokens: session.tokenUsage?.inputTokens,
                 contextWindow: session.tokenUsage?.contextWindow,
               },

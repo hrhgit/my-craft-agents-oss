@@ -19,8 +19,6 @@ import type { Session, Message } from '../../shared/types'
  */
 export interface SessionMeta {
   id: string
-  /** Persisted transcript ownership marker; absent on legacy Craft sessions. */
-  conversationFormat?: 'pi-projection-v1'
   name?: string
   /** Preview of first user message (for title fallback) */
   preview?: string

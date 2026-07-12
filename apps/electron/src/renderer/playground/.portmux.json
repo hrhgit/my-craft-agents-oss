@@ -1,0 +1,4 @@
+{
+  "start": "bun --cwd=../../../../.. run playground:dev:raw",
+  "port_env": ["CRAFT_VITE_PORT", "PORT"]
+}

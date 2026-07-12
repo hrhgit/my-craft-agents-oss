@@ -737,7 +737,12 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     // resolves symlinks and checks container membership. Done after ~ expansion
     // so the legitimate home-dir browsing feature keeps working.
     const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-    const safePath = await validateFilePath(dirPath, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+    // The browser picker starts at the server's home directory. This is a
+    // directory-listing-only capability; file reads retain their stricter
+    // trusted-local-client requirement in getFilePathValidationOptions().
+    const safePath = await validateFilePath(dirPath, getWorkspaceAllowedDirs(workspaceId), {
+      allowHome: true,
+    })
 
     // Read entries, filter to directories
     const raw = await readdir(safePath, { withFileTypes: true })

@@ -92,7 +92,7 @@ export default defineConfig({
     strictPort: true,
     open: false,
     host: process.env.CRAFT_WEBUI_HOST ?? true,
-    // Proxy API + WS to the headless server so the dev bundle on :5175 works
+    // Proxy API + WS to the headless server so the assigned dev URL works
     // end-to-end with HMR. Target port follows CRAFT_RPC_PORT (default 9100).
     // Auto-detects TLS: if the server has CRAFT_RPC_TLS_KEY/CERT set, we proxy
     // over https/wss with secure:false to accept the self-signed dev cert.

@@ -1,7 +1,8 @@
 param(
   [switch]$SkipInstall,
   [switch]$NoBrowser,
-  [switch]$PortmuxManaged
+  [switch]$PortmuxManaged,
+  [int]$Instance = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,7 +23,6 @@ function Fail-And-Wait {
 
   Write-Host ""
   Write-Host $Message -ForegroundColor Red
-  Read-Host "Press Enter to close"
   exit $ExitCode
 }
 
@@ -48,8 +48,18 @@ function New-DevelopmentToken {
 function Test-PortAvailable {
   param([int]$Port)
 
-  $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-  return $null -eq $connection
+  $listener = $null
+  try {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+    $listener.Start()
+    return $true
+  } catch {
+    return $false
+  } finally {
+    if ($null -ne $listener) {
+      $listener.Stop()
+    }
+  }
 }
 
 function Get-Port {
@@ -101,15 +111,22 @@ if (-not (Test-Path $nodeModulesPath)) {
   }
 }
 
-$webuiPort = Get-Port "CRAFT_WEBUI_PORT" 5175
-if ($PortmuxManaged -and -not $env:CRAFT_WEBUI_PORT) {
-  Fail-And-Wait "portmux did not provide CRAFT_WEBUI_PORT. Check .portmux.json and run portmux doctor."
+$webuiInstance = if ($Instance -gt 0) { $Instance } else { 1 }
+$webuiPort = if ($env:CRAFT_WEBUI_PORT) {
+  Get-Port "CRAFT_WEBUI_PORT" 5175
+} elseif ($env:PORT) {
+  Get-Port "PORT" 5175
+} else {
+  if ($PortmuxManaged) {
+    Fail-And-Wait "portmux did not provide CRAFT_WEBUI_PORT or PORT. Check .portmux.json and run portmux doctor."
+  }
+  5175
 }
 if ($webuiPort -ge 65535) {
   Fail-And-Wait "CRAFT_WEBUI_PORT must be below 65535 so the derived RPC port remains valid."
 }
 
-$rpcPort = if ($env:CRAFT_RPC_PORT) {
+$rpcPort = if (-not $PortmuxManaged -and $env:CRAFT_RPC_PORT) {
   Get-Port "CRAFT_RPC_PORT" 9100
 } else {
   $webuiPort + 1
@@ -117,7 +134,7 @@ $rpcPort = if ($env:CRAFT_RPC_PORT) {
 
 foreach ($port in @($webuiPort, $rpcPort)) {
   if (-not (Test-PortAvailable $port)) {
-    Fail-And-Wait "Port $port is already in use. Run portmux switch to select another base port, then try again."
+    Fail-And-Wait "Port $port cannot be bound. Run start-webui.cmd $webuiInstance again after selecting another portmux port."
   }
 }
 
@@ -125,8 +142,15 @@ $env:CRAFT_SERVER_TOKEN = New-DevelopmentToken
 $env:CRAFT_RPC_HOST = "127.0.0.1"
 $env:CRAFT_RPC_PORT = "$rpcPort"
 $env:CRAFT_WEBUI_PORT = "$webuiPort"
+$env:CRAFT_WEBUI_INSTANCE = "$webuiInstance"
 if (-not $env:CRAFT_CONFIG_DIR) {
-  $env:CRAFT_CONFIG_DIR = Join-Path $repoRoot ".craft-agent\webui-$webuiPort"
+  if ($webuiInstance -eq 1) {
+    # Keep the primary development instance aligned with Electron's profile.
+    $env:CRAFT_CONFIG_DIR = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".craft-agent"
+  } else {
+    # Parallel instances must not share the server lock or mutable test state.
+    $env:CRAFT_CONFIG_DIR = Join-Path $repoRoot ".craft-agent\webui-instance-$webuiInstance"
+  }
 }
 $env:CRAFT_WEBUI_DIR = (Join-Path $repoRoot "apps\webui\dist")
 $env:CRAFT_WEBUI_AUTO_LOGIN = "true"
@@ -140,22 +164,41 @@ $vitePath = Join-Path $repoRoot "node_modules\.bin\vite.exe"
 if (-not (Test-Path $vitePath)) {
   Fail-And-Wait "Vite executable not found at $vitePath. Run bun install first."
 }
-$logDir = Join-Path $env:TEMP "craft-agent-webui"
+$logDir = Join-Path $env:TEMP "craft-agent-webui\instance-$webuiInstance"
 New-Item -ItemType Directory -Force $logDir | Out-Null
 $serverErrorLog = Join-Path $logDir "webui-server.error.log"
 $viteErrorLog = Join-Path $logDir "webui-vite.error.log"
 $processes = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 
-try {
-  Write-Step "Starting headless server with WebUI enabled (config: $env:CRAFT_CONFIG_DIR)..."
-  $server = Start-Process -FilePath $bunPath `
-    -ArgumentList @("run", "server:dev:webui") `
+function Start-HeadlessServer {
+  param([int]$RestartAttempt = 0)
+
+  $suffix = if ($RestartAttempt -gt 0) { ".restart-$RestartAttempt" } else { "" }
+  $stdoutLog = Join-Path $logDir "webui-server$suffix.log"
+  $stderrLog = Join-Path $logDir "webui-server$suffix.error.log"
+  $script = if ($RestartAttempt -gt 0) { "server:dev:raw" } else { "server:dev:webui" }
+
+  $process = Start-Process -FilePath $bunPath `
+    -ArgumentList @("run", $script) `
     -WorkingDirectory $repoRoot `
     -WindowStyle Hidden `
-    -RedirectStandardOutput (Join-Path $logDir "webui-server.log") `
-    -RedirectStandardError $serverErrorLog `
+    -RedirectStandardOutput $stdoutLog `
+    -RedirectStandardError $stderrLog `
     -PassThru
-  $processes.Add($server)
+  $processes.Add($process)
+
+  return @{
+    Process = $process
+    StdoutLog = $stdoutLog
+    StderrLog = $stderrLog
+    StartedAt = Get-Date
+  }
+}
+
+try {
+  Write-Step "Starting WebUI instance $webuiInstance (config: $env:CRAFT_CONFIG_DIR)..."
+  $serverState = Start-HeadlessServer
+  $server = $serverState.Process
 
   Write-Step "Starting Vite WebUI dev server..."
   $webui = Start-Process -FilePath $vitePath `
@@ -176,15 +219,52 @@ try {
 
   $webuiUrl = "http://localhost:$webuiPort"
   Write-Step "WebUI is ready: $webuiUrl (RPC: ws://127.0.0.1:$rpcPort)"
-  if (-not $NoBrowser) {
+  if (-not $NoBrowser -and $env:CRAFT_WEBUI_NO_BROWSER -ne "1") {
     Start-Process $webuiUrl
   }
 
-  while ($true) {
-    $running = $processes | Where-Object { -not $_.HasExited }
-    if (-not $running) { break }
+  $restartAttempt = 0
+  $rpcUnavailableChecks = 0
+  while (-not $webui.HasExited) {
+    if (-not $server.HasExited -and (Test-PortAvailable $rpcPort)) {
+      $rpcUnavailableChecks++
+      if ($rpcUnavailableChecks -ge 10) {
+        Write-Host ""
+        Write-Host "[Craft Agents Web] Headless server process is alive but RPC port $rpcPort has been unavailable for 5 seconds. Recycling the process tree..." -ForegroundColor Yellow
+        & taskkill.exe /PID $server.Id /T /F *> $null
+      }
+    } else {
+      $rpcUnavailableChecks = 0
+    }
+
+    if ($server.HasExited) {
+      $uptime = (Get-Date) - $serverState.StartedAt
+      if ($uptime.TotalSeconds -ge 30) {
+        $restartAttempt = 0
+      }
+      $restartAttempt++
+      $delaySeconds = [Math]::Min([Math]::Pow(2, $restartAttempt - 1), 10)
+
+      Write-Host ""
+      Write-Host "[Craft Agents Web] Headless server exited with code $($server.ExitCode). Restarting in ${delaySeconds}s..." -ForegroundColor Yellow
+      Write-Host "[Craft Agents Web] Server logs: $($serverState.StdoutLog), $($serverState.StderrLog)" -ForegroundColor DarkYellow
+      Start-Sleep -Seconds $delaySeconds
+
+      $serverState = Start-HeadlessServer -RestartAttempt $restartAttempt
+      $server = $serverState.Process
+      $rpcUnavailableChecks = 0
+      Write-Step "Headless server restart attempt $restartAttempt started (PID $($server.Id))."
+
+      if (-not (Wait-ForPort $rpcPort 60)) {
+        Write-Host "[Craft Agents Web] Restart attempt $restartAttempt did not bind port $rpcPort within 60 seconds; monitoring will retry if it exits." -ForegroundColor Yellow
+      } else {
+        Write-Step "Headless server recovered on ws://127.0.0.1:$rpcPort. The WebUI will reconnect automatically."
+      }
+    }
     Start-Sleep -Milliseconds 500
   }
+
+  throw "Vite WebUI exited with code $($webui.ExitCode). See $viteErrorLog."
 } catch {
   Write-Host ""
   Write-Host $_.Exception.Message -ForegroundColor Red

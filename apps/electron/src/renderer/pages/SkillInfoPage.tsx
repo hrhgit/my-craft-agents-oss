@@ -104,13 +104,16 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
   // Get skill name for header
   const skillName = skill?.metadata.name || skillSlug
 
-  // Format path to show just the skill-relative portion (skills/{slug}/)
+  // Format path to show the skill-relative Pi location.
   const formatPath = (path: string) => {
-    const skillsIndex = path.indexOf('/skills/')
-    if (skillsIndex !== -1) {
-      return path.slice(skillsIndex + 1) // Remove leading slash, keep "skills/{slug}/..."
+    const normalizedPath = path.replace(/\\/g, '/')
+    for (const marker of ['/.pi/skills/', '/.pi/agent/skills/']) {
+      const markerIndex = normalizedPath.indexOf(marker)
+      if (markerIndex !== -1) {
+        return normalizedPath.slice(markerIndex + 1)
+      }
     }
-    return path
+    return normalizedPath
   }
 
   // Open the skill folder in Finder

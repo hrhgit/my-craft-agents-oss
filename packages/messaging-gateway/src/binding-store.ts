@@ -4,9 +4,6 @@
  * Stores bindings in an explicit storage directory (passed by the caller).
  * In Electron this is `~/.craft-agent/workspaces/{wsId}/messaging/`, but tests
  * can point it at any directory.
- *
- * One-shot migration: if a legacy path is provided and contains a bindings.json
- * that the new path does not, the legacy file is copied forward on construction.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -18,14 +15,9 @@ export class BindingStore extends JsonFileStore<ChannelBinding[]> {
   private bindings: ChannelBinding[] = []
   private changeListener?: () => void
 
-  /**
-   * @param storageDir  Absolute path to the directory where bindings.json is stored.
-   * @param legacyDir   Optional legacy directory. If its bindings.json exists and
-   *                    the new location does not, the file is copied forward once.
-   */
-  constructor(storageDir: string, legacyDir?: string, logger: MessagingLogger = NOOP_LOGGER) {
+  /** @param storageDir Absolute path to the directory where bindings.json is stored. */
+  constructor(storageDir: string, logger: MessagingLogger = NOOP_LOGGER) {
     super(storageDir, 'bindings.json', logger)
-    this.migrateLegacy(legacyDir)
     this.load()
   }
 

@@ -6,7 +6,9 @@
  * 1. The validation functions work correctly (unit tests)
  * 2. The actual storage functions produce safe paths (integration tests)
  */
-import { describe, it, expect } from 'bun:test';
+import { afterAll, beforeAll, describe, it, expect } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { join, normalize } from 'path';
 import {
   validateSessionId,
@@ -18,7 +20,22 @@ import {
   getSessionAttachmentsPath,
   getSessionPlansPath,
   getSessionDownloadsPath,
+  setSharedPiSessionsDirForTests,
 } from '../src/sessions/storage.ts';
+import { encodePiSessionCwd } from '../src/config/paths.ts';
+
+const workspaceRoot = '/Users/test/.craft-agent/workspaces/test-workspace';
+const piSessionsRoot = mkdtempSync(join(tmpdir(), 'craft-session-validation-'));
+const expectedSidecarRoot = join(piSessionsRoot, encodePiSessionCwd(workspaceRoot), '.craft');
+
+beforeAll(() => {
+  setSharedPiSessionsDirForTests(piSessionsRoot);
+});
+
+afterAll(() => {
+  setSharedPiSessionsDirForTests(undefined);
+  rmSync(piSessionsRoot, { recursive: true, force: true });
+});
 
 // ============================================================
 // validateSessionId
@@ -163,61 +180,54 @@ describe('isValidSessionId', () => {
 // ============================================================
 
 describe('getSessionPath - defense in depth', () => {
-  const workspaceRoot = '/Users/test/.craft-agent/workspaces/test-workspace';
-  const expectedSessionsDir = `${workspaceRoot}/sessions`;
-
   it('returns correct path for valid session IDs', () => {
     const result = getSessionPath(workspaceRoot, '260202-swift-river');
-    expect(result).toBe(`${expectedSessionsDir}/260202-swift-river`);
+    expect(result).toBe(join(expectedSidecarRoot, '260202-swift-river'));
   });
 
-  it('sanitizes path traversal attempts - path stays within workspace', () => {
+  it('sanitizes path traversal attempts - path stays within Pi sidecar root', () => {
     // Even if validation is bypassed, defense-in-depth should protect
     const result = getSessionPath(workspaceRoot, '../../../tmp');
 
-    // The path should NOT escape the sessions directory
-    expect(result).toBe(`${expectedSessionsDir}/tmp`);
-    expect(result.startsWith(expectedSessionsDir)).toBe(true);
+    // The path should NOT escape the Pi session's .craft sidecar directory
+    expect(result).toBe(join(expectedSidecarRoot, 'tmp'));
+    expect(result.startsWith(expectedSidecarRoot)).toBe(true);
 
     // Verify it doesn't contain path traversal
     expect(result.includes('..')).toBe(false);
   });
 
-  it('sanitizes deep path traversal - stays within workspace', () => {
+  it('sanitizes deep path traversal - stays within Pi sidecar root', () => {
     const result = getSessionPath(workspaceRoot, '../../../../../../../../tmp');
-    expect(result).toBe(`${expectedSessionsDir}/tmp`);
-    expect(result.startsWith(expectedSessionsDir)).toBe(true);
+    expect(result).toBe(join(expectedSidecarRoot, 'tmp'));
+    expect(result.startsWith(expectedSidecarRoot)).toBe(true);
   });
 
   it('sanitizes absolute path attempts', () => {
     const result = getSessionPath(workspaceRoot, '/etc/passwd');
-    expect(result).toBe(`${expectedSessionsDir}/passwd`);
-    expect(result.startsWith(expectedSessionsDir)).toBe(true);
+    expect(result).toBe(join(expectedSidecarRoot, 'passwd'));
+    expect(result.startsWith(expectedSidecarRoot)).toBe(true);
   });
 
   it('sanitizes mixed traversal attempts', () => {
     const result = getSessionPath(workspaceRoot, 'foo/../../../etc/passwd');
     // basename() returns 'passwd' for this input
-    expect(result).toBe(`${expectedSessionsDir}/passwd`);
-    expect(result.startsWith(expectedSessionsDir)).toBe(true);
+    expect(result).toBe(join(expectedSidecarRoot, 'passwd'));
+    expect(result.startsWith(expectedSidecarRoot)).toBe(true);
   });
 });
 
 describe('getSessionAttachmentsPath - defense in depth', () => {
-  const workspaceRoot = '/Users/test/.craft-agent/workspaces/test-workspace';
-  const expectedSessionsDir = `${workspaceRoot}/sessions`;
-
   it('returns correct path for valid session IDs', () => {
     const result = getSessionAttachmentsPath(workspaceRoot, '260202-swift-river');
-    expect(result).toBe(`${expectedSessionsDir}/260202-swift-river/attachments`);
+    expect(result).toBe(join(expectedSidecarRoot, '260202-swift-river', 'attachments'));
   });
 
-  it('sanitizes path traversal - attachments path stays within workspace', () => {
+  it('sanitizes path traversal - attachments path stays within Pi sidecar root', () => {
     const result = getSessionAttachmentsPath(workspaceRoot, '../../../tmp');
 
-    // Should resolve to sessions/tmp/attachments, NOT /tmp/attachments
-    expect(result).toBe(`${expectedSessionsDir}/tmp/attachments`);
-    expect(result.startsWith(expectedSessionsDir)).toBe(true);
+    expect(result).toBe(join(expectedSidecarRoot, 'tmp', 'attachments'));
+    expect(result.startsWith(expectedSidecarRoot)).toBe(true);
     expect(result.includes('..')).toBe(false);
   });
 
@@ -228,30 +238,24 @@ describe('getSessionAttachmentsPath - defense in depth', () => {
 
     // CRITICAL: Must NOT resolve to /tmp/attachments
     expect(result).not.toBe('/tmp/attachments');
-    expect(result).toBe(`${expectedSessionsDir}/tmp/attachments`);
-    expect(result.startsWith(expectedSessionsDir)).toBe(true);
+    expect(result).toBe(join(expectedSidecarRoot, 'tmp', 'attachments'));
+    expect(result.startsWith(expectedSidecarRoot)).toBe(true);
   });
 });
 
 describe('getSessionPlansPath - defense in depth', () => {
-  const workspaceRoot = '/Users/test/.craft-agent/workspaces/test-workspace';
-  const expectedSessionsDir = `${workspaceRoot}/sessions`;
-
   it('sanitizes path traversal attempts', () => {
     const result = getSessionPlansPath(workspaceRoot, '../../../tmp');
-    expect(result).toBe(`${expectedSessionsDir}/tmp/plans`);
-    expect(result.startsWith(expectedSessionsDir)).toBe(true);
+    expect(result).toBe(join(expectedSidecarRoot, 'tmp', 'plans'));
+    expect(result.startsWith(expectedSidecarRoot)).toBe(true);
   });
 });
 
 describe('getSessionDownloadsPath - defense in depth', () => {
-  const workspaceRoot = '/Users/test/.craft-agent/workspaces/test-workspace';
-  const expectedSessionsDir = `${workspaceRoot}/sessions`;
-
   it('sanitizes path traversal attempts', () => {
     const result = getSessionDownloadsPath(workspaceRoot, '../../../tmp');
-    expect(result).toBe(`${expectedSessionsDir}/tmp/downloads`);
-    expect(result.startsWith(expectedSessionsDir)).toBe(true);
+    expect(result).toBe(join(expectedSidecarRoot, 'tmp', 'downloads'));
+    expect(result.startsWith(expectedSidecarRoot)).toBe(true);
   });
 });
 
@@ -260,23 +264,21 @@ describe('getSessionDownloadsPath - defense in depth', () => {
 // ============================================================
 
 describe('path normalization safety', () => {
-  const workspaceRoot = '/Users/test/.craft-agent/workspaces/test-workspace';
-
-  it('normalized path still stays within workspace', () => {
+  it('normalized path still stays within Pi sidecar root', () => {
     const result = getSessionPath(workspaceRoot, '../../../tmp');
     const normalized = normalize(result);
 
     // Even after normalization, path should be safe
-    expect(normalized.startsWith(workspaceRoot)).toBe(true);
+    expect(normalized.startsWith(normalize(expectedSidecarRoot))).toBe(true);
   });
 
   it('join() with sanitized input produces safe path', () => {
     // Simulate what happens in the real code
     const maliciousInput = '../../../../tmp';
     const sanitized = sanitizeSessionId(maliciousInput); // Returns 'tmp'
-    const result = join(workspaceRoot, 'sessions', sanitized);
+    const result = join(expectedSidecarRoot, sanitized);
 
-    expect(result).toBe(`${workspaceRoot}/sessions/tmp`);
-    expect(result.startsWith(workspaceRoot)).toBe(true);
+    expect(result).toBe(join(expectedSidecarRoot, 'tmp'));
+    expect(result.startsWith(expectedSidecarRoot)).toBe(true);
   });
 });

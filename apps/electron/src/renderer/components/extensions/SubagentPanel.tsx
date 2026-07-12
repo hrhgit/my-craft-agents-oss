@@ -27,9 +27,15 @@ import { Spinner } from '@craft-agent/ui'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger, AnimatedCollapsibleContent } from '@/components/ui/collapsible'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
 import type { PiChildSessionInfo } from '@craft-agent/shared/agent'
+import { createSingleFlightLoader, isSubagentRefreshEvent } from './subagent-session-loader'
 
 /** 轮询间隔：每 5 秒刷新一次子会话列表 */
 const REFRESH_INTERVAL_MS = 5000
+
+const childSessionLoader = createSingleFlightLoader<PiChildSessionInfo[]>(
+  async (sessionId) => window.electronAPI?.listChildSessions?.(sessionId) ?? [],
+  { cacheTtlMs: REFRESH_INTERVAL_MS },
+)
 
 /**
  * 将 ISO 时间字符串格式化为简短的可读形式（HH:MM:SS）。
@@ -229,29 +235,63 @@ export function SubagentPanel({ sessionId, className }: SubagentPanelProps) {
   const [sessions, setSessions] = React.useState<PiChildSessionInfo[]>([])
   const [isLoading, setIsLoading] = React.useState(false)
   const [isOpen, setIsOpen] = React.useState(false)
+  const mountedRef = React.useRef(false)
+  const sessionIdRef = React.useRef(sessionId)
+  const requestVersionRef = React.useRef(0)
+  sessionIdRef.current = sessionId
 
-  const refresh = React.useCallback(async () => {
+  React.useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      requestVersionRef.current += 1
+    }
+  }, [])
+
+  const refresh = React.useCallback(async (options?: { force?: boolean }) => {
+    const requestVersion = ++requestVersionRef.current
+    const requestedSessionId = sessionId
+
+    if (!mountedRef.current || sessionIdRef.current !== requestedSessionId) return
     if (!sessionId) {
       setSessions([])
+      setIsLoading(false)
       return
     }
     setIsLoading(true)
     try {
-      const loaded = await window.electronAPI?.listChildSessions?.(sessionId) ?? []
+      const loaded = await childSessionLoader.load(sessionId, options)
+      if (
+        !mountedRef.current
+        || sessionIdRef.current !== requestedSessionId
+        || requestVersionRef.current !== requestVersion
+      ) return
+
       // 按 modified 时间倒序（最近的分支在前）
       const sorted = [...loaded].sort((a, b) => b.modified.localeCompare(a.modified))
       setSessions(sorted)
     } catch {
+      if (
+        !mountedRef.current
+        || sessionIdRef.current !== requestedSessionId
+        || requestVersionRef.current !== requestVersion
+      ) return
       setSessions([])
     } finally {
-      setIsLoading(false)
+      if (
+        mountedRef.current
+        && sessionIdRef.current === requestedSessionId
+        && requestVersionRef.current === requestVersion
+      ) {
+        setIsLoading(false)
+      }
     }
   }, [sessionId])
 
   // 初次加载 + 每 5 秒轮询刷新
   React.useEffect(() => {
-    refresh()
-    const timer = setInterval(refresh, REFRESH_INTERVAL_MS)
+    void refresh()
+    const timer = setInterval(() => { void refresh() }, REFRESH_INTERVAL_MS)
     return () => clearInterval(timer)
   }, [refresh])
 
@@ -268,14 +308,13 @@ export function SubagentPanel({ sessionId, className }: SubagentPanelProps) {
     if (typeof subscribe !== 'function') return
 
     const unsubscribe = subscribe((event: ExtensionBridgeEvent) => {
-      if (event.type !== 'extension_notify') return
-      if (event.sessionId !== sessionId) return
-      refresh()
+      if (!isSubagentRefreshEvent(event, sessionId)) return
+      void refresh({ force: true })
     })
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [refresh])
+  }, [refresh, sessionId])
 
   // 无子分支时不渲染面板
   if (sessions.length === 0) return null
@@ -305,12 +344,12 @@ export function SubagentPanel({ sessionId, className }: SubagentPanelProps) {
             className="ml-auto text-muted-foreground hover:text-foreground transition-colors p-0.5"
             onClick={(e) => {
               e.stopPropagation()
-              refresh()
+              void refresh({ force: true })
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.stopPropagation()
-                refresh()
+                void refresh({ force: true })
               }
             }}
             title="刷新"

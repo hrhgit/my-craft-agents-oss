@@ -2,7 +2,6 @@
  * ConfigStore — workspace-scoped messaging config.json persistence.
  *
  * Stored at `{storageDir}/config.json`. Shape is `MessagingConfig`.
- * One-shot migration from a legacy directory is supported (mirrors BindingStore).
  */
 
 import { DEFAULT_MESSAGING_CONFIG, type MessagingConfig, type MessagingLogger } from './types'
@@ -11,9 +10,8 @@ import { JsonFileStore, NOOP_LOGGER } from './json-file-store'
 export class ConfigStore extends JsonFileStore<MessagingConfig> {
   private config: MessagingConfig
 
-  constructor(storageDir: string, legacyDir?: string, logger: MessagingLogger = NOOP_LOGGER) {
+  constructor(storageDir: string, logger: MessagingLogger = NOOP_LOGGER) {
     super(storageDir, 'config.json', logger)
-    this.migrateLegacy(legacyDir)
     this.config = this.load()
   }
 

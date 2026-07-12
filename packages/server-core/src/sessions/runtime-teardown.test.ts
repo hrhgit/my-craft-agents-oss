@@ -55,6 +55,28 @@ describe('SessionManager runtime teardown', () => {
     expect((sm as unknown as { sessions: Map<string, unknown> }).sessions.has('delete-runtime')).toBe(false)
   })
 
+  it('deleteSession waits for projection persistence and clears retired runtime state', async () => {
+    injectManagedSession('delete-projection')
+    let release!: () => void
+    const flush = jest.fn(() => new Promise<void>(resolve => { release = resolve }))
+    const internals = sm as unknown as {
+      sessions: Map<string, unknown>
+      piProjectionRetiredRuntimeIds: Map<string, Set<string>>
+      flushPiProjectionWrites: (managed: unknown) => Promise<void>
+    }
+    internals.piProjectionRetiredRuntimeIds.set('delete-projection', new Set(['runtime-1']))
+    internals.flushPiProjectionWrites = flush
+
+    const deleting = sm.deleteSession('delete-projection')
+    while (flush.mock.calls.length === 0) await Promise.resolve()
+    expect(internals.sessions.has('delete-projection')).toBe(true)
+
+    release()
+    await deleting
+    expect(internals.sessions.has('delete-projection')).toBe(false)
+    expect(internals.piProjectionRetiredRuntimeIds.has('delete-projection')).toBe(false)
+  })
+
   it('cleanup disposes active session runtimes before clearing sessions', async () => {
     const first = injectManagedSession('cleanup-runtime-a')
     const second = injectManagedSession('cleanup-runtime-b')
@@ -68,5 +90,36 @@ describe('SessionManager runtime teardown', () => {
     expect(second.poolServer.stop).toHaveBeenCalledTimes(1)
     expect(second.mcpPool.disconnectAll).toHaveBeenCalledTimes(1)
     expect((sm as unknown as { sessions: Map<string, unknown> }).sessions.size).toBe(0)
+  })
+
+  it('cleanup flushes projection persistence before clearing runtime state', async () => {
+    injectManagedSession('cleanup-projection')
+    let release!: () => void
+    const flush = jest.fn(() => new Promise<void>(resolve => { release = resolve }))
+    const internals = sm as unknown as {
+      sessions: Map<string, unknown>
+      piProjectionBySession: Map<string, unknown>
+      piProjectionRetiredRuntimeIds: Map<string, Set<string>>
+      piProjectionWrites: Map<string, Promise<void>>
+      piProjectionPendingSnapshots: Map<string, unknown>
+      flushPiProjectionWrites: (managed: unknown) => Promise<void>
+    }
+    internals.piProjectionBySession.set('cleanup-projection', {})
+    internals.piProjectionRetiredRuntimeIds.set('cleanup-projection', new Set(['runtime-1']))
+    internals.piProjectionWrites.set('cleanup-projection', Promise.resolve())
+    internals.piProjectionPendingSnapshots.set('cleanup-projection', {})
+    internals.flushPiProjectionWrites = flush
+
+    const cleaning = sm.cleanup()
+    while (flush.mock.calls.length === 0) await Promise.resolve()
+    expect(internals.sessions.has('cleanup-projection')).toBe(true)
+
+    release()
+    await cleaning
+    expect(internals.sessions.size).toBe(0)
+    expect(internals.piProjectionBySession.size).toBe(0)
+    expect(internals.piProjectionRetiredRuntimeIds.size).toBe(0)
+    expect(internals.piProjectionWrites.size).toBe(0)
+    expect(internals.piProjectionPendingSnapshots.size).toBe(0)
   })
 })

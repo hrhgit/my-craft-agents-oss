@@ -1,0 +1,1337 @@
+[    2105ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[    2578ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:26325/api/config:0
+[    2894ms] [VERBOSE] [DOM] Password forms should have (optionally hidden) username fields for accessibility: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:26325/login:0
+[    3272ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[    5021ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[    5022ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[    5977ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx?t=1783863217663:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783863217663:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783863217663:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783863324081:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863324081:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783862469529:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863324081:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783863324081:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783863324090:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783863324090:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[   23600ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[   24616ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[   24616ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[   25283ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx?t=1783863217663:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783863217663:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783863217663:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783863324081:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863324081:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783862469529:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863324081:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783863324081:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783863324090:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783863324090:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[  166598ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  166600ms] [ERROR] [FreeFormInput] Failed to resume pending plan execution: Error: Client destroyed (channel: sessions:getPendingPlanExecution)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getPendingPlanExecution] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at executePendingPlan (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863495419:658:50)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863495419:686:5 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863495419:681
+[  166603ms] [ERROR] Failed to load send message key for follow-up view: Error: Client destroyed (channel: input:getSendMessageKey)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSendMessageKey] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at loadSendMessageKey (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783863495419:433:46)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783863495419:440:5 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783863495419:436
+[  166604ms] [ERROR] [useStatuses] Failed to load: Error: Client destroyed (channel: statuses:list)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listStatuses] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at Object.fetcher [as current] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useStatuses.ts:21:42)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:35:39 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:40
+[  166604ms] [ERROR] [useLabels] Failed to load: Error: Client destroyed (channel: labels:list)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLabels] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at Object.fetcher [as current] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useLabels.ts:22:42)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:35:39 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:40
+[  166604ms] [ERROR] [useViews] Failed to load: Error: Client destroyed (channel: views:list)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listViews] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at Object.fetcher [as current] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useViews.ts:21:42)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:35:39 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:40
+[  166604ms] [ERROR] [AppShell] Failed to refresh workspace unread indicators: Error: Client destroyed (channel: sessions:getUnreadSummary)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getUnreadSummary] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:1292:48
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:1303:10 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:1298
+[  166605ms] [ERROR] [App] Failed to load sessions: Error: Client destroyed (channel: sessions:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSessions] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:385:55
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:617:10 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:409
+[  166607ms] [ERROR] Failed to load input settings: Error: Client destroyed (channel: input:getAutoCapitalisation)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getAutoCapitalisation] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at loadInputSettings (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863495419:531:32)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863495419:543:5 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863495419:539
+[  166607ms] [ERROR] [Chat] Failed to load workspace settings: Error: Client destroyed (channel: workspaceSettings:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getWorkspaceSettings] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:982:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:989
+[  166608ms] [ERROR] [Chat] Failed to load sources: Error: Client destroyed (channel: sources:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSources] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:1016:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:1018
+[  166608ms] [ERROR] [Chat] Failed to load skills: Error: Client destroyed (channel: skills:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSkills] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:1273:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:1275
+[  166608ms] [ERROR] Failed to check auth state: Error: Client destroyed (channel: onboarding:getAuthState)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSetupNeeds] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at initialize (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:530:48) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:541
+[  166609ms] [ERROR] [PiProjection] Initial snapshot failed for 260712-ivory-mist: Error: Client destroyed (channel: sessions:getPiProjectionSnapshot)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getPiProjectionSnapshot] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/usePiProjectionSync.ts?t=1783862509566:48:29
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/usePiProjectionSync.ts?t=1783862509566:50
+[  166609ms] [ERROR] [App] Treating session load failure as transport fallback: {mode: remote, status: disconnected, url: ws://localhost:26325/ws, attempt: 0, updatedAt: 1783863500454} @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:412
+[  166667ms] Error: Client destroyed (channel: releaseNotes:getLatestVersion)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at Object.getLatestReleaseVersion (http://localhost:26325/adapter/web-api.ts?t=1783863217663:148:43)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:763:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+    at commitPassiveMountOnFiber (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18206:19)
+    at commitPassiveMountEffects_complete (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18179:17)
+    at commitPassiveMountEffects_begin (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18169:15)
+    at commitPassiveMountEffects (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18159:11)
+[  166668ms] Error: Client destroyed (channel: sessions:command)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as sessionCommand] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:928:24
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/pages/ChatPage.tsx?t=1783863495419:128:7
+[  166668ms] Error: Client destroyed (channel: system:homeDir)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getHomeDir] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863495419:819:37
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  166668ms] Error: Client destroyed (channel: preferences:read)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as readPreferences] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783863495419:669:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  166668ms] Error: Client destroyed (channel: workspaces:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getWorkspaces] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:595:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  166668ms] Error: Client destroyed (channel: LLM_Connection:listWithStatus)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLlmConnectionsWithStatus] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:618:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  166668ms] Error: Client destroyed (channel: drafts:getAll)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getAllDrafts] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:622:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  166668ms] Error: Client destroyed (channel: theme:getApp)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getAppTheme] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:627:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  166669ms] Error: Client destroyed (channel: LLM_Connection:listWithStatus)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLlmConnectionsWithStatus] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:488:50
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:647:7
+[  167090ms] Error: Client destroyed (channel: drafts:set)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as setDraft] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:1164:26
+[  395141ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[  397998ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  397998ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  398999ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx?t=1783863495419:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783863495419:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783863495419:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783863495419:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863495419:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783862469529:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863495419:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783863495419:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783863725091:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783863725091:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[  583380ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  583389ms] [ERROR] [FreeFormInput] Failed to resume pending plan execution: Error: Client destroyed (channel: sessions:getPendingPlanExecution)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getPendingPlanExecution] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at executePendingPlan (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863911896:658:50)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863911896:686:5 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863911896:681
+[  583515ms] [ERROR] Failed to load send message key for follow-up view: Error: Client destroyed (channel: input:getSendMessageKey)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSendMessageKey] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at loadSendMessageKey (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783863911896:433:46)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783863911896:440:5 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783863911896:436
+[  583515ms] [ERROR] [useStatuses] Failed to load: Error: Client destroyed (channel: statuses:list)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listStatuses] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at Object.fetcher [as current] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useStatuses.ts:21:42)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:35:39 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:40
+[  583515ms] [ERROR] [useLabels] Failed to load: Error: Client destroyed (channel: labels:list)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLabels] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at Object.fetcher [as current] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useLabels.ts:22:42)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:35:39 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:40
+[  583516ms] [ERROR] [useViews] Failed to load: Error: Client destroyed (channel: views:list)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listViews] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at Object.fetcher [as current] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useViews.ts:21:42)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:35:39 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:40
+[  583516ms] [ERROR] [AppShell] Failed to refresh workspace unread indicators: Error: Client destroyed (channel: sessions:getUnreadSummary)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getUnreadSummary] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:1292:48
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:1303:10 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:1298
+[  583516ms] [ERROR] [App] Failed to load sessions: Error: Client destroyed (channel: sessions:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSessions] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:385:55
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:617:10 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:409
+[  583519ms] [ERROR] Failed to load input settings: Error: Client destroyed (channel: input:getAutoCapitalisation)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getAutoCapitalisation] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at loadInputSettings (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863911896:531:32)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863911896:543:5 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863911896:539
+[  583525ms] [ERROR] [Chat] Failed to load workspace settings: Error: Client destroyed (channel: workspaceSettings:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getWorkspaceSettings] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:982:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:989
+[  583525ms] [ERROR] [Chat] Failed to load sources: Error: Client destroyed (channel: sources:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSources] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:1016:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:1018
+[  583525ms] [ERROR] [Chat] Failed to load skills: Error: Client destroyed (channel: skills:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSkills] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:1273:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:1275
+[  583525ms] [ERROR] Failed to check auth state: Error: Client destroyed (channel: onboarding:getAuthState)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSetupNeeds] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at initialize (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:530:48) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:541
+[  583525ms] [ERROR] [PiProjection] Initial snapshot failed for 260712-ivory-mist: Error: Client destroyed (channel: sessions:getPiProjectionSnapshot)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getPiProjectionSnapshot] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/usePiProjectionSync.ts?t=1783862509566:48:29
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/usePiProjectionSync.ts?t=1783862509566:50
+[  583526ms] [ERROR] [App] Treating session load failure as transport fallback: {mode: remote, status: disconnected, url: ws://localhost:26325/ws, attempt: 0, updatedAt: 1783863917189} @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:412
+[  583563ms] Error: Client destroyed (channel: releaseNotes:getLatestVersion)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at Object.getLatestReleaseVersion (http://localhost:26325/adapter/web-api.ts?t=1783863495419:148:43)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783863911896:763:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+    at commitPassiveMountOnFiber (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18206:19)
+    at commitPassiveMountEffects_complete (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18179:17)
+    at commitPassiveMountEffects_begin (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18169:15)
+    at commitPassiveMountEffects (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18159:11)
+[  583564ms] Error: Client destroyed (channel: sessions:command)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as sessionCommand] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:928:24
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/pages/ChatPage.tsx?t=1783863911896:128:7
+[  583564ms] Error: Client destroyed (channel: system:homeDir)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getHomeDir] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783863911896:819:37
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  583564ms] Error: Client destroyed (channel: preferences:read)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as readPreferences] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783863911896:669:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  583564ms] Error: Client destroyed (channel: workspaces:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getWorkspaces] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:595:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  583564ms] Error: Client destroyed (channel: LLM_Connection:listWithStatus)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLlmConnectionsWithStatus] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:618:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  583564ms] Error: Client destroyed (channel: drafts:getAll)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getAllDrafts] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:622:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  583564ms] Error: Client destroyed (channel: theme:getApp)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getAppTheme] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:627:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[  583564ms] Error: Client destroyed (channel: LLM_Connection:listWithStatus)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLlmConnectionsWithStatus] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:488:50
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:647:7
+[  583882ms] Error: Client destroyed (channel: drafts:set)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as setDraft] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863911896:1164:26
+[  627891ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  627891ms] [ERROR] Failed to check auth state: Error: Client destroyed (channel: onboarding:getAuthState)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSetupNeeds] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at initialize (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863955178:530:48) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863955178:541
+[  627891ms] [ERROR] [PiProjection] Initial snapshot failed for 260712-ivory-mist: Error: Client destroyed (channel: sessions:getPiProjectionSnapshot)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getPiProjectionSnapshot] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/usePiProjectionSync.ts?t=1783862509566:48:29
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/usePiProjectionSync.ts?t=1783862509566:50
+[  627922ms] Error: Client destroyed (channel: LLM_Connection:listWithStatus)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLlmConnectionsWithStatus] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863955178:488:50
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783863955178:647:7
+[  708880ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[  717950ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  717950ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[  719157ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx?t=1783864033049:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783864033049:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783864033049:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783864033049:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864033049:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783862469529:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864033049:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783864033049:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783864033049:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783864033049:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[ 1030152ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[ 1030153ms] [ERROR] [FreeFormInput] Failed to resume pending plan execution: Error: Client destroyed (channel: sessions:getPendingPlanExecution)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getPendingPlanExecution] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at executePendingPlan (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783864355734:658:50)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783864355734:686:5 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783864355734:681
+[ 1030156ms] [ERROR] Failed to load send message key for follow-up view: Error: Client destroyed (channel: input:getSendMessageKey)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSendMessageKey] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at loadSendMessageKey (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783864355734:433:46)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783864355734:440:5 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783864355734:436
+[ 1030157ms] [ERROR] [useStatuses] Failed to load: Error: Client destroyed (channel: statuses:list)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listStatuses] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at Object.fetcher [as current] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useStatuses.ts:21:42)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:35:39 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:40
+[ 1030157ms] [ERROR] [useLabels] Failed to load: Error: Client destroyed (channel: labels:list)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLabels] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at Object.fetcher [as current] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useLabels.ts:22:42)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:35:39 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:40
+[ 1030157ms] [ERROR] [useViews] Failed to load: Error: Client destroyed (channel: views:list)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listViews] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at Object.fetcher [as current] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useViews.ts:21:42)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:35:39 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/useWorkspaceEntity.ts:40
+[ 1030157ms] [ERROR] [AppShell] Failed to refresh workspace unread indicators: Error: Client destroyed (channel: sessions:getUnreadSummary)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getUnreadSummary] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:1292:48
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:1303:10 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:1298
+[ 1030157ms] [ERROR] [App] Failed to load sessions: Error: Client destroyed (channel: sessions:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSessions] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:385:55
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:617:10 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:409
+[ 1030157ms] [ERROR] Failed to load input settings: Error: Client destroyed (channel: input:getAutoCapitalisation)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getAutoCapitalisation] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at loadInputSettings (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783864355734:531:32)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783864355734:543:5 @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783864355734:539
+[ 1030158ms] [ERROR] [Chat] Failed to load workspace settings: Error: Client destroyed (channel: workspaceSettings:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getWorkspaceSettings] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:982:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:989
+[ 1030158ms] [ERROR] [Chat] Failed to load sources: Error: Client destroyed (channel: sources:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSources] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:1016:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:1018
+[ 1030158ms] [ERROR] [Chat] Failed to load skills: Error: Client destroyed (channel: skills:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSkills] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:1273:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:1275
+[ 1030158ms] [ERROR] Failed to check auth state: Error: Client destroyed (channel: onboarding:getAuthState)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getSetupNeeds] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at initialize (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:530:48) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:541
+[ 1030158ms] [ERROR] [PiProjection] Initial snapshot failed for 260712-ivory-mist: Error: Client destroyed (channel: sessions:getPiProjectionSnapshot)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getPiProjectionSnapshot] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/usePiProjectionSync.ts?t=1783862509566:48:29
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/hooks/usePiProjectionSync.ts?t=1783862509566:50
+[ 1030159ms] [ERROR] [App] Treating session load failure as transport fallback: {mode: remote, status: disconnected, url: ws://localhost:26325/ws, attempt: 0, updatedAt: 1783864364002} @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:412
+[ 1030194ms] Error: Client destroyed (channel: releaseNotes:getLatestVersion)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at Object.getLatestReleaseVersion (http://localhost:26325/adapter/web-api.ts?t=1783864033049:148:43)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:763:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+    at commitPassiveMountOnFiber (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18206:19)
+    at commitPassiveMountEffects_complete (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18179:17)
+    at commitPassiveMountEffects_begin (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18169:15)
+    at commitPassiveMountEffects (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:18159:11)
+[ 1030195ms] Error: Client destroyed (channel: sessions:command)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as sessionCommand] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:928:24
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/pages/ChatPage.tsx?t=1783864355734:128:7
+[ 1030195ms] Error: Client destroyed (channel: system:homeDir)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getHomeDir] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx?t=1783864355734:819:37
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[ 1030195ms] Error: Client destroyed (channel: preferences:read)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as readPreferences] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx?t=1783864355734:669:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[ 1030196ms] Error: Client destroyed (channel: workspaces:get)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getWorkspaces] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:595:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[ 1030196ms] Error: Client destroyed (channel: LLM_Connection:listWithStatus)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLlmConnectionsWithStatus] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:618:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[ 1030196ms] Error: Client destroyed (channel: drafts:getAll)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getAllDrafts] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:622:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[ 1030196ms] Error: Client destroyed (channel: theme:getApp)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as getAppTheme] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:627:24
+    at commitHookEffectListMount (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:16963:34)
+[ 1030196ms] Error: Client destroyed (channel: LLM_Connection:listWithStatus)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as listLlmConnectionsWithStatus] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:488:50
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:647:7
+[ 1030660ms] Error: Client destroyed (channel: drafts:set)
+    at WsRpcClient.ensureConnected (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:674:13)
+    at WsRpcClient.invokeWithOptions (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:80:16)
+    at WsRpcClient.invoke (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/server-core/src/transport/client.ts?t=1783862469529:77:17)
+    at invokeMaybeChunked (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:66:19)
+    at invokeEntry (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:22:30)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:88
+    at invokeSerializedIfNeeded (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:45:12)
+    at Object.fn [as setDraft] (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/transport/build-api.ts?t=1783862469529:25:25)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:1164:26
+[ 1041579ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[ 1045452ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[ 1053590ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[ 1055327ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[ 1055327ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[ 1056657ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx?t=1783864355734:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783864355734:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783864355734:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783864355734:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783862469529:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783864355734:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783864381979:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783864381979:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520
+[ 1152679ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[ 1154080ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[ 1154080ms] [INFO] Renderer performance tracking enabled @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/lib/perf.ts:19
+[ 1154943ms] [ERROR] Warning: validateDOMNesting(...): %s cannot appear as a descendant of <%s>.%s <button> button 
+    at button
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:149:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:126:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:238:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:576:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:553:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:665:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:690:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:311:13
+    at PopoverTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:23:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:65:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-popover.js?v=83839e2b:259:5)
+    at Popover (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/popover.tsx:13:6)
+    at SessionStatusIcon (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionStatusIcon.tsx:17:37)
+    at div
+    at div
+    at div
+    at button
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:153:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:130:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:242:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:298:13
+    at ContextMenuTrigger (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:38:6)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:69:15)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:492:15)
+    at Popper (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-GVT3TM2X.js?v=83839e2b:682:11)
+    at Menu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-UQCPRLU7.js?v=83839e2b:691:11)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:69:15)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-context-menu.js?v=83839e2b:262:11)
+    at ContextMenu (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/context-menu.tsx:16:3)
+    at div
+    at EntityRow (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-row.tsx?t=1783864355734:33:3)
+    at SessionItem (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionItem.tsx?t=1783864355734:41:3)
+    at div
+    at div
+    at div
+    at div
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:311:13
+    at div
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:162:13
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:183:15)
+    at http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-scroll-area.js?v=83839e2b:249:7
+    at ScrollArea (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/scroll-area.tsx:13:3)
+    at div
+    at EntityList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/ui/entity-list.tsx:137:3)
+    at div
+    at SessionList (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/SessionList.tsx?t=1783864355734:45:3)
+    at div
+    at div
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at MotionDOMComponent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/motion_react.js?v=83839e2b:8261:40)
+    at div
+    at PanelStackContainer (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/PanelStackContainer.tsx?t=1783864355734:30:3)
+    at div
+    at AppShellProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/AppShellContext.tsx?t=1783860179757:17:3)
+    at AppShellContent (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/components/app-shell/AppShell.tsx?t=1783864355734:711:3)
+    at EscapeInterruptProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/EscapeInterruptContext.tsx:14:43)
+    at AppShell
+    at div
+    at div
+    at NavigationProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/contexts/NavigationContext.tsx?t=1783862469529:61:3)
+    at Provider2 (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:62:15)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=83839e2b:258:5)
+    at TooltipProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/components/tooltip.tsx:13:3)
+    at ModalProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ModalContext.tsx:12:33)
+    at DismissibleLayerProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/DismissibleLayerContext.tsx:76:44)
+    at FocusProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/FocusContext.tsx:15:33)
+    at ActionRegistryProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/actions/registry.tsx:15:42)
+    at ShikiThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/ShikiThemeContext.tsx:12:38)
+    at PlatformProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/packages/ui/src/context/PlatformContext.tsx:12:36)
+    at App (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/App.tsx?t=1783864355734:226:17)
+    at Suspense
+    at App (http://localhost:26325/App.tsx?t=1783864355734:109:29)
+    at ThemeProvider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/electron/src/renderer/context/ThemeContext.tsx:45:3)
+    at Root (http://localhost:26325/main.tsx?t=1783864482802:77:23)
+    at Provider (http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/jotai.js?v=83839e2b:718:3)
+    at Suspense
+    at ErrorBoundary (http://localhost:26325/main.tsx?t=1783864482802:63:26) @ http://localhost:26325/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:520

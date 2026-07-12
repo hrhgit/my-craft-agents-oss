@@ -33,6 +33,10 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.caching.SET_EXTENDED_PROMPT_CACHE,
   RPC_CHANNELS.caching.GET_ENABLE_1M_CONTEXT,
   RPC_CHANNELS.caching.SET_ENABLE_1M_CONTEXT,
+  RPC_CHANNELS.rtk.GET_ENABLED,
+  RPC_CHANNELS.rtk.SET_ENABLED,
+  RPC_CHANNELS.rtk.GET_STATUS,
+  RPC_CHANNELS.rtk.GET_GAIN,
   RPC_CHANNELS.sessions.GET_MODEL,
   RPC_CHANNELS.sessions.SET_MODEL,
   RPC_CHANNELS.settings.GET_DEFAULT_THINKING_LEVEL,
@@ -44,6 +48,9 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.piExtensions.GET_SETTINGS,
   RPC_CHANNELS.piExtensions.SET_SETTINGS,
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
+  RPC_CHANNELS.piExtensions.GET_CATALOG,
+  RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES,
+  RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED,
   RPC_CHANNELS.settings.GET_NETWORK_PROXY,
   RPC_CHANNELS.dialog.OPEN_FOLDER,
 ] as const
@@ -137,12 +144,10 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.workspace.SETTINGS_UPDATE, async (ctx, workspaceId: string, key: string, value: unknown) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
-    const normalizedValue = key === 'workingDirectory' && typeof value === 'string'
-      ? value.trim()
-      : value
+    const normalizedValue = value
 
     // Validate key is a known workspace setting
-    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'workingDirectory', 'localMcpEnabled', 'defaultLlmConnection']
+    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'localMcpEnabled', 'defaultLlmConnection']
     if (!validKeys.includes(key)) {
       throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
     }
@@ -167,11 +172,6 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       // Store in localMcpServers.enabled (top-level, not in defaults)
       config.localMcpServers = config.localMcpServers || { enabled: true }
       config.localMcpServers.enabled = Boolean(normalizedValue)
-    } else if (key === 'workingDirectory') {
-      // Deprecated: cwd is workspace identity. Keep the key accepted so older
-      // renderers can clear stale values, but never persist a divergent cwd.
-      config.defaults = config.defaults || {}
-      delete config.defaults.workingDirectory
     } else {
       // Update the setting in defaults
       config.defaults = config.defaults || {}

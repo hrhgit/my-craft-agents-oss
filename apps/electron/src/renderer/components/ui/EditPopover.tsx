@@ -384,7 +384,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
   'add-skill': (location) => ({
     context: {
       label: 'Add Skill',
-      filePath: `${location}/skills/`, // location is the workspace root path
+      filePath: `${location}/.pi/skills/`, // location is the workspace root path
       context:
         'The user wants to add a new skill to their workspace. ' +
         'Skills are specialized instructions with a SKILL.md file containing YAML frontmatter (name, description) and markdown instructions. ' +

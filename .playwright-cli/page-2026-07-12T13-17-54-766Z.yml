@@ -1,0 +1,192 @@
+- generic [ref=f15e2]:
+  - generic [ref=f15e7]:
+    - generic [ref=f15e9]:
+      - generic [ref=f15e10]:
+        - generic [ref=f15e11]:
+          - button "切换侧栏" [ref=f15e12]
+          - button "Craft 菜单" [ref=f15e15]
+        - generic [ref=f15e18]:
+          - button "返回" [disabled]
+          - button "前进" [disabled]
+          - button "选择 Workspace" [ref=f15e20] [cursor=pointer]:
+            - generic [ref=f15e21]:
+              - generic [ref=f15e22]: _
+              - generic [ref=f15e23]: _
+            - generic [ref=f15e24]: _chat
+      - generic [ref=f15e27]:
+        - button "添加面板" [ref=f15e28]
+        - button "帮助和文档" [ref=f15e30]
+    - generic [ref=f15e36]:
+      - generic [ref=f15e41]:
+        - button "新建会话" [ref=f15e44]
+        - navigation "Main navigation" [ref=f15e47]:
+          - generic [ref=f15e48]:
+            - button "所有会话 4" [ref=f15e49]:
+              - text: 所有会话
+              - generic [ref=f15e58]: "4"
+            - generic [ref=f15e61]:
+              - generic [ref=f15e63]:
+                - button [ref=f15e64]:
+                  - button "积压 0" [ref=f15e66]:
+                    - text: 积压
+                    - generic [ref=f15e72]: "0"
+                - button [ref=f15e73]:
+                  - button "待办 4" [ref=f15e75]:
+                    - text: 待办
+                    - generic [ref=f15e81]: "4"
+                - button [ref=f15e82]:
+                  - button "待审查 0" [ref=f15e84]:
+                    - text: 待审查
+                    - generic [ref=f15e91]: "0"
+                - button [ref=f15e92]:
+                  - button "完成 0" [ref=f15e94]:
+                    - text: 完成
+                    - generic [ref=f15e101]: "0"
+                - button [ref=f15e102]:
+                  - button "已取消 0" [ref=f15e104]:
+                    - text: 已取消
+                    - generic [ref=f15e111]: "0"
+              - status [ref=f15e112]
+              - generic [ref=f15e115]:
+                - button "已标记 0" [ref=f15e117]:
+                  - text: 已标记
+                  - generic [ref=f15e122]: "0"
+                - button [ref=f15e124]
+          - button [ref=f15e130]
+          - generic [ref=f15e141]:
+            - button "数据源 0" [ref=f15e142]:
+              - text: 数据源
+              - generic [ref=f15e153]: "0"
+            - navigation "Sub navigation" [ref=f15e156]:
+              - button "API 0" [ref=f15e160]:
+                - text: API
+                - generic [ref=f15e165]: "0"
+              - button "MCP 0" [ref=f15e168]:
+                - text: MCP
+                - generic [ref=f15e175]: "0"
+              - button "本地文件夹 0" [ref=f15e178]:
+                - text: 本地文件夹
+                - generic [ref=f15e182]: "0"
+          - button "技能 24" [ref=f15e184]:
+            - text: 技能
+            - generic [ref=f15e188]: "24"
+          - generic [ref=f15e189]:
+            - button "自动化 0" [ref=f15e190]:
+              - text: 自动化
+              - generic [ref=f15e199]: "0"
+            - navigation "Sub navigation" [ref=f15e202]:
+              - button "定时任务 0" [ref=f15e206]:
+                - text: 定时任务
+                - generic [ref=f15e211]: "0"
+              - button "事件触发 0" [ref=f15e214]:
+                - text: 事件触发
+                - generic [ref=f15e222]: "0"
+              - button "智能体 0" [ref=f15e225]:
+                - text: 智能体
+                - generic [ref=f15e230]: "0"
+          - button [ref=f15e234]
+          - button [ref=f15e240]
+      - generic [ref=f15e250]:
+        - generic [ref=f15e251]:
+          - heading "所有会话" [level=1] [ref=f15e255]
+          - button [ref=f15e257]
+        - listbox "Sessions" [ref=f15e264]:
+          - generic [ref=f15e265]:
+            - generic [ref=f15e266]:
+              - button "今天" [ref=f15e267] [cursor=pointer]
+              - option "Change todo state Loading 读取小文本文件 0秒" [selected] [ref=f15e579]:
+                - generic [ref=f15e276]:
+                  - generic [ref=f15e277]:
+                    - button "Change todo state" [ref=f15e278] [cursor=pointer]
+                    - status "Loading" [ref=f15e581]
+                  - generic [ref=f15e282]: 读取小文本文件
+                  - generic [ref=f15e283]: 0秒
+              - option "Change todo state 在线问候 1小时" [ref=f15e295]:
+                - generic [ref=f15e297]:
+                  - button "Change todo state" [ref=f15e299] [cursor=pointer]
+                  - generic [ref=f15e303]: 在线问候
+                  - generic [ref=f15e304]: 1小时
+            - generic [ref=f15e313]:
+              - button "6月 11" [ref=f15e314] [cursor=pointer]
+              - option "Change todo state 何睿骅_AI_Agent实习简历_最终版.docx 帮我改下我的简历，我简历中提到的这些项目分别位于… 1月" [ref=f15e320]:
+                - generic [ref=f15e322]:
+                  - button "Change todo state" [ref=f15e324] [cursor=pointer]
+                  - generic [ref=f15e328]: 何睿骅_AI_Agent实习简历_最终版.docx 帮我改下我的简历，我简历中提到的这些项目分别位于…
+                  - generic [ref=f15e329]: 1月
+            - generic [ref=f15e338]:
+              - button "6月 10" [ref=f15e339] [cursor=pointer]
+              - option "Change todo state 帮我看下我C盘的codex的日志文件，有多大，它可不可以部分清理，比如只清理7天前的？ 1月" [ref=f15e345]:
+                - generic [ref=f15e347]:
+                  - button "Change todo state" [ref=f15e349] [cursor=pointer]
+                  - generic [ref=f15e353]: 帮我看下我C盘的codex的日志文件，有多大，它可不可以部分清理，比如只清理7天前的？
+                  - generic [ref=f15e354]: 1月
+      - generic [ref=f15e366]:
+        - generic [ref=f15e367]:
+          - button [ref=f15e370]:
+            - heading "读取小文本文件" [level=1] [ref=f15e372]
+          - button "Share session" [ref=f15e377]
+          - button "关闭" [ref=f15e381]
+        - generic [ref=f15e388]:
+          - generic [ref=f15e394]:
+            - generic [ref=f15e396]:
+              - paragraph [ref=f15e401]: 请使用工具读取当前目录中的一个小文本文件，只回复文件名。
+              - generic [ref=f15e403]:
+                - button "4 步骤已完成" [ref=f15e405]:
+                  - generic [ref=f15e409]: "4"
+                  - generic [ref=f15e410]: 步骤已完成
+                  - button [ref=f15e413]
+                - generic [ref=f15e419]:
+                  - button "全屏查看" [ref=f15e420]
+                  - paragraph [ref=f15e429]:
+                    - link "config.json" [ref=f15e430] [cursor=pointer]:
+                      - /url: config.json
+                  - generic [ref=f15e431]:
+                    - generic [ref=f15e432]:
+                      - button "复制" [ref=f15e433]
+                      - button "Markdown" [ref=f15e438]
+                    - button "分支选项" [ref=f15e444]
+              - paragraph [ref=f15e453]: 请用 pwsh 工具运行 Start-Sleep -Seconds 12，然后只回复完成。
+              - generic [ref=f15e455]:
+                - button "1 步骤已完成" [ref=f15e457]:
+                  - generic [ref=f15e461]: "1"
+                  - generic [ref=f15e462]: 步骤已完成
+                  - button [ref=f15e465]
+                - generic [ref=f15e471]:
+                  - button "全屏查看" [ref=f15e472]
+                  - paragraph [ref=f15e481]: 完成
+                  - generic [ref=f15e482]:
+                    - generic [ref=f15e483]:
+                      - button "复制" [ref=f15e484]
+                      - button "Markdown" [ref=f15e489]
+                    - button "分支选项" [ref=f15e495]
+              - paragraph [ref=f15e595]: 请用 pwsh 工具运行 Start-Sleep -Seconds 15，然后只回复完成。
+              - generic [ref=f15e598]:
+                - status "Loading" [ref=f15e599]
+                - generic [ref=f15e609]: Thinking...
+            - generic [ref=f15e610]:
+              - status "Loading" [ref=f15e612]
+              - generic [ref=f15e622]: 稍等...
+          - generic [ref=f15e500]:
+            - generic [ref=f15e501]:
+              - generic [ref=f15e502]:
+                - 'button "对话模式: 正常" [ref=f15e504]':
+                  - generic [ref=f15e508]: 正常
+                - button "待办" [ref=f15e512] [cursor=pointer]
+              - button "信息" [ref=f15e521]
+            - generic [ref=f15e529]:
+              - generic [ref=f15e530]:
+                - textbox [active] [ref=f15e531]
+                - generic: 按 Shift + Return 换行
+              - generic [ref=f15e533]:
+                - generic [ref=f15e534]:
+                  - button "附加文件" [ref=f15e535]
+                  - 'button "Permission mode: 执行" [ref=f15e539]':
+                    - generic [ref=f15e542]: 执行
+                  - button "选择数据源" [ref=f15e546]
+                - generic [ref=f15e553]:
+                  - generic "上下文" [ref=f15e554]
+                  - button [ref=f15e558]
+                  - 'button "思考: 高" [ref=f15e570]':
+                    - generic [ref=f15e571]: 高
+                  - button "停止回复" [ref=f15e624]
+  - region "Notifications alt+T"

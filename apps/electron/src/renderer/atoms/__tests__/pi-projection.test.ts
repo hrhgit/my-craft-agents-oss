@@ -8,7 +8,9 @@ import {
   applyPiProjectionSnapshotAtom,
   createPiProjectionState,
   insertOptimisticPiUser,
+  isPiProjectionProcessing,
   piProjectionAtomFamily,
+  piProjectionIsProcessingAtomFamily,
   removeOptimisticPiUser,
 } from '../pi-projection'
 
@@ -57,6 +59,9 @@ describe('Pi projection reducer', () => {
       `content:user:${mutationId}`,
       `artifact:attachment:${mutationId}:att-1`,
     ])
+    expect(state.entitiesById[`artifact:attachment:${mutationId}:att-1`]?.payload).toMatchObject({
+      ownerMessageId: mutationId,
+    })
     state = removeOptimisticPiUser(state, mutationId)
     expect(state.entityIds).toEqual([])
   })
@@ -66,7 +71,10 @@ describe('Pi projection reducer', () => {
     let state = insertOptimisticPiUser(createPiProjectionState('session-1'), mutationId, 'hello')
     const entityId = `content:user:${mutationId}`
     expect(state.entityIds).toEqual([entityId])
-    expect(state.entitiesById[entityId]?.payload).toMatchObject({ optimistic: true })
+    expect(state.entitiesById[entityId]?.payload).toMatchObject({
+      optimistic: true,
+      messageId: mutationId,
+    })
 
     state = applyPiProjectionEvent(state, event({
       entityId,
@@ -223,5 +231,45 @@ describe('Pi projection reducer', () => {
     store.set(applyPiProjectionSnapshotAtom, snapshot({ sessionId: 'session-1', lastSeq: 8 }))
     expect(store.get(piProjectionAtomFamily('session-1')).lastSeq).toBe(8)
     expect(store.get(piProjectionAtomFamily('session-2')).lastSeq).toBe(1)
+  })
+
+  it('derives shell processing state only from the latest Pi lifecycle entity', () => {
+    const store = createStore()
+    store.set(applyPiProjectionSnapshotAtom, snapshot({
+      lastSeq: 3,
+      entities: [
+        {
+          entityId: 'lifecycle:start', entityType: 'conversation', entityVersion: 1,
+          createdSeq: 1, kind: 'agent_start', payload: { status: 'running' },
+          lastEventId: 'event-1', lastSeq: 1,
+        },
+        {
+          entityId: 'content-1', entityType: 'content_block', entityVersion: 1,
+          createdSeq: 2, kind: 'assistant_text', payload: { text: 'streaming' },
+          lastEventId: 'event-3', lastSeq: 3,
+        },
+      ],
+    }))
+
+    expect(isPiProjectionProcessing(store.get(piProjectionAtomFamily('session-1')))).toBe(true)
+    expect(store.get(piProjectionIsProcessingAtomFamily('session-1'))).toBe(true)
+
+    store.set(applyPiProjectionSnapshotAtom, snapshot({
+      lastSeq: 4,
+      entities: [
+        {
+          entityId: 'lifecycle:start', entityType: 'conversation', entityVersion: 1,
+          createdSeq: 1, kind: 'agent_start', payload: { status: 'running' },
+          lastEventId: 'event-1', lastSeq: 1,
+        },
+        {
+          entityId: 'lifecycle:end', entityType: 'conversation', entityVersion: 1,
+          createdSeq: 4, kind: 'agent_end', payload: { status: 'interrupted' },
+          lastEventId: 'event-4', lastSeq: 4,
+        },
+      ],
+    }))
+
+    expect(store.get(piProjectionIsProcessingAtomFamily('session-1'))).toBe(false)
   })
 })

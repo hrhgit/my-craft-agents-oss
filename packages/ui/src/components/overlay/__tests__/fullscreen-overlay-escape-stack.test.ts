@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
-import { handleFullscreenEscapeWithStack } from '../FullscreenOverlayBase'
+import {
+  handleFullscreenEscapeWithStack,
+  shouldDismissFullscreenOverlayFromTarget,
+} from '../FullscreenOverlayBase'
 import { setDismissibleLayerBridge } from '../../../lib/dismissible-layer-bridge'
 
 afterEach(() => {
@@ -25,5 +28,15 @@ describe('handleFullscreenEscapeWithStack', () => {
     const handled = handleFullscreenEscapeWithStack()
     expect(handled).toBe(true)
     expect(handleEscape).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('shouldDismissFullscreenOverlayFromTarget', () => {
+  it('dismisses clicks that are not inside a marked content boundary', () => {
+    expect(shouldDismissFullscreenOverlayFromTarget({ closest: () => null } as unknown as EventTarget)).toBe(true)
+  })
+
+  it('keeps the overlay open for clicks inside a marked content boundary', () => {
+    expect(shouldDismissFullscreenOverlayFromTarget({ closest: () => ({}) } as unknown as EventTarget)).toBe(false)
   })
 })

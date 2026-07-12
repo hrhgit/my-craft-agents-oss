@@ -53,13 +53,19 @@ export function insertOptimisticPiUser(
     Object.create(null) as Record<string, PiProjectionEntityV1>,
     state.entitiesById,
   )
+  const occurredAt = Date.now()
   entitiesById[entityId] = {
     entityId,
     entityType: 'content_block',
     entityVersion: 0,
     createdSeq: state.lastSeq + 1,
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
     kind: 'user_text',
-    payload: { role: 'user', text, streaming: false, clientMutationId, optimistic: true },
+    payload: {
+      role: 'user', messageId: clientMutationId, text, streaming: false,
+      clientMutationId, optimistic: true, timestamp: Date.now(),
+    },
     lastEventId: `optimistic:${clientMutationId}`,
     lastSeq: state.lastSeq + 1,
   }
@@ -71,8 +77,13 @@ export function insertOptimisticPiUser(
       entityType: 'artifact_ref',
       entityVersion: 0,
       createdSeq: state.lastSeq + 2 + order,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
       kind: 'user_attachment',
-      payload: { attachment, clientMutationId, contentEntityId: entityId, order, optimistic: true },
+      payload: {
+        attachment, clientMutationId, ownerMessageId: clientMutationId,
+        contentEntityId: entityId, order, optimistic: true,
+      },
       lastEventId: `optimistic:${clientMutationId}:attachment:${attachment.id}`,
       lastSeq: state.lastSeq + 2 + order,
     }
@@ -151,6 +162,8 @@ export function applyPiProjectionEvent(
       entityType: event.entityType,
       entityVersion: event.entityVersion,
       createdSeq: existing?.createdSeq ?? event.seq,
+      createdAt: existing?.createdAt ?? event.occurredAt,
+      updatedAt: event.occurredAt ?? existing?.updatedAt,
       turnId: event.turnId,
       kind: event.kind,
       payload: event.payload,
@@ -228,6 +241,37 @@ export function applyPiProjectionSnapshot(
 
 export const piProjectionAtomFamily = atomFamily(
   (sessionId: string) => atom<PiProjectionState>(createPiProjectionState(sessionId)),
+  (a, b) => a === b,
+)
+
+const PI_PROCESSING_LIFECYCLE_KINDS = new Set([
+  'agent_start',
+  'agent_end',
+  'turn_start',
+  'turn_end',
+  'compaction_start',
+  'compaction_end',
+  'runtime_error',
+])
+
+/** Lightweight projection-owned processing state for shell-level actions. */
+export function isPiProjectionProcessing(state: PiProjectionState): boolean {
+  if (state.syncState !== 'synced') return false
+
+  let latest: PiProjectionEntityV1 | undefined
+  for (const entityId of state.entityIds) {
+    const entity = state.entitiesById[entityId]
+    if (!entity || !PI_PROCESSING_LIFECYCLE_KINDS.has(entity.kind)) continue
+    if (!latest || entity.lastSeq > latest.lastSeq) latest = entity
+  }
+
+  return latest?.kind === 'agent_start'
+    || latest?.kind === 'turn_start'
+    || latest?.kind === 'compaction_start'
+}
+
+export const piProjectionIsProcessingAtomFamily = atomFamily(
+  (sessionId: string) => atom((get) => isPiProjectionProcessing(get(piProjectionAtomFamily(sessionId)))),
   (a, b) => a === b,
 )
 

@@ -237,10 +237,10 @@ function buildCraftMetadataOnDisk(
     workspaceRootPath: toPortablePath(session.workspaceRootPath),
     workingDirectory: toPortablePath(session.workspaceRootPath),
     lastUsedAt: session.lastUsedAt ?? Date.now(),
-    messageCount: session.messages.length,
-    preview: extractPreview(session.messages),
-    lastMessageRole: extractLastMessageRole(session.messages),
-    lastFinalMessageId: extractLastFinalMessageId(session.messages),
+    messageCount: session.messageCount ?? session.messages.length,
+    preview: session.preview ?? extractPreview(session.messages),
+    lastMessageRole: session.lastMessageRole ?? extractLastMessageRole(session.messages),
+    lastFinalMessageId: session.lastFinalMessageId ?? extractLastFinalMessageId(session.messages),
     tokenUsage: session.tokenUsage,
   } as CraftMetadataOnDisk & { craftId?: unknown };
 
@@ -276,10 +276,7 @@ function isCanonicalStoredMessage(message: StoredMessage): boolean {
 }
 
 function getCanonicalMessageKeys(message: StoredMessage): Set<string> {
-  const canonicalKeys = new Set(['id', 'type', 'timestamp']);
-  if (message.type !== 'user') {
-    canonicalKeys.add('content');
-  }
+  const canonicalKeys = new Set(['id', 'type', 'timestamp', 'content']);
   if (message.type === 'tool') {
     canonicalKeys.add('toolName');
     canonicalKeys.add('toolUseId');
@@ -383,22 +380,49 @@ function mergeCraftOverlayMessages(messages: StoredMessage[], overlay: CraftOver
     for (const overlayMessage of overlay.messages) {
       const existingIndex = indexById.get(overlayMessage.id);
       if (existingIndex === undefined) {
-        if (typeof overlayMessage.type !== 'string' || typeof overlayMessage.content !== 'string') {
-          continue;
-        }
+        const inferredType = typeof overlayMessage.type === 'string'
+          ? overlayMessage.type
+          : overlayMessage.attachments?.length || overlayMessage.badges?.length
+            ? 'user'
+            : 'assistant';
+        const carrier = {
+          type: inferredType,
+          content: typeof overlayMessage.content === 'string' ? overlayMessage.content : '',
+          timestamp: typeof overlayMessage.timestamp === 'number' ? overlayMessage.timestamp : 0,
+          ...overlayMessage,
+          annotations: overlayMessage.annotations ?? overlay.annotations?.[overlayMessage.id],
+        } as StoredMessage;
         indexById.set(overlayMessage.id, merged.length);
-        merged.push(overlayMessage as StoredMessage);
+        merged.push(carrier);
         continue;
       }
       const existingMessage = merged[existingIndex];
       if (!existingMessage) continue;
+      const {
+        content: _overlayContent,
+        timestamp: _overlayTimestamp,
+        type: _overlayType,
+        ...craftPatch
+      } = overlayMessage;
       merged[existingIndex] = {
         ...existingMessage,
-        ...overlayMessage,
+        ...craftPatch,
       };
     }
-    merged.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   }
+
+  for (const [messageId, annotations] of Object.entries(overlay.annotations ?? {})) {
+    if (!annotations?.length || merged.some(message => message.id === messageId)) continue;
+    merged.push({
+      id: messageId,
+      type: 'assistant',
+      content: '',
+      timestamp: 0,
+      annotations,
+    });
+  }
+
+  merged.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 
   return merged;
 }
@@ -526,57 +550,12 @@ export async function writeTreeSessionCraftMetadataAsync(
   }
 }
 
-/**
- * Create a new Pi tree JSONL v3 session file from a StoredSession.
- *
- * Used when writing to a file that does not yet exist (e.g., bundle import).
- * Creates the Pi header + message entries, then merges Craft metadata into the
- * header's `craft` field via {@link writeTreeSessionCraftMetadata}.
- *
- * Returns true on success, false on failure.
- */
-export function createNewTreeSessionFile(sessionFile: string, session: StoredSession): boolean {
-  try {
-    const cwd = expandPath(session.workspaceRootPath);
-    const timestamp = new Date(session.createdAt || Date.now()).toISOString();
-    // Pi 顶层 id 用 sdkSessionId（Pi UUID），无则退回 craftId
-    const piSessionId = session.sdkSessionId || session.craftId;
-
-    const header: TreeSessionHeader = {
-      type: 'session',
-      version: 3,
-      id: piSessionId,
-      timestamp,
-      cwd,
-    };
-
-    const lines: string[] = [JSON.stringify(header)];
-
-    let parentId: string | null = null;
-    for (const msg of session.messages) {
-      const entry = storedMessageToTreeEntry(msg, parentId);
-      lines.push(JSON.stringify(entry));
-      parentId = entry.id;
-    }
-
-    const sessionDir = dirname(sessionFile);
-    if (!existsSync(sessionDir)) {
-      mkdirSync(sessionDir, { recursive: true });
-    }
-
-    atomicWriteFileSync(sessionFile, lines.join('\n') + '\n');
-
-    // Merge Craft metadata into the header's `craft` field
-    writeTreeSessionCraftMetadata(sessionFile, session);
-    writeCraftSessionOverlay(sessionFile, session);
-    return true;
-  } catch (error) {
-    debug('[tree-jsonl] Failed to create new tree session file:', sessionFile, error);
-    return false;
-  }
-}
-
 type PiAppendMessageInput = Parameters<PiSessionManager['appendMessage']>[0];
+
+export interface PiBranchMessageEntryInput {
+  id: string;
+  message: unknown;
+}
 
 function storedMessageToPiAppendMessage(msg: StoredMessage): PiAppendMessageInput | null {
   const timestamp = msg.timestamp ?? Date.now();
@@ -584,7 +563,9 @@ function storedMessageToPiAppendMessage(msg: StoredMessage): PiAppendMessageInpu
   if (msg.type === 'user' || msg.type === 'assistant') {
     return {
       role: msg.type,
-      content: msg.content,
+      content: msg.type === 'assistant'
+        ? [{ type: 'text', text: msg.content }]
+        : msg.content,
       timestamp,
     } as PiAppendMessageInput;
   }
@@ -624,9 +605,12 @@ function isTreeMessageEntry(entry: TreeSessionEntry): entry is TreeMessageEntry 
 
 function comparablePiMessage(message: TreeAgentMessage | PiAppendMessageInput): string {
   const record = message as Record<string, unknown>;
+  const content = record.role === 'assistant' && typeof record.content === 'string'
+    ? [{ type: 'text', text: record.content }]
+    : record.content;
   return JSON.stringify({
     role: record.role,
-    content: record.content,
+    content,
     toolCallId: record.toolCallId,
     toolName: record.toolName,
     isError: record.isError,
@@ -681,88 +665,39 @@ export function appendStoredMessagesViaPiSessionManager(
   return idMap;
 }
 
-/**
- * Convert a StoredMessage to a Pi tree message entry.
- * Best-effort: preserves role, content, and tool fields. Messages that don't
- * map cleanly to a Pi message entry (info, status) are emitted as
- * custom_message entries so the conversation history is not lost.
- */
-function storedMessageToTreeEntry(msg: StoredMessage, parentId: string | null): { type: string; id: string; parentId: string | null; timestamp: string; [key: string]: unknown } {
-  const timestamp = msg.timestamp
-    ? new Date(msg.timestamp).toISOString()
-    : new Date().toISOString();
+/** Copies canonical Pi message entries without flattening content blocks. */
+export function appendPiBranchMessagesViaSessionManager(
+  sessionFile: string,
+  sessionDir: string,
+  cwd: string,
+  entries: PiBranchMessageEntryInput[],
+): Map<string, string> {
+  const manager = PiSessionManager.open(sessionFile, sessionDir, cwd);
+  const idMap = new Map<string, string>();
+  const appendableEntries = entries.filter((entry): entry is { id: string; message: PiAppendMessageInput } => (
+    typeof entry.id === 'string' && entry.id.length > 0 && isRecord(entry.message)
+  ));
+  const existingMessages = (manager.getEntries() as unknown as TreeSessionEntry[]).filter(isTreeMessageEntry);
 
-  // Tool result message
-  if (msg.type === 'tool' && msg.toolUseId && msg.toolResult !== undefined) {
-    return {
-      type: 'message',
-      id: msg.id,
-      parentId,
-      timestamp,
-      message: {
-        role: 'toolResult',
-        toolCallId: msg.toolUseId,
-        toolName: msg.toolName,
-        content: msg.toolResult ?? '',
-        isError: !!msg.isError,
-        timestamp: msg.timestamp,
-      },
-    };
+  let matchedCount = 0;
+  for (; matchedCount < Math.min(existingMessages.length, appendableEntries.length); matchedCount += 1) {
+    const existing = existingMessages[matchedCount]!;
+    const expected = appendableEntries[matchedCount]!;
+    if (!piMessagesEquivalent(existing.message, expected.message)) {
+      throw new Error(`Target session already contains non-matching transcript entries: ${sessionFile}`);
+    }
+    idMap.set(expected.id, existing.id);
   }
 
-  // Tool call message (has toolInput but no toolResult)
-  if (msg.type === 'tool' && msg.toolName && msg.toolInput !== undefined) {
-    return {
-      type: 'message',
-      id: msg.id,
-      parentId,
-      timestamp,
-      message: {
-        role: 'assistant',
-        content: [
-          {
-            type: 'toolCall',
-            id: msg.toolUseId ?? msg.id,
-            name: msg.toolName,
-            arguments: msg.toolInput,
-          },
-        ],
-        timestamp: msg.timestamp,
-      },
-    };
+  if (existingMessages.length > appendableEntries.length) {
+    debug(`[tree-jsonl] Branch target already has ${existingMessages.length - appendableEntries.length} extra transcript entries; skipping duplicate append for ${sessionFile}`);
+    return idMap;
   }
 
-  // User / assistant messages
-  if (msg.type === 'user' || msg.type === 'assistant') {
-    return {
-      type: 'message',
-      id: msg.id,
-      parentId,
-      timestamp,
-      message: {
-        role: msg.type,
-        content: msg.content,
-        timestamp: msg.timestamp,
-      },
-    };
+  for (const entry of appendableEntries.slice(matchedCount)) {
+    idMap.set(entry.id, manager.appendMessage(structuredClone(entry.message)));
   }
-
-  // Info / status / plan / error → custom_message (preserves content)
-  return {
-    type: 'custom_message',
-    id: msg.id,
-    parentId,
-    timestamp,
-    customType: msg.type,
-    content: msg.content,
-    display: true,
-    details: {
-      toolName: msg.toolName,
-      infoLevel: msg.infoLevel,
-      statusType: msg.statusType,
-      isError: msg.isError,
-    },
-  };
+  return idMap;
 }
 
 function isTreeEntry(value: unknown): value is TreeSessionEntry {

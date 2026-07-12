@@ -104,7 +104,7 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
   server.handle(RPC_CHANNELS.window.OPEN_SESSION_IN_NEW_WINDOW, async (_ctx, workspaceId: string, sessionId: string) => {
     if (!windowManager) return
     const session = await deps.sessionManager.getSession(sessionId)
-    if (!session || session.workspaceId !== workspaceId || session.conversationFormat !== 'pi-projection-v1') {
+    if (!session || session.workspaceId !== workspaceId) {
       throw new Error(`Session is not available in the Pi-first UI: ${sessionId}`)
     }
     const deepLink = `craftagents://allSessions/session/${sessionId}`

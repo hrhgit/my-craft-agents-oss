@@ -5,6 +5,7 @@ import { AlertTriangle, Check, Circle, CircleDot, FileText, GitBranch, ListCheck
 import { cn } from '../../lib/utils'
 import { Markdown } from '../markdown'
 import { DocumentFormattedMarkdownOverlay } from '../overlay'
+import { formatCompletionClock, formatRequestDuration } from './turn-utils'
 
 type PlanTab = 'plan' | 'review' | 'checklist'
 type PlanAction = (artifactId: string) => Promise<ExtensionCommandResult>
@@ -24,6 +25,8 @@ export interface PlanArtifactCardProps {
   onRemoveAnnotation?: (messageId: string, annotationId: string) => void
   onUpdateAnnotation?: (messageId: string, annotationId: string, patch: Partial<AnnotationV1>) => void
   onBranch?: () => void
+  completedAt?: number
+  durationMs?: number
 }
 
 const STATE_LABELS: Record<PlanArtifactV1['state'], string> = {
@@ -75,6 +78,8 @@ export function PlanArtifactCard({
   onRemoveAnnotation,
   onUpdateAnnotation,
   onBranch,
+  completedAt,
+  durationMs,
 }: PlanArtifactCardProps) {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = React.useState<PlanTab>('plan')
@@ -86,6 +91,8 @@ export function PlanArtifactCard({
     || artifact.review.status === 'failed'
     || artifact.review.verdict === 'fail'
   const completed = artifact.checklist.filter(item => item.status === 'completed').length
+  const hasCompletionTiming = completedAt !== undefined && durationMs !== undefined
+    && Number.isFinite(completedAt) && Number.isFinite(durationMs) && durationMs >= 0
 
   const runAction = React.useCallback(async (
     action: 'execute' | 'compact' | 'refine',
@@ -180,7 +187,7 @@ export function PlanArtifactCard({
         </aside>
       </div>
 
-      {(isReady || onRefine || onBranch || messageId) && (
+      {(isReady || onRefine || onBranch || messageId || hasCompletionTiming) && (
         <footer className="border-t border-border/60 bg-muted/15 px-3 py-2.5">
           <div className="flex flex-wrap items-center gap-2">
             {isReady && onExecute && (
@@ -199,6 +206,11 @@ export function PlanArtifactCard({
               </button>
             )}
             <span className="min-w-2 flex-1" />
+            {hasCompletionTiming && (
+              <span className="shrink-0 tabular-nums text-xs text-muted-foreground/70" data-response-completion-time={completedAt}>
+                {formatCompletionClock(completedAt!)} {t('turnCard.elapsed')} {formatRequestDuration(durationMs!)}
+              </span>
+            )}
             {messageId && (
               <button type="button" onClick={() => setIsFullscreen(true)} className="inline-flex h-8 items-center gap-1.5 px-2 text-xs text-muted-foreground transition-colors hover:text-foreground">
                 <Maximize2 className="h-3.5 w-3.5" />{t('plan.artifact.readAnnotate')}

@@ -55,7 +55,7 @@ export function DataTableOverlay({
       headerActions={headerActions}
     >
       {/* Table content — scrolling is handled by the parent overlay's scroll container */}
-      <div>
+      <div data-fullscreen-overlay-dismiss-boundary>
         {children}
       </div>
     </PreviewOverlay>

@@ -17,7 +17,6 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
 import { CONFIG_DIR, PI_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
 import { getDefaultStatusConfig, saveStatusConfig, ensureDefaultIconFiles } from '../statuses/storage.ts';
@@ -76,7 +75,7 @@ export function getWorkspaceSourcesPath(rootPath: string): string {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function getWorkspaceSkillsPath(rootPath: string): string {
-  return join(rootPath, 'skills');
+  return join(rootPath, '.pi', 'skills');
 }
 
 // ------------------------------------------------------------
@@ -87,8 +86,7 @@ export function getWorkspaceSkillsPath(rootPath: string): string {
  * Resolve the cwd used for a workspace.
  *
  * Complete-unification semantics: workspace = cwd = Pi session bucket =
- * configuration scope. The legacy `defaults.workingDirectory` field is kept
- * only for migration/compatibility and never influences new session storage.
+ * configuration scope.
  */
 export function getWorkspaceCwd(rootPath: string): string {
   return rootPath;
@@ -109,9 +107,7 @@ export function getWorkspacePiSessionsDir(rootPath: string): string {
  * Count Pi sessions for a workspace by scanning
  * `~/.pi/agent/sessions/{encoded-workspace-root}/`.
  *
- * M12: Scanning coverage matches `listCraftSessionDirs` in sessions/storage.ts —
- * counts both flat `.jsonl` files (new Pi tree format) and legacy subdirectory
- * format (`{sessionId}/session.jsonl`). Does not read headers, so corrupt files
+ * Counts flat Pi tree JSONL files. Does not read headers, so corrupt files
  * that `listSessions` would skip are still counted here — the count is a close
  * approximation, not an exact match to the rendered list length.
  */
@@ -121,14 +117,7 @@ export function countSessionsByCwd(rootPath: string): number {
   try {
     let count = 0;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        count++;
-      } else if (entry.isDirectory()) {
-        // Legacy subdirectory format: {sessionId}/session.jsonl
-        if (existsSync(join(dir, entry.name, 'session.jsonl'))) {
-          count++;
-        }
-      }
+      if (entry.isFile() && entry.name.endsWith('.jsonl')) count++;
     }
     return count;
   } catch {
@@ -150,11 +139,6 @@ export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
 
   try {
     const config = readJsonFileSync<WorkspaceConfig>(configPath);
-
-    // Expand path variables in defaults for portability
-    if (config.defaults?.workingDirectory) {
-      config.defaults.workingDirectory = expandPath(config.defaults.workingDirectory);
-    }
 
     // Compatibility: accept canonical or legacy permission mode names on read
     if (config.defaults?.permissionMode && typeof config.defaults.permissionMode === 'string') {
@@ -194,18 +178,10 @@ export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): 
     mkdirSync(rootPath, { recursive: true });
   }
 
-  // Convert paths to portable form for cross-machine compatibility
   const storageConfig: WorkspaceConfig = {
     ...config,
     updatedAt: Date.now(),
   };
-
-  if (storageConfig.defaults?.workingDirectory) {
-    storageConfig.defaults = {
-      ...storageConfig.defaults,
-      workingDirectory: toPortablePath(storageConfig.defaults.workingDirectory),
-    };
-  }
 
   // Use atomic write to prevent corruption on crash/interrupt
   atomicWriteFileSync(join(rootPath, 'config.json'), JSON.stringify(storageConfig, null, 2));
@@ -356,7 +332,6 @@ export function createWorkspaceAtPath(
     permissionMode: globalDefaults.workspaceDefaults.permissionMode,
     cyclablePermissionModes: globalDefaults.workspaceDefaults.cyclablePermissionModes,
     enabledSourceSlugs: [],
-    workingDirectory: undefined,
     ...defaults, // User-provided defaults override global defaults
   };
 

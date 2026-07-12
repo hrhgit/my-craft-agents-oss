@@ -1,0 +1,3 @@
+[     752ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:26318/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:26318/@vite/client:1034
+[    9337ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://127.0.0.1:26317/@fs/E:/_workSpace/_Agents/craft-agent/apps/webui/node_modules/.vite/deps/chunk-2YEZISON.js?v=83839e2b:21608
+[    9786ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:26317/api/config:0

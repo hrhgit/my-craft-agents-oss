@@ -1,192 +1,102 @@
 import { describe, expect, it } from 'bun:test'
+import {
+  getActivePiBranchEntries,
+  getPiEntryMessageId,
+  resolvePiBranchTarget,
+  type PiBranchProjection,
+} from '@craft-agent/server-core/projection'
 
-type StoredMessage = { id: string }
-type StoredSession = {
-  sdkSessionId?: string
-  messages: StoredMessage[]
-}
-
-type BranchRequest = {
-  branchFromSessionId?: string
-  branchFromMessageId?: string
-}
-
-function validateBranchLikeSessionManager(args: {
-  request: BranchRequest
-  targetWorkspaceRootPath: string
-  targetProvider?: 'anthropic' | 'pi'
-  targetProviderType?: string
-  targetPiAuthProvider?: string
-  sourceManagedWorkspaceRootPath?: string
-  sourceManagedSdkSessionId?: string
-  sourceProvider?: 'anthropic' | 'pi'
-  sourceProviderType?: string
-  sourcePiAuthProvider?: string
-  sourceSession?: StoredSession
-}) {
-  const {
-    request,
-    targetWorkspaceRootPath,
-    targetProvider = 'anthropic',
-    targetProviderType,
-    targetPiAuthProvider,
-    sourceManagedWorkspaceRootPath,
-    sourceManagedSdkSessionId,
-    sourceProvider = 'anthropic',
-    sourceProviderType,
-    sourcePiAuthProvider,
-    sourceSession,
-  } = args
-
-  if (request.branchFromSessionId || request.branchFromMessageId) {
-    if (!request.branchFromSessionId || !request.branchFromMessageId) {
-      throw new Error('Invalid branch request: both branchFromSessionId and branchFromMessageId are required')
-    }
-
-    if (sourceManagedWorkspaceRootPath && sourceManagedWorkspaceRootPath !== targetWorkspaceRootPath) {
-      throw new Error('Invalid branch request: source session belongs to a different workspace')
-    }
-
-    const resolvedTargetProviderType = targetProviderType ?? (targetProvider === 'pi' ? 'pi' : 'anthropic')
-    const resolvedSourceProviderType = sourceProviderType ?? (sourceProvider === 'pi' ? 'pi' : 'anthropic')
-    const providerMismatch = sourceProvider !== targetProvider
-    const providerTypeMismatch = resolvedSourceProviderType !== resolvedTargetProviderType
-    const piAuthProviderMismatch = sourceProvider === 'pi' && sourcePiAuthProvider !== targetPiAuthProvider
-
-    if (providerMismatch || providerTypeMismatch || piAuthProviderMismatch) {
-      throw new Error('Branching is only supported within the same provider/backend. Switch this panel connection and try again.')
-    }
-
-    if (!sourceSession) {
-      throw new Error(`Invalid branch request: source session ${request.branchFromSessionId} not found`)
-    }
-
-    const branchIdx = sourceSession.messages.findIndex(m => m.id === request.branchFromMessageId)
-    if (branchIdx === -1) {
-      throw new Error(`Invalid branch request: message ${request.branchFromMessageId} not found in source session`)
-    }
-
-    const branchContextStrategy: 'sdk-fork' | 'seeded-fresh-session' = 'sdk-fork'
-
-    const branchFromSdkSessionId = sourceManagedSdkSessionId || sourceSession.sdkSessionId
-
-    if (!branchFromSdkSessionId) {
-      throw new Error('Cannot create branch yet: parent session SDK context is not initialized. Send one message in the parent session and try again.')
-    }
-
-    return {
-      sourceSessionId: request.branchFromSessionId,
-      sourceMessageId: request.branchFromMessageId,
-      copiedMessages: sourceSession.messages.slice(0, branchIdx + 1),
-      branchContextStrategy,
-      branchFromSdkSessionId,
-    }
+function projection(): PiBranchProjection {
+  return {
+    leafId: 'assistant-latest',
+    entries: [
+      {
+        id: 'user-root',
+        parentId: null,
+        type: 'message',
+        timestamp: '2026-07-12T00:00:00.000Z',
+        message: {
+          role: 'user',
+          clientMutationId: 'optimistic-user-1',
+          content: [{ type: 'text', text: 'first' }],
+          timestamp: 1000,
+        },
+      },
+      {
+        id: 'assistant-old',
+        parentId: 'user-root',
+        type: 'message',
+        timestamp: '2026-07-12T00:00:01.000Z',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'old answer' }],
+          timestamp: 2000,
+        },
+      },
+      {
+        id: 'user-latest',
+        parentId: 'assistant-old',
+        type: 'message',
+        timestamp: '2026-07-12T00:00:02.000Z',
+        message: { role: 'user', content: [{ type: 'text', text: 'latest' }], timestamp: 3000 },
+      },
+      {
+        id: 'assistant-latest',
+        parentId: 'user-latest',
+        type: 'message',
+        timestamp: '2026-07-12T00:00:03.000Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'latest answer' }], timestamp: 4000 },
+      },
+      {
+        id: 'abandoned-branch',
+        parentId: 'user-root',
+        type: 'message',
+        timestamp: '2026-07-12T00:00:04.000Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'not active' }], timestamp: 5000 },
+      },
+    ],
   }
-
-  return undefined
 }
 
-describe('session branching validation semantics', () => {
-  it('creates validated branch payload only for valid source/message', () => {
-    const sourceSession: StoredSession = {
-      sdkSessionId: 'sdk-parent',
-      messages: [{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }],
-    }
-
-    const result = validateBranchLikeSessionManager({
-      request: { branchFromSessionId: 'source-1', branchFromMessageId: 'm2' },
-      targetWorkspaceRootPath: '/ws-a',
-      sourceManagedWorkspaceRootPath: '/ws-a',
-      sourceSession,
-    })
-
-    expect(result).toBeDefined()
-    expect(result?.copiedMessages.map(m => m.id)).toEqual(['m1', 'm2'])
-    expect(result?.branchContextStrategy).toBe('sdk-fork')
-    expect(result?.branchFromSdkSessionId).toBe('sdk-parent')
+describe('Pi projection branch identity', () => {
+  it('walks only the active Pi leaf', () => {
+    expect(getActivePiBranchEntries(projection()).map(entry => entry.id)).toEqual([
+      'user-root',
+      'assistant-old',
+      'user-latest',
+      'assistant-latest',
+    ])
   })
 
-  it('rejects branch when parent sdk session id is missing', () => {
-    expect(() => validateBranchLikeSessionManager({
-      request: { branchFromSessionId: 'source-1', branchFromMessageId: 'm1' },
-      targetWorkspaceRootPath: '/ws-a',
-      targetProvider: 'anthropic',
-      sourceProvider: 'anthropic',
-      sourceManagedWorkspaceRootPath: '/ws-a',
-      sourceSession: { messages: [{ id: 'm1' }] },
-    })).toThrow('parent session SDK context is not initialized')
+  it('uses client mutation identity for users and stable timestamp identity for assistants', () => {
+    const entries = projection().entries
+    expect(getPiEntryMessageId(entries[0]!)).toBe('optimistic-user-1')
+    expect(getPiEntryMessageId(entries[1]!)).toBe('ts-2000')
   })
 
-  it('rejects pi branch when parent sdk session id is missing', () => {
-    expect(() => validateBranchLikeSessionManager({
-      request: { branchFromSessionId: 'source-1', branchFromMessageId: 'm1' },
-      targetWorkspaceRootPath: '/ws-a',
-      targetProvider: 'pi',
-      sourceProvider: 'pi',
-      sourceManagedWorkspaceRootPath: '/ws-a',
-      sourceSession: { messages: [{ id: 'm1' }] },
-    })).toThrow('parent session SDK context is not initialized')
+  it('resolves an older projected response and truncates the branch at its Pi entry', () => {
+    const result = resolvePiBranchTarget(projection(), 'ts-2000')
+    expect(result?.targetEntry.id).toBe('assistant-old')
+    expect(result?.branchEntries.map(entry => entry.id)).toEqual(['user-root', 'assistant-old'])
+    expect([...result!.canonicalEntryIds]).toEqual(['user-root', 'assistant-old'])
+    expect(result?.overlayMessageIds.has('optimistic-user-1')).toBe(true)
+    expect(result?.overlayMessageIds.has('ts-2000')).toBe(true)
+    expect(result?.overlayMessageIds.has('user-latest')).toBe(false)
   })
 
-  it('rejects cross-workspace branch request', () => {
-    expect(() => validateBranchLikeSessionManager({
-      request: { branchFromSessionId: 'source-1', branchFromMessageId: 'm1' },
-      targetWorkspaceRootPath: '/ws-a',
-      sourceManagedWorkspaceRootPath: '/ws-b',
-      sourceSession: { messages: [{ id: 'm1' }] },
-    })).toThrow('source session belongs to a different workspace')
+  it('accepts a canonical Pi entry id and rejects inactive or unknown targets', () => {
+    expect(resolvePiBranchTarget(projection(), 'assistant-old')?.targetEntry.id).toBe('assistant-old')
+    expect(resolvePiBranchTarget(projection(), 'ts-5000')).toBeNull()
+    expect(resolvePiBranchTarget(projection(), 'missing')).toBeNull()
   })
 
-  it('rejects missing branch message id in source session', () => {
-    expect(() => validateBranchLikeSessionManager({
-      request: { branchFromSessionId: 'source-1', branchFromMessageId: 'missing' },
-      targetWorkspaceRootPath: '/ws-a',
-      sourceManagedWorkspaceRootPath: '/ws-a',
-      sourceSession: { messages: [{ id: 'm1' }] },
-    })).toThrow('not found in source session')
-  })
-
-  it('allows branching for pi provider', () => {
-    const sourceSession: StoredSession = {
-      sdkSessionId: 'pi-parent',
-      messages: [{ id: 'm1' }],
-    }
-
-    const result = validateBranchLikeSessionManager({
-      request: { branchFromSessionId: 'source-1', branchFromMessageId: 'm1' },
-      targetWorkspaceRootPath: '/ws-a',
-      targetProvider: 'pi',
-      sourceProvider: 'pi',
-      sourceManagedWorkspaceRootPath: '/ws-a',
-      sourceSession,
-    })
-
-    expect(result).toBeDefined()
-    expect(result?.branchContextStrategy).toBe('sdk-fork')
-    expect(result?.branchFromSdkSessionId).toBe('pi-parent')
-  })
-
-  it('rejects cross-provider branch requests', () => {
-    expect(() => validateBranchLikeSessionManager({
-      request: { branchFromSessionId: 'source-1', branchFromMessageId: 'm1' },
-      targetWorkspaceRootPath: '/ws-a',
-      targetProvider: 'anthropic',
-      sourceProvider: 'pi',
-      sourceManagedWorkspaceRootPath: '/ws-a',
-      sourceSession: { messages: [{ id: 'm1' }] },
-    })).toThrow('Branching is only supported within the same provider/backend')
-  })
-
-  it('rejects pi branches when auth providers differ', () => {
-    expect(() => validateBranchLikeSessionManager({
-      request: { branchFromSessionId: 'source-1', branchFromMessageId: 'm1' },
-      targetWorkspaceRootPath: '/ws-a',
-      targetProvider: 'pi',
-      targetPiAuthProvider: 'openai-codex',
-      sourceProvider: 'pi',
-      sourcePiAuthProvider: 'github-copilot',
-      sourceManagedWorkspaceRootPath: '/ws-a',
-      sourceSession: { messages: [{ id: 'm1' }] },
-    })).toThrow('Branching is only supported within the same provider/backend')
+  it('rejects cyclic active branches', () => {
+    expect(() => getActivePiBranchEntries({
+      leafId: 'a',
+      entries: [
+        { id: 'a', parentId: 'b', type: 'message', timestamp: '2026-07-12T00:00:00.000Z' },
+        { id: 'b', parentId: 'a', type: 'message', timestamp: '2026-07-12T00:00:01.000Z' },
+      ],
+    })).toThrow('cyclic Pi session projection')
   })
 })

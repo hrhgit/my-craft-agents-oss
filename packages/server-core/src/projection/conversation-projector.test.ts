@@ -48,6 +48,23 @@ describe('ConversationProjector', () => {
     expect(new ConversationProjector('session-1', 'runtime-1', snapshot).createSnapshot()).toEqual(snapshot)
   })
 
+  it('preserves entity wall-clock times across updates and snapshot reloads', () => {
+    const projector = new ConversationProjector('session-1', 'runtime-1')
+    projector.apply(event(1, {
+      entityId: 'turn:1', entityType: 'turn', kind: 'turn_start', occurredAt: 1_783_861_200_000,
+    }))
+    projector.apply(event(2, {
+      entityId: 'turn:1', entityType: 'turn', entityVersion: 2, kind: 'turn_end', occurredAt: 1_783_861_265_432,
+    }))
+
+    const snapshot = projector.createSnapshot()
+    expect(snapshot.entities[0]).toMatchObject({
+      createdAt: 1_783_861_200_000,
+      updatedAt: 1_783_861_265_432,
+    })
+    expect(new ConversationProjector('session-1', 'runtime-1', snapshot).createSnapshot()).toEqual(snapshot)
+  })
+
   it('buffers a gap without exposing the later entity and drains when filled', () => {
     const projector = new ConversationProjector('session-1', 'runtime-1')
     projector.apply(event(1))
@@ -182,6 +199,7 @@ describe('ConversationProjector', () => {
   it('rejects events and snapshots for a different runtime identity', () => {
     const projector = new ConversationProjector('session-1', 'runtime-1')
 
+    expect(() => new ConversationProjector('session-1', '')).toThrow('Invalid Pi projection runtime identity')
     expect(() => projector.apply(event(1, { sessionId: 'session-2' }))).toThrow(ProjectionIdentityError)
     expect(() => projector.installSnapshot({
       schemaVersion: 1,
@@ -190,6 +208,42 @@ describe('ConversationProjector', () => {
       lastSeq: 0,
       entities: [],
     })).toThrow(ProjectionIdentityError)
+  })
+
+  it('continues a normalized timeline under a replacement runtime', () => {
+    const original = new ConversationProjector('session-1', 'runtime-1')
+    original.apply(event(1, { entityId: 'text', entityVersion: 1 }))
+    original.apply(event(2, { entityId: 'text', entityVersion: 2, payload: { text: 'old' } }))
+
+    const continued = original.continueWithRuntime('runtime-2')
+    expect(continued).not.toBe(original)
+    expect(continued.createSnapshot()).toEqual({
+      ...original.createSnapshot(),
+      runtimeId: 'runtime-2',
+    })
+    expect(continued.apply(event(3, {
+      runtimeId: 'runtime-2',
+      eventId: 'runtime-2:3',
+      entityId: 'text',
+      entityVersion: 3,
+      payload: { text: 'new' },
+    })).status).toBe('applied')
+    expect(continued.getEntity('text')).toMatchObject({
+      entityVersion: 3,
+      createdSeq: 1,
+      lastSeq: 3,
+      payload: { text: 'new' },
+    })
+    expect(() => continued.apply(event(4))).toThrow(ProjectionIdentityError)
+  })
+
+  it('does not replace a runtime while a sequence gap is buffered', () => {
+    const projector = new ConversationProjector('session-1', 'runtime-1')
+    projector.apply(event(2))
+
+    expect(() => projector.continueWithRuntime('runtime-2'))
+      .toThrow('Cannot replace a Pi projection runtime while events are buffered')
+    expect(projector.continueWithRuntime('runtime-1')).toBe(projector)
   })
 
   it('rejects malformed or conflicting snapshot entities', () => {

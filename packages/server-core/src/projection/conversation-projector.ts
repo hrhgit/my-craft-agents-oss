@@ -34,6 +34,10 @@ export class ConversationProjector {
   private readonly pendingEventIds = new Set<string>()
 
   constructor(sessionId: string, runtimeId: string, snapshot?: PiProjectionSnapshotV1) {
+    if (typeof sessionId !== 'string' || !sessionId
+      || typeof runtimeId !== 'string' || !runtimeId) {
+      throw new TypeError('Invalid Pi projection runtime identity')
+    }
     this.sessionId = sessionId
     this.runtimeId = runtimeId
     if (snapshot) this.installSnapshot(snapshot)
@@ -112,6 +116,20 @@ export class ConversationProjector {
     })
   }
 
+  /** Continues the same session timeline under a replacement Pi runtime. */
+  continueWithRuntime(nextRuntimeId: string): ConversationProjector {
+    if (!nextRuntimeId) throw new TypeError('Invalid Pi projection runtime identity')
+    if (nextRuntimeId === this.runtimeId) return this
+    if (this.hasGap()) {
+      throw new Error('Cannot replace a Pi projection runtime while events are buffered')
+    }
+    const snapshot = this.createSnapshot()
+    return new ConversationProjector(this.sessionId, nextRuntimeId, {
+      ...snapshot,
+      runtimeId: nextRuntimeId,
+    })
+  }
+
   installSnapshot(snapshot: PiProjectionSnapshotV1): void {
     this.assertIdentity(snapshot.sessionId, snapshot.runtimeId)
     if (snapshot.schemaVersion !== 1 || !Number.isSafeInteger(snapshot.lastSeq) || snapshot.lastSeq < 0 || !Array.isArray(snapshot.entities)) {
@@ -129,6 +147,9 @@ export class ConversationProjector {
         || !Number.isSafeInteger(entity.entityVersion) || entity.entityVersion < 1
         || !Number.isSafeInteger(entity.createdSeq) || entity.createdSeq < 1 || entity.createdSeq > entity.lastSeq
         || !Number.isSafeInteger(entity.lastSeq) || entity.lastSeq < 1 || entity.lastSeq > snapshot.lastSeq
+        || (entity.createdAt !== undefined && (!Number.isFinite(entity.createdAt) || entity.createdAt < 0))
+        || (entity.updatedAt !== undefined && (!Number.isFinite(entity.updatedAt) || entity.updatedAt < 0))
+        || (entity.createdAt !== undefined && entity.updatedAt !== undefined && entity.updatedAt < entity.createdAt)
         || entityIds.has(entity.entityId) || eventIds.has(entity.lastEventId) || sequences.has(entity.lastSeq)) {
         throw new TypeError('Invalid Pi projection snapshot entity')
       }
@@ -158,6 +179,8 @@ export class ConversationProjector {
       entityType: event.entityType,
       entityVersion: event.entityVersion,
       createdSeq: existing?.createdSeq ?? event.seq,
+      createdAt: existing?.createdAt ?? event.occurredAt,
+      updatedAt: event.occurredAt ?? existing?.updatedAt,
       turnId: event.turnId,
       kind: event.kind,
       payload: structuredClone(event.payload),
@@ -183,6 +206,10 @@ export class ConversationProjector {
     if (!Number.isSafeInteger(event.seq) || event.seq < 1) throw new TypeError('Invalid Pi projection sequence')
     if (!Number.isSafeInteger(event.entityVersion) || event.entityVersion < 1) {
       throw new TypeError('Invalid Pi projection entity version')
+    }
+    if (event.occurredAt !== undefined
+      && (!Number.isFinite(event.occurredAt) || event.occurredAt < 0)) {
+      throw new TypeError('Invalid Pi projection occurrence time')
     }
   }
 

@@ -48,4 +48,31 @@ describe('handleMessageAnnotationsUpdated', () => {
     expect((next.state.session.messages[0] as any).annotations).toEqual([])
     expect((next.state.session.messages[1] as any).annotations).toEqual(annotations)
   })
+
+  it('creates an overlay carrier for a projected message not present in Craft messages', () => {
+    const state = makeState([])
+    const annotations = [{
+      id: 'ann-projected',
+      schemaVersion: 1 as const,
+      createdAt: 1700000000000,
+      body: [{ type: 'highlight' as const }],
+      target: {
+        source: { sessionId: 'session-1', messageId: 'ts-1700000000000' },
+        selectors: [{ type: 'text-quote' as const, exact: 'projected' }],
+      },
+    }]
+
+    const next = handleMessageAnnotationsUpdated(state, {
+      type: 'message_annotations_updated',
+      sessionId: 'session-1',
+      messageId: 'ts-1700000000000',
+      annotations,
+    })
+
+    expect(next.state.session.messages).toEqual([expect.objectContaining({
+      id: 'ts-1700000000000',
+      content: '',
+      annotations,
+    })])
+  })
 })

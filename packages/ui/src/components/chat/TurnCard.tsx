@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { useMemo, useEffect, useRef, useCallback, useState } from 'react'
+import { useMemo, useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react'
 import i18n from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type { ToolDisplayMeta, AnnotationV1, ExtensionCommandResult, PlanArtifactV1 } from '@craft-agent/core'
@@ -38,7 +38,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../tooltip'
 import { parseDiffFromFile, type FileContents } from '@pierre/diffs'
 import { getDiffStats, getUnifiedDiffStats } from '../code-viewer'
 import { TurnCardActionsMenu } from './TurnCardActionsMenu'
-import { computeLastChildSet, groupActivitiesByParent, isActivityGroup, formatDuration, formatTokens, deriveTurnPhase, shouldShowThinkingIndicator, type ActivityGroup, type AssistantTurn } from './turn-utils'
+import { computeLastChildSet, groupActivitiesByParent, isActivityGroup, formatCompletionClock, formatDuration, formatRequestDuration, formatTokens, deriveTurnPhase, shouldShowThinkingIndicator, type ActivityGroup, type AssistantTurn } from './turn-utils'
 import { extractAnnotationSelectedText } from './follow-up-helpers'
 import {
   formatAnnotationFollowUpTooltipText,
@@ -94,37 +94,6 @@ import {
 // ============================================================================
 // Utilities
 // ============================================================================
-
-/**
- * Simple markdown stripping for preview text.
- * Removes markdown syntax to show plain text preview.
- * Code block content is preserved as plain text.
- */
-function stripMarkdown(text: string): string {
-  return text
-    // Extract content from fenced code blocks (remove ``` and optional language)
-    .replace(/```(?:\w+)?\n?([\s\S]*?)```/g, '$1')
-    // Extract content from inline code
-    .replace(/`([^`]+)`/g, '$1')
-    // Remove headers
-    .replace(/^#{1,6}\s+/gm, '')
-    // Remove bold/italic
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/_([^_]+)_/g, '$1')
-    // Remove links
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    // Remove images
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    // Remove blockquotes
-    .replace(/^>\s+/gm, '')
-    // Remove horizontal rules
-    .replace(/^---+$/gm, '')
-    // Collapse whitespace
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
 /**
  * Compute diff stats for Edit/Write tool inputs.
@@ -307,6 +276,10 @@ export interface TurnCardProps {
   isStreaming: boolean
   /** Whether this turn is fully complete */
   isComplete: boolean
+  /** Wall-clock completion time for the final response. */
+  completedAt?: number
+  /** End-to-end duration from the user request to completion. */
+  durationMs?: number
   /** Start in expanded state */
   defaultExpanded?: boolean
   /** Controlled expansion state (overrides internal state) */
@@ -903,30 +876,38 @@ function TreeViewConnector({ depth }: { depth: number; isLastChild?: boolean }) 
 function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, displayMode = 'detailed' }: ActivityRowProps) {
   const depth = activity.depth || 0
 
-  // Intermediate messages (LLM commentary) - render with dashed circle icon
-  // Show "Thinking" while streaming, stripped markdown content when complete
+  // Intermediate messages (reasoning and commentary) stay fully visible in the activity stream.
   if (activity.type === 'intermediate') {
     const isThinking = activity.status === 'running'
-    const displayContent = isThinking ? 'Thinking...' : stripMarkdown(activity.content || '')
+    const displayContent = activity.content?.trim()
     const isComplete = activity.status === 'completed'
     return (
       <div className="flex items-stretch">
         <TreeViewConnector depth={depth} isLastChild={isLastChild} />
         <div
           className={cn(
-            "group/row flex items-center gap-2 py-0.5 text-foreground/75 flex-1 min-w-0",
+            "group/row flex items-start gap-2 py-1 text-foreground/75 flex-1 min-w-0",
             SIZE_CONFIG.fontSize
           )}
           onClick={onOpenDetails && isComplete ? onOpenDetails : undefined}
         >
           {isThinking ? (
-            <div className={cn(SIZE_CONFIG.iconSize, "flex items-center justify-center shrink-0")}>
+            <div className={cn(SIZE_CONFIG.iconSize, "mt-0.5 flex items-center justify-center shrink-0")}>
               <Spinner className={SIZE_CONFIG.spinnerSize} />
             </div>
           ) : (
-            <MessageCircleDashed className={cn(SIZE_CONFIG.iconSize, "shrink-0")} />
+            <MessageCircleDashed className={cn(SIZE_CONFIG.iconSize, "mt-0.5 shrink-0")} />
           )}
-          <span className={cn("truncate flex-1", onOpenDetails && isComplete && "group-hover/row:underline")}>{displayContent}</span>
+          <div className={cn(
+            "min-w-0 flex-1 select-text break-words",
+            onOpenDetails && isComplete && "group-hover/row:underline"
+          )}>
+            {displayContent ? (
+              <Markdown mode="minimal">{activity.content || ''}</Markdown>
+            ) : (
+              <span>Thinking...</span>
+            )}
+          </div>
           {/* Open details button */}
           {onOpenDetails && isComplete && (
             <div
@@ -1386,6 +1367,10 @@ export interface ResponseCardProps {
   isStreaming: boolean
   /** When streaming started - used for buffering timeout calculation */
   streamStartTime?: number
+  /** Wall-clock completion time for the final response. */
+  completedAt?: number
+  /** End-to-end duration from the user request to completion. */
+  durationMs?: number
   /** Callback to open file in editor */
   onOpenFile?: (path: string) => void
   /** Callback to open URL */
@@ -1626,6 +1611,17 @@ function applyTextHighlightRange(
   }
 }
 
+function CompletionTiming({ completedAt, durationMs }: { completedAt?: number; durationMs?: number }) {
+  const { t } = useTranslation()
+  if (completedAt === undefined || durationMs === undefined
+    || !Number.isFinite(completedAt) || !Number.isFinite(durationMs) || durationMs < 0) return null
+  return (
+    <span className="shrink-0 tabular-nums text-muted-foreground/70" data-response-completion-time={completedAt}>
+      {formatCompletionClock(completedAt)} {t('turnCard.elapsed')}{formatRequestDuration(durationMs)}
+    </span>
+  )
+}
+
 /**
  * ResponseCard - Unified card component for AI responses and plans
  *
@@ -1646,6 +1642,8 @@ export function ResponseCard({
   text,
   isStreaming,
   streamStartTime,
+  completedAt,
+  durationMs,
   onOpenFile,
   onOpenUrl,
   onPopOut,
@@ -1669,6 +1667,7 @@ export function ResponseCard({
   annotationInteractionMode = 'interactive',
 }: ResponseCardProps) {
   const { t } = useTranslation()
+  const hasCompletionTiming = completedAt !== undefined && durationMs !== undefined
   // Throttled content for display - updates every CONTENT_THROTTLE_MS during streaming
   const [displayedText, setDisplayedText] = useState(text)
   const lastUpdateRef = useRef(Date.now())
@@ -2549,6 +2548,7 @@ export function ResponseCard({
 
               {/* Right side */}
               <div className="flex items-center gap-3">
+                <CompletionTiming completedAt={completedAt} durationMs={durationMs} />
                 {/* Accept Plan dropdown (plan variant only, last response) */}
                 {isPlan && showAcceptPlan && onAccept && onAcceptWithCompact && (
                   <div
@@ -2572,23 +2572,24 @@ export function ResponseCard({
             </div>
           )}
 
-          {/* Compact footer — Accept Plan only (mobile / auto-compact / popover).
-              Uses a bottom-sheet drawer to match the CompactPermissionModeSelector
-              / CompactModelSelector pattern. Guarded by isLastResponse so older
-              plans don't render an empty strip with a hidden-but-focusable button. */}
-          {compactMode && isPlan && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact && (
+          {/* Compact footer keeps completion metadata and the last-plan action. */}
+          {compactMode && (hasCompletionTiming
+            || (isPlan && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact)) && (
             <div
               className={cn(
-                "pl-3 pr-2 py-1.5 border-t border-border/30 flex items-center justify-end bg-muted/20",
+                "pl-3 pr-2 py-1.5 border-t border-border/30 flex items-center justify-between gap-2 bg-muted/20",
                 SIZE_CONFIG.fontSize
               )}
             >
-              <CompactAcceptPlanDrawer
-                onAccept={onAccept}
-                onAcceptWithCompact={onAcceptWithCompact}
-                acceptLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.acceptPlan')}
-                acceptOptionLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.accept')}
-              />
+              <CompletionTiming completedAt={completedAt} durationMs={durationMs} />
+              {isPlan && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact && (
+                <CompactAcceptPlanDrawer
+                  onAccept={onAccept}
+                  onAcceptWithCompact={onAcceptWithCompact}
+                  acceptLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.acceptPlan')}
+                  acceptOptionLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.accept')}
+                />
+              )}
             </div>
           )}
         </div>
@@ -2763,6 +2764,8 @@ export const TurnCard = React.memo(function TurnCard({
   intent,
   isStreaming,
   isComplete,
+  completedAt,
+  durationMs,
   defaultExpanded = false,
   isExpanded: externalIsExpanded,
   onExpandedChange,
@@ -2844,20 +2847,23 @@ export const TurnCard = React.memo(function TurnCard({
     }
   }, [turnId, isExpanded, onExpandedChange])
 
-  // Scroll to bottom of activities list when user manually expands
-  // This shows the most recent step instead of the oldest
-  useEffect(() => {
-    if (isExpanded && hasUserToggled.current && activitiesContainerRef.current) {
-      // Wait for expansion animation to complete (250ms) before scrolling
-      const timer = setTimeout(() => {
-        activitiesContainerRef.current?.scrollTo({
-          top: activitiesContainerRef.current.scrollHeight,
-          behavior: 'smooth'
-        })
-      }, 260)
-      return () => clearTimeout(timer)
+  // Expanded activity streams open at the newest item, including automatic expansion.
+  useLayoutEffect(() => {
+    if (!isExpanded || !activitiesContainerRef.current) return
+
+    const scrollToLatest = () => {
+      const container = activitiesContainerRef.current
+      if (container) container.scrollTop = container.scrollHeight
     }
-  }, [isExpanded])
+
+    scrollToLatest()
+    const frame = requestAnimationFrame(scrollToLatest)
+    const timer = window.setTimeout(scrollToLatest, 260)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(timer)
+    }
+  }, [isExpanded, activities.length])
 
   // Use local state for activity groups if no controlled state provided
   const [localExpandedActivityGroups, setLocalExpandedActivityGroups] = useState<Set<string>>(new Set())
@@ -3188,10 +3194,14 @@ export const TurnCard = React.memo(function TurnCard({
                 onRemoveAnnotation={onRemoveAnnotation}
                 onUpdateAnnotation={onUpdateAnnotation}
                 onBranch={onBranch && response.messageId ? () => onBranch(response.messageId!) : undefined}
+                completedAt={completedAt}
+                durationMs={durationMs}
               /> : <ResponseCard
                 text={response.text}
                 isStreaming={response.isStreaming}
                 streamStartTime={response.streamStartTime}
+                completedAt={completedAt}
+                durationMs={durationMs}
                 sessionId={sessionId}
                 onOpenFile={onOpenFile}
                 onOpenUrl={onOpenUrl}
@@ -3235,10 +3245,14 @@ export const TurnCard = React.memo(function TurnCard({
             onRemoveAnnotation={onRemoveAnnotation}
             onUpdateAnnotation={onUpdateAnnotation}
             onBranch={onBranch && response.messageId ? () => onBranch(response.messageId!) : undefined}
+            completedAt={completedAt}
+            durationMs={durationMs}
           /> : <ResponseCard
             text={response.text}
             isStreaming={response.isStreaming}
             streamStartTime={response.streamStartTime}
+            completedAt={completedAt}
+            durationMs={durationMs}
             sessionId={sessionId}
             onOpenFile={onOpenFile}
             onOpenUrl={onOpenUrl}
@@ -3283,6 +3297,9 @@ export const TurnCard = React.memo(function TurnCard({
 
   // Re-render if displayMode changed
   if (prev.displayMode !== next.displayMode) return false
+
+  // Re-render when persisted completion metadata arrives or changes.
+  if (prev.completedAt !== next.completedAt || prev.durationMs !== next.durationMs) return false
 
   // Re-render if compactMode changed (affects ResponseCard footer rendering)
   if (prev.compactMode !== next.compactMode) return false

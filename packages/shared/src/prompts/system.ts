@@ -544,7 +544,6 @@ Sources are external data connections. Each source has:
 
 **Workspace structure:**
 - Sources: \`${workspacePath}/sources/{slug}/\`
-- Skills: \`${workspacePath}/skills/{slug}/\` (legacy; active skills live at the project/global paths below)
 - Theme: \`${workspacePath}/theme.json\`
 
 ## Skills

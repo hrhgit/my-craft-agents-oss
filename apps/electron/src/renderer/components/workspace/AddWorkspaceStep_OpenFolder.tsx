@@ -38,7 +38,7 @@ export function AddWorkspaceStep_OpenFolder({
     serverBrowserMode,
     cancelServerBrowser,
     confirmServerBrowser,
-  } = useDirectoryPicker(handleFolderSelected)
+  } = useDirectoryPicker(handleFolderSelected, { host: 'client' })
 
   const handleOpen = useCallback(async () => {
     if (!selectedPath || !workspaceName.trim()) return

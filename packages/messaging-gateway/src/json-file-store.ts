@@ -1,17 +1,17 @@
 /**
- * Generic JSON file store with load/save/migrate-legacy functionality.
+ * Generic JSON file store with load/save functionality.
  *
  * Eliminates duplicated boilerplate across binding-store, config-store,
  * pending-senders, and topic-registry. Subclasses inherit the raw file
- * I/O (parse / atomic write / one-shot legacy copy) and keep their own
+ * I/O (parse / atomic write) and keep their own
  * business logic (validation, normalisation, change listeners, etc.).
  *
  * Writes go through `atomicWriteFileSync` (tmp + rename) so a crash mid-write
  * leaves the previous file intact instead of a truncated one.
  */
 
-import { existsSync, readFileSync, mkdirSync, copyFileSync } from 'node:fs'
-import { join, basename } from 'node:path'
+import { existsSync, readFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { atomicWriteFileSync } from '@craft-agent/shared/utils'
 import type { MessagingLogger } from './types'
 
@@ -80,39 +80,6 @@ export class JsonFileStore<T> {
         error: err,
       })
       return false
-    }
-  }
-
-  /**
-   * One-shot migration: if `legacyDir` exists and contains a file named
-   * `legacyFileName` (defaults to the same basename as `filePath`), and
-   * the current `filePath` does NOT exist, copy the legacy file forward.
-   *
-   * Safe to call on every construction — it's a no-op once the new file
-   * exists or if the legacy file is absent.
-   */
-  protected migrateLegacy(legacyDir: string | undefined, legacyFileName?: string): void {
-    if (!legacyDir) return
-    if (existsSync(this.filePath)) return
-    const legacyFile = join(legacyDir, legacyFileName ?? basename(this.filePath))
-    if (!existsSync(legacyFile)) return
-    try {
-      if (!existsSync(this.dirPath)) {
-        mkdirSync(this.dirPath, { recursive: true })
-      }
-      copyFileSync(legacyFile, this.filePath)
-      this.log.info('json store migrated from legacy location', {
-        event: 'json_store_migrated',
-        legacyFile,
-        filePath: this.filePath,
-      })
-    } catch (err) {
-      this.log.error('json store migration failed', {
-        event: 'json_store_migration_failed',
-        legacyFile,
-        filePath: this.filePath,
-        error: err,
-      })
     }
   }
 }

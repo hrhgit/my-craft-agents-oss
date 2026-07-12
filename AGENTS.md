@@ -33,7 +33,7 @@ When investigating "Pi Process Exited", `get_capabilities`, or Windows `EPERM` s
 For renderer and UI changes, validate in the browser first, then run the relevant Electron smoke check.
 
 - Start the complete local WebUI with `start-webui.cmd` from the repository root.
-- The script starts the headless RPC server and Vite WebUI, automatically signs the local browser in, then opens `http://localhost:5175`.
+- The script starts the headless RPC server and Vite WebUI, automatically signs the local browser in, then opens the localhost URL assigned by portmux.
 - Automatic login is a development-only localhost flow enabled by the launcher; do not enable it for shared or production servers.
 - Keep reusable UI in `apps/electron/src/renderer` or `packages/ui` so WebUI and Electron share the same components and styles.
 - Treat `apps/webui/src` as the browser adapter/bootstrap layer. Do not duplicate the main application layout there.

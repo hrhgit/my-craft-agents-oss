@@ -63,6 +63,9 @@ export interface WebApiOptions {
   workspaceId?: string
 }
 
+/** Keep recovery responsive while the RPC service restarts. */
+export const WEBUI_MAX_RECONNECT_DELAY_MS = 5_000
+
 export function createWebApi(options: WebApiOptions): {
   api: ElectronAPI
   client: WsRpcClient
@@ -72,6 +75,7 @@ export function createWebApi(options: WebApiOptions): {
   const client = new WsRpcClient(serverUrl, {
     workspaceId,
     autoReconnect: true,
+    maxReconnectDelay: WEBUI_MAX_RECONNECT_DELAY_MS,
     mode: 'remote',
     // No token — auth is via session cookie sent on WebSocket upgrade
   })

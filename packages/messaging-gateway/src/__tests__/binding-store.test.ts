@@ -6,26 +6,22 @@
  *   - one-channel-one-session invariant (second bind evicts first)
  *   - unbind and unbindSession counts
  *   - change listener fires on mutation
- *   - legacy directory migration (one-shot copy forward)
  *   - persistence across instances via file on disk
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { BindingStore } from '../binding-store'
 
 let dir: string
-let legacyDir: string
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'bind-'))
-  legacyDir = mkdtempSync(join(tmpdir(), 'bind-legacy-'))
 })
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
-  rmSync(legacyDir, { recursive: true, force: true })
 })
 
 describe('BindingStore', () => {
@@ -123,66 +119,6 @@ describe('BindingStore', () => {
     const b = new BindingStore(dir)
     const hit = b.findByChannel('telegram', 'c1')
     expect(hit?.channelName).toBe('name')
-  })
-
-  it('migrates legacy bindings.json one-shot on construction', () => {
-    const legacyFile = join(legacyDir, 'bindings.json')
-    const sample = [
-      {
-        id: 'legacy-1',
-        workspaceId: 'ws1',
-        sessionId: 'sess',
-        platform: 'telegram',
-        channelId: 'c1',
-        enabled: true,
-        createdAt: 1,
-        config: {},
-      },
-    ]
-    writeFileSync(legacyFile, JSON.stringify(sample))
-
-    const store = new BindingStore(dir, legacyDir)
-    expect(store.findByChannel('telegram', 'c1')?.id).toBe('legacy-1')
-    expect(existsSync(join(dir, 'bindings.json'))).toBe(true)
-  })
-
-  it('does not overwrite existing file when legacy is also present', () => {
-    // Pre-populate new location
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(
-      join(dir, 'bindings.json'),
-      JSON.stringify([
-        {
-          id: 'new-1',
-          workspaceId: 'ws1',
-          sessionId: 'sess-new',
-          platform: 'telegram',
-          channelId: 'c1',
-          enabled: true,
-          createdAt: 2,
-          config: {},
-        },
-      ]),
-    )
-    // Legacy has different content
-    writeFileSync(
-      join(legacyDir, 'bindings.json'),
-      JSON.stringify([
-        {
-          id: 'legacy-1',
-          workspaceId: 'ws1',
-          sessionId: 'sess-legacy',
-          platform: 'telegram',
-          channelId: 'c1',
-          enabled: true,
-          createdAt: 1,
-          config: {},
-        },
-      ]),
-    )
-
-    const store = new BindingStore(dir, legacyDir)
-    expect(store.findByChannel('telegram', 'c1')?.sessionId).toBe('sess-new')
   })
 
   it('recovers from corrupt bindings.json as an empty store', () => {

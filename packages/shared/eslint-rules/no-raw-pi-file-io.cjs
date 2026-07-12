@@ -39,12 +39,6 @@ const ALLOWED_PATH_EXPORTS_BY_FILE_ENDING = new Map([
   ['src/config/paths.ts', ALLOW_ALL_SENSITIVE_EXPORTS],
   ['src/config/pi-global-config.ts', new Set(['PI_AGENT_DIR'])],
   ['src/sessions/storage.ts', new Set(['PI_SESSIONS_DIR'])],
-  ['src/config/unified-migration.ts', new Set([
-    'PI_MODELS_FILE',
-    'PI_SETTINGS_FILE',
-    'PI_SKILLS_DIR',
-    'PI_SESSIONS_DIR',
-  ])],
   ['src/workspaces/storage.ts', new Set(['PI_SESSIONS_DIR'])],
 ])
 

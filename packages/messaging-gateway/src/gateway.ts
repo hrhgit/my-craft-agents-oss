@@ -48,8 +48,6 @@ export interface GatewayOptions {
   workspaceId: string
   /** Absolute path to the messaging storage directory. */
   storageDir: string
-  /** Optional legacy directory for one-shot migration of bindings.json. */
-  legacyStorageDir?: string
   /** Optional consumer that resolves /pair codes issued elsewhere. */
   pairingConsumer?: PairingCodeConsumer
   /** Fired after any binding mutation (bind/unbind). */
@@ -175,11 +173,7 @@ export class MessagingGateway {
       component: 'gateway',
       workspaceId: opts.workspaceId,
     })
-    this.bindingStore = new BindingStore(
-      opts.storageDir,
-      opts.legacyStorageDir,
-      this.log.child({ component: 'binding-store' }),
-    )
+    this.bindingStore = new BindingStore(opts.storageDir, this.log.child({ component: 'binding-store' }))
     if (opts.onBindingChanged) {
       this.bindingStore.onChange(opts.onBindingChanged)
     }

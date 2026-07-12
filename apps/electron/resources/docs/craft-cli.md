@@ -133,7 +133,7 @@ craft-agent source auth-help linear
 <!-- cli:skill:start -->
 ## Skill
 
-Manage workspace skills stored under `skills/{slug}/SKILL.md`.
+Manage project skills stored under `.pi/skills/{slug}/SKILL.md`.
 
 ### Commands
 - `craft-agent skill list [--workspace-only] [--project-root <path>]`

@@ -181,6 +181,7 @@ export function ImagePreviewOverlay({
             src={activeDataUrl}
             alt={activeItem?.label || activeItem?.src.split('/').pop() || 'Image preview'}
             className="max-w-full max-h-full object-contain rounded-sm"
+            data-fullscreen-overlay-dismiss-boundary
             draggable={false}
             onTransitionEnd={() => setIsAnimating(false)}
             style={{

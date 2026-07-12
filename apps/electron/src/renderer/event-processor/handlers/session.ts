@@ -560,16 +560,26 @@ export function handleMessageAnnotationsUpdated(
   event: MessageAnnotationsUpdatedEvent
 ): ProcessResult {
   const { session, streaming } = state
+  const existingIndex = session.messages.findIndex(message => message.id === event.messageId)
+  const messages = existingIndex >= 0
+    ? session.messages.map(message =>
+        message.id === event.messageId
+          ? { ...message, annotations: event.annotations }
+          : message
+      )
+    : [...session.messages, {
+        id: event.messageId,
+        role: 'assistant' as const,
+        content: '',
+        timestamp: Date.now(),
+        annotations: event.annotations,
+      }]
 
   return {
     state: {
       session: {
         ...session,
-        messages: session.messages.map(m =>
-          m.id === event.messageId
-            ? { ...m, annotations: event.annotations }
-            : m
-        ),
+        messages,
       },
       streaming,
     },

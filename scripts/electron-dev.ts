@@ -5,6 +5,7 @@
 
 import { spawn, type Subprocess } from "bun";
 import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync, readdirSync } from "fs";
+import { homedir } from "os";
 import { join, basename } from "path";
 import * as esbuild from "esbuild";
 import { downloadUv, type Platform, type Arch } from "./build/common";
@@ -12,6 +13,7 @@ import { downloadUv, type Platform, type Arch } from "./build/common";
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
 const DIST_DIR = join(ELECTRON_DIR, "dist");
+const DEFAULT_CONFIG_DIR = join(homedir(), ".craft-agent");
 
 // Replace grammY's bundled polyfills (node-fetch@2 + abort-controller@3) with
 // native Node globals. esbuild otherwise renames the polyfill's `class
@@ -81,11 +83,24 @@ async function ensureBundledUvForCurrentPlatform(): Promise<void> {
   });
 }
 
+function getRequestedVitePort(): number | null {
+  const rawPort = process.env.CRAFT_VITE_PORT ?? process.env.PORT;
+  const port = Number.parseInt(rawPort ?? "", 10);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
 // Multi-instance detection (matches detect-instance.sh logic)
 // Detects instance number from folder name suffix (e.g., craft-agents-1 → instance 1)
 function detectInstance(): void {
-  // Don't override if already set (e.g., by sourcing detect-instance.sh first)
-  if (process.env.CRAFT_VITE_PORT) return;
+  const requestedVitePort = getRequestedVitePort();
+  if (requestedVitePort !== null) {
+    process.env.CRAFT_VITE_PORT = `${requestedVitePort}`;
+    if (!process.env.CRAFT_CONFIG_DIR) {
+      process.env.CRAFT_CONFIG_DIR = DEFAULT_CONFIG_DIR;
+    }
+    console.log(`🔌 Assigned Vite port=${process.env.CRAFT_VITE_PORT}, config=${process.env.CRAFT_CONFIG_DIR}`);
+    return;
+  }
 
   const folderName = basename(ROOT_DIR);
   const match = folderName.match(/-(\d+)$/);
@@ -95,9 +110,16 @@ function detectInstance(): void {
     process.env.CRAFT_INSTANCE_NUMBER = instanceNum;
     process.env.CRAFT_VITE_PORT = `${instanceNum}173`;
     process.env.CRAFT_APP_NAME = `Craft Agents [${instanceNum}]`;
-    process.env.CRAFT_CONFIG_DIR = join(process.env.HOME || "", `.craft-agent-${instanceNum}`);
+    if (!process.env.CRAFT_CONFIG_DIR) {
+      process.env.CRAFT_CONFIG_DIR = DEFAULT_CONFIG_DIR;
+    }
     process.env.CRAFT_DEEPLINK_SCHEME = `craftagents${instanceNum}`;
     console.log(`🔢 Instance ${instanceNum} detected: port=${process.env.CRAFT_VITE_PORT}, config=${process.env.CRAFT_CONFIG_DIR}`);
+    return;
+  }
+
+  if (!process.env.CRAFT_CONFIG_DIR) {
+    process.env.CRAFT_CONFIG_DIR = DEFAULT_CONFIG_DIR;
   }
 }
 
@@ -118,70 +140,14 @@ function loadEnvFile(): void {
               (value.startsWith("'") && value.endsWith("'"))) {
             value = value.slice(1, -1);
           }
-          process.env[key] = value;
+          // Shell/portmux-provided values are authoritative; .env only fills defaults.
+          if (process.env[key] === undefined) {
+            process.env[key] = value;
+          }
         }
       }
     }
     console.log("📄 Loaded .env file");
-  }
-}
-
-// Kill any process using the specified port
-async function killProcessOnPort(port: string): Promise<void> {
-  const isWindows = process.platform === "win32";
-
-  try {
-    if (isWindows) {
-      // Windows: use netstat to find PID, then taskkill
-      const netstat = spawn({
-        cmd: ["cmd", "/c", `netstat -ano | findstr :${port}`],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const output = await new Response(netstat.stdout).text();
-      await netstat.exited;
-
-      // Parse PIDs from netstat output (last column)
-      const pids = new Set<string>();
-      for (const line of output.split("\n")) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length >= 5) {
-          const pid = parts[parts.length - 1];
-          if (pid && /^\d+$/.test(pid) && pid !== "0") {
-            pids.add(pid);
-          }
-        }
-      }
-
-      // Kill each PID
-      for (const pid of pids) {
-        const kill = spawn({
-          cmd: ["taskkill", "/PID", pid, "/F"],
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        await kill.exited;
-      }
-
-      if (pids.size > 0) {
-        console.log(`🔪 Killed ${pids.size} process(es) on port ${port}`);
-      }
-    } else {
-      // Mac/Linux: use lsof and kill
-      const lsof = spawn({
-        cmd: ["sh", "-c", `lsof -ti:${port} | xargs kill -9 2>/dev/null || true`],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const output = await new Response(lsof.stdout).text();
-      await lsof.exited;
-
-      if (output.trim()) {
-        console.log(`🔪 Killed process(es) on port ${port}`);
-      }
-    }
-  } catch {
-    // Ignore errors - port may not be in use
   }
 }
 
@@ -411,8 +377,8 @@ async function main(): Promise<void> {
   console.log("🚀 Starting Electron dev environment...\n");
 
   // Setup
-  detectInstance();
   loadEnvFile();
+  detectInstance();
   if (process.env.CRAFT_DEV_CLEAN_VITE_CACHE === "1") {
     cleanViteCache();
   }
@@ -431,9 +397,6 @@ async function main(): Promise<void> {
 
   const vitePort = process.env.CRAFT_VITE_PORT || "5173";
   const oauthDefines = getOAuthDefines();
-
-  // Kill any existing process on the Vite port
-  await killProcessOnPort(vitePort);
 
   const mainCjsPath = join(DIST_DIR, "main.cjs");
   const preloadCjsPath = join(DIST_DIR, "bootstrap-preload.cjs");
@@ -496,14 +459,15 @@ async function main(): Promise<void> {
   });
   esbuildContexts.push(toolbarPreloadContext);
 
-  // Let watch mode perform the first build and keep the same contexts alive.
-  // Removing stale outputs lets us wait for this build without a fixed delay.
+  // Produce a complete initial build before enabling watch mode. context.watch()
+  // returns before its first build finishes, which can exceed the readiness
+  // timeout for the main bundle on Windows.
   for (const outputPath of [mainCjsPath, preloadCjsPath, toolbarPreloadCjsPath]) {
     if (existsSync(outputPath)) rmSync(outputPath);
   }
 
   console.log("🔨 Building Electron process bundles...");
-  await Promise.all(esbuildContexts.map(context => context.watch()));
+  await Promise.all(esbuildContexts.map(context => context.rebuild()));
 
   if (!await waitForFilesReady([mainCjsPath, preloadCjsPath, toolbarPreloadCjsPath])) {
     console.error("❌ Electron process bundles were not produced in time");
@@ -523,6 +487,7 @@ async function main(): Promise<void> {
     }
   }
 
+  await Promise.all(esbuildContexts.map(context => context.watch()));
   console.log("👀 Watching main process, preload, and browser toolbar preload...");
 
   // 5. Start Electron (initial build completed above)

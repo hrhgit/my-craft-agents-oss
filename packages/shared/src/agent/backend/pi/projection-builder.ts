@@ -6,12 +6,20 @@ import {
   parsePlanArtifactMessageDetails,
   parsePlanModeStateMessageDetails,
 } from '@craft-agent/core/types'
-import type { PiProjectionEntityType, PiProjectionEventV1 } from '../../../protocol/pi-projection.ts'
+import type {
+  PiProjectionEntityType,
+  PiProjectionEventV1,
+  PiProjectionSnapshotV1,
+} from '../../../protocol/pi-projection.ts'
 import { stripLeadingCraftInjectedUserContext } from '../../../prompts/strip-injected-user-context.ts'
+import type { HostQueuedUserProjection, HostRuntimeErrorProjection } from '../types.ts'
 
 type ProjectableAgentEvent = Extract<
   AgentEvent,
-  { type: 'tool_start' | 'tool_result' | 'complete' | 'error' | 'typed_error' }
+  {
+    type: 'tool_start' | 'tool_result' | 'complete' | 'error' | 'typed_error'
+      | 'status' | 'info' | 'queue_overflow'
+  }
 >
 
 interface EntityState {
@@ -29,7 +37,67 @@ export class PiProjectionBuilder {
   private readonly entities = new Map<string, EntityState>()
   private readonly pendingTurnEntityIds: string[] = []
 
-  constructor(readonly sessionId: string, readonly runtimeId: string) {}
+  constructor(
+    readonly sessionId: string,
+    readonly runtimeId: string,
+    seed?: PiProjectionSnapshotV1,
+    private readonly now: () => number = Date.now,
+  ) {
+    if (seed) this.restoreSeed(seed)
+  }
+
+  acceptHostQueuedUser(input: HostQueuedUserProjection): PiProjectionEventV1[] {
+    const clientMutationId = input.clientMutationId.trim()
+    if (!clientMutationId) throw new TypeError('Queued Pi projection requires a clientMutationId')
+
+    const messageId = input.messageId?.trim() || clientMutationId
+    const text = input.message
+    const timestamp = this.projectionTimestamp(input)
+    const attachments = this.sanitizeUserAttachments(input.attachments)
+    const entityId = `content:user:${clientMutationId}`
+    const events: PiProjectionEventV1[] = []
+
+    if (text) {
+      const state = this.nextEntity(entityId)
+      state.payload = {
+        role: 'user', text, streaming: false, messageId, clientMutationId,
+        queueStatus: 'queued', source: 'host', timestamp,
+      }
+      events.push(this.createEvent(entityId, 'content_block', state.version, 'user_text', state.payload, undefined, timestamp))
+    }
+
+    for (const [index, attachment] of attachments.entries()) {
+      const attachmentEntityId = `artifact:attachment:${clientMutationId}:${attachment.id}`
+      const state = this.nextEntity(attachmentEntityId)
+      state.payload = {
+        attachment,
+        clientMutationId,
+        ownerMessageId: messageId,
+        contentEntityId: text ? entityId : undefined,
+        order: index,
+        queueStatus: 'queued',
+        source: 'host',
+      }
+      events.push(this.createEvent(
+        attachmentEntityId,
+        'artifact_ref',
+        state.version,
+        'user_attachment',
+        state.payload,
+        undefined,
+        timestamp,
+      ))
+    }
+
+    return events
+  }
+
+  acceptHostRuntimeError(input: HostRuntimeErrorProjection): PiProjectionEventV1[] {
+    return [
+      ...this.finalizeRunningTools(true),
+      this.errorEvent({ ...input, source: 'host' }),
+    ]
+  }
 
   acceptPromptRequest(request: {
     requestId: string
@@ -108,26 +176,50 @@ export class PiProjectionBuilder {
       case 'tool_start': {
         const entityId = `tool:${event.toolUseId}`
         const state = this.nextEntity(entityId)
-        state.turnId = event.turnId
+        const turnId = event.turnId ?? this.activeTurnId ?? undefined
+        state.turnId = turnId
         state.payload = {
           toolCallId: event.toolUseId, toolName: event.toolName, input: event.input,
           intent: event.intent, displayName: event.displayName,
           parentToolUseId: event.parentToolUseId, status: 'running',
         }
-        return [this.createEvent(entityId, 'tool_run', state.version, 'tool_execution_start', state.payload, event.turnId)]
+        return [this.createEvent(entityId, 'tool_run', state.version, 'tool_execution_start', state.payload, turnId)]
       }
       case 'tool_result': {
         const entityId = `tool:${event.toolUseId}`
         const state = this.nextEntity(entityId)
-        state.turnId = event.turnId ?? state.turnId
+        const turnId = event.turnId ?? state.turnId ?? this.activeTurnId ?? undefined
+        state.turnId = turnId
         state.payload = {
           ...state.payload,
           toolCallId: event.toolUseId, toolName: event.toolName, result: event.result,
           isError: event.isError === true, parentToolUseId: event.parentToolUseId,
           status: event.isError ? 'failed' : 'completed',
         }
-        return [this.createEvent(entityId, 'tool_run', state.version, 'tool_execution_end', state.payload, event.turnId)]
+        return [this.createEvent(entityId, 'tool_run', state.version, 'tool_execution_end', state.payload, turnId)]
       }
+      case 'status':
+        if (this.isCompactionCompatibilityMessage(event.message)) return []
+        return [this.hostMessageEvent('host_status', {
+          message: event.message,
+          level: 'info',
+          statusType: event.message.startsWith('Retrying') ? 'retrying' : 'status',
+        })]
+      case 'info':
+        if (this.isCompactionCompatibilityMessage(event.message)) return []
+        return [this.hostMessageEvent('host_info', {
+          message: event.message,
+          level: 'info',
+          statusType: 'info',
+        })]
+      case 'queue_overflow':
+        return [this.hostMessageEvent('host_info', {
+          message: event.message,
+          level: 'warning',
+          statusType: 'queue_overflow',
+          droppedEvents: event.droppedEvents,
+          maxQueueSize: event.maxQueueSize,
+        })]
       case 'complete':
         return [
           ...this.finalizeRunningTools(false),
@@ -173,14 +265,22 @@ export class PiProjectionBuilder {
   /** Projects Pi events that intentionally never enter Craft's AgentEvent model. */
   acceptRuntimeEvent(event: Record<string, unknown>): PiProjectionEventV1[] {
     if (event.type === 'agent_start') {
-      return [this.lifecycleEvent('agent_start', { status: 'running' })]
+      return [this.lifecycleEvent('agent_start', { status: 'running' }, this.projectionTimestamp(event))]
     }
     if (event.type === 'turn_start') {
       const turnId = `pi-turn-${this.turnIndex++}`
       this.activeTurnId = turnId
       const entityId = `turn:${turnId}`
       const state = this.nextEntity(entityId)
-      const events = [this.createEvent(entityId, 'turn', state.version, 'turn_start', { status: 'running' }, turnId)]
+      const events = [this.createEvent(
+        entityId,
+        'turn',
+        state.version,
+        'turn_start',
+        { status: 'running' },
+        turnId,
+        this.projectionTimestamp(event),
+      )]
       for (const pendingEntityId of this.pendingTurnEntityIds.splice(0)) {
         const pending = this.nextEntity(pendingEntityId)
         if (!pending.payload) continue
@@ -211,7 +311,7 @@ export class PiProjectionBuilder {
         status: 'completed',
         stopReason: typeof message?.stopReason === 'string' ? message.stopReason : undefined,
         toolResultCount: Array.isArray(event.toolResults) ? event.toolResults.length : 0,
-      }, turnId)]
+      }, turnId, this.projectionTimestamp(event))]
     }
     if (event.type === 'compaction_start') {
       return [this.lifecycleEvent('compaction_start', {
@@ -230,8 +330,19 @@ export class PiProjectionBuilder {
     if (event.type !== 'message_end') return []
     const message = event.message
     if (!message || typeof message !== 'object') return []
-    const value = message as { id?: unknown; timestamp?: unknown; role?: unknown; customType?: unknown; content?: unknown; details?: unknown; clientMutationId?: unknown; attachments?: unknown }
+    const value = message as {
+      id?: unknown
+      timestamp?: unknown
+      role?: unknown
+      customType?: unknown
+      content?: unknown
+      details?: unknown
+      display?: unknown
+      clientMutationId?: unknown
+      attachments?: unknown
+    }
     if (value.role === 'custom') return this.acceptCustomMessage(value)
+    if (value.role === 'assistant') return this.acceptAssistantMessageEnd(value)
     if (value.role !== 'user') return []
     // Pi stores the full model input, including Craft's volatile date, session
     // state, and source blocks. Projection payloads are user-visible, so only
@@ -248,21 +359,41 @@ export class PiProjectionBuilder {
     const events: PiProjectionEventV1[] = []
     if (text) {
       const state = this.nextEntity(entityId)
+      const messageId = typeof state.payload?.messageId === 'string'
+        ? state.payload.messageId
+        : identity
       state.payload = {
-        role: 'user', text, streaming: false,
-        clientMutationId,
+        role: 'user', text, streaming: false, messageId,
+        clientMutationId, queueStatus: 'accepted', source: 'pi',
+        timestamp: this.messageTimestamp(value) ?? state.payload?.timestamp,
       }
-      events.push(this.createEvent(entityId, 'content_block', state.version, 'user_text', state.payload, turnId))
+      events.push(this.createEvent(
+        entityId,
+        'content_block',
+        state.version,
+        'user_text',
+        state.payload,
+        turnId,
+        this.messageTimestamp(value),
+      ))
       if (!turnId) this.pendingTurnEntityIds.push(entityId)
     }
     for (const [index, attachment] of attachments.entries()) {
       const attachmentEntityId = `artifact:attachment:${identity}:${attachment.id}`
       const attachmentState = this.nextEntity(attachmentEntityId)
+      const ownerMessageId = typeof attachmentState.payload?.ownerMessageId === 'string'
+        ? attachmentState.payload.ownerMessageId
+        : typeof this.entities.get(entityId)?.payload?.messageId === 'string'
+          ? this.entities.get(entityId)!.payload!.messageId as string
+          : identity
       attachmentState.payload = {
         attachment,
         clientMutationId,
+        ownerMessageId,
         contentEntityId: text ? entityId : undefined,
         order: index,
+        queueStatus: 'accepted',
+        source: 'pi',
       }
       events.push(this.createEvent(attachmentEntityId, 'artifact_ref', attachmentState.version, 'user_attachment', attachmentState.payload, turnId))
       if (!turnId) this.pendingTurnEntityIds.push(attachmentEntityId)
@@ -272,9 +403,11 @@ export class PiProjectionBuilder {
 
   private acceptCustomMessage(message: {
     id?: unknown
+    timestamp?: unknown
     customType?: unknown
     content?: unknown
     details?: unknown
+    display?: unknown
   }): PiProjectionEventV1[] {
     if (message.customType === PLAN_MODE_STATE_CUSTOM_TYPE) {
       const details = parsePlanModeStateMessageDetails(message.details)
@@ -283,7 +416,30 @@ export class PiProjectionBuilder {
       const state = this.nextEntity(entityId)
       return [this.createEvent(entityId, 'conversation', state.version, 'plan_mode_state', details.state)]
     }
-    if (message.customType !== PLAN_ARTIFACT_CUSTOM_TYPE && message.customType !== PLAN_ARTIFACT_UPDATE_CUSTOM_TYPE) return []
+    if (message.customType !== PLAN_ARTIFACT_CUSTOM_TYPE && message.customType !== PLAN_ARTIFACT_UPDATE_CUSTOM_TYPE) {
+      if (message.display !== true) return []
+      const content = this.extractText(message.content)
+      if (!content) return []
+      const messageId = this.messageIdentity(message)
+      const entityId = `content:custom:${messageId}`
+      const state = this.nextEntity(entityId)
+      const details = this.asRecord(message.details)
+      const level = details?.level === 'warning' || details?.level === 'error'
+        ? details.level
+        : 'info'
+      state.payload = {
+        role: 'info', messageId, content, level,
+        customType: typeof message.customType === 'string' ? message.customType : 'custom',
+      }
+      return [this.createEvent(
+        entityId,
+        'content_block',
+        state.version,
+        'custom_display',
+        state.payload,
+        this.activeTurnId ?? undefined,
+      )]
+    }
     const details = parsePlanArtifactMessageDetails(message.details)
     if (!details) return []
     const entityId = `artifact:${details.artifact.artifactId}`
@@ -328,22 +484,121 @@ export class PiProjectionBuilder {
       ? String(value.type)
       : value.type === 'text_end' ? 'assistant_text' : 'assistant_text_delta'
     return [this.createEvent(entityId, 'content_block', state.version, kind, {
-      role: 'assistant', contentKind, text: state.text ?? '',
+      role: 'assistant', contentKind, messageId, text: state.text ?? '',
       delta: value.type === 'thinking_delta' || value.type === 'text_delta' ? value.delta : undefined,
       streaming: value.type !== 'thinking_end' && value.type !== 'text_end',
       contentIndex: value.contentIndex,
     }, this.activeTurnId ?? undefined)]
   }
 
+  private acceptAssistantMessageEnd(message: {
+    id?: unknown
+    timestamp?: unknown
+    content?: unknown
+    stopReason?: unknown
+  }): PiProjectionEventV1[] {
+    const content = typeof message.content === 'string'
+      ? [{ type: 'text', text: message.content }]
+      : message.content
+    if (!Array.isArray(content)) return []
+    const messageId = this.messageIdentity(message)
+    const events: PiProjectionEventV1[] = []
+
+    for (const [contentIndex, candidate] of content.entries()) {
+      if (!candidate || typeof candidate !== 'object') continue
+      const part = candidate as Record<string, unknown>
+      const contentKind = part.type === 'thinking'
+        ? 'thinking'
+        : part.type === 'text'
+          ? 'text'
+          : null
+      if (!contentKind) continue
+      const text = contentKind === 'thinking'
+        ? (typeof part.thinking === 'string' ? part.thinking : '')
+        : (typeof part.text === 'string' ? part.text : '')
+      const entityId = `content:${contentKind}:${messageId}:${contentIndex}`
+      const state = this.nextEntity(entityId)
+      state.text = text
+      const stopReason = typeof message.stopReason === 'string' ? message.stopReason : undefined
+      const isIntermediate = stopReason === 'toolUse' || stopReason === 'tool_use'
+      state.payload = {
+        role: 'assistant', contentKind, messageId, text,
+        streaming: false, contentIndex, stopReason,
+        isIntermediate,
+        isFinal: !isIntermediate,
+      }
+      events.push(this.createEvent(
+        entityId,
+        'content_block',
+        state.version,
+        contentKind === 'thinking' ? 'thinking_end' : 'assistant_text',
+        state.payload,
+        this.activeTurnId ?? undefined,
+      ))
+    }
+
+    return events
+  }
+
   private isProjectable(event: AgentEvent): event is ProjectableAgentEvent {
     return event.type === 'tool_start' || event.type === 'tool_result'
       || event.type === 'complete' || event.type === 'error' || event.type === 'typed_error'
+      || event.type === 'status' || event.type === 'info' || event.type === 'queue_overflow'
+  }
+
+  private messageTimestamp(message: { timestamp?: unknown }): number | undefined {
+    return this.projectionTimestamp(message)
+  }
+
+  private projectionTimestamp(value: { timestamp?: unknown }): number | undefined {
+    if (typeof value.timestamp === 'number' && Number.isFinite(value.timestamp)) return value.timestamp
+    if (typeof value.timestamp === 'string') {
+      const parsed = Date.parse(value.timestamp)
+      if (Number.isFinite(parsed)) return parsed
+    }
+    return undefined
   }
 
   private messageIdentity(message: { id?: unknown; timestamp?: unknown }): string {
     if (typeof message.id === 'string' && message.id) return message.id
-    if (typeof message.timestamp === 'number' && Number.isFinite(message.timestamp)) return `ts-${message.timestamp}`
+    const timestamp = this.messageTimestamp(message)
+    if (timestamp !== undefined) return `ts-${timestamp}`
     return `seq-${this.seq + 1}`
+  }
+
+  private restoreSeed(seed: PiProjectionSnapshotV1): void {
+    if (seed.schemaVersion !== 1 || seed.sessionId !== this.sessionId
+      || !Number.isSafeInteger(seed.lastSeq) || seed.lastSeq < 0 || !Array.isArray(seed.entities)) {
+      throw new TypeError('Invalid Pi projection builder seed')
+    }
+
+    const entityIds = new Set<string>()
+    let nextTurnIndex = 0
+    for (const entity of seed.entities) {
+      if (!entity || typeof entity.entityId !== 'string' || !entity.entityId
+        || entityIds.has(entity.entityId)
+        || !Number.isSafeInteger(entity.entityVersion) || entity.entityVersion < 1
+        || !Number.isSafeInteger(entity.createdSeq) || entity.createdSeq < 1
+        || !Number.isSafeInteger(entity.lastSeq) || entity.lastSeq < entity.createdSeq
+        || entity.lastSeq > seed.lastSeq
+        || (entity.createdAt !== undefined && (!Number.isFinite(entity.createdAt) || entity.createdAt < 0))
+        || (entity.updatedAt !== undefined && (!Number.isFinite(entity.updatedAt) || entity.updatedAt < 0))) {
+        throw new TypeError('Invalid Pi projection builder seed entity')
+      }
+      entityIds.add(entity.entityId)
+      const payload = this.asRecord(entity.payload)
+      this.entities.set(entity.entityId, {
+        version: entity.entityVersion,
+        turnId: entity.turnId,
+        payload: payload ? structuredClone(payload) : undefined,
+        text: typeof payload?.text === 'string' ? payload.text : undefined,
+      })
+      const match = /^turn:pi-turn-(\d+)$/.exec(entity.entityId)
+      if (match?.[1]) nextTurnIndex = Math.max(nextTurnIndex, Number(match[1]) + 1)
+    }
+
+    this.seq = seed.lastSeq
+    this.turnIndex = nextTurnIndex
   }
 
   private extractText(content: unknown): string {
@@ -355,6 +610,16 @@ export class PiProjectionBuilder {
         : '')
       .filter((part): part is string => typeof part === 'string')
       .join('')
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined
+  }
+
+  private isCompactionCompatibilityMessage(message: string): boolean {
+    return message.includes('Compacting context') || message.startsWith('Compacted context')
   }
 
   private sanitizeUserAttachments(value: unknown): Array<{
@@ -389,10 +654,23 @@ export class PiProjectionBuilder {
     return state
   }
 
-  private lifecycleEvent(kind: string, payload: unknown): PiProjectionEventV1 {
+  private lifecycleEvent(kind: string, payload: unknown, occurredAt?: number): PiProjectionEventV1 {
     const entityId = `lifecycle:${kind}:${this.seq + 1}`
     const state = this.nextEntity(entityId)
-    return this.createEvent(entityId, 'conversation', state.version, kind, payload)
+    return this.createEvent(entityId, 'conversation', state.version, kind, payload, undefined, occurredAt)
+  }
+
+  private hostMessageEvent(kind: 'host_status' | 'host_info', payload: unknown): PiProjectionEventV1 {
+    const entityId = `host:${kind}:${this.seq + 1}`
+    const state = this.nextEntity(entityId)
+    return this.createEvent(
+      entityId,
+      'conversation',
+      state.version,
+      kind,
+      payload,
+      this.activeTurnId ?? undefined,
+    )
   }
 
   private errorEvent(payload: unknown): PiProjectionEventV1 {
@@ -408,12 +686,13 @@ export class PiProjectionBuilder {
     kind: string,
     payload: unknown,
     turnId?: string,
+    occurredAt = this.now(),
   ): PiProjectionEventV1 {
     const seq = ++this.seq
     return {
       schemaVersion: 1, eventId: `${this.runtimeId}:${seq}`, seq: this.seq,
       sessionId: this.sessionId, runtimeId: this.runtimeId, turnId,
-      entityId, entityType, entityVersion, kind, payload,
+      entityId, entityType, entityVersion, kind, payload, occurredAt,
     }
   }
 }

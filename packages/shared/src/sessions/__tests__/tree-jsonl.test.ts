@@ -6,6 +6,7 @@ import {
   createSession,
   getSessionFilePath,
   getSessionPlansPath,
+  loadSession,
   listSessions,
   setSharedPiSessionsDirForTests,
 } from '../storage'
@@ -15,6 +16,7 @@ import {
   readSessionJsonl,
 } from '../jsonl'
 import {
+  appendPiBranchMessagesViaSessionManager,
   appendStoredMessagesViaPiSessionManager,
   looksLikeTreeSessionJsonl,
   projectTreeSessionProjectionAsStoredSession,
@@ -437,6 +439,26 @@ Active: none
     expect(header.craft.messageCount).toBe(stored!.messages.length)
   })
 
+  it('persists projection-derived computed metadata instead of recalculating it from overlays', async () => {
+    const stored = readSessionJsonl(sessionFile)
+    expect(stored).not.toBeNull()
+    stored!.messages = []
+    stored!.messageCount = 7
+    stored!.preview = 'Projected prompt'
+    stored!.lastMessageRole = 'assistant'
+    stored!.lastFinalMessageId = 'pi-message-7'
+
+    writeSessionJsonl(sessionFile, stored!)
+
+    const header = JSON.parse((await Bun.file(sessionFile).text()).trim().split('\n')[0]!)
+    expect(header.craft).toMatchObject({
+      messageCount: 7,
+      preview: 'Projected prompt',
+      lastMessageRole: 'assistant',
+      lastFinalMessageId: 'pi-message-7',
+    })
+  })
+
   it('keeps Pi header fields as Pi-owned while Craft UI state stays under craft metadata', () => {
     writeJsonl(sessionFile, [
       {
@@ -466,7 +488,7 @@ Active: none
     expect(stored?.permissionMode).toBe('ask')
   })
 
-  it('preserves Craft-only fields for canonical messages through the overlay', async () => {
+  it('preserves Craft-only UI fields without copying canonical message content', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
     const attachment = {
@@ -512,8 +534,39 @@ Active: none
     expect(existsSync(overlayPath)).toBe(true)
     const overlay = JSON.parse(await Bun.file(overlayPath).text())
     expect(overlay.messages[0].id).toBe('u1')
-    expect(overlay.messages[0].content).toBe('Start here')
+    expect(overlay.messages[0].content).toBeUndefined()
     expect(overlay.messages[0].attachments).toEqual([attachment])
+  })
+
+  it('materializes annotation overlays keyed by projection message identity', () => {
+    const stored = readSessionJsonl(sessionFile)
+    expect(stored).not.toBeNull()
+    const projectionMessageId = 'ts-1700000000000'
+    const annotation = {
+      id: 'ann-projection',
+      schemaVersion: 1 as const,
+      createdAt: 1700000000001,
+      body: [{ type: 'highlight' as const }],
+      target: {
+        source: { sessionId: stored!.craftId, messageId: projectionMessageId },
+        selectors: [{ type: 'text-quote' as const, exact: 'answer' }],
+      },
+    }
+    stored!.messages.push({
+      id: projectionMessageId,
+      type: 'assistant',
+      content: '',
+      timestamp: 0,
+      annotations: [annotation],
+    })
+
+    writeSessionJsonl(sessionFile, stored!)
+
+    const reloaded = readSessionJsonl(sessionFile)
+    expect(reloaded?.messages.find(message => message.id === projectionMessageId)).toMatchObject({
+      content: '',
+      annotations: [annotation],
+    })
   })
 
   it('sanitizes craft ids before writing Craft overlay files', async () => {
@@ -561,6 +614,42 @@ Active: none
 
     const entries = (await Bun.file(retryFile).text()).trim().split('\n').map(line => JSON.parse(line))
     expect(entries.filter(entry => entry.type === 'message')).toHaveLength(2)
+    expect(entries.find(entry => entry.message?.role === 'assistant')?.message.content).toEqual([
+      { type: 'text', text: 'Hi' },
+    ])
+    expect([...retryIdMap.entries()]).toEqual([...firstIdMap.entries()])
+  })
+
+  it('copies raw Pi branch messages without flattening assistant content blocks', async () => {
+    const branchFile = join(dir, '2026-07-01T00-00-03-000Z_branch.jsonl')
+    writeJsonl(branchFile, [{
+      type: 'session', version: 3, id: 'branch', timestamp: '2026-07-01T00:00:00.000Z', cwd: '/work/project',
+    }])
+    const entries = [{
+      id: 'source-user',
+      message: { role: 'user', content: 'Inspect', timestamp: 1 },
+    }, {
+      id: 'source-assistant',
+      message: {
+        role: 'assistant', timestamp: 2, stopReason: 'toolUse',
+        content: [
+          { type: 'thinking', thinking: 'reasoning' },
+          { type: 'text', text: 'checking' },
+          { type: 'toolCall', id: 'call-1', name: 'Read', arguments: { path: 'a.ts' } },
+        ],
+      },
+    }]
+
+    const firstIdMap = appendPiBranchMessagesViaSessionManager(
+      branchFile, dirname(branchFile), '/work/project', entries,
+    )
+    const retryIdMap = appendPiBranchMessagesViaSessionManager(
+      branchFile, dirname(branchFile), '/work/project', entries,
+    )
+    const written = (await Bun.file(branchFile).text()).trim().split('\n').map(line => JSON.parse(line))
+    const assistant = written.find(entry => entry.message?.role === 'assistant')
+
+    expect(assistant.message.content).toEqual(entries[1]!.message.content)
     expect([...retryIdMap.entries()]).toEqual([...firstIdMap.entries()])
   })
 
@@ -597,14 +686,13 @@ Active: none
     expect(header.id).toBe(session.craftId)
     expect(header.cwd).toBe(workspaceRoot)
     expect(header.craft.name).toBe('Shared write')
-    expect(header.craft.conversationFormat).toBe('pi-projection-v1')
+    expect(header.craft.conversationFormat).toBeUndefined()
     expect(expandPath(header.craft.workingDirectory)).toBe(workspaceRoot)
     expect(lines.length).toBe(1)
 
     const listed = listSessions(workspaceRoot)
     expect(listed.map(s => s.craftId)).toContain(session.craftId)
     expect(listed.find(s => s.craftId === session.craftId)?.name).toBe('Shared write')
-    expect(listed.find(s => s.craftId === session.craftId)?.conversationFormat).toBe('pi-projection-v1')
   })
 
   it('ignores explicit non-default working directories for new sessions', async () => {
@@ -634,6 +722,30 @@ Active: none
     const listed = listSessions(workspaceRoot)
     expect(listed.map(s => s.craftId)).toContain(session.craftId)
     expect(listed.find(s => s.craftId === session.craftId)?.workingDirectory).toBe(workspaceRoot)
+  })
+
+  it('rejects nested legacy session.jsonl paths inside the Pi session bucket', () => {
+    const piRoot = join(dir, 'pi-sessions-nested-rejection')
+    const workspaceRoot = join(dir, 'workspace-nested-rejection')
+    const sessionId = 'legacy-nested'
+    mkdirSync(workspaceRoot, { recursive: true })
+    setSharedPiSessionsDirForTests(piRoot)
+
+    const flatCandidate = getSessionFilePath(workspaceRoot, sessionId)
+    const nestedSessionFile = join(dirname(flatCandidate), sessionId, 'session.jsonl')
+    mkdirSync(dirname(nestedSessionFile), { recursive: true })
+    writeJsonl(nestedSessionFile, [{
+      type: 'session',
+      version: 3,
+      id: sessionId,
+      timestamp: '2026-07-01T00:00:00.000Z',
+      cwd: workspaceRoot,
+      craft: { id: sessionId, workspaceRootPath: workspaceRoot },
+    }])
+
+    expect(listSessions(workspaceRoot).map(session => session.craftId)).not.toContain(sessionId)
+    expect(loadSession(workspaceRoot, sessionId)).toBeNull()
+    expect(getSessionFilePath(workspaceRoot, sessionId)).not.toBe(nestedSessionFile)
   })
 
   it('preserves plan counts while reusing resolved session sidecar paths', async () => {

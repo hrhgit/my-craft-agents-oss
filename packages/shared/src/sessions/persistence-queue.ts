@@ -13,8 +13,6 @@ interface PendingWrite {
   timer: ReturnType<typeof setTimeout>
 }
 
-type LegacyStoredSession = StoredSession & { id?: unknown }
-
 interface HeaderMetadataSignature {
   name?: string
   labels?: string[]
@@ -67,9 +65,9 @@ class SessionPersistenceQueue {
    * session, it will be replaced with the new data and the timer reset.
    */
   enqueue(session: StoredSession): void {
-    const sessionId = this.getSessionId(session)
+    const sessionId = session.craftId
     if (!sessionId) {
-      console.error('[PersistenceQueue] Refusing to enqueue session without craftId or legacy id')
+      console.error('[PersistenceQueue] Refusing to enqueue session without craftId')
       return
     }
 
@@ -93,11 +91,6 @@ class SessionPersistenceQueue {
     }, this.debounceMs)
 
     this.pending.set(sessionId, { data: normalizedSession, timer })
-  }
-
-  private getSessionId(session: StoredSession): string | undefined {
-    const legacyId = (session as LegacyStoredSession).id
-    return session.craftId || (typeof legacyId === 'string' && legacyId.length > 0 ? legacyId : undefined)
   }
 
   private pruneCancelled(now = Date.now()): void {
@@ -151,10 +144,9 @@ class SessionPersistenceQueue {
   /**
    * Write a session to disk immediately in Pi tree JSONL v3 format.
    *
-   * The write path is now UNCONDITIONALLY the Pi tree JSONL v3
-   * path. The legacy Craft JSONL format (SessionHeader + StoredMessage lines)
-   * is no longer written — it is only read by the migration tool and by the
-   * resilient reader in jsonl.ts for backward compatibility.
+   * The write path is unconditionally Pi tree JSONL v3. Legacy Craft JSONL
+   * transcripts are neither accepted here nor read by the runtime storage
+   * layer.
    *
    * Pi tree format:
    *   Line 1:  {type:"session", version:3, id, timestamp, cwd, craft?: {...}}
@@ -184,8 +176,7 @@ class SessionPersistenceQueue {
         lastUsedAt: data.lastUsedAt ?? Date.now(),
       }
 
-      // Always create/update the Pi tree JSONL file and merge Craft metadata
-      // into its header. This replaces the legacy Craft JSONL write path.
+      // Create/update the Pi tree JSONL file and merge Craft metadata into its header.
       const intendedHeaderSignature = getHeaderMetadataSignature(storageSession as SessionHeader)
       const treeFilePath = await ensureSharedPiTreeSessionFileAsync(storageSession, {
         lastWrittenHeaderSignature: this.lastWrittenHeaderSignature.get(sessionId),

@@ -49,6 +49,12 @@ export interface AssistantTurn {
   isStreaming: boolean
   isComplete: boolean
   timestamp: number
+  /** Wall-clock time when the user request started, in Unix milliseconds. */
+  startedAt?: number
+  /** Wall-clock time when the final response completed, in Unix milliseconds. */
+  completedAt?: number
+  /** End-to-end request duration derived from startedAt/completedAt. */
+  durationMs?: number
   /** Extracted from TodoWrite tool - latest todo state in this turn */
   todos?: TodoItem[]
 }
@@ -983,6 +989,31 @@ export function formatDuration(ms: number): string {
     return `${minutes}m+`
   }
   return `${minutes}m ${remainingSeconds}s`
+}
+
+/** Format a completion timestamp as a local 24-hour clock value. */
+export function formatCompletionClock(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(timestamp))
+}
+
+/** Format an end-to-end request duration compactly, omitting zero leading units. */
+export function formatRequestDuration(ms: number): string {
+  const totalSeconds = Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) {
+    return `${hours}h${minutes > 0 ? `${String(minutes).padStart(2, '0')}m` : ''}${seconds > 0 ? `${String(seconds).padStart(2, '0')}s` : ''}`
+  }
+  if (minutes > 0) {
+    return `${minutes}m${seconds > 0 ? `${String(seconds).padStart(2, '0')}s` : ''}`
+  }
+  return `${seconds}s`
 }
 
 /**

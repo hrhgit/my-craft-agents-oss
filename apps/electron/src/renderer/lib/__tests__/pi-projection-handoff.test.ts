@@ -34,7 +34,7 @@ describe('Pi projection completion handoff', () => {
       role: 'assistant', text: 'Earlier answer', streaming: false,
     }))
     state = applyPiProjectionEvent(state, event(2, 'assistant:intermediate', 'content_block', 'assistant_text', {
-      role: 'assistant', text: 'Hidden intermediate', intermediate: true, streaming: false,
+      role: 'assistant', text: 'Hidden intermediate', isIntermediate: true, streaming: false,
     }))
     state = applyPiProjectionEvent(state, event(3, 'assistant:2', 'content_block', 'assistant_text', {
       role: 'assistant', text: 'Final **answer**', streaming: false,

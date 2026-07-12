@@ -22,7 +22,7 @@ import { FullscreenOverlayBase } from '@craft-agent/ui'
 import { useSetAtom } from 'jotai'
 import { fullscreenOverlayOpenAtom } from '@/atoms/overlay'
 import { motion, AnimatePresence } from 'motion/react'
-import type { LlmConnectionWithStatus, ThinkingLevel, WorkspaceSettings, Workspace } from '../../../shared/types'
+import type { LlmConnection, LlmConnectionWithStatus, ThinkingLevel, WorkspaceSettings, Workspace } from '../../../shared/types'
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVELS } from '@craft-agent/shared/agent/thinking-levels'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import { cn } from '@/lib/utils'
@@ -40,7 +40,12 @@ import { useWorkspaceIcon } from '@/hooks/useWorkspaceIcon'
 import { OnboardingWizard } from '@/components/onboarding'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { getModelShortName, type ModelDefinition } from '@config/models'
-import { getModelsForProviderType, type CustomEndpointApi } from '@config/llm-connections'
+import {
+  getModelsForProviderType,
+  resolveMidStreamBehavior,
+  type CustomEndpointApi,
+  type MidStreamBehavior,
+} from '@config/llm-connections'
 import { toast } from 'sonner'
 import { PiProvidersSection } from './PiProvidersSection'
 
@@ -516,6 +521,29 @@ export default function AiSettingsPage() {
     await refreshLlmConnections()
   }, [defaultConnection, refreshLlmConnections])
 
+  const handleMidStreamBehaviorChange = useCallback(async (
+    connection: LlmConnectionWithStatus,
+    midStreamBehavior: MidStreamBehavior,
+  ) => {
+    if (!window.electronAPI) return
+
+    const { isAuthenticated: _authenticated, authError: _authError, isDefault: _isDefault, ...connectionData } = connection
+    try {
+      const result = await window.electronAPI.saveLlmConnection({
+        ...connectionData,
+        midStreamBehavior,
+      } as LlmConnection)
+      if (!result.success) {
+        toast.error(t('settings.ai.midStream.updateFailed'), { description: result.error })
+        return
+      }
+      await refreshLlmConnections()
+    } catch (error) {
+      console.error('Failed to update mid-stream behavior:', error)
+      toast.error(t('settings.ai.midStream.updateFailed'))
+    }
+  }, [refreshLlmConnections, t])
+
   const handleDefaultThinkingChange = useCallback(async (level: ThinkingLevel) => {
     if (!window.electronAPI) return
 
@@ -594,6 +622,26 @@ export default function AiSettingsPage() {
                   />
                 </SettingsCard>
               </SettingsSection>
+              )}
+
+              {llmConnections.length > 0 && (
+                <SettingsSection title={t('settings.ai.midStream.title')}>
+                  <SettingsCard>
+                    {llmConnections.map((connection) => (
+                      <SettingsMenuSelectRow
+                        key={connection.slug}
+                        label={connection.name}
+                        description={connection.isDefault ? t('settings.ai.useDefault') : connection.slug}
+                        value={resolveMidStreamBehavior(connection)}
+                        onValueChange={(value) => handleMidStreamBehaviorChange(connection, value as MidStreamBehavior)}
+                        options={[
+                          { value: 'steer', label: t('settings.ai.midStream.steer') },
+                          { value: 'queue', label: t('settings.ai.midStream.queue') },
+                        ]}
+                      />
+                    ))}
+                  </SettingsCard>
+                </SettingsSection>
               )}
 
               {/* Workspace Overrides - only show if connections exist */}

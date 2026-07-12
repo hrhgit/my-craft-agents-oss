@@ -12,11 +12,6 @@ export * from './theme.ts';
 export * from './validators.ts';
 export * from './cli-domains.ts';
 export {
-  runUnifiedMigrationIfNeeded,
-  isUnifiedMigrationNeeded,
-  type MigrationResult,
-} from './unified-migration.ts';
-export {
   ConfigWatcher,
   createConfigWatcher,
   type ConfigWatcherCallbacks,

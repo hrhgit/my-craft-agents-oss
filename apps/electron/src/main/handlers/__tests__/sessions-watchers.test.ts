@@ -7,7 +7,7 @@ import { registerSessionsHandlers, cleanupSessionFileWatchForClient } from '@cra
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
-type HandlerFn = (ctx: { clientId: string }, ...args: any[]) => Promise<any> | any
+type HandlerFn = (ctx: { clientId: string; workspaceId?: string }, ...args: any[]) => Promise<any> | any
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -47,6 +47,12 @@ describe('sessions file watchers', () => {
 
     const deps: HandlerDeps = {
       sessionManager: {
+        getSession: async (sessionId: string) => {
+          if (sessionId === 'session-a' || sessionId === 'session-b') {
+            return { id: sessionId, workspaceId: 'ws-1' }
+          }
+          return null
+        },
         getSessionPath: (sessionId: string) => {
           if (sessionId === 'session-a') return sessionDirA
           if (sessionId === 'session-b') return sessionDirB
@@ -97,8 +103,8 @@ describe('sessions file watchers', () => {
     expect(watch).toBeTruthy()
     expect(unwatch).toBeTruthy()
 
-    await watch!({ clientId: 'client-a' }, 'session-a')
-    await watch!({ clientId: 'client-b' }, 'session-b')
+    await watch!({ clientId: 'client-a', workspaceId: 'ws-1' }, 'session-a')
+    await watch!({ clientId: 'client-b', workspaceId: 'ws-1' }, 'session-b')
     await wait(50)
 
     writeFileSync(join(sessionDirA, 'a.txt'), `a-${Date.now()}`)
@@ -112,7 +118,7 @@ describe('sessions file watchers', () => {
     expect(bEvents.some((evt) => evt.channel === RPC_CHANNELS.sessions.FILES_CHANGED && evt.args[0] === 'session-b')).toBe(true)
 
     pushed.length = 0
-    await unwatch!({ clientId: 'client-a' })
+    await unwatch!({ clientId: 'client-a', workspaceId: 'ws-1' })
 
     writeFileSync(join(sessionDirA, 'a.txt'), `a2-${Date.now()}`)
     writeFileSync(join(sessionDirB, 'b.txt'), `b2-${Date.now()}`)
@@ -129,7 +135,7 @@ describe('sessions file watchers', () => {
     const watch = handlers.get(RPC_CHANNELS.sessions.WATCH_FILES)
     expect(watch).toBeTruthy()
 
-    await watch!({ clientId: 'client-a' }, 'session-a')
+    await watch!({ clientId: 'client-a', workspaceId: 'ws-1' }, 'session-a')
     await wait(50)
 
     cleanupSessionFileWatchForClient('client-a')

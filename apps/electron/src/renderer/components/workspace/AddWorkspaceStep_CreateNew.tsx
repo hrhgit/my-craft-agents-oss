@@ -89,7 +89,7 @@ export function AddWorkspaceStep_CreateNew({
     serverBrowserMode,
     cancelServerBrowser,
     confirmServerBrowser,
-  } = useDirectoryPicker(handleFolderSelected)
+  } = useDirectoryPicker(handleFolderSelected, { host: 'client' })
 
   const handleCreate = useCallback(async () => {
     if (!name.trim() || !finalPath || error) return

@@ -108,4 +108,25 @@ describe('panel stack single-lane behavior', () => {
     expect(changed).toBe(false)
     expect(store.get(focusedPanelIdAtom)).toBe(secondId)
   })
+
+  it('keeps a single session panel identity across unchanged UI-state reconciliation', () => {
+    const store = createStore()
+
+    store.set(reconcilePanelStackAtom, {
+      entries: [{ route: 'allSessions/session/s1', proportion: 1 }],
+      focusedIndex: 0,
+    })
+    const initialPanel = getStack(store)[0]
+
+    // Opening an in-place UI such as search can cause URL state to be read
+    // again, but it must not replace the panel that owns ChatPage.
+    const changed = store.set(reconcilePanelStackAtom, {
+      entries: [{ route: 'allSessions/session/s1', proportion: 1 }],
+      focusedIndex: 0,
+    })
+
+    expect(changed).toBe(false)
+    expect(getStack(store)[0]).toBe(initialPanel)
+    expect(store.get(focusedPanelIdAtom)).toBe(initialPanel.id)
+  })
 })

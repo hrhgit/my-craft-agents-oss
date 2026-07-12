@@ -64,7 +64,7 @@ import { isMac, PATH_SEP, getPathBasename } from '@/lib/platform'
 import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { ImageSupportWarningBanner } from './ImageSupportWarningBanner'
-import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, getModelContextWindow, type ModelDefinition } from '@config/models'
+import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, type ModelDefinition } from '@config/models'
 import {
   resolveEffectiveConnectionSlug,
   isCompatProvider,
@@ -104,6 +104,10 @@ import {
   groupConnectionsByProvider,
   stripPiPrefixForDisplay,
 } from './model-picker-helpers'
+import {
+  getConnectionModelContextWindow,
+  getContextUsagePercent,
+} from './context-usage'
 import { useModelVisionToggle } from './useModelVisionToggle'
 
 function formatFollowUpChipText(text: string, fallback: string, maxLength = 50): string {
@@ -115,34 +119,17 @@ function formatFollowUpChipText(text: string, fallback: string, maxLength = 50):
     : normalized
 }
 
-// Both the ContextUsageRing and the warning badge compute against the full
-// context window so their percentages stay consistent — 100% means the context
-// window is fully consumed. The warning badge still fires at 80% of the
-// compaction threshold (~77.5% of the window) to give early warning.
-function getContextUsagePercent(
-  contextStatus: FreeFormInputProps['contextStatus'],
-  currentModel: string,
-): { percent: number | null; inputTokens?: number; contextWindow?: number } {
-  const effectiveContextWindow = contextStatus?.contextWindow || getModelContextWindow(currentModel)
-  if (!contextStatus?.inputTokens || !effectiveContextWindow) {
-    return { percent: null, inputTokens: contextStatus?.inputTokens, contextWindow: effectiveContextWindow }
-  }
-  return {
-    percent: Math.min(100, Math.round((contextStatus.inputTokens / effectiveContextWindow) * 100)),
-    inputTokens: contextStatus.inputTokens,
-    contextWindow: effectiveContextWindow,
-  }
-}
-
 function ContextUsageRing({
   contextStatus,
   currentModel,
+  configuredContextWindow,
 }: {
   contextStatus?: FreeFormInputProps['contextStatus']
   currentModel: string
+  configuredContextWindow?: number
 }) {
   const { t } = useTranslation()
-  const usage = getContextUsagePercent(contextStatus, currentModel)
+  const usage = getContextUsagePercent(contextStatus, currentModel, configuredContextWindow)
   const percent = usage.percent ?? 0
   const radius = 5
   const circumference = 2 * Math.PI * radius
@@ -538,6 +525,11 @@ export function FreeFormInput({
     if (!effectiveConnection) return null
     return llmConnections.find(c => c.slug === effectiveConnection) ?? null
   }, [llmConnections, effectiveConnection])
+
+  const configuredContextWindow = React.useMemo(
+    () => getConnectionModelContextWindow(effectiveConnectionDetails?.models, currentModel),
+    [currentModel, effectiveConnectionDetails?.models],
+  )
 
 
   // Access sessionStatuses and onSessionStatusChange from context for the # menu state picker
@@ -2216,6 +2208,7 @@ export function FreeFormInput({
           <ContextUsageRing
             contextStatus={contextStatus}
             currentModel={currentModel}
+            configuredContextWindow={configuredContextWindow}
           />
           {/* 5. Model/Connection Selector - Hidden in compact mode (EditPopover embedding) */}
           {!compactMode && (
@@ -2581,7 +2574,11 @@ export function FreeFormInput({
               is 80% of the compaction threshold (~62% of the full window) so the user is
               warned before the SDK auto-compacts at ~77.5% of the window. */}
           {(() => {
-            const usage = getContextUsagePercent(contextStatus, currentModel)
+            const usage = getContextUsagePercent(
+              contextStatus,
+              currentModel,
+              configuredContextWindow,
+            )
             const usagePercent = usage.percent
             // Compaction triggers at ~77.5% of the window; warn at 80% of that.
             const warningThresholdPercent = Math.round(0.775 * 0.8 * 100) // ~62

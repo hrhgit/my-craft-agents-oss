@@ -26,6 +26,10 @@ function guidePath(slug: string): string {
   return resolve(WORKSPACE_ROOT, 'sources', slug, 'guide.md');
 }
 
+function skillPath(slug: string): string {
+  return resolve(WORKSPACE_ROOT, '.pi', 'skills', slug, 'SKILL.md');
+}
+
 function browserDocPath(): string {
   return resolve(join(homedir(), '.craft-agent', 'docs', 'browser-tools.md'));
 }
@@ -312,18 +316,18 @@ describe('PrerequisiteManager', () => {
 
   describe('trackBashSkillRead', () => {
     it('clears skill prerequisite when Bash command contains the skill path', () => {
-      const skillPath = '/test/workspace/skills/my-skill/SKILL.md';
-      manager.registerSkillPrerequisites([skillPath]);
+      const path = skillPath('my-skill');
+      manager.registerSkillPrerequisites([path]);
 
       // WebSearch should be blocked (skill prerequisite pending)
       expect(manager.checkPrerequisites('WebSearch').allowed).toBe(false);
 
       // Reset rejection count so we can test the block again after clearing
       manager.resetReadState();
-      manager.registerSkillPrerequisites([skillPath]);
+      manager.registerSkillPrerequisites([path]);
 
       // Bash cat targeting the skill path should clear the prerequisite
-      const result = manager.trackBashSkillRead({ command: `cat ${skillPath}` });
+      const result = manager.trackBashSkillRead({ command: `cat ${path}` });
       expect(result).toBe(true);
 
       // Now other tools should be allowed
@@ -331,8 +335,8 @@ describe('PrerequisiteManager', () => {
     });
 
     it('returns false when Bash command does not contain a pending skill path', () => {
-      const skillPath = '/test/workspace/skills/my-skill/SKILL.md';
-      manager.registerSkillPrerequisites([skillPath]);
+      const path = skillPath('my-skill');
+      manager.registerSkillPrerequisites([path]);
 
       const result = manager.trackBashSkillRead({ command: 'ls -la /some/other/path' });
       expect(result).toBe(false);
@@ -350,8 +354,8 @@ describe('PrerequisiteManager', () => {
     });
 
     it('clears multiple skill prerequisites from a single command', () => {
-      const skill1 = '/test/workspace/skills/alpha/SKILL.md';
-      const skill2 = '/test/workspace/skills/beta/SKILL.md';
+      const skill1 = skillPath('alpha');
+      const skill2 = skillPath('beta');
       manager.registerSkillPrerequisites([skill1, skill2]);
 
       // Command that contains both paths
@@ -365,10 +369,10 @@ describe('PrerequisiteManager', () => {
     });
 
     it('logs debug message when clearing via Bash', () => {
-      const skillPath = '/test/workspace/skills/my-skill/SKILL.md';
-      manager.registerSkillPrerequisites([skillPath]);
+      const path = skillPath('my-skill');
+      manager.registerSkillPrerequisites([path]);
 
-      manager.trackBashSkillRead({ command: `cat ${skillPath}` });
+      manager.trackBashSkillRead({ command: `cat ${path}` });
       expect(debugMessages.some(m => m.includes('cleared skill prerequisite via Bash'))).toBe(true);
     });
   });

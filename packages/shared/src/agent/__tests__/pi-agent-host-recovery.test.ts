@@ -1,7 +1,9 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { RpcCapabilities } from '@earendil-works/pi-coding-agent';
 import { PiAgent } from '../pi-agent.ts';
+import type { PiHostLease } from '../backend/pi-host-manager.ts';
 import type { BackendConfig } from '../backend/types.ts';
+
+type RpcCapabilities = PiHostLease['capabilities'];
 
 function createConfig(): BackendConfig {
   return {

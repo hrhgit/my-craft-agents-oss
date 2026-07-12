@@ -15,7 +15,7 @@ import type { AutomationMatcher } from '../../automations/types'
 function createTestWorkspace(rootDir: string): string {
   const wsDir = join(rootDir, 'workspace')
   mkdirSync(join(wsDir, 'sources'), { recursive: true })
-  mkdirSync(join(wsDir, 'skills'), { recursive: true })
+  mkdirSync(join(wsDir, '.pi', 'skills'), { recursive: true })
   writeFileSync(join(wsDir, 'config.json'), JSON.stringify({ name: 'Test Workspace' }))
   return wsDir
 }
@@ -45,7 +45,7 @@ function createTestSource(wsDir: string, slug: string, config?: Partial<FolderSo
 }
 
 function createTestSkill(wsDir: string, slug: string, extraFiles?: Record<string, string>): void {
-  const skillDir = join(wsDir, 'skills', slug)
+  const skillDir = join(wsDir, '.pi', 'skills', slug)
   mkdirSync(skillDir, { recursive: true })
 
   writeFileSync(join(skillDir, 'SKILL.md'), `---
@@ -385,8 +385,8 @@ describe('resource-bundle', () => {
     it('skips skills without SKILL.md', () => {
       const wsDir = createTestWorkspace(tmpDir)
       // Create a skill dir with no SKILL.md
-      mkdirSync(join(wsDir, 'skills', 'broken'), { recursive: true })
-      writeFileSync(join(wsDir, 'skills', 'broken', 'readme.txt'), 'not a skill')
+      mkdirSync(join(wsDir, '.pi', 'skills', 'broken'), { recursive: true })
+      writeFileSync(join(wsDir, '.pi', 'skills', 'broken', 'readme.txt'), 'not a skill')
 
       const { bundle, warnings } = exportResources(wsDir, { skills: 'all' })
 
@@ -687,9 +687,9 @@ describe('resource-bundle', () => {
       const result = await importResources(wsDir, bundle, 'skip', noopDeps)
 
       expect(result.skills.imported).toEqual(['pdf-tools'])
-      expect(existsSync(join(wsDir, 'skills', 'pdf-tools', 'SKILL.md'))).toBe(true)
-      expect(existsSync(join(wsDir, 'skills', 'pdf-tools', 'forms.md'))).toBe(true)
-      expect(existsSync(join(wsDir, 'skills', 'pdf-tools', 'scripts', 'extract.py'))).toBe(true)
+      expect(existsSync(join(wsDir, '.pi', 'skills', 'pdf-tools', 'SKILL.md'))).toBe(true)
+      expect(existsSync(join(wsDir, '.pi', 'skills', 'pdf-tools', 'forms.md'))).toBe(true)
+      expect(existsSync(join(wsDir, '.pi', 'skills', 'pdf-tools', 'scripts', 'extract.py'))).toBe(true)
     })
 
     it('skips existing resources in skip mode', async () => {
@@ -1143,9 +1143,9 @@ describe('resource-bundle', () => {
       expect(existsSync(join(dstDir, 'sources', 'my-api', 'guide.md'))).toBe(true)
 
       // Verify skill files
-      expect(existsSync(join(dstDir, 'skills', 'my-skill', 'SKILL.md'))).toBe(true)
-      expect(existsSync(join(dstDir, 'skills', 'my-skill', 'helper.ts'))).toBe(true)
-      expect(readFileSync(join(dstDir, 'skills', 'my-skill', 'helper.ts'), 'utf-8')).toBe('export function help() {}')
+      expect(existsSync(join(dstDir, '.pi', 'skills', 'my-skill', 'SKILL.md'))).toBe(true)
+      expect(existsSync(join(dstDir, '.pi', 'skills', 'my-skill', 'helper.ts'))).toBe(true)
+      expect(readFileSync(join(dstDir, '.pi', 'skills', 'my-skill', 'helper.ts'), 'utf-8')).toBe('export function help() {}')
 
       // Imported source config should have auth reset
       const importedConfig = JSON.parse(readFileSync(join(dstDir, 'sources', 'my-api', 'config.json'), 'utf-8'))

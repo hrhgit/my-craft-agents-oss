@@ -104,10 +104,28 @@ describe('PiProjectionBuilder', () => {
     })
   })
 
-  it('does not allocate sequence numbers for non-projected legacy events', () => {
+  it('projects Host status events without duplicating raw compaction lifecycle', () => {
     const builder = new PiProjectionBuilder('session-1', 'runtime-1')
-    expect(builder.accept({ type: 'status', message: 'working' })).toEqual([])
-    expect(builder.accept({ type: 'complete' })[0]?.seq).toBe(1)
+    expect(builder.accept({ type: 'status', message: 'working' })[0]).toMatchObject({
+      seq: 1,
+      kind: 'host_status',
+      payload: { message: 'working', level: 'info', statusType: 'status' },
+    })
+    expect(builder.accept({ type: 'info', message: 'ready' })[0]).toMatchObject({
+      seq: 2,
+      kind: 'host_info',
+      payload: { message: 'ready', level: 'info', statusType: 'info' },
+    })
+    expect(builder.accept({
+      type: 'queue_overflow', message: 'Some events were dropped', droppedEvents: 3, maxQueueSize: 10,
+    })[0]).toMatchObject({
+      seq: 3,
+      kind: 'host_info',
+      payload: { level: 'warning', statusType: 'queue_overflow', droppedEvents: 3, maxQueueSize: 10 },
+    })
+    expect(builder.accept({ type: 'status', message: 'Compacting context...' })).toEqual([])
+    expect(builder.accept({ type: 'info', message: 'Compacted context to fit within limits' })).toEqual([])
+    expect(builder.accept({ type: 'complete' })[0]?.seq).toBe(4)
   })
 
   it('preserves runtime errors when agent completion follows', () => {
@@ -146,7 +164,10 @@ describe('PiProjectionBuilder', () => {
     })[0]!
     expect(user.entityId).toBe('content:user:user-1')
     expect(user.kind).toBe('user_text')
-    expect(user.payload).toEqual({ role: 'user', text: 'hello', streaming: false })
+    expect(user.payload).toEqual({
+      role: 'user', text: 'hello', streaming: false, messageId: 'user-1',
+      clientMutationId: undefined, queueStatus: 'accepted', source: 'pi',
+    })
   })
 
   it('omits Craft-injected context from Pi-native user message projections', () => {
@@ -171,7 +192,10 @@ Ask me a question`,
       },
     })[0]!
 
-    expect(user.payload).toEqual({ role: 'user', text: 'Ask me a question', streaming: false })
+    expect(user.payload).toEqual({
+      role: 'user', text: 'Ask me a question', streaming: false, messageId: 'user-1',
+      clientMutationId: undefined, queueStatus: 'accepted', source: 'pi',
+    })
   })
 
   it('does not project injected context as text for attachment-only messages', () => {
@@ -311,5 +335,149 @@ sessionId: session-1
       service: 'drive', status: 'pending',
     })
     expect(JSON.stringify(pending.payload)).not.toMatch(/accessToken|refreshToken|codeVerifier|secret/)
+  })
+
+  it('seeds sequence, entity versions, payload state, and the next turn index from a snapshot', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-2', {
+      schemaVersion: 1,
+      sessionId: 'session-1',
+      runtimeId: 'runtime-1',
+      lastSeq: 5,
+      entities: [{
+        entityId: 'turn:pi-turn-4', entityType: 'turn', entityVersion: 2,
+        createdSeq: 1, turnId: 'pi-turn-4', kind: 'turn_end', payload: { status: 'completed' },
+        lastEventId: 'runtime-1:4', lastSeq: 4,
+      }, {
+        entityId: 'tool:call-1', entityType: 'tool_run', entityVersion: 2,
+        createdSeq: 2, turnId: 'pi-turn-4', kind: 'tool_execution_start',
+        payload: { toolCallId: 'call-1', toolName: 'Read', input: { path: 'a.ts' }, status: 'running' },
+        lastEventId: 'runtime-1:5', lastSeq: 5,
+      }],
+    })
+
+    const turn = builder.acceptRuntimeEvent({ type: 'turn_start' })[0]!
+    const result = builder.accept({
+      type: 'tool_result', toolUseId: 'call-1', toolName: 'Read', result: 'ok', isError: false,
+    })[0]!
+
+    expect(turn).toMatchObject({
+      runtimeId: 'runtime-2', eventId: 'runtime-2:6', seq: 6,
+      entityId: 'turn:pi-turn-5', turnId: 'pi-turn-5', entityVersion: 1,
+    })
+    expect(result).toMatchObject({
+      eventId: 'runtime-2:7', seq: 7, entityId: 'tool:call-1', entityVersion: 3,
+      turnId: 'pi-turn-4', payload: { input: { path: 'a.ts' }, result: 'ok', status: 'completed' },
+    })
+  })
+
+  it('uses assistant message_end as the authoritative final content update', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    builder.acceptRuntimeEvent({ type: 'turn_start' })
+    const streaming = builder.acceptRuntimeEvent({
+      type: 'message_update',
+      message: { id: 'assistant-1', timestamp: 10 },
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'partial' },
+    })[0]!
+    const finalized = builder.acceptRuntimeEvent({
+      type: 'message_end',
+      message: {
+        id: 'assistant-1', role: 'assistant', timestamp: 10,
+        content: [
+          { type: 'text', text: 'final answer' },
+          { type: 'thinking', thinking: 'final reasoning' },
+        ],
+      },
+    })
+
+    expect(finalized[0]).toMatchObject({
+      entityId: streaming.entityId, entityVersion: 2, kind: 'assistant_text',
+      payload: {
+        role: 'assistant', contentKind: 'text', messageId: 'assistant-1',
+        text: 'final answer', streaming: false, contentIndex: 0,
+      },
+    })
+    expect(finalized[1]).toMatchObject({
+      entityId: 'content:thinking:assistant-1:1', entityVersion: 1, kind: 'thinking_end',
+      payload: { messageId: 'assistant-1', text: 'final reasoning', streaming: false },
+    })
+  })
+
+  it('upgrades Host-queued user entities when Pi accepts the same client mutation', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    const queued = builder.acceptHostQueuedUser({
+      message: 'queued input', clientMutationId: 'mutation-1', messageId: 'message-1', timestamp: 9,
+      attachments: [{ id: 'att-1', name: 'note.txt', mediaType: 'text/plain', size: 5 }],
+    })
+    expect(queued[0]).toMatchObject({
+      entityId: 'content:user:mutation-1', entityVersion: 1,
+      payload: {
+        messageId: 'message-1', clientMutationId: 'mutation-1',
+        queueStatus: 'queued', source: 'host', timestamp: 9,
+      },
+    })
+    expect(queued[1]).toMatchObject({
+      entityId: 'artifact:attachment:mutation-1:att-1', entityVersion: 1, occurredAt: 9,
+      payload: { ownerMessageId: 'message-1', queueStatus: 'queued', source: 'host' },
+    })
+
+    builder.acceptRuntimeEvent({ type: 'turn_start' })
+    const accepted = builder.acceptRuntimeEvent({
+      type: 'message_end',
+      message: {
+        role: 'user', content: 'queued input', timestamp: 10,
+        clientMutationId: 'mutation-1',
+        attachments: [{ id: 'att-1', name: 'note.txt', mediaType: 'text/plain', size: 5 }],
+      },
+    })
+    expect(accepted[0]).toMatchObject({
+      entityId: queued[0]!.entityId, entityVersion: 2, turnId: 'pi-turn-0', occurredAt: 10,
+      payload: { messageId: 'message-1', queueStatus: 'accepted', source: 'pi', timestamp: 10 },
+    })
+    expect(accepted[1]).toMatchObject({
+      entityId: queued[1]!.entityId, entityVersion: 2, turnId: 'pi-turn-0',
+      payload: { ownerMessageId: 'message-1', queueStatus: 'accepted', source: 'pi' },
+    })
+  })
+
+  it('projects Host runtime errors through the current sequence owner', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    builder.accept({ type: 'tool_start', toolName: 'Write', toolUseId: 'call-1', input: {} })
+    const failed = builder.acceptHostRuntimeError({
+      phase: 'send', message: 'transport failed', code: 'transport_closed', retryable: true,
+    })
+
+    expect(failed[0]).toMatchObject({
+      seq: 2, entityId: 'tool:call-1', entityVersion: 2,
+      kind: 'tool_execution_end', payload: { status: 'failed', isError: true },
+    })
+    expect(failed[1]).toMatchObject({
+      seq: 3, kind: 'runtime_error',
+      payload: {
+        source: 'host', phase: 'send', message: 'transport failed',
+        code: 'transport_closed', retryable: true,
+      },
+    })
+    expect(builder.accept({ type: 'complete' })[0]?.seq).toBe(4)
+  })
+
+  it('projects visible custom messages while retaining plan special cases', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    expect(builder.acceptRuntimeEvent({
+      type: 'message_end',
+      message: {
+        role: 'custom', customType: 'extension-notice', content: 'Needs attention',
+        display: true, timestamp: 42, details: { level: 'warning' },
+      },
+    })[0]).toMatchObject({
+      entityId: 'content:custom:ts-42', entityType: 'content_block', kind: 'custom_display',
+      payload: {
+        role: 'info', messageId: 'ts-42', content: 'Needs attention',
+        level: 'warning', customType: 'extension-notice',
+      },
+    })
+    expect(builder.acceptRuntimeEvent({
+      type: 'message_end',
+      message: { role: 'custom', customType: 'hidden', content: 'hidden', display: false, timestamp: 43 },
+    })).toEqual([])
   })
 })

@@ -40,15 +40,16 @@ function createTestSession(
   };
 }
 
-function createLegacyTestSession(
+function createSessionWithoutCraftId(
   id: string,
   workspaceRootPath: string,
   sdkSessionId?: string
-): StoredSession & { id: string; craftId?: string } {
-  const session = createTestSession(id, workspaceRootPath, sdkSessionId) as StoredSession & { id: string; craftId?: string };
-  session.id = id;
-  delete session.craftId;
-  return session;
+): StoredSession {
+  return {
+    ...createTestSession(id, workspaceRootPath, sdkSessionId),
+    craftId: undefined,
+    id,
+  } as unknown as StoredSession;
 }
 
 function readWrittenHeader(workspaceRootPath: string, sessionId: string): any {
@@ -61,6 +62,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function blockNextWrite(queue: SessionPersistenceQueue): {
+  started: Promise<void>;
+  release: () => void;
+} {
+  let markStarted!: () => void;
+  let releaseWrite!: () => void;
+  const started = new Promise<void>(resolve => { markStarted = resolve; });
+  const blocked = new Promise<void>(resolve => { releaseWrite = resolve; });
+  const internals = queue as unknown as { write: (sessionId: string) => Promise<void> };
+  const originalWrite = internals.write.bind(queue);
+  internals.write = async (sessionId: string) => {
+    markStarted();
+    await blocked;
+    await originalWrite(sessionId);
+  };
+  return { started, release: releaseWrite };
+}
+
 describe('SessionPersistenceQueue', () => {
   let testDir: string;
   let queue: SessionPersistenceQueue;
@@ -69,8 +88,6 @@ describe('SessionPersistenceQueue', () => {
     // Create a unique test directory
     testDir = join(tmpdir(), `persistence-queue-test-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });
-    // Create sessions subdirectory structure
-    mkdirSync(join(testDir, 'sessions', 'test-session'), { recursive: true });
     setSharedPiSessionsDirForTests(join(testDir, 'pi-sessions'));
     // Use 0ms debounce for immediate writes in tests
     queue = new SessionPersistenceQueue(0);
@@ -125,9 +142,6 @@ describe('SessionPersistenceQueue', () => {
 
   it('allows parallel writes to different sessions', async () => {
     // Different sessions should write in parallel without blocking each other
-    mkdirSync(join(testDir, 'sessions', 'session-a'), { recursive: true });
-    mkdirSync(join(testDir, 'sessions', 'session-b'), { recursive: true });
-
     const sessionA = createTestSession('session-a', testDir, 'id-a');
     const sessionB = createTestSession('session-b', testDir, 'id-b');
 
@@ -148,48 +162,22 @@ describe('SessionPersistenceQueue', () => {
     expect(headerB.craft.sdkSessionId).toBe('id-b');
   });
 
-  it('uses legacy id as a fallback key without colliding missing craftIds', async () => {
-    const sessionA = createLegacyTestSession('legacy-a', testDir, 'id-a');
-    const sessionB = createLegacyTestSession('legacy-b', testDir, 'id-b');
+  it('rejects legacy id-only sessions without accepting id as the persistence key', async () => {
+    const session = createSessionWithoutCraftId('legacy-a', testDir, 'id-a');
 
-    queue.enqueue(sessionA);
-    queue.enqueue(sessionB);
+    queue.enqueue(session);
+    await queue.flush('legacy-a');
 
-    await Promise.all([
-      queue.flush('legacy-a'),
-      queue.flush('legacy-b'),
-    ]);
-
-    const headerA = readWrittenHeader(testDir, 'legacy-a');
-    const headerB = readWrittenHeader(testDir, 'legacy-b');
-
-    expect(headerA.craft.id).toBe('legacy-a');
-    expect(headerA.craft.sdkSessionId).toBe('id-a');
-    expect(headerB.craft.id).toBe('legacy-b');
-    expect(headerB.craft.sdkSessionId).toBe('id-b');
+    expect(queue.hasPending('legacy-a')).toBe(false);
+    expect(existsSync(getSessionFilePath(testDir, 'legacy-a'))).toBe(false);
   });
 
   it('cancel waits for debounce-triggered writes already in progress', async () => {
     const session = createTestSession('blocked-session', testDir, 'sdk-blocked');
-    const filePath = getSessionFilePath(testDir, session.craftId, undefined, session.createdAt);
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, `${JSON.stringify({
-      type: 'session',
-      version: 3,
-      id: session.craftId,
-      timestamp: new Date(session.createdAt).toISOString(),
-      cwd: testDir,
-    })}\n`, 'utf-8');
-
-    const lockDir = `${filePath}.lock`;
-    mkdirSync(lockDir);
+    const blocker = blockNextWrite(queue);
 
     queue.enqueue(session);
-
-    for (let attempt = 0; attempt < 20 && queue.pendingCount > 0; attempt++) {
-      await sleep(5);
-    }
-    expect(queue.pendingCount).toBe(0);
+    await blocker.started;
 
     let cancelResolved = false;
     const cancelPromise = queue.cancel(session.craftId).then(() => {
@@ -199,7 +187,7 @@ describe('SessionPersistenceQueue', () => {
     await sleep(40);
     expect(cancelResolved).toBe(false);
 
-    rmSync(lockDir, { recursive: true, force: true });
+    blocker.release();
     await cancelPromise;
 
     expect(cancelResolved).toBe(true);
@@ -207,24 +195,11 @@ describe('SessionPersistenceQueue', () => {
 
   it('drops enqueue calls that arrive while delete cancellation waits on an in-progress write', async () => {
     const session = createTestSession('delete-race-session', testDir, 'sdk-blocked');
+    const blocker = blockNextWrite(queue);
     const filePath = getSessionFilePath(testDir, session.craftId, undefined, session.createdAt);
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, `${JSON.stringify({
-      type: 'session',
-      version: 3,
-      id: session.craftId,
-      timestamp: new Date(session.createdAt).toISOString(),
-      cwd: testDir,
-    })}\n`, 'utf-8');
-
-    const lockDir = `${filePath}.lock`;
-    mkdirSync(lockDir);
 
     queue.enqueue(session);
-    for (let attempt = 0; attempt < 20 && queue.pendingCount > 0; attempt++) {
-      await sleep(5);
-    }
-    expect(queue.pendingCount).toBe(0);
+    await blocker.started;
 
     const cancelPromise = queue.cancel(session.craftId, { preventFutureEnqueue: true });
     await sleep(40);
@@ -234,7 +209,7 @@ describe('SessionPersistenceQueue', () => {
       sdkSessionId: 'sdk-should-not-revive',
     });
 
-    rmSync(lockDir, { recursive: true, force: true });
+    blocker.release();
     await cancelPromise;
     rmSync(filePath, { force: true });
 

@@ -86,7 +86,7 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
         deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `sources/${slug}/config.json`)
       }
       for (const slug of result.skills.imported) {
-        deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `skills/${slug}/SKILL.md`)
+        deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `.pi/skills/${slug}/SKILL.md`)
       }
 
       return result

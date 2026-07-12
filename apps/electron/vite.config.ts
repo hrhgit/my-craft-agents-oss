@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
+const requestedPort = Number.parseInt(process.env.CRAFT_VITE_PORT ?? process.env.PORT ?? '', 10)
+const electronVitePort = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
+  ? requestedPort
+  : 5173
+
 // NOTE: Source map upload to Sentry is intentionally disabled.
 // To re-enable, uncomment the sentryVitePlugin below and add SENTRY_AUTH_TOKEN,
 // SENTRY_ORG, SENTRY_PROJECT to CI secrets. See CLAUDE.md "Sentry Error Tracking" section.
@@ -68,7 +73,8 @@ export default defineConfig({
     }
   },
   server: {
-    port: 5173,
+    port: electronVitePort,
+    strictPort: true,
     open: false
   }
 })

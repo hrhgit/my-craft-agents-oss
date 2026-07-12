@@ -5,12 +5,12 @@ import { join } from 'path'
 import { getSessionFilePath, getSessionPath, readSessionJsonl, setSharedPiSessionsDirForTests } from '@craft-agent/shared/sessions'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 
-// Regression test for the High-severity finding in eb81086e:
+// Regression test for the High-severity finding in eb81086e, adapted for
+// Pi-first transcript ownership:
 //
-//   sendMessage's `{ accepted, messageId }` ack contract was returning before
-//   the user message hit disk because `persistSession` only enqueues with a
-//   500ms debounce. A crash inside the debounce window after ack would lose
-//   the message.
+//   sendMessage's `{ accepted, messageId }` ack contract must not return before
+//   the Craft-owned attachment/badge overlay hits disk. A crash inside the
+//   persistence debounce window would otherwise lose its Pi message identity.
 //
 // The fix added `await this.flushSession(managed.id)` between persistSession
 // and onAck. This test locks that ordering by reading the session file from
@@ -26,7 +26,12 @@ describe('sendMessage durability', () => {
     sm = new SessionManager()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await sm.flushAllSessions()
+    const projectionWrites = [
+      ...(sm as unknown as { piProjectionWrites: Map<string, Promise<void>> }).piProjectionWrites.values(),
+    ]
+    await Promise.all(projectionWrites)
     mock.restore()
     setSharedPiSessionsDirForTests(undefined)
     rmSync(tmpRoot, { recursive: true, force: true })
@@ -70,7 +75,26 @@ describe('sendMessage durability', () => {
     return [...ids]
   }
 
-  it('user message is on disk before onAck fires (normal branch)', async () => {
+  function readPersistedQueuedMessageIds(sessionId: string): string[] {
+    const path = join(getSessionPath(tmpRoot, sessionId), 'pi-projection-v1.json')
+    if (!existsSync(path)) return []
+    const snapshot = JSON.parse(readFileSync(path, 'utf8')) as {
+      entities?: Array<{ kind?: unknown; payload?: { messageId?: unknown; queueStatus?: unknown } }>
+    }
+    return snapshot.entities?.flatMap(entity => (
+      entity.kind === 'user_text'
+        && entity.payload?.queueStatus === 'queued'
+        && typeof entity.payload.messageId === 'string'
+        ? [entity.payload.messageId]
+        : []
+    )) ?? []
+  }
+
+  const overlayOptions = {
+    badges: [{ type: 'source' as const, label: 'Linear', rawText: '@linear', start: 0, end: 7 }],
+  }
+
+  it('user overlay is on disk before onAck fires (normal branch)', async () => {
     const sessionId = 'durability-normal'
     buildSession(sessionId)
 
@@ -87,7 +111,7 @@ describe('sendMessage durability', () => {
         'hello',
         undefined,
         undefined,
-        undefined,
+        overlayOptions,
         undefined,
         undefined,
         (messageId) => {
@@ -126,34 +150,69 @@ describe('sendMessage durability', () => {
     )
 
     expect(ackedBeforeAgentInit).toBe(true)
+    const projection = await sm.getPiProjectionSnapshot(sessionId)
+    expect(projection?.entities.some(entity => entity.kind === 'runtime_error')).toBe(true)
   })
 
-  it('user message is on disk before onAck fires (mid-stream / queued branch)', async () => {
+  it('user overlay is on disk before onAck fires (mid-stream / queued branch)', async () => {
     const sessionId = 'durability-midstream'
     const managed = buildSession(sessionId)
-    // Force the mid-stream branch. Agent is null, so redirect() falls back to
-    // false and the queue path runs.
+    // Force the mid-stream branch. The fake runtime declines redirect so the
+    // durable Host queue projection path runs.
     managed.isProcessing = true
+    const projectQueuedUser = mock((input: {
+      message: string
+      clientMutationId: string
+      messageId?: string
+      timestamp?: number
+    }) => {
+      sm.applyPiProjectionEvent({
+        schemaVersion: 1,
+        eventId: 'queued-event-1',
+        seq: 1,
+        sessionId,
+        runtimeId: 'runtime-1',
+        entityId: `content:user:${input.clientMutationId}`,
+        entityType: 'content_block',
+        entityVersion: 1,
+        kind: 'user_text',
+        occurredAt: input.timestamp,
+        payload: {
+          role: 'user',
+          text: input.message,
+          messageId: input.messageId ?? input.clientMutationId,
+          clientMutationId: input.clientMutationId,
+          queueStatus: 'queued',
+          source: 'host',
+          timestamp: input.timestamp,
+        },
+      })
+    })
+    managed.agent = { redirect: () => false, projectQueuedUser } as never
 
     let ackedMessageId: string | null = null
     let onDiskAtAck = false
+    let projectionOnDiskAtAck = false
 
     await sm.sendMessage(
       sessionId,
       'queued message',
       undefined,
       undefined,
-      undefined,
+      overlayOptions,
       undefined,
       undefined,
       (messageId) => {
         ackedMessageId = messageId
         onDiskAtAck = readPersistedMessageIds(sessionId).includes(messageId)
+        projectionOnDiskAtAck = readPersistedQueuedMessageIds(sessionId).includes(messageId)
       },
     )
 
+    expect(projectQueuedUser).toHaveBeenCalledTimes(1)
     expect(ackedMessageId).not.toBeNull()
     expect(onDiskAtAck).toBe(true)
+    expect(projectionOnDiskAtAck).toBe(true)
   })
 
   it('keeps new sends queued behind a shifted replay message', async () => {
@@ -193,15 +252,18 @@ describe('sendMessage durability', () => {
 
   it('acks Pi sends if chat fails before the event loop starts', async () => {
     const sessionId = 'durability-pi-chat-failure'
-    buildSession(sessionId)
+    const managed = buildSession(sessionId)
+    const projectRuntimeError = mock(() => undefined)
     const fakeAgent = {
       getModel: () => 'pi-test-model',
       setAllSources: mock(() => undefined),
       getSessionId: () => null,
+      projectRuntimeError,
       chat: mock(() => {
         throw new Error('chat failed before iterator')
       }),
     }
+    managed.agent = fakeAgent as never
     ;(sm as unknown as { getOrCreateAgent: () => Promise<unknown> }).getOrCreateAgent = mock(async () => fakeAgent)
 
     let ackedMessageId: string | null = null
@@ -212,7 +274,7 @@ describe('sendMessage durability', () => {
       'pi provider delayed ack',
       undefined,
       undefined,
-      undefined,
+      overlayOptions,
       undefined,
       undefined,
       (messageId) => {
@@ -222,6 +284,12 @@ describe('sendMessage durability', () => {
     )
 
     expect(fakeAgent.chat).toHaveBeenCalled()
+    expect(projectRuntimeError).toHaveBeenCalledWith({
+      phase: 'send',
+      message: 'chat failed before iterator',
+      retryable: true,
+    })
+    expect(managed.messages.some(message => message.role === 'error')).toBe(false)
     expect(ackedMessageId).not.toBeNull()
     expect(onDiskAtAck).toBe(true)
   })

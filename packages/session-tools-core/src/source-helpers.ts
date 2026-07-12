@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { readSessionHeader, sanitizeSessionId, tryGetSessionFilePath } from '@craft-agent/shared/sessions';
-import { stripBom } from '@craft-agent/shared/utils';
+import { expandPath, stripBom } from '@craft-agent/shared/utils';
 import type { SourceConfig } from './types.ts';
 
 /**
@@ -15,11 +15,11 @@ import type { SourceConfig } from './types.ts';
  * basename() strips directory components, so if it differs from the input,
  * the slug contained separators and is unsafe.
  */
-function isSafeSourceSlug(sourceSlug: string): boolean {
-  if (!sourceSlug || sourceSlug === '.' || sourceSlug === '..') {
+function isSafeSlug(slug: string): boolean {
+  if (!slug || slug === '.' || slug === '..') {
     return false;
   }
-  return basename(sourceSlug) === sourceSlug;
+  return basename(slug) === slug;
 }
 
 /**
@@ -28,8 +28,14 @@ function isSafeSourceSlug(sourceSlug: string): boolean {
  * helpers use isSafeSourceSlug to return null/false instead.
  */
 function validateSourceSlug(sourceSlug: string): void {
-  if (!isSafeSourceSlug(sourceSlug)) {
+  if (!isSafeSlug(sourceSlug)) {
     throw new Error('Invalid source slug: path separators not allowed');
+  }
+}
+
+function validateSkillSlug(skillSlug: string): void {
+  if (!isSafeSlug(skillSlug)) {
+    throw new Error('Invalid skill slug: path separators not allowed');
   }
 }
 
@@ -59,7 +65,7 @@ export function getSourceGuidePath(workspaceRootPath: string, sourceSlug: string
  * Check if a source directory exists
  */
 export function sourceExists(workspaceRootPath: string, sourceSlug: string): boolean {
-  if (!isSafeSourceSlug(sourceSlug)) {
+  if (!isSafeSlug(sourceSlug)) {
     return false;
   }
   return existsSync(getSourcePath(workspaceRootPath, sourceSlug));
@@ -69,7 +75,7 @@ export function sourceExists(workspaceRootPath: string, sourceSlug: string): boo
  * Check if a source config file exists
  */
 export function sourceConfigExists(workspaceRootPath: string, sourceSlug: string): boolean {
-  if (!isSafeSourceSlug(sourceSlug)) {
+  if (!isSafeSlug(sourceSlug)) {
     return false;
   }
   return existsSync(getSourceConfigPath(workspaceRootPath, sourceSlug));
@@ -83,7 +89,7 @@ export function loadSourceConfig(
   workspaceRootPath: string,
   sourceSlug: string
 ): SourceConfig | null {
-  if (!isSafeSourceSlug(sourceSlug)) {
+  if (!isSafeSlug(sourceSlug)) {
     return null;
   }
   const configPath = getSourceConfigPath(workspaceRootPath, sourceSlug);
@@ -126,7 +132,8 @@ export function listSourceSlugs(workspaceRootPath: string): string[] {
  * Get the path to a skill's directory
  */
 export function getSkillPath(workspaceRootPath: string, skillSlug: string): string {
-  return join(workspaceRootPath, 'skills', skillSlug);
+  validateSkillSlug(skillSlug);
+  return join(workspaceRootPath, '.pi', 'skills', skillSlug);
 }
 
 /**
@@ -143,10 +150,8 @@ export function getSkillMdPath(workspaceRootPath: string, skillSlug: string): st
 /**
  * Read the session's workingDirectory from the persisted session header.
  *
- * Tries the workspace-scoped Pi projection path first
- * (~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl), then falls back to the legacy craft workspace
- * path (~/.craft-agent/workspaces/{id}/sessions/{sessionId}/session.jsonl) for
- * sessions not yet migrated.
+ * Reads the workspace-scoped Pi projection path at
+ * ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl.
  *
  * Returns undefined if the session file doesn't exist, can't be parsed,
  * or has no workingDirectory set. Never throws.
@@ -158,23 +163,11 @@ export function resolveSessionWorkingDirectory(
   // sanitizeSessionId as path traversal defense (basename strips any path components).
   const safeSessionId = sanitizeSessionId(sessionId);
 
-  // Try the workspace bucket first without scanning the global Pi sessions root.
+  // Read only the workspace bucket without scanning the global Pi sessions root.
   const piSessionFile = tryGetSessionFilePath(workspacePath, safeSessionId);
-  if (piSessionFile) {
-    // shared's readSessionHeader normalizes both Pi tree (workingDirectory =
-    // craft.workingDirectory ?? header.cwd) and legacy craft headers.
-    const wd = readSessionHeader(piSessionFile)?.workingDirectory;
-    if (wd) return wd;
-  }
-
-  // Legacy fallback: ~/.craft-agent/workspaces/{id}/sessions/{sessionId}/session.jsonl
-  try {
-    const sessionFile = join(workspacePath, 'sessions', safeSessionId, 'session.jsonl');
-    if (!existsSync(sessionFile)) return undefined;
-    return readSessionHeader(sessionFile)?.workingDirectory || undefined;
-  } catch {
-    return undefined; // Never fail — caller handles missing gracefully
-  }
+  if (!piSessionFile) return undefined;
+  const workingDirectory = readSessionHeader(piSessionFile)?.workingDirectory;
+  return workingDirectory ? expandPath(workingDirectory) : undefined;
 }
 
 /**

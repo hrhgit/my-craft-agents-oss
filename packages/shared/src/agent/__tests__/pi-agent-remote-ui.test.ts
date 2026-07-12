@@ -26,10 +26,41 @@ describe('PiAgent RemoteUI bridge', () => {
       type: 'remoteui_request', kind: 'confirm', requestId: 'confirm',
     })
     expect(map({ type: 'extension_ui_request', id: 'input', extensionId: 'prompt-automation', method: 'input', title: 'Name', placeholder: 'Enter a name' })).toMatchObject({
-      type: 'remoteui_request', kind: 'editor', requestId: 'input', prefill: 'Enter a name',
+      type: 'remoteui_request', kind: 'editor', requestId: 'input', placeholder: 'Enter a name',
     })
     expect(map({ type: 'extension_ui_request', id: 'editor', extensionId: 'subagent', method: 'editor', title: 'Logs', prefill: 'log text' })).toMatchObject({
       type: 'remoteui_request', kind: 'editor', requestId: 'editor', prefill: 'log text',
+    })
+    expect(map({
+      type: 'extension_ui_request',
+      id: 'ask-user-single',
+      extensionId: 'ask_user',
+      method: 'select',
+      title: 'Pick an approach',
+      options: ['Prototype', '✏️ Write my own answer...'],
+    })).toMatchObject({
+      type: 'remoteui_request',
+      kind: 'select',
+      requestId: 'ask-user-single',
+      options: [{ title: 'Prototype' }],
+      allowFreeform: true,
+    })
+    expect(map({
+      type: 'extension_ui_request',
+      id: 'ask-user-multiple',
+      extensionId: 'ask_user',
+      method: 'input',
+      title: 'Choose areas\n\nContext:\nSelect everything that applies.\n\nOptions (select one or more):\n1. UI — Screen work\n2. Backend',
+      placeholder: 'Type your selection(s)...',
+    })).toMatchObject({
+      type: 'remoteui_request',
+      kind: 'select',
+      requestId: 'ask-user-multiple',
+      title: 'Choose areas',
+      message: 'Select everything that applies.',
+      options: [{ title: 'UI', description: 'Screen work' }, { title: 'Backend' }],
+      allowMultiple: true,
+      allowFreeform: true,
     })
 
     agent.destroy()
@@ -38,14 +69,14 @@ describe('PiAgent RemoteUI bridge', () => {
   it('converts modal results to the scalar Pi RPC responses', () => {
     const { agent, responses } = createAgent()
 
-    agent.sendRemoteUIResponse('select', { selections: ['First option'] })
+    agent.sendRemoteUIResponse('select', { selections: ['First option', 'Second option'] })
     agent.sendRemoteUIResponse('freeform', { selections: [], freeformText: 'My answer' })
     agent.sendRemoteUIResponse('editor', { text: 'Notes' })
     agent.sendRemoteUIResponse('confirm', { confirmed: true })
     agent.sendRemoteUIResponse('cancel', null, 'cancelled')
 
     expect(responses).toEqual([
-      { type: 'extension_ui_response', id: 'select', value: 'First option' },
+      { type: 'extension_ui_response', id: 'select', value: 'First option, Second option' },
       { type: 'extension_ui_response', id: 'freeform', value: 'My answer' },
       { type: 'extension_ui_response', id: 'editor', value: 'Notes' },
       { type: 'extension_ui_response', id: 'confirm', confirmed: true },

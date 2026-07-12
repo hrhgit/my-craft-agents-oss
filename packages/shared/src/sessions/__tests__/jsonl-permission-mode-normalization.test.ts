@@ -16,8 +16,8 @@ afterEach(() => {
   }
 });
 
-describe('session jsonl: permission mode normalization', () => {
-  it('normalizes canonical permissionMode and previousPermissionMode in header reads', () => {
+describe('session jsonl format boundary', () => {
+  it('rejects a legacy flat Craft header', () => {
     const sessionDir = mkdtempSync(join(tmpdir(), 'session-mode-header-'));
     tempDirs.push(sessionDir);
 
@@ -42,11 +42,10 @@ describe('session jsonl: permission mode normalization', () => {
     writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, 'utf-8');
 
     const loadedHeader = readSessionHeader(sessionFile);
-    expect(loadedHeader?.permissionMode).toBe('allow-all');
-    expect(loadedHeader?.previousPermissionMode).toBe('safe');
+    expect(loadedHeader).toBeNull();
   });
 
-  it('normalizes canonical mode values when loading full session', () => {
+  it('rejects a legacy flat Craft transcript', () => {
     const sessionDir = mkdtempSync(join(tmpdir(), 'session-mode-full-'));
     tempDirs.push(sessionDir);
 
@@ -78,7 +77,6 @@ describe('session jsonl: permission mode normalization', () => {
     writeFileSync(sessionFile, `${JSON.stringify(header)}\n${JSON.stringify(message)}\n`, 'utf-8');
 
     const loaded = readSessionJsonl(sessionFile);
-    expect(loaded?.permissionMode).toBe('safe');
-    expect(loaded?.previousPermissionMode).toBe('allow-all');
+    expect(loaded).toBeNull();
   });
 });

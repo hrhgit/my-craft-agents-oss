@@ -62,6 +62,8 @@ export interface FullscreenOverlayBaseProps {
   className?: string
   /** Accessible title for the overlay (visually hidden) */
   accessibleTitle?: string
+  /** Whether clicks outside a marked content boundary should close the overlay */
+  dismissOnOutsideClick?: boolean
 
   // --- Structured header props (optional) ---
   // When any of these are provided, a FullscreenOverlayBaseHeader is rendered above children.
@@ -85,6 +87,19 @@ export interface FullscreenOverlayBaseProps {
   error?: OverlayErrorBannerProps
 }
 
+const DISMISS_BOUNDARY_SELECTOR = '[data-fullscreen-overlay-dismiss-boundary]'
+
+/**
+ * Fullscreen overlays contain a full-viewport scroll area, so there is no native
+ * Dialog backdrop to distinguish card content from the surrounding empty space.
+ */
+export function shouldDismissFullscreenOverlayFromTarget(target: EventTarget | null): boolean {
+  if (!target || typeof target !== 'object' || !('closest' in target)) return true
+
+  const closest = (target as Element).closest
+  return typeof closest !== 'function' || !closest.call(target, DISMISS_BOUNDARY_SELECTOR)
+}
+
 export function handleFullscreenEscapeWithStack(): boolean {
   const bridge = getDismissibleLayerBridge()
   if (!bridge) return false
@@ -97,6 +112,7 @@ export function FullscreenOverlayBase({
   children,
   className,
   accessibleTitle = 'Overlay',
+  dismissOnOutsideClick = false,
   typeBadge,
   filePath,
   title,
@@ -158,6 +174,11 @@ export function FullscreenOverlayBase({
             event.preventDefault()
             event.stopPropagation()
           }}
+          onClick={(event) => {
+            if (dismissOnOutsideClick && shouldDismissFullscreenOverlayFromTarget(event.target)) {
+              onClose()
+            }
+          }}
         >
           {/* Visually hidden title for accessibility - required by Radix Dialog */}
           <Dialog.Title className="sr-only">{accessibleTitle}</Dialog.Title>
@@ -178,7 +199,7 @@ export function FullscreenOverlayBase({
               <div className="min-h-full flex flex-col justify-center">
                 {/* Error banner — inside centering flow, above content */}
                 {error && (
-                  <div className="px-6 pb-4">
+                  <div className="px-6 pb-4" data-fullscreen-overlay-dismiss-boundary>
                     <OverlayErrorBanner label={error.label} message={error.message} />
                   </div>
                 )}
@@ -190,7 +211,7 @@ export function FullscreenOverlayBase({
           {/* Floating header — rendered after scroll area so it's visually on top (DOM order).
               Positioned absolutely at the top of the viewport, above the scroll content. */}
           {hasHeader && (
-            <div className="absolute top-0 left-0 right-0 z-10">
+            <div className="absolute top-0 left-0 right-0 z-10" data-fullscreen-overlay-dismiss-boundary>
               <FullscreenOverlayBaseHeader
                 onClose={onClose}
                 typeBadge={typeBadge}

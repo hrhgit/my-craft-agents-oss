@@ -367,13 +367,13 @@ describe('detectConfigFileType', () => {
 
   it('detects skill SKILL.md files', () => {
     const result = detectConfigFileType(
-      `${workspaceRoot}/skills/commit/SKILL.md`,
+      `${workspaceRoot}/.pi/skills/commit/SKILL.md`,
       workspaceRoot
     );
     expect(result).not.toBeNull();
     expect(result!.type).toBe('skill');
     expect(result!.slug).toBe('commit');
-    expect(result!.displayFile).toBe('skills/commit/SKILL.md');
+    expect(result!.displayFile).toBe('.pi/skills/commit/SKILL.md');
   });
 
   it('detects statuses config', () => {
@@ -450,7 +450,7 @@ describe('validateConfigFileContent', () => {
   });
 
   it('dispatches to skill validator', () => {
-    const detection = { type: 'skill' as const, slug: 'my-skill', displayFile: 'skills/my-skill/SKILL.md' };
+    const detection = { type: 'skill' as const, slug: 'my-skill', displayFile: '.pi/skills/my-skill/SKILL.md' };
     const content = `---
 name: Test
 description: Test skill

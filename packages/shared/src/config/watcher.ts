@@ -11,8 +11,7 @@
  * - ~/.craft-agent/themes/*.json - Preset theme files (app-level)
  * - ~/.craft-agent/workspaces/{slug}/ - Workspace directory (recursive)
  *   - sources/{slug}/config.json, guide.md, permissions.json
- *   - skills/{slug}/SKILL.md, icon.*
- *   - sessions/{id}/session.jsonl (header metadata only)
+ *   - .pi/skills/{slug}/SKILL.md, icon.*
  *   - permissions.json
  */
 
@@ -446,8 +445,7 @@ export class ConfigWatcher {
   /**
    * Watch the Pi sessions bucket for this workspace's cwd.
    *
-   * Session files live under `~/.pi/agent/sessions/{encoded-cwd}/` (legacy
-   * `~/.craft-agent/workspaces/{id}/sessions/` still supported for back-compat).
+     * Session files live under `~/.pi/agent/sessions/{encoded-cwd}/`.
    * The workspace watcher above can't see these files, so a separate watcher
    * is needed to detect external metadata changes (labels, name, flags) made
    * by other instances or the Pi CLI.
@@ -473,7 +471,6 @@ export class ConfigWatcher {
         const normalizedPath = filename.replace(/\\/g, '/');
 
         // Pi tree format: {timestamp}_{sessionId}.jsonl
-        // Legacy format: {sessionId}/session.jsonl
         const parts = normalizedPath.split('/');
         let sessionId: string | null = null;
 
@@ -482,9 +479,6 @@ export class ConfigWatcher {
           const baseName = parts[0]!.replace(/\.jsonl$/, '');
           const underscoreIdx = baseName.indexOf('_');
           sessionId = underscoreIdx >= 0 ? baseName.slice(underscoreIdx + 1) : baseName;
-        } else if (parts.length >= 2 && parts[1] === 'session.jsonl') {
-          // Legacy subdirectory format
-          sessionId = parts[0]!;
         }
 
         if (sessionId && !normalizedPath.endsWith('.tmp')) {
@@ -541,13 +535,13 @@ export class ConfigWatcher {
       return;
     }
 
-    // Skills changes: skills/{slug}/...
-    if (parts[0] === 'skills' && parts.length >= 2) {
-      const slug = parts[1]!;  // Safe: checked parts.length >= 2
-      const file = parts[2];
+    // Skills changes: .pi/skills/{slug}/...
+    if (parts[0] === '.pi' && parts[1] === 'skills' && parts.length >= 3) {
+      const slug = parts[2]!;
+      const file = parts[3];
 
       // Directory-level changes (new/removed skill folders)
-      if (parts.length === 2) {
+      if (parts.length === 3) {
         this.debounce('skills-dir', () => this.handleSkillsDirChange());
         return;
       }
@@ -558,20 +552,6 @@ export class ConfigWatcher {
       } else if (file && /^icon\.(svg|png|jpg|jpeg)$/i.test(file)) {
         // Icon file changes also trigger a skill change (to update iconPath)
         this.debounce(`skill-icon:${slug}`, () => this.handleSkillChange(slug));
-      }
-      return;
-    }
-
-    // Session metadata changes: sessions/{id}/session.jsonl
-    // Detects external modifications (other instances, scripts, manual edits).
-    // Only reads line 1 (header) — lightweight even during active streaming.
-    if (parts[0] === 'sessions' && parts.length >= 3) {
-      const sessionId = parts[1]!;
-      const file = parts[2];
-
-      // Only watch actual session files, ignore .tmp (atomic write intermediates)
-      if (file === 'session.jsonl') {
-        this.debounce(`session-meta:${sessionId}`, () => this.handleSessionMetadataChange(sessionId), SESSION_META_DEBOUNCE_MS);
       }
       return;
     }
@@ -872,7 +852,7 @@ export class ConfigWatcher {
       this.callbacks.onSkillsListChange?.(allSkills);
     } catch (error) {
       debug('[ConfigWatcher] Error handling skills dir change:', error);
-      this.callbacks.onError?.('skills/', error as Error);
+      this.callbacks.onError?.('.pi/skills/', error as Error);
     }
   }
 
@@ -1049,7 +1029,7 @@ export class ConfigWatcher {
   // ============================================================
 
   /**
-   * Handle session.jsonl change — reads only line 1 (header) and emits if valid.
+   * Handle a Pi session JSONL change — reads only line 1 and emits if valid.
    * This enables detection of external metadata changes (labels, name, flags)
    * made by other instances, scripts, or manual edits.
    */

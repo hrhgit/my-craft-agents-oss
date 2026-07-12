@@ -198,7 +198,7 @@ export function expandToolPaths(
  *
  * The SDK resolves skills as `pluginName:skillSlug` where the plugin name is
  * read from `.claude-plugin/plugin.json` `name` field. Skills can live in 3 tiers:
- *   1. Workspace: {workspaceRoot}/skills/{slug}/ → plugin name from plugin.json (legacy fallback)
+ *   1. Workspace plugin: plugin name from `.claude-plugin/plugin.json` (qualification fallback only)
  *   2. Project:   {workingDir}/.pi/skills/{slug}/ → plugin name = ".agents"
  *   3. Global:    ~/.pi/agent/skills/{slug}/ → plugin name = ".agents"
  *
@@ -326,7 +326,7 @@ export function stripToolMetadata(
  *
  * Validates:
  * - sources/{slug}/config.json
- * - skills/{slug}/SKILL.md
+ * - .pi/skills/{slug}/SKILL.md
  * - statuses/config.json
  * - permissions.json
  * - theme.json
@@ -461,7 +461,7 @@ function detectCliNamespaceFromConfigDetection(detection: ConfigFileDetection): 
  * For selected config domains, enforce CLI usage instead of direct file operations.
  * - labels/**: strict block on Read/Write/Edit
  * - sources/{slug}/config.json: redirect on Write/Edit
- * - skills/{slug}/SKILL.md: redirect on Write/Edit
+ * - .pi/skills/{slug}/SKILL.md: redirect on Write/Edit
  * - automations.json: redirect on Write/Edit
  */
 export function getConfigCliRedirect(

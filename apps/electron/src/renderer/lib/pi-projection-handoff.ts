@@ -15,7 +15,10 @@ function readVisibleAssistantText(entity: PiProjectionEntityV1): string | undefi
   if (!entity.payload || typeof entity.payload !== 'object') return undefined
 
   const payload = entity.payload as Record<string, unknown>
-  if (payload.role !== 'assistant' || payload.intermediate === true || typeof payload.text !== 'string') {
+  if (payload.role !== 'assistant'
+    || payload.isIntermediate === true
+    || payload.intermediate === true
+    || typeof payload.text !== 'string') {
     return undefined
   }
   const text = payload.text.trim()

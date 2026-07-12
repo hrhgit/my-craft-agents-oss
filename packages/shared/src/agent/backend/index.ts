@@ -44,6 +44,8 @@ export type {
   PostInitResult,
   ExtensionBridgeEvent,
   PiExtensionCommand,
+  HostRuntimeErrorProjection,
+  HostQueuedUserProjection,
 } from './types.ts';
 
 // Enums need to be exported as values, not just types
@@ -76,6 +78,11 @@ export { EventQueue } from './event-queue.ts';
 
 // Provider-specific event adapters
 export { PiEventAdapter } from './pi/event-adapter.ts';
+export {
+  buildPiProjectionSnapshotFromHostProjection,
+  type PiHostSessionProjectionLike,
+} from './pi/projection-history.ts';
+export { PiProjectionBuilder } from './pi/projection-builder.ts';
 
 // Agent implementations are imported directly by factory.ts
 // Consumers should use createBackend() instead of concrete classes

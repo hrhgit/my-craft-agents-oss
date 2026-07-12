@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Check, Pencil, Send, X } from 'lucide-react'
+import { Check, Send, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export interface RemoteUIOption {
@@ -43,6 +43,7 @@ export interface RemoteUIEditorRequest {
   kind: 'editor'
   title: string
   prefill?: string
+  placeholder?: string
   source: string
   sessionId: string
   extensionId: string
@@ -109,7 +110,14 @@ function ComposerHeader({ title, message, onSkip }: { title: string; message?: s
 }
 
 function SelectComposer({ request, onRespond }: { request: RemoteUISelectRequest; onRespond: RemoteUIComposerProps['onRespond'] }) {
-  const { options = [], allowMultiple = false, allowFreeform = false, allowComment = false } = request
+  const { options = [], allowMultiple = false, allowComment = false } = request
+  // ask_user guarantees a direct freeform answer for every question. Older RPC
+  // fallbacks also include a synthetic "Write my own answer" option, which the
+  // inline composer replaces with the text field below.
+  const allowFreeform = request.allowFreeform || request.extensionId === 'ask_user'
+  const visibleOptions = options.filter(option =>
+    request.extensionId !== 'ask_user' || !/write my own answer/i.test(option.title),
+  )
   const [selected, setSelected] = useState<string[]>([])
   const [freeformText, setFreeformText] = useState('')
   const [comment, setComment] = useState('')
@@ -160,39 +168,56 @@ function SelectComposer({ request, onRespond }: { request: RemoteUISelectRequest
 
       <div className="max-h-[min(46vh,420px)] overflow-y-auto px-2 pb-1">
         <div className="flex flex-col gap-1">
-          {options.map((option, index) => {
+          {visibleOptions.map((option, index) => {
             const isSelected = selected.includes(option.title)
+            const optionContent = (
+              <span className="min-w-0 flex-1 text-sm leading-5">
+                <span className="font-medium text-foreground">{option.title}</span>
+                {option.description && <span className="ml-2 text-muted-foreground">{option.description}</span>}
+              </span>
+            )
+
+            if (allowMultiple) {
+              return (
+                <label
+                  key={`${option.title}-${index}`}
+                  data-remote-ui-option
+                  className={cn(
+                    'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
+                    isSelected ? 'bg-muted' : 'hover:bg-muted/70',
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => chooseOption(option.title)}
+                    className="h-4 w-4 shrink-0 accent-foreground"
+                    aria-label={`Select ${option.title}`}
+                  />
+                  {optionContent}
+                </label>
+              )
+            }
+
             return (
               <button
                 key={`${option.title}-${index}`}
                 type="button"
+                data-remote-ui-option
                 onClick={() => chooseOption(option.title)}
                 className={cn(
-                  'group flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
+                  'flex min-h-11 w-full items-center rounded-md px-2 py-1.5 text-left transition-colors',
                   isSelected ? 'bg-muted' : 'hover:bg-muted/70',
                 )}
               >
-                <span className={cn(
-                  'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs text-muted-foreground',
-                  isSelected && 'border-foreground bg-foreground text-background',
-                )}>
-                  {isSelected ? <Check className="h-3.5 w-3.5" /> : index + 1}
-                </span>
-                <span className="min-w-0 flex-1 text-sm leading-5">
-                  <span className="font-medium text-foreground">{option.title}</span>
-                  {option.description && <span className="ml-2 text-muted-foreground">{option.description}</span>}
-                </span>
-                {!allowMultiple && !allowComment && <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />}
+                {optionContent}
               </button>
             )
           })}
         </div>
 
         {allowFreeform && (
-          <div className="mt-1 flex items-end gap-2 rounded-md px-2 py-1.5 focus-within:bg-muted/60">
-            <span className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-muted-foreground">
-              <Pencil className="h-3.5 w-3.5" />
-            </span>
+          <div data-remote-ui-freeform className="mt-1 flex items-end gap-2 rounded-md px-2 py-1.5 focus-within:bg-muted/60">
             <textarea
               ref={freeformRef}
               value={freeformText}
@@ -298,7 +323,7 @@ function EditorComposer({ request, onRespond }: { request: RemoteUIEditorRequest
           value={text}
           onChange={event => setText(event.target.value)}
           rows={2}
-          placeholder="Type your answer..."
+          placeholder={request.placeholder ?? 'Type your answer...'}
           className="max-h-40 min-h-16 flex-1 resize-none rounded-md bg-muted/60 px-3 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground focus:bg-muted"
           aria-label="Answer"
         />

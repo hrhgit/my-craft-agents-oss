@@ -215,19 +215,15 @@ describe('qualifySkillName with filesystem resolution', () => {
   const workspaceSlug = 'my-workspace'
 
   beforeAll(() => {
-    // Create workspace skill: my-workspace/skills/ws-only/SKILL.md
-    mkdirSync(join(workspaceRoot, 'skills', 'ws-only'), { recursive: true })
-    writeFileSync(join(workspaceRoot, 'skills', 'ws-only', 'SKILL.md'), '---\nname: WS Only\ndescription: test\n---\n')
-
-    // Create workspace skill that also exists in project (for priority test)
-    mkdirSync(join(workspaceRoot, 'skills', 'shared-skill'), { recursive: true })
-    writeFileSync(join(workspaceRoot, 'skills', 'shared-skill', 'SKILL.md'), '---\nname: WS Shared\ndescription: test\n---\n')
+    // When no working directory is supplied, the workspace root is the Pi project root.
+    mkdirSync(join(workspaceRoot, '.pi', 'skills', 'workspace-root-only'), { recursive: true })
+    writeFileSync(join(workspaceRoot, '.pi', 'skills', 'workspace-root-only', 'SKILL.md'), '---\nname: Workspace Root Only\ndescription: test\n---\n')
 
     // Create project skill: my-project/.pi/skills/proj-only/SKILL.md
     mkdirSync(join(projectDir, '.pi', 'skills', 'proj-only'), { recursive: true })
     writeFileSync(join(projectDir, '.pi', 'skills', 'proj-only', 'SKILL.md'), '---\nname: Proj Only\ndescription: test\n---\n')
 
-    // Create project skill that also exists in workspace (for priority test)
+    // Create another project skill to exercise bare-name resolution.
     mkdirSync(join(projectDir, '.pi', 'skills', 'shared-skill'), { recursive: true })
     writeFileSync(join(projectDir, '.pi', 'skills', 'shared-skill', 'SKILL.md'), '---\nname: Proj Shared\ndescription: test\n---\n')
   })
@@ -236,10 +232,10 @@ describe('qualifySkillName with filesystem resolution', () => {
     rmSync(testDir, { recursive: true, force: true })
   })
 
-  it('resolves workspace-only skill to workspace plugin', () => {
-    const result = qualifySkillName({ skill: 'ws-only' }, workspaceSlug, workspaceRoot, projectDir)
+  it('falls back to the workspace plugin when a skill is absent from the active project', () => {
+    const result = qualifySkillName({ skill: 'workspace-root-only' }, workspaceSlug, workspaceRoot, projectDir)
     expect(result.modified).toBe(true)
-    expect(result.input).toEqual({ skill: 'my-workspace:ws-only' })
+    expect(result.input).toEqual({ skill: 'my-workspace:workspace-root-only' })
   })
 
   it('resolves project-only skill to .agents plugin', () => {
@@ -248,10 +244,9 @@ describe('qualifySkillName with filesystem resolution', () => {
     expect(result.input).toEqual({ skill: `${AGENTS_PLUGIN_NAME}:proj-only` })
   })
 
-  it('project skill takes priority over workspace skill (same slug)', () => {
+  it('resolves another project skill to .agents', () => {
     const result = qualifySkillName({ skill: 'shared-skill' }, workspaceSlug, workspaceRoot, projectDir)
     expect(result.modified).toBe(true)
-    // Project has higher priority than workspace — should resolve to .agents:
     expect(result.input).toEqual({ skill: `${AGENTS_PLUGIN_NAME}:shared-skill` })
   })
 
@@ -262,8 +257,8 @@ describe('qualifySkillName with filesystem resolution', () => {
     expect(result.input).toEqual({ skill: `${AGENTS_PLUGIN_NAME}:proj-only` })
   })
 
-  it('does not modify correctly qualified workspace skill', () => {
-    const result = qualifySkillName({ skill: 'my-workspace:ws-only' }, workspaceSlug, workspaceRoot, projectDir)
+  it('does not modify a correctly qualified project skill', () => {
+    const result = qualifySkillName({ skill: `${AGENTS_PLUGIN_NAME}:proj-only` }, workspaceSlug, workspaceRoot, projectDir)
     expect(result.modified).toBe(false)
   })
 
@@ -273,9 +268,9 @@ describe('qualifySkillName with filesystem resolution', () => {
     expect(result.input).toEqual({ skill: 'my-workspace:nonexistent' })
   })
 
-  it('resolves without project dir (workspace-only mode)', () => {
-    const result = qualifySkillName({ skill: 'ws-only' }, workspaceSlug, workspaceRoot, undefined)
+  it('uses workspaceRoot as the Pi project root when workingDirectory is absent', () => {
+    const result = qualifySkillName({ skill: 'workspace-root-only' }, workspaceSlug, workspaceRoot, undefined)
     expect(result.modified).toBe(true)
-    expect(result.input).toEqual({ skill: 'my-workspace:ws-only' })
+    expect(result.input).toEqual({ skill: `${AGENTS_PLUGIN_NAME}:workspace-root-only` })
   })
 })

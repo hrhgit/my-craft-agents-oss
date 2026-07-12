@@ -82,6 +82,7 @@ export function DocumentFormattedMarkdownOverlay({
     <FullscreenOverlayBase
       isOpen={isOpen}
       onClose={onClose}
+      dismissOnOutsideClick
       filePath={filePath}
       typeBadge={typeBadge}
       copyContent={content}
@@ -91,7 +92,10 @@ export function DocumentFormattedMarkdownOverlay({
           Scrolling and gradient fade mask are handled by FullscreenOverlayBase. */}
       <div className="min-h-full flex flex-col justify-center px-6 py-16">
         {/* Content card - my-auto centers vertically when content is small, flows naturally when large */}
-        <div className="bg-background rounded-[16px] shadow-strong w-full max-w-[960px] h-fit mx-auto my-auto">
+        <div
+          className="bg-background rounded-[16px] shadow-strong w-full max-w-[960px] h-fit mx-auto my-auto"
+          data-fullscreen-overlay-dismiss-boundary
+        >
           {/* Plan header (variant="plan" only) */}
           {variant === 'plan' && (
             <div className="px-4 py-2 border-b border-border/30 flex items-center gap-2 bg-success/5 rounded-t-[16px]">

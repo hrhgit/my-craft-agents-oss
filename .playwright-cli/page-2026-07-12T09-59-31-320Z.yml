@@ -1,0 +1,137 @@
+- generic [ref=f3e2]:
+  - generic [ref=f3e38]:
+    - generic [ref=f3e40]:
+      - generic [ref=f3e41]:
+        - generic [ref=f3e42]:
+          - button "切换侧栏" [ref=f3e43]
+          - button "Craft 菜单" [ref=f3e46]
+        - generic [ref=f3e49]:
+          - button "返回" [disabled]
+          - button "前进" [disabled]
+          - button "选择 Workspace" [ref=f3e51] [cursor=pointer]:
+            - generic [ref=f3e52]:
+              - generic [ref=f3e53]: c
+              - generic [ref=f3e54]: c
+            - generic [ref=f3e55]: craft-agent
+      - generic [ref=f3e58]:
+        - button "添加面板" [ref=f3e59]
+        - button "帮助和文档" [ref=f3e61]
+    - generic [ref=f3e67]:
+      - generic [ref=f3e72]:
+        - button "新建会话" [ref=f3e75]
+        - navigation "Main navigation" [ref=f3e78]:
+          - generic [ref=f3e79]:
+            - button "所有会话 2" [ref=f3e80]:
+              - text: 所有会话
+              - generic [ref=f3e89]: "2"
+            - generic [ref=f3e92]:
+              - generic [ref=f3e94]:
+                - button [ref=f3e95]:
+                  - button "积压 0" [ref=f3e97]:
+                    - text: 积压
+                    - generic [ref=f3e107]: "0"
+                - button [ref=f3e108]:
+                  - button "待办 2" [ref=f3e110]:
+                    - text: 待办
+                    - generic [ref=f3e120]: "2"
+                - button [ref=f3e121]:
+                  - button "待审查 0" [ref=f3e123]:
+                    - text: 待审查
+                    - generic [ref=f3e133]: "0"
+                - button [ref=f3e134]:
+                  - button "完成 0" [ref=f3e136]:
+                    - text: 完成
+                    - generic [ref=f3e146]: "0"
+                - button [ref=f3e147]:
+                  - button "已取消 0" [ref=f3e149]:
+                    - text: 已取消
+                    - generic [ref=f3e159]: "0"
+              - status [ref=f3e160]
+              - generic [ref=f3e163]:
+                - button "已标记 0" [ref=f3e165]:
+                  - text: 已标记
+                  - generic [ref=f3e170]: "0"
+                - button [ref=f3e172]
+          - button [ref=f3e178]
+          - generic [ref=f3e189]:
+            - button "数据源 0" [ref=f3e190]:
+              - text: 数据源
+              - generic [ref=f3e201]: "0"
+            - navigation "Sub navigation" [ref=f3e204]:
+              - button "API 0" [ref=f3e208]:
+                - text: API
+                - generic [ref=f3e213]: "0"
+              - button "MCP 0" [ref=f3e216]:
+                - text: MCP
+                - generic [ref=f3e223]: "0"
+              - button "本地文件夹 0" [ref=f3e226]:
+                - text: 本地文件夹
+                - generic [ref=f3e230]: "0"
+          - button "技能 0" [ref=f3e232]:
+            - text: 技能
+            - generic [ref=f3e236]: "0"
+          - generic [ref=f3e237]:
+            - button "自动化 0" [ref=f3e238]:
+              - text: 自动化
+              - generic [ref=f3e247]: "0"
+            - navigation "Sub navigation" [ref=f3e250]:
+              - button "定时任务 0" [ref=f3e254]:
+                - text: 定时任务
+                - generic [ref=f3e259]: "0"
+              - button "事件触发 0" [ref=f3e262]:
+                - text: 事件触发
+                - generic [ref=f3e270]: "0"
+              - button "智能体 0" [ref=f3e273]:
+                - text: 智能体
+                - generic [ref=f3e278]: "0"
+          - button [ref=f3e282]
+          - button [ref=f3e288]
+      - generic [ref=f3e298]:
+        - generic [ref=f3e299]:
+          - heading "所有会话" [level=1] [ref=f3e303]
+          - button [ref=f3e305]
+        - listbox "Sessions" [ref=f3e312]:
+          - generic [ref=f3e314]:
+            - generic [ref=f3e315]: 今天
+            - option "Change todo state Empty projection session 27分" [selected] [ref=f3e318]:
+              - generic [ref=f3e320]:
+                - button "Change todo state" [ref=f3e322] [cursor=pointer]
+                - generic [ref=f3e330]: Empty projection session
+                - generic [ref=f3e331]: 27分
+            - option "Change todo state Pi-first state matrix 27分" [ref=f3e344]:
+              - generic [ref=f3e346]:
+                - button "Change todo state" [ref=f3e348] [cursor=pointer]
+                - generic [ref=f3e356]: Pi-first state matrix
+                - generic [ref=f3e357]: 27分
+      - generic [ref=f3e369]:
+        - generic [ref=f3e370]:
+          - button [ref=f3e373]:
+            - heading "Pi-first state matrix" [level=1] [ref=f3e375]
+          - button "Share session" [ref=f3e380]
+          - button "关闭" [ref=f3e384]
+        - generic [ref=f3e391]:
+          - status "Loading" [ref=f3e400]
+          - generic [ref=f3e410]:
+            - generic [ref=f3e411]:
+              - generic [ref=f3e412]:
+                - 'button "对话模式: 正常" [ref=f3e414]':
+                  - generic [ref=f3e418]: 正常
+                - button "待办" [ref=f3e422] [cursor=pointer]
+              - button "信息" [ref=f3e435]
+            - generic [ref=f3e443]:
+              - generic [ref=f3e444]:
+                - textbox [ref=f3e445]
+                - generic: 按 Shift + Return 换行
+              - generic [ref=f3e447]:
+                - generic [ref=f3e448]:
+                  - button "附加文件" [ref=f3e449]
+                  - 'button "Permission mode: 询问" [ref=f3e454]':
+                    - generic [ref=f3e457]: 询问
+                  - button "选择数据源" [ref=f3e461]
+                - generic [ref=f3e471]:
+                  - generic "上下文" [ref=f3e472]
+                  - button [ref=f3e476]
+                  - 'button "思考: 中等" [ref=f3e479]':
+                    - generic [ref=f3e480]: 中等
+                  - button "发送消息" [disabled]
+  - region "Notifications alt+T"

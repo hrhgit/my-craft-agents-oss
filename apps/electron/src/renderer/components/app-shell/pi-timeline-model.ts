@@ -228,6 +228,24 @@ export function selectPiRuntimeState(entities: readonly PiProjectionEntityV1[]):
   }
 }
 
+/** Selects status text emitted during the current projected Pi runtime only. */
+export function selectPiProcessingStatusMessage(
+  entities: readonly PiProjectionEntityV1[],
+): string | undefined {
+  if (!selectPiRuntimeState(entities).isProcessing) return undefined
+
+  const runtimeStartSeq = entities
+    .filter(entity => entity.kind === 'agent_start')
+    .reduce((latest, entity) => Math.max(latest, entity.lastSeq), 0)
+  const status = entities
+    .filter(entity => entity.kind === 'host_status' && entity.lastSeq >= runtimeStartSeq)
+    .sort((a, b) => b.lastSeq - a.lastSeq)[0]
+  const payload = status ? record(status.payload) : null
+  return typeof payload?.message === 'string' && payload.message
+    ? payload.message
+    : undefined
+}
+
 /** Selects the newest Host-approved prompt; raw Pi permission checks never enter this view. */
 export function selectPendingPiPermission(
   entities: readonly PiProjectionEntityV1[],

@@ -30,18 +30,37 @@ describe('RemoteUIComposer', () => {
     expect(html).not.toContain('role="dialog"')
   })
 
-  it('renders editor requests as a direct answer field', () => {
+  it('renders multiple choices with native checkboxes and an inline custom answer field', () => {
+    const request: RemoteUIRequest = {
+      ...baseRequest,
+      kind: 'select',
+      title: 'Choose the relevant areas',
+      options: [{ title: 'UI' }, { title: 'Backend' }],
+      allowMultiple: true,
+      allowFreeform: true,
+    }
+
+    const html = renderToStaticMarkup(<RemoteUIComposer request={request} onRespond={() => {}} />)
+
+    expect(html).toContain('type="checkbox"')
+    expect(html).toContain('data-remote-ui-option')
+    expect(html).toContain('data-remote-ui-freeform')
+    expect(html).not.toContain('rounded-full')
+  })
+
+  it('keeps input hints as placeholders instead of prefilled answers', () => {
     const request: RemoteUIRequest = {
       ...baseRequest,
       kind: 'editor',
       title: 'Describe the change',
-      prefill: 'Initial notes',
+      placeholder: 'Type the change to make',
     }
 
     const html = renderToStaticMarkup(<RemoteUIComposer request={request} onRespond={() => {}} />)
 
     expect(html).toContain('Describe the change')
-    expect(html).toContain('Initial notes')
+    expect(html).toContain('placeholder="Type the change to make"')
     expect(html).toContain('aria-label="Answer"')
+    expect(html).not.toContain('value="Type the change to make"')
   })
 })

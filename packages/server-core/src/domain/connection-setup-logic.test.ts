@@ -127,10 +127,10 @@ describe('createBuiltInConnection seeds midStreamBehavior', () => {
     expect(conn.midStreamBehavior).toBe('steer')
   })
 
-  it("ChatGPT Plus → 'steer' (Pi backend, native polite steer)", () => {
-    const conn = createBuiltInConnection('chatgpt-plus')
-    expect(conn.providerType).toBe('pi')
-    expect(conn.midStreamBehavior).toBe('steer')
+  it('rejects the retired ChatGPT Plus Craft connection template', () => {
+    expect(() => createBuiltInConnection('chatgpt-plus')).toThrow(
+      'Unknown built-in connection slug: chatgpt-plus',
+    )
   })
 
   it("Pi API key (Craft Agents Backend) → 'steer'", () => {

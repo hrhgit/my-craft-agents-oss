@@ -139,8 +139,6 @@ outside this list:
   config-change watching until Pi exposes a typed subscription.
 - `packages/shared/src/sessions/storage.ts` — `PI_SESSIONS_DIR` only, to compute
   workspace bucket paths and delegate creation/lookup to Pi projection facades.
-- `packages/shared/src/config/unified-migration.ts` — one-shot migration into
-  Pi-owned storage with rollback.
 - `packages/shared/src/workspaces/storage.ts` — read-only session bucket
   projection for workspace/session routing.
 
@@ -159,6 +157,7 @@ the case here for why it is a seam extension.
   `sessions/tree-jsonl.ts` uses Pi craft metadata setters. The remaining
   ratchet is to remove Craft-only overlays once Pi exposes a typed UI metadata
   sidecar/projection contract.
-- `unified-migration.ts` remains one-shot migration/rollback debt. Remove it
-  after the migration window closes and all supported users are on Pi-owned
-  storage.
+- The legacy Craft storage migration window is closed. Craft no longer imports
+  or reads legacy session, skill, credential, or messaging storage, and no
+  longer migrates legacy workspace cwd or LLM connection configuration at
+  startup.

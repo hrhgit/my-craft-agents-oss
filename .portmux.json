@@ -1,4 +1,4 @@
 {
   "start": "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\\start-webui.ps1 -PortmuxManaged",
-  "port_env": ["CRAFT_WEBUI_PORT"]
+  "port_env": ["CRAFT_WEBUI_PORT", "PORT"]
 }

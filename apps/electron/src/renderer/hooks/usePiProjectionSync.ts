@@ -67,4 +67,23 @@ export function usePiProjectionSync(
       })
     return () => { cancelled = true }
   }, [activeSessionId, store])
+
+  useEffect(() => {
+    if (!activeSessionId) return
+    let cancelled = false
+    const cleanup = window.electronAPI.onReconnected((isStale) => {
+      if (!isStale) return
+      void window.electronAPI.getPiProjectionSnapshot(activeSessionId)
+        .then((snapshot) => {
+          if (!cancelled && snapshot) store.set(applyPiProjectionSnapshotAtom, snapshot)
+        })
+        .catch((error) => {
+          if (!cancelled) console.error(`[PiProjection] Reconnect recovery failed for ${activeSessionId}:`, error)
+        })
+    })
+    return () => {
+      cancelled = true
+      cleanup()
+    }
+  }, [activeSessionId, store])
 }

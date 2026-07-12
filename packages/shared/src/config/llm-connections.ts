@@ -43,8 +43,7 @@ export function registerPiModelResolver(resolver: PiModelResolver): void {
  * - 'pi': Pi unified LLM API (20+ providers via @earendil-works/pi-ai)
  * - 'pi_compat': Pi with custom endpoint (Ollama, self-hosted models, Anthropic-compat endpoints)
  *
- * Legacy values (anthropic, bedrock, vertex, anthropic_compat) are migrated on startup
- * by migrateLegacyProviderTypes() in storage.ts.
+ * Retired pre-Pi provider values are not accepted by the active runtime.
  */
 export type LlmProviderType =
   | 'pi'
@@ -142,7 +141,7 @@ export type MidStreamBehavior = 'steer' | 'queue';
 
 /**
  * LLM Connection configuration.
- * Stored in config.llmConnections array.
+ * Stored in Pi models.json providers or its Craft-owned craftConnections field.
  */
 export interface LlmConnection {
   /** URL-safe identifier (e.g., 'anthropic-api', 'ollama-local') */
