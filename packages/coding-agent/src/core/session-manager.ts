@@ -58,6 +58,12 @@ export interface SessionHeader {
 		permissionMode?: string;
 		thinkingLevel?: string;
 	};
+	/**
+	 * Opaque host-shell metadata. Pi preserves this object but does not interpret
+	 * it; host facades update it through SessionManager so shells do not rewrite
+	 * JSONL headers directly.
+	 */
+	craft?: Record<string, unknown>;
 }
 
 export interface NewSessionOptions {
@@ -1550,6 +1556,16 @@ export class SessionManager {
 	getHeader(): SessionHeader | null {
 		const h = this.fileEntries.find((e) => e.type === "session");
 		return h ? (h as SessionHeader) : null;
+	}
+
+	/** Replace the opaque Craft host metadata on the session header. */
+	setCraftMetadata(metadata: Record<string, unknown>): void {
+		const header = this.getHeader();
+		if (!header) {
+			throw new Error("Cannot update Craft metadata: session header is missing");
+		}
+		header.craft = { ...metadata };
+		this._rewriteFile();
 	}
 
 	/**

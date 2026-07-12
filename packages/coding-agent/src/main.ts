@@ -588,6 +588,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("parseArgs");
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY);
+	const rpcExtensionTarget = process.env.PI_EXTENSION_TARGET === "craft" ? "craft" : "pi";
 	const shouldTakeOverStdout = appMode !== "interactive";
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
@@ -688,7 +689,10 @@ export async function main(args: string[], options?: MainOptions) {
 		sessionStartEvent,
 		deferResourceLoad,
 		persistInitialState,
+		extensionTarget,
+		extensionPaths,
 	}) => {
+		const runtimeStartedAt = performance.now();
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
@@ -696,7 +700,16 @@ export async function main(args: string[], options?: MainOptions) {
 			extensionFlagValues: parsed.unknownFlags,
 			deferResourceLoad,
 			resourceLoaderOptions: {
-				additionalExtensionPaths: resolvedExtensionPaths,
+				extensionTarget: extensionTarget ?? "pi",
+				additionalExtensionPaths: [
+					...(resolvedExtensionPaths ?? []),
+					...(extensionPaths ?? []).map((path, index) => ({
+						id: `runtime-extension-${index}`,
+						path,
+						activation: "startup" as const,
+						targets: [extensionTarget ?? "pi"],
+					})),
+				],
 				additionalSkillPaths: resolvedSkillPaths,
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
 				additionalThemePaths: resolvedThemePaths,
@@ -710,6 +723,7 @@ export async function main(args: string[], options?: MainOptions) {
 				extensionFactories: options?.extensionFactories,
 			},
 		});
+		const servicesReadyAt = performance.now();
 		const { settingsManager, modelRegistry, resourceLoader } = services;
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
 			...services.diagnostics,
@@ -734,6 +748,7 @@ export async function main(args: string[], options?: MainOptions) {
 			modelRegistry,
 			settingsManager,
 		);
+		const optionsReadyAt = performance.now();
 		diagnostics.push(...sessionOptionDiagnostics);
 
 		if (parsed.apiKey) {
@@ -765,6 +780,19 @@ export async function main(args: string[], options?: MainOptions) {
 				diagnostics.push(...newDiagnostics);
 			},
 		});
+		if (process.env.PI_RUNTIME_PROFILE === "1") {
+			console.error(
+				JSON.stringify({
+					scope: "pi-host",
+					event: "runtime.profile",
+					cwd,
+					servicesMs: Math.round((servicesReadyAt - runtimeStartedAt) * 100) / 100,
+					optionsMs: Math.round((optionsReadyAt - servicesReadyAt) * 100) / 100,
+					sessionMs: Math.round((performance.now() - optionsReadyAt) * 100) / 100,
+					totalMs: Math.round((performance.now() - runtimeStartedAt) * 100) / 100,
+				}),
+			);
+		}
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
 			created.session.setThinkingLevel(created.session.thinkingLevel);
@@ -777,12 +805,29 @@ export async function main(args: string[], options?: MainOptions) {
 		};
 	};
 	time("createRuntime");
+	if (appMode === "rpc" && process.env.PI_GLOBAL_HOST_PROCESS === "1") {
+		initTheme(undefined, false);
+		printTimings();
+		await runRpcMode({
+			kind: "global-host",
+			agentDir,
+			createRuntime,
+			defaultRuntime: {
+				cwd: sessionManager.getCwd(),
+				sessionManager,
+				extensionTarget: rpcExtensionTarget,
+				deferResourceLoad: false,
+				persistInitialState: true,
+			},
+		});
+	}
 	const runtime = await createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,
 		sessionManager,
 		deferResourceLoad: deferInitialWorkspaceLoad,
 		persistInitialState: !deferInitialWorkspaceLoad,
+		extensionTarget: appMode === "rpc" ? rpcExtensionTarget : "pi",
 	});
 	time("createAgentSessionRuntime");
 	const { services, session, modelFallbackMessage } = runtime;

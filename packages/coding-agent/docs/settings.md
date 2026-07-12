@@ -231,7 +231,7 @@ Paths in `~/.pi/agent/settings.json` resolve relative to `~/.pi/agent`. Paths in
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `packages` | array | `[]` | npm/git packages to load resources from |
-| `extensions` | array | `[]` | Local extension file paths, directories, or objects with `path` and `activation` |
+| `extensions` | array | `[]` | Local extension file paths, directories, or objects with `path`, `activation`, and `targets` |
 | `skills` | string[] | `[]` | Local skill file paths or directories |
 | `prompts` | string[] | `[]` | Local prompt template paths or directories |
 | `themes` | string[] | `[]` | Local theme file paths or directories |
@@ -239,18 +239,22 @@ Paths in `~/.pi/agent/settings.json` resolve relative to `~/.pi/agent`. Paths in
 
 Arrays support glob patterns and exclusions. Use `!pattern` to exclude. Use `+path` to force-include an exact path and `-path` to force-exclude an exact path.
 
-Extension entries may use object form to control activation:
+Extension entries may use object form to control activation and host targets:
 
 ```json
 {
   "extensions": [
     { "path": "./extensions/editor-ui.ts", "activation": "startup" },
-    { "path": "./extensions/model-tools.ts", "activation": "beforeFirstRequest" }
+    { "path": "./extensions/model-tools.ts", "activation": "beforeFirstRequest" },
+    { "path": "./extensions/craft-ui.ts", "targets": ["craft"] },
+    { "path": "./extensions/shared.ts", "targets": ["pi", "craft"] }
   ]
 }
 ```
 
 `activation` can be `startup`, `beforeFirstRequest`, or `lazy`. Unspecified extension entries default to `beforeFirstRequest`, so they do not delay the first screen. `beforeFirstRequest` extensions still finish loading before Pi sends the first model request.
+
+`targets` can contain `pi`, `craft`, or both. Entries without `targets` default to `["pi"]`; Craft hosts pass `extensionTarget: "craft"` to load only Craft-compatible entries.
 
 #### packages
 

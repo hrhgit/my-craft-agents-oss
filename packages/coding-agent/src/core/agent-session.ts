@@ -26,7 +26,14 @@ import type {
 import { clampThinkingLevel, getSupportedThinkingLevels, modelsAreEqual } from "@earendil-works/pi-ai/model-utils";
 import { cleanupSessionResources } from "@earendil-works/pi-ai/session-resources";
 import { resetDefaultApiProviders, streamSimple } from "@earendil-works/pi-ai/stream";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/types";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	TextContent,
+	UserAttachmentMetadata,
+} from "@earendil-works/pi-ai/types";
 import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
 import { supportsBuiltinWebSearch } from "@earendil-works/pi-ai/web-search";
 import { theme } from "../modes/interactive/theme/theme.ts";
@@ -52,6 +59,7 @@ import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import { applyExtensionFlagValues } from "./extension-flags.ts";
 import {
 	type ContextUsage,
+	type ExtensionCapabilitiesContext,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	ExtensionRunner,
@@ -210,6 +218,8 @@ export interface AgentSessionConfig {
 
 export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
+	uiContextFactory?: (extensionId: string) => ExtensionUIContext;
+	capabilitiesContextFactory?: (extensionId: string) => ExtensionCapabilitiesContext;
 	commandContextActions?: ExtensionCommandContextActions;
 	abortHandler?: () => void;
 	shutdownHandler?: ShutdownHandler;
@@ -244,6 +254,10 @@ export type ToolPermissionHandler = (request: ToolPermissionRequest) => Promise<
 
 /** Options for AgentSession.prompt() */
 export interface PromptOptions {
+	/** Host-generated identity preserved on the resulting user message. */
+	clientMutationId?: string;
+	/** Sanitized host attachment metadata persisted on the user message. */
+	attachments?: UserAttachmentMetadata[];
 	/** Whether to expand file-based prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
@@ -366,6 +380,8 @@ export class AgentSession {
 	private _networkManager?: NetworkManager;
 	private _sessionActivityRegistry: SessionActivityRegistry;
 	private _extensionUIContext?: ExtensionUIContext;
+	private _extensionUIContextFactory?: (extensionId: string) => ExtensionUIContext;
+	private _extensionCapabilitiesContextFactory?: (extensionId: string) => ExtensionCapabilitiesContext;
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
@@ -1287,9 +1303,9 @@ export class AgentSession {
 					);
 				}
 				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options?.clientMutationId);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options?.clientMutationId);
 				}
 				preflightResult?.(true);
 				return;
@@ -1340,6 +1356,8 @@ export class AgentSession {
 				role: "user",
 				content: userContent,
 				timestamp: Date.now(),
+				clientMutationId: options?.clientMutationId,
+				attachments: options?.attachments,
 			});
 
 			// Inject any pending "nextTurn" messages as context alongside the user message
@@ -1402,7 +1420,7 @@ export class AgentSession {
 		if (!command) return false;
 
 		// Get command context from extension runner (includes session control methods)
-		const ctx = this._extensionRunner.createCommandContext();
+		const ctx = this._extensionRunner.createCommandContext(command.extensionId);
 
 		try {
 			await command.handler(args, ctx);
@@ -1457,7 +1475,7 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async steer(text: string, images?: ImageContent[]): Promise<void> {
+	async steer(text: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -1467,7 +1485,7 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueSteer(expandedText, images);
+		await this._queueSteer(expandedText, images, options?.clientMutationId);
 	}
 
 	/**
@@ -1477,7 +1495,7 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async followUp(text: string, images?: ImageContent[]): Promise<void> {
+	async followUp(text: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -1487,13 +1505,13 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueFollowUp(expandedText, images);
+		await this._queueFollowUp(expandedText, images, options?.clientMutationId);
 	}
 
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueSteer(text: string, images?: ImageContent[], clientMutationId?: string): Promise<void> {
 		this._steeringMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -1504,13 +1522,14 @@ export class AgentSession {
 			role: "user",
 			content,
 			timestamp: Date.now(),
+			clientMutationId,
 		});
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueFollowUp(text: string, images?: ImageContent[], clientMutationId?: string): Promise<void> {
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -1521,6 +1540,7 @@ export class AgentSession {
 			role: "user",
 			content,
 			timestamp: Date.now(),
+			clientMutationId,
 		});
 	}
 
@@ -2472,6 +2492,12 @@ export class AgentSession {
 		if (bindings.uiContext !== undefined) {
 			this._extensionUIContext = bindings.uiContext;
 		}
+		if (bindings.uiContextFactory !== undefined) {
+			this._extensionUIContextFactory = bindings.uiContextFactory;
+		}
+		if (bindings.capabilitiesContextFactory !== undefined) {
+			this._extensionCapabilitiesContextFactory = bindings.capabilitiesContextFactory;
+		}
 		if (bindings.commandContextActions !== undefined) {
 			this._extensionCommandContextActions = bindings.commandContextActions;
 		}
@@ -2496,6 +2522,12 @@ export class AgentSession {
 	applyExtensionBindings(bindings: ExtensionBindings): void {
 		if (bindings.uiContext !== undefined) {
 			this._extensionUIContext = bindings.uiContext;
+		}
+		if (bindings.uiContextFactory !== undefined) {
+			this._extensionUIContextFactory = bindings.uiContextFactory;
+		}
+		if (bindings.capabilitiesContextFactory !== undefined) {
+			this._extensionCapabilitiesContextFactory = bindings.capabilitiesContextFactory;
 		}
 		if (bindings.commandContextActions !== undefined) {
 			this._extensionCommandContextActions = bindings.commandContextActions;
@@ -2570,6 +2602,8 @@ export class AgentSession {
 
 	private _applyExtensionBindings(runner: ExtensionRunner): void {
 		runner.setUIContext(this._extensionUIContext);
+		runner.setUIContextFactory(this._extensionUIContextFactory);
+		runner.setCapabilitiesContextFactory(this._extensionCapabilitiesContextFactory);
 		runner.bindCommandContext(this._extensionCommandContextActions);
 
 		this._extensionErrorUnsubscriber?.();
@@ -2875,6 +2909,8 @@ export class AgentSession {
 
 		const hasBindings =
 			this._extensionUIContext ||
+			this._extensionUIContextFactory ||
+			this._extensionCapabilitiesContextFactory ||
 			this._extensionCommandContextActions ||
 			this._extensionShutdownHandler ||
 			this._extensionErrorListener;

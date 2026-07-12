@@ -3,7 +3,7 @@ import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import type { ExtensionActivation } from "./extensions/types.ts";
+import type { ExtensionActivation, ExtensionTarget } from "./extensions/types.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import type { NetworkSettings } from "./network-types.ts";
 
@@ -67,13 +67,23 @@ export type PackageSource =
 	| string
 	| {
 			source: string;
-			extensions?: Array<string | { path: string; activation?: ExtensionActivation }>;
+			extensions?: Array<
+				| string
+				| {
+						id?: string;
+						path: string;
+						activation?: ExtensionActivation;
+						targets?: ExtensionTarget[];
+				  }
+			>;
 			skills?: string[];
 			prompts?: string[];
 			themes?: string[];
 	  };
 
-export type ExtensionPathSource = string | { path: string; activation?: ExtensionActivation };
+export type ExtensionPathSource =
+	| string
+	| { id?: string; path: string; activation?: ExtensionActivation; targets?: ExtensionTarget[] };
 
 /**
  * Per-extension namespace configuration.
@@ -127,7 +137,7 @@ export interface Settings {
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
-	extensions?: ExtensionPathSource[]; // Array of local extension file paths/directories, optionally with activation
+	extensions?: ExtensionPathSource[]; // Array of local extension file paths/directories, optionally with activation/targets
 	extensionConfig?: Record<string, ExtensionNamespaceSettings>; // Per-extension namespace config (model/enabled/concurrency), keyed by extension name
 	shellGui?: Record<string, ShellGuiNamespaceSettings>; // craft shell GUI preferences (shell.gui.<name>.*); ignored by pi CLI standalone
 	skills?: string[]; // Array of local skill file paths or directories

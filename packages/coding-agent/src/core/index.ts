@@ -44,6 +44,7 @@ export {
 	type ExecResult,
 	type Extension,
 	type ExtensionAPI,
+	type ExtensionCapabilitiesContext,
 	type ExtensionCommandContext,
 	type ExtensionContext,
 	type ExtensionError,
@@ -54,6 +55,9 @@ export {
 	ExtensionRunner,
 	type ExtensionShortcut,
 	type ExtensionUIContext,
+	type HostCapabilityError,
+	type HostCapabilityInvokeOptions,
+	type HostCapabilityResult,
 	type LoadExtensionsResult,
 	type MessageRenderer,
 	type RegisteredCommand,
@@ -77,6 +81,28 @@ export {
 	type WebFetchToolResultEvent,
 	type WorkingIndicatorOptions,
 } from "./extensions/index.ts";
+export {
+	type GlobalBackgroundTaskContext,
+	GlobalBackgroundTaskCoordinator,
+	type GlobalBackgroundTaskEventListener,
+	type GlobalBackgroundTaskHandler,
+	type GlobalBackgroundTaskRequest,
+	type GlobalBackgroundTaskSnapshot,
+	type GlobalBackgroundTaskStatus,
+	getProcessGlobalBackgroundTaskCoordinator,
+} from "./global-background-tasks.ts";
+export {
+	createPiGlobalHost,
+	PiGlobalHost,
+	type PiGlobalHostOptions,
+	type PiGlobalHostRuntimeOpenOptions,
+	type PiGlobalHostRuntimeSnapshot,
+} from "./global-host.ts";
+export {
+	getPiGlobalHostStatePath,
+	type PiGlobalHostState,
+	readPiGlobalHostState,
+} from "./global-host-state.ts";
 export {
 	type ActiveSessionInput,
 	type ActiveSessionOwnerKind,

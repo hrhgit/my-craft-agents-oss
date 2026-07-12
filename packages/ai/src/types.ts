@@ -287,10 +287,22 @@ export interface Usage {
 
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 
+/** Display-only attachment metadata supplied by a host. Never contains file contents or paths. */
+export interface UserAttachmentMetadata {
+	id: string;
+	name: string;
+	mediaType?: string;
+	size?: number;
+}
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
 	timestamp: number; // Unix timestamp in milliseconds
+	/** Host-generated identity used to reconcile optimistic UI with persistence. */
+	clientMutationId?: string;
+	/** Sanitized host attachment references persisted with the user turn. */
+	attachments?: UserAttachmentMetadata[];
 }
 
 export interface AssistantMessage {

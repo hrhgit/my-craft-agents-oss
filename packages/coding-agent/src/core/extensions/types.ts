@@ -45,6 +45,12 @@ import type { CompactionPreparation, CompactionResult } from "../compaction/inde
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
+import type {
+	GlobalBackgroundTaskEventListener,
+	GlobalBackgroundTaskHandler,
+	GlobalBackgroundTaskRequest,
+	GlobalBackgroundTaskSnapshot,
+} from "../global-background-tasks.ts";
 import type { KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
 import type { ModelRegistry } from "../model-registry.ts";
@@ -126,6 +132,8 @@ export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: Keybindi
  * Each mode (interactive, RPC, print) provides its own implementation.
  */
 export interface ExtensionUIContext {
+	/** Explicit host UI surface; extensions must not infer this from hasUI. */
+	readonly capabilities: ExtensionUICapabilities;
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
@@ -278,6 +286,47 @@ export interface ExtensionUIContext {
 	setToolsExpanded(expanded: boolean): void;
 }
 
+export interface ExtensionUICapabilities {
+	kind: "tui" | "craft" | "none";
+	dialogs: boolean;
+	widgets: boolean;
+	customComponents: boolean;
+	terminalInput: boolean;
+	editorControl: boolean;
+}
+
+export interface HostCapabilityInvokeOptions {
+	timeoutMs?: number;
+	signal?: AbortSignal;
+	onProgress?: (progress: unknown, sequence: number) => void;
+}
+
+export interface HostCapabilityError {
+	code: string;
+	message: string;
+	recoverable?: boolean;
+}
+
+export type HostCapabilityResult<T = unknown> =
+	| { status: "success"; output: T }
+	| { status: "denied" | "cancelled" | "unsupported" | "failed"; error?: HostCapabilityError };
+
+export interface HostCapabilityDeclaration {
+	capability: string;
+	operations: readonly string[];
+}
+
+/** Host-owned capabilities available to an extension without exposing host internals. */
+export interface ExtensionCapabilitiesContext {
+	readonly supported: readonly string[];
+	invoke<TOutput = unknown>(
+		capability: string,
+		operation: string,
+		input?: unknown,
+		options?: HostCapabilityInvokeOptions,
+	): Promise<HostCapabilityResult<TOutput>>;
+}
+
 // ============================================================================
 // Extension Context
 // ============================================================================
@@ -302,6 +351,8 @@ export interface CompactOptions {
 export interface ExtensionContext {
 	/** UI methods for user interaction */
 	ui: ExtensionUIContext;
+	/** Versioned, host-owned desktop or embedding capabilities. */
+	capabilities: ExtensionCapabilitiesContext;
 	/** Whether UI is available (false in print/RPC mode) */
 	hasUI: boolean;
 	/** Current working directory */
@@ -1104,6 +1155,7 @@ export type MessageRenderer<T = unknown> = (
 
 export interface RegisteredCommand {
 	name: string;
+	extensionId: string;
 	sourceInfo: SourceInfo;
 	description?: string;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
@@ -1122,10 +1174,31 @@ export interface ResolvedCommand extends RegisteredCommand {
 // biome-ignore lint/suspicious/noConfusingVoidType: void allows bare return statements
 export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContext) => Promise<R | void> | R | void;
 
+export interface ExtensionHostAPI {
+	registerBackgroundTask<TInput>(type: string, handler: GlobalBackgroundTaskHandler<TInput>): () => void;
+	enqueueBackgroundTask<TInput>(request: GlobalBackgroundTaskRequest<TInput>): GlobalBackgroundTaskSnapshot;
+	cancelBackgroundTask(id: string): GlobalBackgroundTaskSnapshot | undefined;
+	listBackgroundTasks(): GlobalBackgroundTaskSnapshot[];
+	subscribeBackgroundTasks(listener: GlobalBackgroundTaskEventListener): () => void;
+}
+
+export interface ExtensionEnvironment {
+	id: string;
+	target: ExtensionTarget;
+	sourcePath: string;
+	dataDir: string;
+}
+
 /**
  * ExtensionAPI passed to extension factory functions.
  */
 export interface ExtensionAPI {
+	/** Process-global services. Definitions are shared; session ctx is not. */
+	readonly host: ExtensionHostAPI;
+	/** Stable identity and host boundary for this loaded extension. */
+	readonly environment: ExtensionEnvironment;
+	/** Declare the Host capabilities this extension may request. Declarations are not grants. */
+	declareCapabilities(declarations: readonly HostCapabilityDeclaration[]): void;
 	// =========================================================================
 	// Event Subscription
 	// =========================================================================
@@ -1185,7 +1258,7 @@ export interface ExtensionAPI {
 	// =========================================================================
 
 	/** Register a custom command. */
-	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void;
+	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo" | "extensionId">): void;
 
 	/** Register a keyboard shortcut. */
 	registerShortcut(
@@ -1424,15 +1497,36 @@ export interface ProviderModelConfig {
 /** Extension factory function type. Supports both sync and async initialization. */
 export type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
 
+export type ExtensionIsolation = "session" | "process";
+
+export interface ExtensionV2Definition {
+	host?: (host: ExtensionHostAPI) => void | Promise<void>;
+	session?: ExtensionFactory;
+	isolation?: ExtensionIsolation;
+}
+
+export type ExtensionFactoryV2 = ExtensionFactory & { readonly definitionV2: ExtensionV2Definition };
+
+export function defineExtensionV2(definition: ExtensionV2Definition): ExtensionFactoryV2 {
+	const factory = (async (pi: ExtensionAPI) => {
+		await definition.host?.(pi.host);
+		await definition.session?.(pi);
+	}) as ExtensionFactoryV2;
+	Object.defineProperty(factory, "definitionV2", { value: Object.freeze({ ...definition }) });
+	return factory;
+}
+
 // ============================================================================
 // Loaded Extension Types
 // ============================================================================
 
 export type ExtensionActivation = "startup" | "beforeFirstRequest" | "lazy";
+export type ExtensionTarget = "pi" | "craft";
 
 export interface RegisteredTool {
 	definition: ToolDefinition;
 	sourceInfo: SourceInfo;
+	extensionId?: string;
 }
 
 export interface ExtensionFlag {
@@ -1585,10 +1679,13 @@ export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionAction
 
 /** Loaded extension with all registered items. */
 export interface Extension {
+	id: string;
+	target: ExtensionTarget;
 	path: string;
 	resolvedPath: string;
 	sourceInfo: SourceInfo;
 	activation: ExtensionActivation;
+	hostCapabilities?: HostCapabilityDeclaration[];
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;
@@ -1610,6 +1707,7 @@ export interface LoadExtensionsResult {
 // ============================================================================
 
 export interface ExtensionError {
+	extensionId: string;
 	extensionPath: string;
 	event: string;
 	error: string;

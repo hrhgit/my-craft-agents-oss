@@ -112,6 +112,7 @@ function registerPendingExtensionProviders(
 export async function createAgentSessionServices(
 	options: CreateAgentSessionServicesOptions,
 ): Promise<AgentSessionServices> {
+	const servicesStartedAt = performance.now();
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
 	const authStorage = options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
@@ -124,19 +125,46 @@ export async function createAgentSessionServices(
 		agentDir,
 		settingsManager,
 	});
+	const objectsReadyAt = performance.now();
 
 	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
 	if (options.deferResourceLoad) {
 		await resourceLoader.loadPhase?.("startup");
+		const resourcesReadyAt = performance.now();
 		registerPendingExtensionProviders(resourceLoader, modelRegistry, diagnostics);
 		diagnostics.push(
 			...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues, { ignoreUnknown: true }),
 		);
+		if (process.env.PI_RUNTIME_PROFILE === "1") {
+			console.error(
+				JSON.stringify({
+					scope: "pi-host",
+					event: "services.profile",
+					cwd,
+					objectsMs: Math.round((objectsReadyAt - servicesStartedAt) * 100) / 100,
+					resourcesMs: Math.round((resourcesReadyAt - objectsReadyAt) * 100) / 100,
+					networkMs: 0,
+				}),
+			);
+		}
 	} else {
 		await resourceLoader.reload();
+		const resourcesReadyAt = performance.now();
 		registerPendingExtensionProviders(resourceLoader, modelRegistry, diagnostics);
 		diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 		await networkManager.initialize();
+		if (process.env.PI_RUNTIME_PROFILE === "1") {
+			console.error(
+				JSON.stringify({
+					scope: "pi-host",
+					event: "services.profile",
+					cwd,
+					objectsMs: Math.round((objectsReadyAt - servicesStartedAt) * 100) / 100,
+					resourcesMs: Math.round((resourcesReadyAt - objectsReadyAt) * 100) / 100,
+					networkMs: Math.round((performance.now() - resourcesReadyAt) * 100) / 100,
+				}),
+			);
+		}
 	}
 
 	return {

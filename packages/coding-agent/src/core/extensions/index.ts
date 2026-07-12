@@ -59,6 +59,7 @@ export type {
 	ExtensionActions,
 	// API
 	ExtensionAPI,
+	ExtensionCapabilitiesContext,
 	ExtensionCommandContext,
 	ExtensionCommandContextActions,
 	ExtensionContext,
@@ -67,13 +68,18 @@ export type {
 	ExtensionError,
 	ExtensionEvent,
 	ExtensionFactory,
+	ExtensionFactoryV2,
 	ExtensionFlag,
 	ExtensionHandler,
+	ExtensionHostAPI,
+	ExtensionIsolation,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
+	ExtensionTarget,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionV2Definition,
 	ExtensionWidgetOptions,
 	FindToolCallEvent,
 	FindToolResultEvent,
@@ -83,6 +89,10 @@ export type {
 	GetThinkingLevelHandler,
 	GrepToolCallEvent,
 	GrepToolResultEvent,
+	HostCapabilityDeclaration,
+	HostCapabilityError,
+	HostCapabilityInvokeOptions,
+	HostCapabilityResult,
 	// Events - Input
 	InputEvent,
 	InputEventResult,
@@ -165,6 +175,7 @@ export type {
 } from "./types.ts";
 // Type guards
 export {
+	defineExtensionV2,
 	defineTool,
 	isBashToolResult,
 	isEditToolResult,

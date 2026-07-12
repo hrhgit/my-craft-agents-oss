@@ -133,14 +133,16 @@ Additional paths via `settings.json`:
 }
 ```
 
-Extension entries can also choose when they load:
+Extension entries can also choose when they load and which host can load them:
 
 ```json
 {
   "extensions": [
     { "path": "/path/to/editor-ui.ts", "activation": "startup" },
     { "path": "/path/to/model-tools.ts", "activation": "beforeFirstRequest" },
-    { "path": "/path/to/optional-command.ts", "activation": "lazy" }
+    { "path": "/path/to/optional-command.ts", "activation": "lazy" },
+    { "path": "/path/to/craft-ui.ts", "targets": ["craft"] },
+    { "path": "/path/to/shared.ts", "targets": ["pi", "craft"] }
   ]
 }
 ```
@@ -149,6 +151,12 @@ Activation values:
 - `startup`: loaded before the first interactive screen. Use this only when the extension must affect startup UI, startup model/provider selection, or immediate session setup.
 - `beforeFirstRequest`: loaded after the first screen is shown, but before the first real model request is sent. This is the default for extension paths that do not specify `activation`.
 - `lazy`: discovered but not loaded during startup or first-request preparation. Use this for resources that are activated by a later explicit flow.
+
+Target values:
+- `pi`: load in Pi CLI hosts.
+- `craft`: load in Craft hosts.
+
+Entries without `targets` default to `["pi"]`. Craft hosts should create sessions with `extensionTarget: "craft"` so Pi-only extensions are filtered before their modules execute.
 
 To share extensions via npm or git as pi packages, see [packages.md](packages.md).
 

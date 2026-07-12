@@ -8,6 +8,8 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
+import * as _bundledPiAi from "@earendil-works/pi-ai";
+import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import type { KeyId } from "@earendil-works/pi-tui";
 import * as _bundledPiTui from "@earendil-works/pi-tui";
 import { createJiti } from "jiti/static";
@@ -23,13 +25,16 @@ import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
+import { getProcessGlobalBackgroundTaskCoordinator } from "../global-background-tasks.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import type {
 	Extension,
 	ExtensionActivation,
 	ExtensionAPI,
 	ExtensionFactory,
+	ExtensionFactoryV2,
 	ExtensionRuntime,
+	ExtensionTarget,
 	LoadExtensionsResult,
 	MessageRenderer,
 	ProviderConfig,
@@ -37,14 +42,20 @@ import type {
 	ToolDefinition,
 } from "./types.ts";
 
+export interface ExtensionLoadMetadata {
+	id: string;
+	target: ExtensionTarget;
+	agentDir: string;
+}
+
 const require = createRequire(import.meta.url);
+
+const extensionV2FactoryCache = new Map<string, { mtimeMs: number; factory: ExtensionFactoryV2 }>();
 
 let _virtualModules: Record<string, unknown> | undefined;
 
 function getVirtualModules(): Record<string, unknown> {
 	if (_virtualModules) return _virtualModules;
-	const _bundledPiAi = require("@earendil-works/pi-ai") as unknown;
-	const _bundledPiAiOauth = require("@earendil-works/pi-ai/oauth") as unknown;
 	_virtualModules = {
 		typebox: _bundledTypebox,
 		"typebox/compile": _bundledTypeboxCompile,
@@ -183,8 +194,46 @@ function createExtensionAPI(
 	runtime: ExtensionRuntime,
 	cwd: string,
 	eventBus: EventBus,
+	environment: ExtensionLoadMetadata,
 ): ExtensionAPI {
+	const backgroundTasks = getProcessGlobalBackgroundTaskCoordinator();
+	const dataDir = path.join(environment.agentDir, "extension-data", environment.id);
+	fs.mkdirSync(dataDir, { recursive: true });
 	const api = {
+		environment: Object.freeze({
+			id: environment.id,
+			target: environment.target,
+			sourcePath: extension.resolvedPath,
+			dataDir,
+		}),
+		host: {
+			registerBackgroundTask: (type, handler) => {
+				try {
+					return backgroundTasks.register(type, handler);
+				} catch (error) {
+					if (error instanceof Error && error.message.includes("already registered")) return () => {};
+					throw error;
+				}
+			},
+			enqueueBackgroundTask: (request) => backgroundTasks.enqueue(request),
+			cancelBackgroundTask: (id) => backgroundTasks.cancel(id),
+			listBackgroundTasks: () => backgroundTasks.list(),
+			subscribeBackgroundTasks: (listener) => backgroundTasks.subscribe(listener),
+		},
+		declareCapabilities(declarations: readonly import("./types.ts").HostCapabilityDeclaration[]): void {
+			runtime.assertActive();
+			const normalized = declarations.map((declaration) => {
+				const capability = declaration.capability.trim();
+				const operations = [
+					...new Set(declaration.operations.map((operation) => operation.trim()).filter(Boolean)),
+				];
+				if (!capability || operations.length === 0) {
+					throw new Error("Host capability declarations require a capability and at least one operation");
+				}
+				return { capability, operations };
+			});
+			extension.hostCapabilities = normalized;
+		},
 		// Registration methods - write to extension
 		on(event: string, handler: HandlerFn): void {
 			runtime.assertActive();
@@ -198,14 +247,16 @@ function createExtensionAPI(
 			extension.tools.set(tool.name, {
 				definition: tool,
 				sourceInfo: extension.sourceInfo,
+				extensionId: extension.id,
 			});
 			runtime.refreshTools();
 		},
 
-		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
+		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo" | "extensionId">): void {
 			runtime.assertActive();
 			extension.commands.set(name, {
 				name,
+				extensionId: extension.id,
 				sourceInfo: extension.sourceInfo,
 				...options,
 			});
@@ -333,6 +384,9 @@ function createExtensionAPI(
 }
 
 async function loadExtensionModule(extensionPath: string) {
+	const mtimeMs = fs.statSync(extensionPath).mtimeMs;
+	const cached = extensionV2FactoryCache.get(extensionPath);
+	if (cached?.mtimeMs === mtimeMs) return cached.factory;
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
 		fsCache: path.join(getAgentDir(), ".cache", "jiti"),
@@ -344,7 +398,12 @@ async function loadExtensionModule(extensionPath: string) {
 
 	const module = await jiti.import(extensionPath, { default: true });
 	const factory = module as ExtensionFactory;
-	return typeof factory !== "function" ? undefined : factory;
+	if (typeof factory !== "function") return undefined;
+	const v2Factory = factory as ExtensionFactoryV2;
+	if (v2Factory.definitionV2 && v2Factory.definitionV2.isolation !== "process") {
+		extensionV2FactoryCache.set(extensionPath, { mtimeMs, factory: v2Factory });
+	}
+	return factory;
 }
 
 /**
@@ -353,6 +412,7 @@ async function loadExtensionModule(extensionPath: string) {
 function createExtension(
 	extensionPath: string,
 	resolvedPath: string,
+	identity: Pick<ExtensionLoadMetadata, "id" | "target">,
 	activation: ExtensionActivation = "beforeFirstRequest",
 ): Extension {
 	const source =
@@ -362,10 +422,13 @@ function createExtension(
 	const baseDir = extensionPath.startsWith("<") ? undefined : path.dirname(resolvedPath);
 
 	return {
+		id: identity.id,
+		target: identity.target,
 		path: extensionPath,
 		resolvedPath,
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
 		activation,
+		hostCapabilities: [],
 		handlers: new Map(),
 		tools: new Map(),
 		messageRenderers: new Map(),
@@ -380,6 +443,7 @@ async function loadExtension(
 	cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
+	metadata: ExtensionLoadMetadata,
 	activation?: ExtensionActivation,
 ): Promise<{ extension: Extension | null; error: string | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
@@ -390,8 +454,8 @@ async function loadExtension(
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
 
-		const extension = createExtension(extensionPath, resolvedPath, activation);
-		const api = createExtensionAPI(extension, runtime, cwd, eventBus);
+		const extension = createExtension(extensionPath, resolvedPath, metadata, activation);
+		const api = createExtensionAPI(extension, runtime, cwd, eventBus, metadata);
 		await factory(api);
 
 		return { extension, error: null };
@@ -411,10 +475,11 @@ export async function loadExtensionFromFactory(
 	runtime: ExtensionRuntime,
 	extensionPath = "<inline>",
 	activation: ExtensionActivation = "beforeFirstRequest",
+	metadata: ExtensionLoadMetadata = { id: "inline", target: "pi", agentDir: getAgentDir() },
 ): Promise<Extension> {
-	const extension = createExtension(extensionPath, extensionPath, activation);
+	const extension = createExtension(extensionPath, extensionPath, metadata, activation);
 	const resolvedCwd = resolvePath(cwd);
-	const api = createExtensionAPI(extension, runtime, resolvedCwd, eventBus);
+	const api = createExtensionAPI(extension, runtime, resolvedCwd, eventBus, metadata);
 	await factory(api);
 	return extension;
 }
@@ -425,6 +490,7 @@ export async function loadExtensionsIntoRuntime(
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
 	activationByPath?: Map<string, ExtensionActivation>,
+	metadataByPath?: Map<string, ExtensionLoadMetadata>,
 ): Promise<Pick<LoadExtensionsResult, "extensions" | "errors">> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
@@ -433,7 +499,12 @@ export async function loadExtensionsIntoRuntime(
 	for (const extPath of paths) {
 		const resolvedPath = resolvePath(extPath, resolvedCwd, { normalizeUnicodeSpaces: true });
 		const activation = activationByPath?.get(extPath) ?? activationByPath?.get(resolvedPath);
-		const { extension, error } = await loadExtension(extPath, resolvedCwd, eventBus, runtime, activation);
+		const metadata = metadataByPath?.get(extPath) ?? metadataByPath?.get(resolvedPath);
+		if (!metadata) {
+			errors.push({ path: extPath, error: "Missing strict extension metadata (id, target, agentDir)" });
+			continue;
+		}
+		const { extension, error } = await loadExtension(extPath, resolvedCwd, eventBus, runtime, metadata, activation);
 
 		if (error) {
 			errors.push({ path: extPath, error });
@@ -456,6 +527,7 @@ export async function loadExtensions(
 	cwd: string,
 	eventBus?: EventBus,
 	activationByPath?: Map<string, ExtensionActivation>,
+	metadataByPath?: Map<string, ExtensionLoadMetadata>,
 ): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
@@ -463,7 +535,14 @@ export async function loadExtensions(
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const runtime = createExtensionRuntime();
 
-	const loaded = await loadExtensionsIntoRuntime(paths, resolvedCwd, resolvedEventBus, runtime, activationByPath);
+	const loaded = await loadExtensionsIntoRuntime(
+		paths,
+		resolvedCwd,
+		resolvedEventBus,
+		runtime,
+		activationByPath,
+		metadataByPath,
+	);
 	extensions.push(...loaded.extensions);
 	errors.push(...loaded.errors);
 

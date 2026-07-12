@@ -11,7 +11,13 @@ import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
-import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import type {
+	ExtensionRunner,
+	ExtensionTarget,
+	LoadExtensionsResult,
+	SessionStartEvent,
+	ToolDefinition,
+} from "./extensions/index.ts";
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
@@ -81,6 +87,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
 	resourceLoader?: ResourceLoader;
+	/** Host extension target for default discovery. Default: "pi". */
+	extensionTarget?: ExtensionTarget;
 
 	/** Session manager. Default: SessionManager.create(cwd) */
 	sessionManager?: SessionManager;
@@ -133,6 +141,7 @@ export type {
 	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionFactory,
+	ExtensionTarget,
 	SlashCommandInfo,
 	SlashCommandSource,
 	ToolDefinition,
@@ -251,7 +260,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 
 	if (!resourceLoader) {
-		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+		resourceLoader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			settingsManager,
+			extensionTarget: options.extensionTarget,
+		});
 		await resourceLoader.reload();
 		time("resourceLoader.reload");
 	}

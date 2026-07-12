@@ -94,6 +94,14 @@ export function createHeadlessUIContext(transport: HeadlessUITransport): Extensi
 	const stubTui = undefined as unknown as TUI;
 
 	const ctx: ExtensionUIContext = {
+		capabilities: {
+			kind: "none",
+			dialogs: false,
+			widgets: true,
+			customComponents: false,
+			terminalInput: false,
+			editorControl: false,
+		},
 		// ---- Core bridge methods ----
 		notify(message: string, type?: "info" | "warning" | "error"): void {
 			transport.send({ type: "extension_notify", message, notificationType: type, source: "headless" });

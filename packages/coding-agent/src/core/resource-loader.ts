@@ -1,8 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { createRequire } from "node:module";
 import { basename, join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, getPackageDir } from "../config.ts";
+import { CONFIG_DIR_NAME } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
@@ -12,6 +11,7 @@ import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
 	createExtensionRuntime,
+	type ExtensionLoadMetadata,
 	loadExtensionFromFactory,
 	loadExtensions,
 	loadExtensionsIntoRuntime,
@@ -21,13 +21,15 @@ import type {
 	ExtensionActivation,
 	ExtensionFactory,
 	ExtensionRuntime,
+	ExtensionTarget,
 	LoadExtensionsResult,
 } from "./extensions/types.ts";
-import type {
-	DefaultPackageManager as DefaultPackageManagerType,
-	PathMetadata,
-	ResolvedPaths,
-	ResolvedResource,
+import {
+	DefaultPackageManager,
+	type PathMetadata,
+	type ResolvedPaths,
+	type ResolvedResource,
+	type ResourcePathEntry,
 } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
@@ -35,16 +37,6 @@ import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
 import { loadSkills } from "./skills.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
-
-const require = createRequire(import.meta.url);
-
-interface PackageManagerModule {
-	DefaultPackageManager: new (options: {
-		cwd: string;
-		agentDir: string;
-		settingsManager: SettingsManager;
-	}) => DefaultPackageManagerType;
-}
 
 export interface ResourceExtensionPaths {
 	skillPaths?: Array<{ path: string; metadata: PathMetadata }>;
@@ -77,7 +69,52 @@ interface ResourceResolutionSnapshot {
 	metadataByPath: Map<string, PathMetadata>;
 }
 
-type LocalExtensionSource = string | { path: string; activation?: ExtensionActivation };
+interface ResourceResolutionSnapshotCacheEntry {
+	generation: string;
+	snapshot: Promise<ResourceResolutionSnapshot>;
+}
+
+const MAX_RESOURCE_SNAPSHOT_CACHE_ENTRIES = 64;
+const resourceResolutionSnapshotCache = new Map<string, ResourceResolutionSnapshotCacheEntry>();
+
+function fileGeneration(path: string): string {
+	try {
+		const stats = statSync(path);
+		return `${stats.mtimeMs}:${stats.size}`;
+	} catch {
+		return "missing";
+	}
+}
+
+function cloneResolvedPaths(paths: ResolvedPaths): ResolvedPaths {
+	return {
+		extensions: paths.extensions.map((resource) => ({ ...resource, metadata: { ...resource.metadata } })),
+		skills: paths.skills.map((resource) => ({ ...resource, metadata: { ...resource.metadata } })),
+		prompts: paths.prompts.map((resource) => ({ ...resource, metadata: { ...resource.metadata } })),
+		themes: paths.themes.map((resource) => ({ ...resource, metadata: { ...resource.metadata } })),
+	};
+}
+
+function cloneResourceResolutionSnapshot(snapshot: ResourceResolutionSnapshot): ResourceResolutionSnapshot {
+	return {
+		resolvedPaths: cloneResolvedPaths(snapshot.resolvedPaths),
+		cliExtensionPaths: cloneResolvedPaths(snapshot.cliExtensionPaths),
+		metadataByPath: new Map(
+			Array.from(snapshot.metadataByPath, ([path, metadata]) => [path, { ...metadata }] as const),
+		),
+	};
+}
+
+type LocalExtensionSource = ResourcePathEntry;
+
+interface StartupExtensionEntry {
+	id: string;
+	path: string;
+	targets: ExtensionTarget[];
+}
+
+const DEFAULT_EXTENSION_TARGET: ExtensionTarget = "pi";
+const EXTENSION_TARGETS: ExtensionTarget[] = ["pi", "craft"];
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
 	if (!input) {
@@ -120,6 +157,48 @@ function getLocalExtensionPath(entry: LocalExtensionSource): string {
 
 function getLocalExtensionActivation(entry: LocalExtensionSource): ExtensionActivation | undefined {
 	return typeof entry === "string" ? undefined : entry.activation;
+}
+
+function parseExtensionTargets(value: unknown): ExtensionTarget[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const targets: ExtensionTarget[] = [];
+	for (const target of value) {
+		if (typeof target !== "string") {
+			continue;
+		}
+		if (!EXTENSION_TARGETS.includes(target as ExtensionTarget)) {
+			continue;
+		}
+		const extensionTarget = target as ExtensionTarget;
+		if (!targets.includes(extensionTarget)) {
+			targets.push(extensionTarget);
+		}
+	}
+	return targets;
+}
+
+function getLocalExtensionTargets(entry: LocalExtensionSource): ExtensionTarget[] | undefined {
+	return typeof entry === "string" ? undefined : parseExtensionTargets(entry.targets);
+}
+
+function getLocalExtensionId(entry: LocalExtensionSource): string | undefined {
+	return typeof entry === "string" ? undefined : entry.id?.trim();
+}
+
+function extensionTargetsMatch(targets: ExtensionTarget[] | undefined, target: ExtensionTarget): boolean {
+	return (targets ?? [DEFAULT_EXTENSION_TARGET]).includes(target);
+}
+
+function withStartupExtensionMetadata(
+	metadata: PathMetadata,
+	targets: ExtensionTarget[] | undefined,
+	extensionId?: string,
+): PathMetadata {
+	const next: PathMetadata = { ...metadata, activation: "startup", extensionId };
+	if (targets !== undefined) {
+		next.targets = targets;
+	}
+	return next;
 }
 
 export function loadProjectContextFiles(options: {
@@ -167,7 +246,7 @@ export interface DefaultResourceLoaderOptions {
 	agentDir: string;
 	settingsManager?: SettingsManager;
 	eventBus?: EventBus;
-	additionalExtensionPaths?: string[];
+	additionalExtensionPaths?: ResourcePathEntry[];
 	additionalSkillPaths?: string[];
 	additionalPromptTemplatePaths?: string[];
 	additionalThemePaths?: string[];
@@ -197,6 +276,7 @@ export interface DefaultResourceLoaderOptions {
 	};
 	systemPromptOverride?: (base: string | undefined) => string | undefined;
 	appendSystemPromptOverride?: (base: string[]) => string[];
+	extensionTarget?: ExtensionTarget;
 }
 
 export class DefaultResourceLoader implements ResourceLoader {
@@ -204,8 +284,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private agentDir: string;
 	private settingsManager: SettingsManager;
 	private eventBus: EventBus;
-	private packageManager: DefaultPackageManagerType | undefined;
-	private additionalExtensionPaths: string[];
+	private packageManager: DefaultPackageManager | undefined;
+	private additionalExtensionPaths: LocalExtensionSource[];
 	private additionalSkillPaths: string[];
 	private additionalPromptTemplatePaths: string[];
 	private additionalThemePaths: string[];
@@ -235,6 +315,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	};
 	private systemPromptOverride?: (base: string | undefined) => string | undefined;
 	private appendSystemPromptOverride?: (base: string[]) => string[];
+	private extensionTarget: ExtensionTarget;
 
 	private extensionsResult: LoadExtensionsResult;
 	private skills: Skill[];
@@ -278,6 +359,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.agentsFilesOverride = options.agentsFilesOverride;
 		this.systemPromptOverride = options.systemPromptOverride;
 		this.appendSystemPromptOverride = options.appendSystemPromptOverride;
+		this.extensionTarget = options.extensionTarget ?? DEFAULT_EXTENSION_TARGET;
 
 		this.extensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
 		this.skills = [];
@@ -366,9 +448,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	async reload(options: ResourceReloadOptions = {}): Promise<void> {
+		const reloadStartedAt = performance.now();
 		const phase = options.phase ?? "full";
 		await this.settingsManager.reload();
+		const settingsReadyAt = performance.now();
 		const snapshot = await this.resolveResourceSnapshot(phase);
+		const snapshotReadyAt = performance.now();
 		const metadataByPath = snapshot.metadataByPath;
 
 		this.extensionSkillSourceInfos = new Map();
@@ -425,11 +510,20 @@ export class DefaultResourceLoader implements ResourceLoader {
 			...snapshot.resolvedPaths.extensions,
 			...snapshot.cliExtensionPaths.extensions,
 		]);
+		const extensionLoadMetadataByPath = this.buildExtensionLoadMetadataMap([
+			...snapshot.resolvedPaths.extensions,
+			...snapshot.cliExtensionPaths.extensions,
+		]);
 		const allExtensionPaths = this.noExtensions
 			? cliEnabledExtensions
 			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
 		const extensionPaths = this.filterExtensionPathsForPhase(allExtensionPaths, extensionActivationByPath, phase);
-		const extensionsResult = await this.loadExtensionsForPhase(extensionPaths, extensionActivationByPath, phase);
+		const extensionsResult = await this.loadExtensionsForPhase(
+			extensionPaths,
+			extensionActivationByPath,
+			extensionLoadMetadataByPath,
+			phase,
+		);
 
 		// Detect extension conflicts (tools, commands, flags with same names from different extensions)
 		// Keep all extensions loaded. Conflicts are reported as diagnostics, and precedence is handled by load order.
@@ -438,9 +532,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 			extensionsResult.errors.push({ path: conflict.path, error: conflict.message });
 		}
 
-		for (const p of this.additionalExtensionPaths) {
-			if (isLocalPath(p)) {
-				const resolved = this.resolveResourcePath(p);
+		for (const entry of this.additionalExtensionPaths) {
+			const entryPath = getLocalExtensionPath(entry);
+			if (isLocalPath(entryPath)) {
+				const resolved = this.resolveResourcePath(entryPath);
 				if (!existsSync(resolved)) {
 					extensionsResult.errors.push({ path: resolved, error: `Extension path does not exist: ${resolved}` });
 				}
@@ -458,6 +553,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.extensionsResult = { ...this.extensionsResult, extensions: filteredExtensions };
 
 		this.applyExtensionSourceInfo(this.extensionsResult.extensions, metadataByPath);
+		const extensionsReadyAt = performance.now();
 
 		const shouldLoadRequestResources = phase !== "startup";
 		const skillPaths = shouldLoadRequestResources
@@ -465,7 +561,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 				? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
 				: this.mergePaths([...cliEnabledSkills, ...enabledSkills], this.additionalSkillPaths)
 			: [];
-
 		this.lastSkillPaths = skillPaths;
 		this.updateSkillsFromPaths(skillPaths, metadataByPath);
 		if (shouldLoadRequestResources) {
@@ -543,6 +638,20 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.appendSystemPrompt = this.appendSystemPromptOverride
 			? this.appendSystemPromptOverride(baseAppend)
 			: baseAppend;
+		if (process.env.PI_RUNTIME_PROFILE === "1") {
+			console.error(
+				JSON.stringify({
+					scope: "pi-host",
+					event: "resources.profile",
+					cwd: this.cwd,
+					phase,
+					settingsMs: Math.round((settingsReadyAt - reloadStartedAt) * 100) / 100,
+					snapshotMs: Math.round((snapshotReadyAt - settingsReadyAt) * 100) / 100,
+					extensionsMs: Math.round((extensionsReadyAt - snapshotReadyAt) * 100) / 100,
+					staticResourcesMs: Math.round((performance.now() - extensionsReadyAt) * 100) / 100,
+				}),
+			);
+		}
 		this.loadedResourcePhase = phase;
 	}
 
@@ -565,23 +674,74 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return true;
 	}
 
-	private getPackageManager(): DefaultPackageManagerType {
+	private getPackageManager(): DefaultPackageManager {
 		if (!this.packageManager) {
-			const packageManagerPath = join(getPackageDir(), "dist", "core", "package-manager.js");
-			const { DefaultPackageManager } = require(packageManagerPath) as PackageManagerModule;
 			this.packageManager = new DefaultPackageManager({
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				settingsManager: this.settingsManager,
+				extensionTarget: this.extensionTarget,
 			});
 		}
 		return this.packageManager;
+	}
+
+	private getResourceCacheKey(phase: ResourceLoadPhase): string {
+		return JSON.stringify({
+			cwd: this.cwd,
+			agentDir: this.agentDir,
+			extensionTarget: this.extensionTarget,
+			additionalExtensionPaths: this.additionalExtensionPaths,
+			additionalSkillPaths: this.additionalSkillPaths,
+			additionalPromptTemplatePaths: this.additionalPromptTemplatePaths,
+			additionalThemePaths: this.additionalThemePaths,
+			noSkills: this.noSkills,
+			noPromptTemplates: this.noPromptTemplates,
+			noThemes: this.noThemes,
+			noContextFiles: this.noContextFiles,
+			systemPromptSource: this.systemPromptSource,
+			appendSystemPromptSource: this.appendSystemPromptSource,
+			phase,
+		});
+	}
+
+	private getResourceCacheGeneration(): string {
+		return [
+			fileGeneration(join(this.agentDir, "settings.json")),
+			fileGeneration(join(this.cwd, CONFIG_DIR_NAME, "settings.json")),
+			fileGeneration(join(this.agentDir, "package.json")),
+			fileGeneration(join(this.cwd, CONFIG_DIR_NAME, "package.json")),
+		].join("|");
 	}
 
 	private async resolveResourceSnapshot(phase: ResourceLoadPhase): Promise<ResourceResolutionSnapshot> {
 		if (phase === "startup") {
 			return this.resolveStartupResourceSnapshot();
 		}
+		const cacheKey = this.getResourceCacheKey(phase);
+		const generation = this.getResourceCacheGeneration();
+		const cached = resourceResolutionSnapshotCache.get(cacheKey);
+		if (cached?.generation === generation) {
+			return cloneResourceResolutionSnapshot(await cached.snapshot);
+		}
+
+		const snapshot = this.resolveResourceSnapshotUncached();
+		resourceResolutionSnapshotCache.set(cacheKey, { generation, snapshot });
+		if (resourceResolutionSnapshotCache.size > MAX_RESOURCE_SNAPSHOT_CACHE_ENTRIES) {
+			const oldestKey = resourceResolutionSnapshotCache.keys().next().value;
+			if (oldestKey !== undefined) resourceResolutionSnapshotCache.delete(oldestKey);
+		}
+		try {
+			return cloneResourceResolutionSnapshot(await snapshot);
+		} catch (error) {
+			if (resourceResolutionSnapshotCache.get(cacheKey)?.snapshot === snapshot) {
+				resourceResolutionSnapshotCache.delete(cacheKey);
+			}
+			throw error;
+		}
+	}
+
+	private async resolveResourceSnapshotUncached(): Promise<ResourceResolutionSnapshot> {
 		const packageManager = this.getPackageManager();
 		const resolvedPaths = await packageManager.resolve();
 		const cliExtensionPaths = await packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
@@ -614,6 +774,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const metadataByPath = new Map<string, PathMetadata>();
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
+		const globalExtensionEntries = Array.isArray(globalSettings.extensions)
+			? (globalSettings.extensions as LocalExtensionSource[])
+			: [];
+		const projectExtensionEntries = Array.isArray(projectSettings.extensions)
+			? (projectSettings.extensions as LocalExtensionSource[])
+			: [];
 
 		const addStartupExtensions = (
 			entries: LocalExtensionSource[],
@@ -623,6 +789,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			target: ResolvedPaths,
 		) => {
 			for (const entry of entries) {
+				const entryId = getLocalExtensionId(entry);
+				const entryTargets = getLocalExtensionTargets(entry);
+				if (!entryId || !entryTargets?.length) continue;
 				if (getLocalExtensionActivation(entry) !== "startup") {
 					continue;
 				}
@@ -631,48 +800,56 @@ export class DefaultResourceLoader implements ResourceLoader {
 					continue;
 				}
 				const resolvedEntryPath = resolvePath(entryPath, baseDir, { homeDir: this.agentDir, trim: true });
-				const resolvedEntries = this.resolveStartupExtensionEntries(resolvedEntryPath);
+				const resolvedEntries = this.resolveStartupExtensionEntries(
+					resolvedEntryPath,
+					getLocalExtensionActivation(entry),
+					entryTargets,
+					entryId,
+				);
 				const metadata: PathMetadata = { source, scope, origin: "top-level", baseDir };
-				for (const extensionPath of resolvedEntries) {
+				for (const extensionEntry of resolvedEntries) {
+					if (!extensionTargetsMatch(extensionEntry.targets, this.extensionTarget)) {
+						continue;
+					}
+					const extensionPath = extensionEntry.path;
+					const extensionMetadata = withStartupExtensionMetadata(
+						metadata,
+						extensionEntry.targets,
+						extensionEntry.id,
+					);
 					if (!metadataByPath.has(extensionPath)) {
-						metadataByPath.set(extensionPath, { ...metadata, activation: "startup" });
+						metadataByPath.set(extensionPath, extensionMetadata);
 					}
 					target.extensions.push({
 						path: extensionPath,
 						enabled: true,
-						metadata: { ...metadata, activation: "startup" },
+						metadata: extensionMetadata,
 					});
 				}
 			}
 		};
 
-		addStartupExtensions(
-			(projectSettings.extensions ?? []) as LocalExtensionSource[],
-			join(this.cwd, CONFIG_DIR_NAME),
-			"project",
-			"local",
-			resolvedPaths,
-		);
-		addStartupExtensions(
-			(globalSettings.extensions ?? []) as LocalExtensionSource[],
-			this.agentDir,
-			"user",
-			"local",
-			resolvedPaths,
-		);
+		addStartupExtensions(projectExtensionEntries, join(this.cwd, CONFIG_DIR_NAME), "project", "local", resolvedPaths);
+		addStartupExtensions(globalExtensionEntries, this.agentDir, "user", "local", resolvedPaths);
 		addStartupExtensions(this.additionalExtensionPaths, this.cwd, "temporary", "cli", cliExtensionPaths);
 
 		return { resolvedPaths, cliExtensionPaths, metadataByPath };
 	}
 
-	private resolveStartupExtensionEntries(entryPath: string): string[] {
+	private resolveStartupExtensionEntries(
+		entryPath: string,
+		inheritedActivation: ExtensionActivation | undefined,
+		inheritedTargets: ExtensionTarget[] | undefined,
+		inheritedId?: string,
+	): StartupExtensionEntry[] {
 		if (!existsSync(entryPath)) {
 			return [];
 		}
 		try {
 			const stats = statSync(entryPath);
 			if (stats.isFile() && (entryPath.endsWith(".ts") || entryPath.endsWith(".js"))) {
-				return [entryPath];
+				if (!inheritedId || !inheritedActivation || !inheritedTargets?.length) return [];
+				return [{ id: inheritedId, path: entryPath, targets: inheritedTargets }];
 			}
 			if (!stats.isDirectory()) {
 				return [];
@@ -685,12 +862,16 @@ export class DefaultResourceLoader implements ResourceLoader {
 		if (existsSync(packageJsonPath)) {
 			try {
 				const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-					pi?: { extensions?: Array<string | { path: string; activation?: ExtensionActivation }> };
+					pi?: { extensions?: LocalExtensionSource[] };
 				};
 				const extensions = pkg.pi?.extensions ?? [];
-				const startupEntries: string[] = [];
+				const startupEntries: StartupExtensionEntry[] = [];
 				for (const extension of extensions) {
-					if (getLocalExtensionActivation(extension) !== "startup") {
+					const id = getLocalExtensionId(extension);
+					const targets = inheritedTargets ?? getLocalExtensionTargets(extension);
+					if (!id || !targets?.length) continue;
+					const activation = inheritedActivation ?? getLocalExtensionActivation(extension);
+					if (activation !== "startup") {
 						continue;
 					}
 					const extensionPath = resolvePath(getLocalExtensionPath(extension), entryPath, {
@@ -698,7 +879,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 						trim: true,
 					});
 					if (existsSync(extensionPath)) {
-						startupEntries.push(extensionPath);
+						startupEntries.push({
+							id,
+							path: extensionPath,
+							targets,
+						});
 					}
 				}
 				if (startupEntries.length > 0) {
@@ -709,14 +894,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
-		const indexTs = join(entryPath, "index.ts");
-		if (existsSync(indexTs)) {
-			return [indexTs];
-		}
-		const indexJs = join(entryPath, "index.js");
-		if (existsSync(indexJs)) {
-			return [indexJs];
-		}
 		return [];
 	}
 
@@ -737,6 +914,22 @@ export class DefaultResourceLoader implements ResourceLoader {
 			activationByPath.set(resolvedPath, activation);
 		}
 		return activationByPath;
+	}
+
+	private buildExtensionLoadMetadataMap(resources: ResolvedResource[]): Map<string, ExtensionLoadMetadata> {
+		const result = new Map<string, ExtensionLoadMetadata>();
+		for (const resource of resources) {
+			if (!resource.enabled || !resource.metadata.extensionId) continue;
+			const metadata: ExtensionLoadMetadata = {
+				id: resource.metadata.extensionId,
+				target: this.extensionTarget,
+				agentDir: this.agentDir,
+			};
+			const resolvedPath = this.resolveResourcePath(resource.path);
+			result.set(resource.path, metadata);
+			result.set(resolvedPath, metadata);
+		}
+		return result;
 	}
 
 	private filterExtensionPathsForPhase(
@@ -760,6 +953,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private async loadExtensionsForPhase(
 		extensionPaths: string[],
 		activationByPath: Map<string, ExtensionActivation>,
+		metadataByPath: Map<string, ExtensionLoadMetadata>,
 		phase: ResourceLoadPhase,
 	): Promise<LoadExtensionsResult> {
 		if (phase === "beforeFirstRequest" && this.loadedResourcePhase === "startup") {
@@ -780,6 +974,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				this.eventBus,
 				this.extensionsResult.runtime,
 				activationByPath,
+				metadataByPath,
 			);
 			const inlineExtensions = await this.loadExtensionFactories(this.extensionsResult.runtime, phase);
 			return {
@@ -789,7 +984,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 			};
 		}
 
-		const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus, activationByPath);
+		const extensionsResult = await loadExtensions(
+			extensionPaths,
+			this.cwd,
+			this.eventBus,
+			activationByPath,
+			metadataByPath,
+		);
 		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime, phase);
 		extensionsResult.extensions.push(...inlineExtensions.extensions);
 		extensionsResult.errors.push(...inlineExtensions.errors);
@@ -1241,8 +1442,19 @@ export class DefaultResourceLoader implements ResourceLoader {
 		// Track which extension registered each tool and flag
 		const toolOwners = new Map<string, string>();
 		const flagOwners = new Map<string, string>();
+		const idOwners = new Map<string, string>();
 
 		for (const ext of extensions) {
+			const existingIdOwner = idOwners.get(ext.id);
+			if (existingIdOwner && existingIdOwner !== ext.path) {
+				conflicts.push({
+					path: ext.path,
+					message: `Extension id "${ext.id}" conflicts with ${existingIdOwner} for target ${ext.target}`,
+				});
+			} else {
+				idOwners.set(ext.id, ext.path);
+			}
+
 			// Check tools
 			for (const toolName of ext.tools.keys()) {
 				const existingOwner = toolOwners.get(toolName);

@@ -39,7 +39,7 @@ import { CONFIG_DIR_NAME } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
-import type { ExtensionActivation } from "./extensions/types.ts";
+import type { ExtensionActivation, ExtensionTarget } from "./extensions/types.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 
@@ -59,6 +59,8 @@ export interface PathMetadata {
 	origin: "package" | "top-level";
 	baseDir?: string;
 	activation?: ExtensionActivation;
+	targets?: ExtensionTarget[];
+	extensionId?: string;
 }
 
 export interface ResolvedResource {
@@ -121,6 +123,7 @@ interface PackageManagerOptions {
 	cwd: string;
 	agentDir: string;
 	settingsManager: SettingsManager;
+	extensionTarget?: ExtensionTarget;
 }
 
 type SourceScope = "user" | "project" | "temporary";
@@ -154,7 +157,14 @@ interface GitUpdateTarget extends ConfiguredUpdateSource {
 	parsed: GitSource;
 }
 
-type ManifestResourceEntry = string | { path: string; activation?: ExtensionActivation };
+export interface ExtensionManifestEntry {
+	id: string;
+	path: string;
+	activation?: ExtensionActivation;
+	targets: ExtensionTarget[];
+}
+
+type ManifestResourceEntry = ExtensionManifestEntry;
 
 interface PiManifest {
 	extensions?: ManifestResourceEntry[];
@@ -189,7 +199,7 @@ function resourcePrecedenceRank(m: PathMetadata): number {
 }
 
 interface PackageFilter {
-	extensions?: ManifestResourceEntry[];
+	extensions?: ResourcePathEntry[];
 	skills?: string[];
 	prompts?: string[];
 	themes?: string[];
@@ -210,14 +220,25 @@ const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
 
 type IgnoreMatcher = ReturnType<typeof ignore>;
 
-export type ResourcePathEntry = string | { path: string; activation?: ExtensionActivation };
+export type ResourcePathEntry =
+	| string
+	| { id?: string; path: string; activation?: ExtensionActivation; targets?: ExtensionTarget[] };
 
 interface ResolvedResourcePathEntry {
+	id?: string;
 	path: string;
 	activation?: ExtensionActivation;
+	targets?: ExtensionTarget[];
+}
+
+interface ExtensionDiscoveryEntry extends ResolvedResourcePathEntry {
+	id: string;
+	targets: ExtensionTarget[];
 }
 
 const EXTENSION_ACTIVATIONS: ExtensionActivation[] = ["startup", "beforeFirstRequest", "lazy"];
+const EXTENSION_TARGETS: ExtensionTarget[] = ["pi", "craft"];
+const DEFAULT_EXTENSION_TARGET: ExtensionTarget = "pi";
 
 function parseExtensionActivation(value: unknown): ExtensionActivation | undefined {
 	if (typeof value !== "string") return undefined;
@@ -232,12 +253,91 @@ function getResourceEntryActivation(entry: ResourcePathEntry): ExtensionActivati
 	return typeof entry === "string" ? undefined : parseExtensionActivation(entry.activation);
 }
 
+function parseExtensionTargets(value: unknown): ExtensionTarget[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const targets: ExtensionTarget[] = [];
+	for (const target of value) {
+		if (typeof target !== "string") {
+			continue;
+		}
+		if (!EXTENSION_TARGETS.includes(target as ExtensionTarget)) {
+			continue;
+		}
+		const extensionTarget = target as ExtensionTarget;
+		if (!targets.includes(extensionTarget)) {
+			targets.push(extensionTarget);
+		}
+	}
+	return targets;
+}
+
+function getResourceEntryTargets(entry: ResourcePathEntry): ExtensionTarget[] | undefined {
+	return typeof entry === "string" ? undefined : parseExtensionTargets(entry.targets);
+}
+
+function getResourceEntryId(entry: ResourcePathEntry): string | undefined {
+	if (typeof entry === "string") return undefined;
+	const id = entry.id?.trim();
+	return id && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(id) ? id : undefined;
+}
+
+function assertStrictExtensionEntry(
+	entry: ResourcePathEntry,
+	context: string,
+): asserts entry is ExtensionManifestEntry {
+	if (typeof entry === "string") {
+		throw new Error(`${context}: extension entries must be objects with id, path, and targets`);
+	}
+	if (!getResourceEntryId(entry)) {
+		throw new Error(`${context}: extension id must be a lowercase kebab-case slug`);
+	}
+	const targets = parseExtensionTargets(entry.targets);
+	if (!targets || targets.length === 0 || targets.length !== entry.targets?.length) {
+		throw new Error(`${context}: extension targets must explicitly contain pi, craft, or both`);
+	}
+}
+
 function getResourceEntryPaths(entries: readonly ResourcePathEntry[]): string[] {
 	return entries.map((entry) => getResourceEntryPath(entry));
 }
 
-function withExtensionActivation(metadata: PathMetadata, activation: ExtensionActivation | undefined): PathMetadata {
-	return activation ? { ...metadata, activation } : metadata;
+function getSettingsResourceEntries(
+	settings: ReturnType<SettingsManager["getGlobalSettings"]>,
+	resourceType: ResourceType,
+): ResourcePathEntry[] {
+	const entries = settings[resourceType];
+	return Array.isArray(entries) ? (entries as ResourcePathEntry[]) : [];
+}
+
+function getSettingsStringEntries(
+	settings: ReturnType<SettingsManager["getGlobalSettings"]>,
+	resourceType: Exclude<ResourceType, "extensions">,
+): string[] {
+	const entries = settings[resourceType];
+	return Array.isArray(entries) ? (entries as string[]) : [];
+}
+
+function withExtensionMetadata(
+	metadata: PathMetadata,
+	activation: ExtensionActivation | undefined,
+	targets: ExtensionTarget[] | undefined,
+	extensionId?: string,
+): PathMetadata {
+	const next: PathMetadata = { ...metadata };
+	if (activation) {
+		next.activation = activation;
+	}
+	if (targets !== undefined) {
+		next.targets = targets;
+	}
+	if (extensionId) {
+		next.extensionId = extensionId;
+	}
+	return next;
+}
+
+function extensionTargetsMatch(metadata: PathMetadata, target: ExtensionTarget): boolean {
+	return (metadata.targets ?? [DEFAULT_EXTENSION_TARGET]).includes(target);
 }
 
 function entryMatchesPath(filePath: string, entryPath: string, baseDir: string): boolean {
@@ -580,17 +680,23 @@ function readPiManifestFile(packageJsonPath: string): PiManifest | null {
 	}
 }
 
-function resolveExtensionEntries(dir: string): string[] | null {
+function resolveExtensionEntries(dir: string): ExtensionDiscoveryEntry[] | null {
 	const packageJsonPath = join(dir, "package.json");
 	if (existsSync(packageJsonPath)) {
 		const manifest = readPiManifestFile(packageJsonPath);
 		if (manifest?.extensions?.length) {
-			const entries: string[] = [];
+			const entries: ExtensionDiscoveryEntry[] = [];
 			for (const entry of manifest.extensions) {
+				assertStrictExtensionEntry(entry, packageJsonPath);
 				const extPath = getResourceEntryPath(entry);
 				const resolvedExtPath = resolve(dir, extPath);
 				if (existsSync(resolvedExtPath)) {
-					entries.push(resolvedExtPath);
+					entries.push({
+						id: entry.id,
+						path: resolvedExtPath,
+						activation: getResourceEntryActivation(entry),
+						targets: getResourceEntryTargets(entry)!,
+					});
 				}
 			}
 			if (entries.length > 0) {
@@ -599,20 +705,11 @@ function resolveExtensionEntries(dir: string): string[] | null {
 		}
 	}
 
-	const indexTs = join(dir, "index.ts");
-	const indexJs = join(dir, "index.js");
-	if (existsSync(indexTs)) {
-		return [indexTs];
-	}
-	if (existsSync(indexJs)) {
-		return [indexJs];
-	}
-
 	return null;
 }
 
-function collectAutoExtensionEntries(dir: string): string[] {
-	const entries: string[] = [];
+function collectAutoExtensionEntries(dir: string): ExtensionDiscoveryEntry[] {
+	const entries: ExtensionDiscoveryEntry[] = [];
 	if (!existsSync(dir)) return entries;
 
 	// First check if this directory itself has explicit extension entries (package.json or index)
@@ -633,13 +730,11 @@ function collectAutoExtensionEntries(dir: string): string[] {
 
 			const fullPath = join(dir, entry.name);
 			let isDir = entry.isDirectory();
-			let isFile = entry.isFile();
 
 			if (entry.isSymbolicLink()) {
 				try {
 					const stats = statSync(fullPath);
 					isDir = stats.isDirectory();
-					isFile = stats.isFile();
 				} catch {
 					continue;
 				}
@@ -649,9 +744,7 @@ function collectAutoExtensionEntries(dir: string): string[] {
 			const ignorePath = isDir ? `${relPath}/` : relPath;
 			if (ig.ignores(ignorePath)) continue;
 
-			if (isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".js"))) {
-				entries.push(fullPath);
-			} else if (isDir) {
+			if (isDir) {
 				const resolvedEntries = resolveExtensionEntries(fullPath);
 				if (resolvedEntries) {
 					entries.push(...resolvedEntries);
@@ -674,7 +767,7 @@ function collectResourceFiles(dir: string, resourceType: ResourceType): string[]
 		return collectSkillEntries(dir, "pi");
 	}
 	if (resourceType === "extensions") {
-		return collectAutoExtensionEntries(dir);
+		return collectAutoExtensionEntries(dir).map((entry) => entry.path);
 	}
 	return collectFiles(dir, FILE_PATTERNS[resourceType]);
 }
@@ -863,6 +956,7 @@ export class DefaultPackageManager implements PackageManager {
 	private cwd: string;
 	private agentDir: string;
 	private settingsManager: SettingsManager;
+	private extensionTarget: ExtensionTarget;
 	private globalNpmRoot: string | undefined;
 	private globalNpmRootCommandKey: string | undefined;
 	private progressCallback: ProgressCallback | undefined;
@@ -871,6 +965,7 @@ export class DefaultPackageManager implements PackageManager {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager;
+		this.extensionTarget = options.extensionTarget ?? DEFAULT_EXTENSION_TARGET;
 	}
 
 	setProgressCallback(callback: ProgressCallback | undefined): void {
@@ -988,8 +1083,8 @@ export class DefaultPackageManager implements PackageManager {
 
 		for (const resourceType of RESOURCE_TYPES) {
 			const target = this.getTargetMap(accumulator, resourceType);
-			const globalEntries = (globalSettings[resourceType] ?? []) as ResourcePathEntry[];
-			const projectEntries = (projectSettings[resourceType] ?? []) as ResourcePathEntry[];
+			const globalEntries = getSettingsResourceEntries(globalSettings, resourceType);
+			const projectEntries = getSettingsResourceEntries(projectSettings, resourceType);
 			this.resolveLocalEntries(
 				projectEntries,
 				resourceType,
@@ -2160,11 +2255,7 @@ export class DefaultPackageManager implements PackageManager {
 		for (const resourceType of RESOURCE_TYPES) {
 			const dir = join(packageRoot, resourceType);
 			if (existsSync(dir)) {
-				// Collect all files from the directory (all enabled by default)
-				const files = collectResourceFiles(dir, resourceType);
-				for (const f of files) {
-					this.addResource(this.getTargetMap(accumulator, resourceType), f, metadata, true);
-				}
+				this.addDefaultResourcesFromDir(dir, resourceType, this.getTargetMap(accumulator, resourceType), metadata);
 				hasAnyDir = true;
 			}
 		}
@@ -2185,11 +2276,30 @@ export class DefaultPackageManager implements PackageManager {
 		}
 		const dir = join(packageRoot, resourceType);
 		if (existsSync(dir)) {
-			// Collect all files from the directory (all enabled by default)
-			const files = collectResourceFiles(dir, resourceType);
-			for (const f of files) {
-				this.addResource(target, f, metadata, true);
+			this.addDefaultResourcesFromDir(dir, resourceType, target, metadata);
+		}
+	}
+
+	private addDefaultResourcesFromDir(
+		dir: string,
+		resourceType: ResourceType,
+		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
+		metadata: PathMetadata,
+	): void {
+		if (resourceType === "extensions") {
+			for (const entry of collectAutoExtensionEntries(dir)) {
+				this.addResource(
+					target,
+					entry.path,
+					withExtensionMetadata(metadata, entry.activation, entry.targets, entry.id),
+					true,
+				);
 			}
+			return;
+		}
+
+		for (const f of collectResourceFiles(dir, resourceType)) {
+			this.addResource(target, f, metadata, true);
 		}
 	}
 
@@ -2201,11 +2311,22 @@ export class DefaultPackageManager implements PackageManager {
 		metadata: PathMetadata,
 	): void {
 		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType);
+		const manifestEntries = resourceType === "extensions" ? this.readPiManifest(packageRoot)?.extensions : undefined;
+		const conventionExtensionEntries =
+			resourceType === "extensions" && !manifestEntries
+				? collectAutoExtensionEntries(join(packageRoot, "extensions"))
+				: undefined;
 
 		if (userPatterns.length === 0) {
 			// Empty array explicitly disables all resources of this type
 			for (const f of allFiles) {
-				this.addResource(target, f, metadata, false);
+				const activation = conventionExtensionEntries
+					? this.findActivationForResolvedPath(f, conventionExtensionEntries)
+					: undefined;
+				const targets = conventionExtensionEntries
+					? this.findTargetsForResolvedPath(f, conventionExtensionEntries)
+					: undefined;
+				this.addResource(target, f, withExtensionMetadata(metadata, activation, targets), false);
 			}
 			return;
 		}
@@ -2215,8 +2336,23 @@ export class DefaultPackageManager implements PackageManager {
 
 		for (const f of allFiles) {
 			const enabled = enabledByUser.has(f);
-			const activation = this.findActivationForPath(f, userPatterns, packageRoot);
-			this.addResource(target, f, withExtensionActivation(metadata, activation), enabled);
+			const activation =
+				resourceType === "extensions"
+					? (this.findActivationForPath(f, userPatterns, packageRoot) ??
+						(manifestEntries ? this.findActivationForPath(f, manifestEntries, packageRoot) : undefined) ??
+						(conventionExtensionEntries
+							? this.findActivationForResolvedPath(f, conventionExtensionEntries)
+							: undefined))
+					: undefined;
+			const targets =
+				resourceType === "extensions"
+					? (this.findTargetsForPath(f, userPatterns, packageRoot) ??
+						(manifestEntries ? this.findTargetsForPath(f, manifestEntries, packageRoot) : undefined) ??
+						(conventionExtensionEntries
+							? this.findTargetsForResolvedPath(f, conventionExtensionEntries)
+							: undefined))
+					: undefined;
+			this.addResource(target, f, withExtensionMetadata(metadata, activation, targets), enabled);
 		}
 	}
 
@@ -2270,6 +2406,9 @@ export class DefaultPackageManager implements PackageManager {
 		metadata: PathMetadata,
 	): void {
 		if (!entries) return;
+		if (resourceType === "extensions") {
+			for (const entry of entries) assertStrictExtensionEntry(entry, `${root}/package.json`);
+		}
 
 		const allFiles = this.collectFilesFromManifestEntries(entries, root, resourceType);
 		const paths = getResourceEntryPaths(entries);
@@ -2278,8 +2417,10 @@ export class DefaultPackageManager implements PackageManager {
 
 		for (const f of allFiles) {
 			if (enabledPaths.has(f)) {
-				const activation = this.findActivationForPath(f, entries, root);
-				this.addResource(target, f, withExtensionActivation(metadata, activation), true);
+				const activation = resourceType === "extensions" ? this.findActivationForPath(f, entries, root) : undefined;
+				const targets = resourceType === "extensions" ? this.findTargetsForPath(f, entries, root) : undefined;
+				const extensionId = resourceType === "extensions" ? this.findIdForPath(f, entries, root) : undefined;
+				this.addResource(target, f, withExtensionMetadata(metadata, activation, targets, extensionId), true);
 			}
 		}
 	}
@@ -2318,6 +2459,31 @@ export class DefaultPackageManager implements PackageManager {
 		return undefined;
 	}
 
+	private findTargetsForPath(
+		filePath: string,
+		entries: ResourcePathEntry[],
+		baseDir: string,
+	): ExtensionTarget[] | undefined {
+		for (const entry of entries) {
+			const targets = getResourceEntryTargets(entry);
+			if (targets === undefined) {
+				continue;
+			}
+			if (entryMatchesPath(filePath, getResourceEntryPath(entry), baseDir)) {
+				return targets;
+			}
+		}
+		return undefined;
+	}
+
+	private findIdForPath(filePath: string, entries: ResourcePathEntry[], baseDir: string): string | undefined {
+		for (const entry of entries) {
+			const id = getResourceEntryId(entry);
+			if (id && entryMatchesPath(filePath, getResourceEntryPath(entry), baseDir)) return id;
+		}
+		return undefined;
+	}
+
 	private resolveLocalEntries(
 		entries: ResourcePathEntry[],
 		resourceType: ResourceType,
@@ -2326,17 +2492,27 @@ export class DefaultPackageManager implements PackageManager {
 		baseDir: string,
 	): void {
 		if (entries.length === 0) return;
+		if (resourceType === "extensions") {
+			for (const entry of entries) assertStrictExtensionEntry(entry, baseDir);
+		}
 
 		// Collect all files from plain entries (non-pattern entries)
 		const { plain, patterns } = splitPatterns(entries);
 		const resolvedPlain = plain.map((entry): ResolvedResourcePathEntry => {
 			const entryPath = getResourceEntryPath(entry);
 			return {
+				id: resourceType === "extensions" ? getResourceEntryId(entry)! : "resource",
 				path: this.resolvePathFromBase(entryPath, baseDir),
 				activation: getResourceEntryActivation(entry),
+				targets: resourceType === "extensions" ? getResourceEntryTargets(entry)! : [],
 			};
 		});
-		const allFiles = this.collectFilesFromPathEntries(resolvedPlain, resourceType);
+		const extensionEntries =
+			resourceType === "extensions" ? this.collectExtensionEntriesFromPathEntries(resolvedPlain) : [];
+		const allFiles =
+			resourceType === "extensions"
+				? extensionEntries.map((entry) => entry.path)
+				: this.collectFilesFromPathEntries(resolvedPlain, resourceType);
 
 		// Determine which files are enabled based on patterns
 		const enabledPaths = applyPatterns(allFiles, patterns, baseDir);
@@ -2344,8 +2520,17 @@ export class DefaultPackageManager implements PackageManager {
 		// Add all files with their enabled state
 		for (const f of allFiles) {
 			const activation =
-				resourceType === "extensions" ? this.findActivationForResolvedPath(f, resolvedPlain) : undefined;
-			this.addResource(target, f, withExtensionActivation(metadata, activation), enabledPaths.has(f));
+				resourceType === "extensions" ? this.findActivationForResolvedPath(f, extensionEntries) : undefined;
+			const targets =
+				resourceType === "extensions" ? this.findTargetsForResolvedPath(f, extensionEntries) : undefined;
+			const extensionId =
+				resourceType === "extensions" ? this.findIdForResolvedPath(f, extensionEntries) : undefined;
+			this.addResource(
+				target,
+				f,
+				withExtensionMetadata(metadata, activation, targets, extensionId),
+				enabledPaths.has(f),
+			);
 		}
 	}
 
@@ -2354,6 +2539,38 @@ export class DefaultPackageManager implements PackageManager {
 			entries.map((entry) => entry.path),
 			resourceType,
 		);
+	}
+
+	private collectExtensionEntriesFromPathEntries(entries: ResolvedResourcePathEntry[]): ResolvedResourcePathEntry[] {
+		const discovered: ResolvedResourcePathEntry[] = [];
+		for (const entry of entries) {
+			if (!existsSync(entry.path)) {
+				continue;
+			}
+
+			try {
+				const stats = statSync(entry.path);
+				if (stats.isFile()) {
+					discovered.push(entry);
+					continue;
+				}
+				if (!stats.isDirectory()) {
+					continue;
+				}
+			} catch {
+				continue;
+			}
+
+			for (const extensionEntry of collectAutoExtensionEntries(entry.path)) {
+				discovered.push({
+					id: entry.id || extensionEntry.id,
+					path: extensionEntry.path,
+					activation: entry.activation ?? extensionEntry.activation,
+					targets: entry.targets ?? extensionEntry.targets,
+				});
+			}
+		}
+		return discovered;
 	}
 
 	private findActivationForResolvedPath(
@@ -2373,6 +2590,38 @@ export class DefaultPackageManager implements PackageManager {
 			if (normalizedFilePath.startsWith(prefix)) {
 				return entry.activation;
 			}
+		}
+		return undefined;
+	}
+
+	private findTargetsForResolvedPath(
+		filePath: string,
+		entries: ResolvedResourcePathEntry[],
+	): ExtensionTarget[] | undefined {
+		const normalizedFilePath = resolve(filePath);
+		for (const entry of entries) {
+			if (entry.targets === undefined) {
+				continue;
+			}
+			const normalizedEntryPath = resolve(entry.path);
+			if (normalizedFilePath === normalizedEntryPath) {
+				return entry.targets;
+			}
+			const prefix = normalizedEntryPath.endsWith(sep) ? normalizedEntryPath : `${normalizedEntryPath}${sep}`;
+			if (normalizedFilePath.startsWith(prefix)) {
+				return entry.targets;
+			}
+		}
+		return undefined;
+	}
+
+	private findIdForResolvedPath(filePath: string, entries: ResolvedResourcePathEntry[]): string | undefined {
+		const normalizedFilePath = resolve(filePath);
+		for (const entry of entries) {
+			const normalizedEntryPath = resolve(entry.path);
+			if (normalizedFilePath === normalizedEntryPath) return entry.id;
+			const prefix = normalizedEntryPath.endsWith(sep) ? normalizedEntryPath : `${normalizedEntryPath}${sep}`;
+			if (normalizedFilePath.startsWith(prefix)) return entry.id;
 		}
 		return undefined;
 	}
@@ -2398,19 +2647,19 @@ export class DefaultPackageManager implements PackageManager {
 		};
 
 		const userOverrides = {
-			extensions: getResourceEntryPaths((globalSettings.extensions ?? []) as ResourcePathEntry[]),
-			skills: (globalSettings.skills ?? []) as string[],
-			prompts: (globalSettings.prompts ?? []) as string[],
-			themes: (globalSettings.themes ?? []) as string[],
+			extensions: getResourceEntryPaths(getSettingsResourceEntries(globalSettings, "extensions")),
+			skills: getSettingsStringEntries(globalSettings, "skills"),
+			prompts: getSettingsStringEntries(globalSettings, "prompts"),
+			themes: getSettingsStringEntries(globalSettings, "themes"),
 		};
 		const projectOverrides = {
-			extensions: getResourceEntryPaths((projectSettings.extensions ?? []) as ResourcePathEntry[]),
-			skills: (projectSettings.skills ?? []) as string[],
-			prompts: (projectSettings.prompts ?? []) as string[],
-			themes: (projectSettings.themes ?? []) as string[],
+			extensions: getResourceEntryPaths(getSettingsResourceEntries(projectSettings, "extensions")),
+			skills: getSettingsStringEntries(projectSettings, "skills"),
+			prompts: getSettingsStringEntries(projectSettings, "prompts"),
+			themes: getSettingsStringEntries(projectSettings, "themes"),
 		};
-		const userExtensionEntries = (globalSettings.extensions ?? []) as ResourcePathEntry[];
-		const projectExtensionEntries = (projectSettings.extensions ?? []) as ResourcePathEntry[];
+		const userExtensionEntries = getSettingsResourceEntries(globalSettings, "extensions");
+		const projectExtensionEntries = getSettingsResourceEntries(projectSettings, "extensions");
 
 		const userDirs = {
 			extensions: join(globalBaseDir, "extensions"),
@@ -2444,13 +2693,34 @@ export class DefaultPackageManager implements PackageManager {
 					resourceType === "extensions" && activationEntries
 						? this.findActivationForPath(path, activationEntries, baseDir)
 						: undefined;
-				this.addResource(target, path, withExtensionActivation(metadata, activation), enabled);
+				this.addResource(target, path, withExtensionMetadata(metadata, activation, undefined), enabled);
+			}
+		};
+
+		const addExtensionResources = (
+			entries: ExtensionDiscoveryEntry[],
+			metadata: PathMetadata,
+			overrides: string[],
+			baseDir: string,
+			activationEntries: ResourcePathEntry[],
+		) => {
+			const target = this.getTargetMap(accumulator, "extensions");
+			for (const entry of entries) {
+				const enabled = isEnabledByOverrides(entry.path, overrides, baseDir);
+				const activation = this.findActivationForPath(entry.path, activationEntries, baseDir) ?? entry.activation;
+				const targets = this.findTargetsForPath(entry.path, activationEntries, baseDir) ?? entry.targets;
+				const extensionId = this.findIdForPath(entry.path, activationEntries, baseDir) ?? entry.id;
+				this.addResource(
+					target,
+					entry.path,
+					withExtensionMetadata(metadata, activation, targets, extensionId),
+					enabled,
+				);
 			}
 		};
 
 		// Project extensions from .pi/
-		addResources(
-			"extensions",
+		addExtensionResources(
 			collectAutoExtensionEntries(projectDirs.extensions),
 			projectMetadata,
 			projectOverrides.extensions,
@@ -2499,8 +2769,7 @@ export class DefaultPackageManager implements PackageManager {
 		);
 
 		// User extensions from ~/.pi/agent/
-		addResources(
-			"extensions",
+		addExtensionResources(
 			collectAutoExtensionEntries(userDirs.extensions),
 			userMetadata,
 			userOverrides.extensions,
@@ -2608,12 +2877,16 @@ export class DefaultPackageManager implements PackageManager {
 	private toResolvedPaths(accumulator: ResourceAccumulator): ResolvedPaths {
 		const mapToResolved = (
 			entries: Map<string, { metadata: PathMetadata; enabled: boolean }>,
+			resourceType: ResourceType,
 		): ResolvedResource[] => {
-			const resolved = Array.from(entries.entries()).map(([path, { metadata, enabled }]) => ({
+			let resolved = Array.from(entries.entries()).map(([path, { metadata, enabled }]) => ({
 				path,
 				enabled,
 				metadata,
 			}));
+			if (resourceType === "extensions") {
+				resolved = resolved.filter((entry) => extensionTargetsMatch(entry.metadata, this.extensionTarget));
+			}
 			resolved.sort((a, b) => resourcePrecedenceRank(a.metadata) - resourcePrecedenceRank(b.metadata));
 
 			const seen = new Set<string>();
@@ -2626,10 +2899,10 @@ export class DefaultPackageManager implements PackageManager {
 		};
 
 		return {
-			extensions: mapToResolved(accumulator.extensions),
-			skills: mapToResolved(accumulator.skills),
-			prompts: mapToResolved(accumulator.prompts),
-			themes: mapToResolved(accumulator.themes),
+			extensions: mapToResolved(accumulator.extensions, "extensions"),
+			skills: mapToResolved(accumulator.skills, "skills"),
+			prompts: mapToResolved(accumulator.prompts, "prompts"),
+			themes: mapToResolved(accumulator.themes, "themes"),
 		};
 	}
 

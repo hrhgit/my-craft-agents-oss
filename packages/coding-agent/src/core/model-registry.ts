@@ -504,8 +504,11 @@ export class ModelRegistry {
 				if (!providerConfig.baseUrl) {
 					throw new Error(`Provider ${providerName}: "baseUrl" is required when defining custom models.`);
 				}
-				if (!providerConfig.apiKey) {
-					throw new Error(`Provider ${providerName}: "apiKey" is required when defining custom models.`);
+				if (!providerConfig.apiKey && !this.authStorage.hasAuth(providerName)) {
+					throw new Error(
+						`Provider ${providerName}: an auth source is required when defining custom models. ` +
+							`Set "apiKey" in models.json or configure credentials in auth.json.`,
+					);
 				}
 			}
 
@@ -802,8 +805,11 @@ export class ModelRegistry {
 		if (!config.baseUrl) {
 			throw new Error(`Provider ${providerName}: "baseUrl" is required when defining models.`);
 		}
-		if (!config.apiKey && !config.oauth) {
-			throw new Error(`Provider ${providerName}: "apiKey" or "oauth" is required when defining models.`);
+		if (!config.apiKey && !config.oauth && !this.authStorage.hasAuth(providerName)) {
+			throw new Error(
+				`Provider ${providerName}: an auth source is required when defining models. ` +
+					`Set "apiKey"/"oauth" on the provider or configure credentials in auth.json.`,
+			);
 		}
 
 		for (const modelDef of config.models) {

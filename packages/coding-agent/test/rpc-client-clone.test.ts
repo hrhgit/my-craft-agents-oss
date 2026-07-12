@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
+import { PiRuntimeHandle, RpcClient } from "../src/modes/rpc/rpc-client.ts";
 
 type RpcClientPrivate = {
 	send: (command: { type: string }, timeoutMs?: number) => Promise<unknown>;
@@ -13,6 +13,36 @@ type RpcClientInternals = {
 };
 
 describe("RpcClient clone", () => {
+	it("forwards clientMutationId in prompt metadata", async () => {
+		const client = new RpcClient();
+		const privateClient = client as unknown as RpcClientPrivate;
+		const send = vi.fn(async () => ({ type: "response", command: "prompt", success: true }));
+		privateClient.send = send;
+
+		await client.prompt("hello", undefined, {
+			systemPrompt: "host prompt",
+			clientMutationId: "mutation-1",
+			attachments: [{ id: "att-1", name: "photo.png", mediaType: "image/png", size: 42 }],
+		});
+
+		expect(send).toHaveBeenCalledWith({
+			type: "prompt",
+			message: "hello",
+			images: undefined,
+			systemPrompt: "host prompt",
+			clientMutationId: "mutation-1",
+			attachments: [{ id: "att-1", name: "photo.png", mediaType: "image/png", size: 42 }],
+		});
+
+		await client.steer("mid-stream", undefined, { clientMutationId: "mutation-2" });
+		expect(send).toHaveBeenLastCalledWith({
+			type: "steer",
+			message: "mid-stream",
+			images: undefined,
+			clientMutationId: "mutation-2",
+		});
+	});
+
 	it("sends the clone RPC command", async () => {
 		const client = new RpcClient();
 		const privateClient = client as unknown as RpcClientPrivate;
@@ -176,5 +206,94 @@ describe("RpcClient Pi shell API methods", () => {
 			isError: false,
 			terminate: true,
 		});
+	});
+});
+
+describe("PiRuntimeHandle", () => {
+	it("sends host capability responses through the runtime envelope", () => {
+		const client = new RpcClient();
+		const internals = client as unknown as RpcClientInternals;
+		const write = vi.fn();
+		internals.process = { stdin: { destroyed: false, writable: true, write } };
+		const handle = new PiRuntimeHandle(client, {
+			runtimeId: "runtime-a",
+			cwd: "E:/project",
+			sessionId: "session-a",
+			isStreaming: false,
+		});
+
+		handle.respondToExtensionHostCapability({
+			type: "extension_host_capability_response",
+			version: 1,
+			id: "cap-1",
+			status: "success",
+			output: { shown: true },
+		});
+
+		expect(JSON.parse(write.mock.calls[0][0])).toEqual({
+			type: "extension_host_capability_response",
+			version: 1,
+			id: "cap-1",
+			status: "success",
+			output: { shown: true },
+			runtimeId: "runtime-a",
+		});
+	});
+
+	it("scopes commands to its runtime without owning another process", async () => {
+		const client = new RpcClient();
+		const privateClient = client as unknown as RpcClientPrivate;
+		const send = vi.fn(async (command: { type: string; runtimeId?: string }) => ({
+			type: "response",
+			command: command.type,
+			success: true,
+			data:
+				command.type === "open_runtime"
+					? { runtimeId: command.runtimeId, cwd: "E:/project", sessionId: "session-a", isStreaming: false }
+					: { sessionId: "session-a", thinkingLevel: "off" },
+		}));
+		privateClient.send = send;
+		privateClient.getData = <T>(response: unknown): T => (response as { data: T }).data;
+
+		const handle = await client.openRuntime({ runtimeId: "runtime-a", cwd: "E:/project", extensionTarget: "pi" });
+		await handle.getState();
+
+		expect(handle.runtimeId).toBe("runtime-a");
+		expect(send).toHaveBeenNthCalledWith(1, {
+			type: "open_runtime",
+			runtimeId: "runtime-a",
+			cwd: "E:/project",
+			extensionTarget: "pi",
+		});
+		expect(send).toHaveBeenNthCalledWith(2, { type: "get_state", runtimeId: "runtime-a" }, undefined);
+	});
+
+	it("filters shared transport events by runtimeId", () => {
+		const client = new RpcClient();
+		const internals = client as unknown as RpcClientInternals;
+		const first = new PiRuntimeHandle(client, {
+			runtimeId: "runtime-a",
+			cwd: "E:/project",
+			sessionId: "session-a",
+			isStreaming: false,
+		});
+		const second = new PiRuntimeHandle(client, {
+			runtimeId: "runtime-b",
+			cwd: "E:/project",
+			sessionId: "session-b",
+			isStreaming: false,
+		});
+		const firstEvents = vi.fn();
+		const secondEvents = vi.fn();
+		first.onEvent(firstEvents);
+		second.onEvent(secondEvents);
+
+		internals.handleLine(JSON.stringify({ type: "agent_start", runtimeId: "runtime-a" }));
+		internals.handleLine(JSON.stringify({ type: "agent_start", runtimeId: "runtime-b" }));
+
+		expect(firstEvents).toHaveBeenCalledTimes(1);
+		expect(firstEvents).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: "runtime-a" }));
+		expect(secondEvents).toHaveBeenCalledTimes(1);
+		expect(secondEvents).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: "runtime-b" }));
 	});
 });

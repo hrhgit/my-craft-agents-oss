@@ -481,6 +481,8 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 		sessionStartEvent,
 		deferResourceLoad,
 		persistInitialState,
+		extensionTarget,
+		extensionPaths,
 	}) => {
 		const services = await createAgentSessionServices({
 			cwd,
@@ -489,7 +491,16 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 			extensionFlagValues: parsed.unknownFlags,
 			deferResourceLoad,
 			resourceLoaderOptions: {
-				additionalExtensionPaths: resolvedExtensionPaths,
+				extensionTarget: extensionTarget ?? "pi",
+				additionalExtensionPaths: [
+					...(resolvedExtensionPaths ?? []),
+					...(extensionPaths ?? []).map((path, index) => ({
+						id: `runtime-extension-${index}`,
+						path,
+						activation: "startup" as const,
+						targets: [extensionTarget ?? "pi"],
+					})),
+				],
 				additionalSkillPaths: resolvedSkillPaths,
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
 				additionalThemePaths: resolvedThemePaths,
@@ -575,6 +586,7 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 		sessionManager,
 		deferResourceLoad: true,
 		persistInitialState: false,
+		extensionTarget: "pi",
 	});
 	time("createAgentSessionRuntime");
 	if (runtime.isWorkspaceLoaded) {

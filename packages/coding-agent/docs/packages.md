@@ -130,20 +130,24 @@ Add a `pi` manifest to `package.json` or use conventional directories. Include t
 
 Paths are relative to the package root. Arrays support glob patterns and `!exclusions`.
 
-Extension manifest entries may use object form to control when an extension loads:
+Extension manifest entries may use object form to control when an extension loads and which host can load it:
 
 ```json
 {
   "pi": {
     "extensions": [
       { "path": "./extensions/editor-ui.ts", "activation": "startup" },
-      { "path": "./extensions/model-tools.ts", "activation": "beforeFirstRequest" }
+      { "path": "./extensions/model-tools.ts", "activation": "beforeFirstRequest" },
+      { "path": "./extensions/craft-ui.ts", "targets": ["craft"] },
+      { "path": "./extensions/shared.ts", "targets": ["pi", "craft"] }
     ]
   }
 }
 ```
 
 `startup` extensions load before the first screen. `beforeFirstRequest` extensions load after the first screen but before the first model request. `lazy` extensions are left for later explicit activation. String extension entries default to `beforeFirstRequest`.
+
+`targets` can contain `pi`, `craft`, or both. Entries without `targets` default to `["pi"]`, so Craft hosts only load extensions that explicitly include `craft`.
 
 ### Gallery Metadata
 
@@ -227,7 +231,7 @@ Filter what a package loads using the object form in settings:
 - `+path` force-includes an exact path.
 - `-path` force-excludes an exact path.
 - Filters layer on top of the manifest. They narrow down what is already allowed.
-- Extension filter entries may also be objects with `path` and `activation`.
+- Extension filter entries may also be objects with `path`, `activation`, and `targets`; filter entry values override matching manifest entry values.
 
 ## Enable and Disable Resources
 

@@ -365,6 +365,10 @@ export function getPackageDir(): string {
 	let dir = __dirname;
 	while (dir !== dirname(dir)) {
 		if (existsSync(join(dir, "package.json"))) {
+			const parent = dirname(dir);
+			if (basename(dir) === "dist" && existsSync(join(parent, "package.json"))) {
+				return parent;
+			}
 			return dir;
 		}
 		dir = dirname(dir);

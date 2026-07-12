@@ -16,6 +16,7 @@ export { createEventBus } from "./core/event-bus.ts";
 // Headless UI context (for RPC / embedded modes without a TUI)
 export { createHeadlessUIContext, type HeadlessUITransport } from "./core/extensions/index.ts";
 export {
+	defineExtensionV2,
 	defineTool,
 	isBashToolResult,
 	isEditToolResult,

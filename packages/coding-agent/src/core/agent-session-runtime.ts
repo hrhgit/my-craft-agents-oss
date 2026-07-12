@@ -5,6 +5,7 @@ import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
 import type { ReplacedSessionContext, SessionShutdownEvent, SessionStartEvent } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import type { ExtensionTarget } from "./extensions/types.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -23,6 +24,8 @@ export interface CreateAgentSessionRuntimeResult extends CreateAgentSessionResul
 type RuntimeResourceLoadOptions = {
 	deferResourceLoad?: boolean;
 	persistInitialState?: boolean;
+	extensionTarget: ExtensionTarget;
+	extensionPaths?: string[];
 };
 
 /**
@@ -39,6 +42,8 @@ export type CreateAgentSessionRuntimeFactory = (options: {
 	sessionStartEvent?: SessionStartEvent;
 	deferResourceLoad?: boolean;
 	persistInitialState?: boolean;
+	extensionTarget?: ExtensionTarget;
+	extensionPaths?: string[];
 }) => Promise<CreateAgentSessionRuntimeResult>;
 
 /**
@@ -88,7 +93,7 @@ export class AgentSessionRuntime {
 		createRuntime: CreateAgentSessionRuntimeFactory,
 		_diagnostics: AgentSessionRuntimeDiagnostic[] = [],
 		_modelFallbackMessage?: string,
-		resourceLoadOptions: RuntimeResourceLoadOptions = {},
+		resourceLoadOptions: RuntimeResourceLoadOptions = { extensionTarget: "pi" },
 	) {
 		this._session = _session;
 		this._services = _services;
@@ -110,6 +115,10 @@ export class AgentSessionRuntime {
 		return this._services.cwd;
 	}
 
+	get extensionTarget(): ExtensionTarget {
+		return this.resourceLoadOptions.extensionTarget;
+	}
+
 	get diagnostics(): readonly AgentSessionRuntimeDiagnostic[] {
 		return this._diagnostics;
 	}
@@ -120,6 +129,35 @@ export class AgentSessionRuntime {
 
 	get isWorkspaceLoaded(): boolean {
 		return true;
+	}
+
+	/**
+	 * Create an independent runtime backed by the same process-level factory.
+	 *
+	 * Global hosts use this to open concurrent sessions without spawning another
+	 * CLI process. The returned runtime owns its own AgentSession and cwd-bound
+	 * services; disposing it does not affect this runtime.
+	 */
+	async createSibling(options: {
+		cwd: string;
+		agentDir?: string;
+		sessionManager: SessionManager;
+		sessionStartEvent?: SessionStartEvent;
+		deferResourceLoad?: boolean;
+		persistInitialState?: boolean;
+		extensionTarget?: ExtensionTarget;
+		extensionPaths?: string[];
+	}): Promise<AgentSessionRuntime> {
+		return createAgentSessionRuntime(this.createRuntime, {
+			cwd: options.cwd,
+			agentDir: options.agentDir ?? this.services.agentDir,
+			sessionManager: options.sessionManager,
+			sessionStartEvent: options.sessionStartEvent,
+			deferResourceLoad: options.deferResourceLoad ?? this.resourceLoadOptions.deferResourceLoad,
+			persistInitialState: options.persistInitialState ?? this.resourceLoadOptions.persistInitialState,
+			extensionTarget: options.extensionTarget ?? this.resourceLoadOptions.extensionTarget,
+			extensionPaths: options.extensionPaths ?? this.resourceLoadOptions.extensionPaths,
+		});
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
@@ -431,6 +469,8 @@ export async function createAgentSessionRuntime(
 		sessionStartEvent?: SessionStartEvent;
 		deferResourceLoad?: boolean;
 		persistInitialState?: boolean;
+		extensionTarget?: ExtensionTarget;
+		extensionPaths?: string[];
 	},
 ): Promise<AgentSessionRuntime> {
 	assertSessionCwdExists(options.sessionManager, options.cwd);
@@ -444,6 +484,8 @@ export async function createAgentSessionRuntime(
 		{
 			deferResourceLoad: options.deferResourceLoad,
 			persistInitialState: options.persistInitialState,
+			extensionTarget: options.extensionTarget ?? "pi",
+			extensionPaths: options.extensionPaths,
 		},
 	);
 }

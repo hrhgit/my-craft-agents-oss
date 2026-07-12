@@ -576,6 +576,14 @@ await loader.reload();
 const { session } = await createAgentSession({ resourceLoader: loader });
 ```
 
+Embedded Craft hosts should select the Craft extension target so Pi-only extensions are filtered before loading:
+
+```typescript
+const { session } = await createAgentSession({
+  extensionTarget: "craft",
+});
+```
+
 Extensions can register tools, subscribe to events, add commands, and more. See [extensions.md](extensions.md) for the full API.
 
 **Event Bus:** Extensions can communicate via `pi.events`. Pass a shared `eventBus` to `DefaultResourceLoader` if you need to emit or listen from outside:
@@ -841,6 +849,7 @@ import {
 const loader = new DefaultResourceLoader({
   cwd,
   agentDir: getAgentDir(),
+  extensionTarget: "craft",
 });
 await loader.reload();
 

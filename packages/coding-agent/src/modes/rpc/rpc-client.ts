@@ -5,18 +5,37 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { connect, type Socket } from "node:net";
 import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai/types";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import { readPiGlobalHostState } from "../../core/global-host-state.ts";
+import type {
+	HostExtensionsResult,
+	HostGlobalConfig,
+	HostGlobalProvider,
+	HostModelCatalog,
+	HostResolvedSkill,
+	HostSessionProjection,
+	HostSkillsResult,
+} from "../../core/host-facade.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
+	RpcBackgroundTaskEvent,
 	RpcCapabilities,
 	RpcChildSessionInfo,
 	RpcCommand,
 	RpcCommandType,
+	RpcEnvelope,
 	RpcExtensionCommandResult,
+	RpcExtensionHostCapabilityCancel,
+	RpcExtensionHostCapabilityDeclaration,
+	RpcExtensionHostCapabilityProgress,
+	RpcExtensionHostCapabilityRequest,
+	RpcExtensionHostCapabilityResponse,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcHostToolDefinition,
@@ -24,6 +43,8 @@ import type {
 	RpcLLMQueryRequest,
 	RpcLLMQueryResult,
 	RpcResponse,
+	RpcRuntimeOpenOptions,
+	RpcRuntimeSummary,
 	RpcSessionState,
 	RpcSlashCommand,
 	RpcToolExecuteRequest,
@@ -42,18 +63,31 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 
 /** RpcCommand without the id field (for internal send) */
 type RpcCommandBody = DistributiveOmit<RpcCommand, "id">;
+type RpcRuntimeCommandBody = DistributiveOmit<RpcCommand, "id" | "runtimeId" | "clientId">;
+type RpcWritable = NodeJS.WritableStream & { destroyed: boolean; writable: boolean };
 
 export interface RpcClientOptions {
+	/** Discover and connect to an existing user-level Pi GlobalHost before spawning. */
+	globalHost?: { enabled: boolean; agentDir?: string };
 	/** Command used to launch the CLI entry point (default: node) */
 	command?: string;
 	/** Arguments placed before the CLI entry point, useful for tsx/register-based dev runs */
 	commandArgs?: string[];
 	/** Path to the CLI entry point (default: searches for dist/cli.js) */
 	cliPath?: string;
+	/** Launch command itself as the Pi executable, without inserting a CLI entry-point argument. */
+	directExecutable?: boolean;
 	/** Working directory for the agent */
 	cwd?: string;
 	/** Environment variables */
 	env?: Record<string, string>;
+	/**
+	 * How to build the child process environment.
+	 *
+	 * - inherit: process.env is merged first, then env overrides (default).
+	 * - replace: env is used as the full child environment.
+	 */
+	envMode?: "inherit" | "replace";
 	/**
 	 * Optional host hooks module loaded inside the RPC subprocess.
 	 *
@@ -75,6 +109,10 @@ export interface RpcClientOptions {
 	pipeStderr?: boolean;
 }
 
+export interface ConnectPiGlobalHostOptions extends Omit<RpcClientOptions, "globalHost"> {
+	agentDir?: string;
+}
+
 export interface ModelInfo {
 	provider: string;
 	id: string;
@@ -84,18 +122,31 @@ export interface ModelInfo {
 
 export interface RpcExtensionErrorEvent {
 	type: "extension_error";
+	clientId?: string;
+	runtimeId?: string;
+	extensionId: string;
 	extensionPath: string;
 	event: string;
 	error: string;
 }
 
+export type RpcProcessLifecycleEvent =
+	| { type: "process_exit"; code: number | null; signal: string | null; message: string; stderr: string }
+	| { type: "process_error"; message: string; stderr: string }
+	| { type: "stdin_error"; message: string; stderr: string };
+
 export type RpcClientEvent =
-	| AgentEvent
+	| (AgentEvent & RpcEnvelope)
+	| RpcBackgroundTaskEvent
 	| RpcExtensionUIRequest
+	| RpcExtensionHostCapabilityDeclaration
+	| RpcExtensionHostCapabilityRequest
+	| RpcExtensionHostCapabilityCancel
 	| RpcExtensionErrorEvent
+	| RpcProcessLifecycleEvent
 	| RpcToolPermissionRequest
 	| RpcToolExecuteRequest;
-export type RpcEventListener = (event: AgentEvent) => void;
+export type RpcEventListener = (event: AgentEvent & RpcEnvelope) => void;
 export type RpcClientEventListener = (event: RpcClientEvent) => void;
 
 /** Host-side permission handler invoked for every tool_permission_request. */
@@ -120,6 +171,9 @@ const SECONDARY_LLM_TIMEOUT_MS = 120000;
 
 export class RpcClient {
 	private process: ChildProcess | null = null;
+	private socket: Socket | null = null;
+	private spawnedGlobalHost = false;
+	private readonly clientId = randomUUID();
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
 	private clientEventListeners: RpcClientEventListener[] = [];
@@ -131,6 +185,8 @@ export class RpcClient {
 	private options: RpcClientOptions;
 	private toolPermissionHandler: RpcToolPermissionHandler | null = null;
 	private toolExecutor: RpcToolExecutor | null = null;
+	private runtimeToolPermissionHandlers = new Map<string, RpcToolPermissionHandler>();
+	private runtimeToolExecutors = new Map<string, RpcToolExecutor>();
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
@@ -140,11 +196,15 @@ export class RpcClient {
 	 * Start the RPC agent process.
 	 */
 	async start(): Promise<void> {
-		if (this.process) {
+		if (this.process || this.socket) {
 			throw new Error("Client already started");
 		}
 
 		this.exitError = null;
+		if (this.options.globalHost?.enabled) {
+			const state = readPiGlobalHostState(this.options.globalHost.agentDir);
+			if (state && (await this.connectToGlobalHost(state.port, state.token))) return;
+		}
 
 		const command = this.options.command ?? "node";
 		const commandArgs = this.options.commandArgs ?? [];
@@ -162,9 +222,11 @@ export class RpcClient {
 		}
 
 		const hostHooksModule = this.options.hostHooksModule ?? this.options.fetchInterceptorModule;
+		const baseEnv = this.options.envMode === "replace" ? {} : process.env;
 		const env = {
-			...process.env,
+			...baseEnv,
 			...this.options.env,
+			...(this.options.globalHost?.enabled ? { PI_GLOBAL_HOST_PROCESS: "1" } : {}),
 			...(hostHooksModule
 				? {
 						[PI_HOST_HOOKS_MODULE_ENV]: hostHooksModule,
@@ -173,12 +235,14 @@ export class RpcClient {
 				: {}),
 		};
 
-		const childProcess = spawn(command, [...commandArgs, cliPath, ...args], {
+		const launchArgs = this.options.directExecutable ? [...commandArgs, ...args] : [...commandArgs, cliPath, ...args];
+		const childProcess = spawn(command, launchArgs, {
 			cwd: this.options.cwd,
 			env,
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		this.process = childProcess;
+		this.spawnedGlobalHost = this.options.globalHost?.enabled === true;
 
 		// Collect stderr for debugging
 		childProcess.stderr?.on("data", (data) => {
@@ -192,12 +256,24 @@ export class RpcClient {
 			if (this.process !== childProcess) return;
 			const error = this.createProcessExitError(code, signal);
 			this.exitError = error;
+			this.emitClientEvent({
+				type: "process_exit",
+				code,
+				signal,
+				message: error.message,
+				stderr: this.stderr,
+			});
 			this.rejectPendingRequests(error);
 		});
 		childProcess.once("error", (error) => {
 			if (this.process !== childProcess) return;
 			const processError = new Error(`Agent process error: ${error.message}. Stderr: ${this.stderr}`);
 			this.exitError = processError;
+			this.emitClientEvent({
+				type: "process_error",
+				message: processError.message,
+				stderr: this.stderr,
+			});
 			this.rejectPendingRequests(processError);
 		});
 		childProcess.stdin?.on("error", (error) => {
@@ -205,6 +281,11 @@ export class RpcClient {
 			const stdinError =
 				this.exitError ?? new Error(`Agent process stdin error: ${error.message}. Stderr: ${this.stderr}`);
 			this.exitError = stdinError;
+			this.emitClientEvent({
+				type: "stdin_error",
+				message: stdinError.message,
+				stderr: this.stderr,
+			});
 			this.rejectPendingRequests(stdinError);
 		});
 
@@ -227,10 +308,31 @@ export class RpcClient {
 	 * Stop the RPC agent process.
 	 */
 	async stop(): Promise<void> {
+		if (this.socket) {
+			const socket = this.socket;
+			this.socket = null;
+			this.stopReadingStdout?.();
+			this.stopReadingStdout = null;
+			socket.end();
+			socket.destroy();
+			this.rejectPendingRequests(new Error("Pi GlobalHost client stopped"));
+			return;
+		}
 		if (!this.process) return;
 
 		this.stopReadingStdout?.();
 		this.stopReadingStdout = null;
+		if (this.spawnedGlobalHost) {
+			const childProcess = this.process;
+			childProcess.stdin?.end();
+			childProcess.stdout?.destroy();
+			childProcess.stderr?.destroy();
+			childProcess.unref();
+			this.process = null;
+			this.spawnedGlobalHost = false;
+			this.pendingRequests.clear();
+			return;
+		}
 		this.process.kill("SIGTERM");
 
 		// Wait for process to exit
@@ -303,27 +405,69 @@ export class RpcClient {
 		return capabilities.commands.includes(command);
 	}
 
+	/** Open an independent session runtime on the already-running RPC process. */
+	async openRuntime(options: RpcRuntimeOpenOptions): Promise<PiRuntimeHandle> {
+		const response = await this.send({
+			type: "open_runtime",
+			...options,
+			runtimeId: options.runtimeId ?? randomUUID(),
+		});
+		return new PiRuntimeHandle(this, this.getData<RpcRuntimeSummary>(response));
+	}
+
+	async closeRuntime(runtimeId: string): Promise<boolean> {
+		const response = await this.send({ type: "close_runtime", runtimeId });
+		this.runtimeToolPermissionHandlers.delete(runtimeId);
+		this.runtimeToolExecutors.delete(runtimeId);
+		return this.getData<{ closed: boolean }>(response).closed;
+	}
+
+	async getRuntimeState(runtimeId: string): Promise<{ runtime: RpcRuntimeSummary; state: RpcSessionState }> {
+		const response = await this.send({ type: "get_runtime_state", runtimeId });
+		return this.getData(response);
+	}
+
+	async listRuntimes(): Promise<RpcRuntimeSummary[]> {
+		const response = await this.send({ type: "list_runtimes" });
+		return this.getData<{ runtimes: RpcRuntimeSummary[] }>(response).runtimes;
+	}
+
 	/**
 	 * Send a prompt to the agent.
 	 * Returns immediately after sending; use onEvent() to receive streaming events.
 	 * Use waitForIdle() to wait for completion.
 	 */
-	async prompt(message: string, images?: ImageContent[], options?: { systemPrompt?: string }): Promise<void> {
-		await this.send({ type: "prompt", message, images, systemPrompt: options?.systemPrompt });
+	async prompt(
+		message: string,
+		images?: ImageContent[],
+		options?: {
+			systemPrompt?: string;
+			clientMutationId?: string;
+			attachments?: import("@earendil-works/pi-ai/types").UserAttachmentMetadata[];
+		},
+	): Promise<void> {
+		await this.send({
+			type: "prompt",
+			message,
+			images,
+			systemPrompt: options?.systemPrompt,
+			clientMutationId: options?.clientMutationId,
+			attachments: options?.attachments,
+		});
 	}
 
 	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
-	async steer(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "steer", message, images });
+	async steer(message: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
+		await this.send({ type: "steer", message, images, clientMutationId: options?.clientMutationId });
 	}
 
 	/**
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 */
-	async followUp(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "follow_up", message, images });
+	async followUp(message: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
+		await this.send({ type: "follow_up", message, images, clientMutationId: options?.clientMutationId });
 	}
 
 	/**
@@ -337,12 +481,24 @@ export class RpcClient {
 	 * Respond to an extension UI request emitted by an RPC worker.
 	 */
 	respondToExtensionUI(response: RpcExtensionUIResponse): void {
-		const childProcess = this.process;
-		const stdin = childProcess?.stdin;
-		if (!childProcess || !stdin || stdin.destroyed || !stdin.writable) {
+		const stdin = this.getWritableInput();
+		if (!stdin || stdin.destroyed || !stdin.writable) {
 			throw new Error("Client not started");
 		}
 		stdin.write(serializeJsonLine(response));
+	}
+
+	/** Respond to a host capability request emitted by an extension. */
+	respondToExtensionHostCapability(response: RpcExtensionHostCapabilityResponse): void {
+		const stdin = this.getWritableInput();
+		if (!stdin || stdin.destroyed || !stdin.writable) throw new Error("Client not started");
+		stdin.write(serializeJsonLine(response));
+	}
+
+	reportExtensionHostCapabilityProgress(progress: RpcExtensionHostCapabilityProgress): void {
+		const stdin = this.getWritableInput();
+		if (!stdin || stdin.destroyed || !stdin.writable) throw new Error("Client not started");
+		stdin.write(serializeJsonLine(progress));
 	}
 
 	/**
@@ -614,9 +770,170 @@ export class RpcClient {
 		return (await this.invokeExtensionCommandResult(commandId, args)).invoked;
 	}
 
+	/**
+	 * Read Pi-owned global host config: providers, settings, display metadata,
+	 * and Craft opaque metadata stored under Pi's models.json.
+	 */
+	async getGlobalConfig(): Promise<HostGlobalConfig> {
+		const response = await this.send({ type: "get_global_config" });
+		return this.getData<HostGlobalConfig>(response);
+	}
+
+	/**
+	 * Save or replace a Pi global provider. Credentials are persisted via Pi
+	 * AuthStorage; masked placeholders are ignored by the facade.
+	 */
+	async saveGlobalProvider(key: string, provider: HostGlobalProvider, apiKey?: string): Promise<void> {
+		await this.send({ type: "save_global_provider", key, provider, apiKey });
+	}
+
+	async deleteGlobalProvider(key: string): Promise<void> {
+		await this.send({ type: "delete_global_provider", key });
+	}
+
+	async setGlobalDefault(provider: string, model: string, thinkingLevel?: string, cwd?: string): Promise<void> {
+		await this.send({ type: "set_global_default", provider, model, thinkingLevel, cwd });
+	}
+
+	async setCraftCredential(slug: string, credential: unknown): Promise<void> {
+		await this.send({ type: "set_craft_credential", slug, credential });
+	}
+
+	async getSessionProjection(
+		sessionPath: string,
+		options: { sessionDir?: string; cwdOverride?: string } = {},
+	): Promise<HostSessionProjection> {
+		const response = await this.send({
+			type: "get_session_projection",
+			sessionPath,
+			sessionDir: options.sessionDir,
+			cwdOverride: options.cwdOverride,
+		});
+		return this.getData<HostSessionProjection>(response);
+	}
+
+	async setCraftSessionMetadata(
+		sessionPath: string,
+		options: { sessionDir?: string; cwdOverride?: string; name?: string; metadata?: unknown; customType?: string },
+	): Promise<HostSessionProjection> {
+		const response = await this.send({
+			type: "set_craft_session_metadata",
+			sessionPath,
+			sessionDir: options.sessionDir,
+			cwdOverride: options.cwdOverride,
+			name: options.name,
+			metadata: options.metadata,
+			customType: options.customType,
+		});
+		return this.getData<HostSessionProjection>(response);
+	}
+
+	async forkSession(
+		sourcePath: string,
+		targetCwd: string,
+		options: { sessionDir?: string; id?: string; parentSession?: string } = {},
+	): Promise<HostSessionProjection> {
+		const response = await this.send({
+			type: "fork_session",
+			sourcePath,
+			targetCwd,
+			sessionDir: options.sessionDir,
+			idOverride: options.id,
+			parentSession: options.parentSession,
+		});
+		return this.getData<HostSessionProjection>(response);
+	}
+
+	async listSkills(
+		options: { cwd?: string; agentDir?: string; skillPaths?: string[] } = {},
+	): Promise<HostSkillsResult> {
+		const response = await this.send({
+			type: "list_skills",
+			cwd: options.cwd,
+			agentDir: options.agentDir,
+			skillPaths: options.skillPaths,
+		});
+		return this.getData<HostSkillsResult>(response);
+	}
+
+	async resolveSkill(
+		name: string,
+		options: { cwd?: string; agentDir?: string; skillPaths?: string[] } = {},
+	): Promise<HostResolvedSkill | null> {
+		const response = await this.send({
+			type: "resolve_skill",
+			name,
+			cwd: options.cwd,
+			agentDir: options.agentDir,
+			skillPaths: options.skillPaths,
+		});
+		return this.getData<HostResolvedSkill | null>(response);
+	}
+
+	async getExtensions(options: { cwd?: string; agentDir?: string } = {}): Promise<HostExtensionsResult> {
+		const response = await this.send({ type: "get_extensions", cwd: options.cwd, agentDir: options.agentDir });
+		return this.getData<HostExtensionsResult>(response);
+	}
+
+	async setExtensionConfig(name: string, config: Record<string, unknown>): Promise<void> {
+		await this.send({ type: "set_extension_config", name, config });
+	}
+
+	async reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
+		const response = await this.send({ type: "reload_extensions" });
+		return this.getData<{ reloaded: boolean; deferred: boolean }>(response);
+	}
+
+	async getModelCatalog(provider?: string): Promise<HostModelCatalog> {
+		const response = await this.send({ type: "get_model_catalog", provider });
+		return this.getData<HostModelCatalog>(response);
+	}
+
 	// =========================================================================
 	// Helpers
 	// =========================================================================
+
+	/** @internal Shared transport entry point used by PiRuntimeHandle. */
+	requestRuntime(runtimeId: string, command: RpcRuntimeCommandBody, timeoutMs?: number): Promise<RpcResponse> {
+		return this.send({ ...command, runtimeId } as RpcCommandBody, timeoutMs);
+	}
+
+	/** @internal Decode a typed response for PiRuntimeHandle. */
+	readResponseData<T>(response: RpcResponse): T {
+		return this.getData<T>(response);
+	}
+
+	/** @internal Install a runtime-scoped permission handler. */
+	async setRuntimeToolPermissionHandler(runtimeId: string, handler: RpcToolPermissionHandler | null): Promise<void> {
+		if (handler) this.runtimeToolPermissionHandlers.set(runtimeId, handler);
+		else this.runtimeToolPermissionHandlers.delete(runtimeId);
+		await this.requestRuntime(runtimeId, { type: "enable_tool_permissions", enabled: handler !== null });
+	}
+
+	/** @internal Register tools without replacing another runtime's executor. */
+	async registerRuntimeTools(
+		runtimeId: string,
+		tools: RpcHostToolDefinition[],
+		executor: RpcToolExecutor,
+	): Promise<string[]> {
+		this.runtimeToolExecutors.set(runtimeId, executor);
+		const response = await this.requestRuntime(runtimeId, { type: "register_tools", tools });
+		return this.getData<{ registered: string[] }>(response).registered;
+	}
+
+	/** @internal Send an extension UI response to one runtime. */
+	respondToRuntimeExtensionUI(runtimeId: string, response: RpcExtensionUIResponse): void {
+		this.respondToExtensionUI({ ...response, runtimeId });
+	}
+
+	/** @internal Send an extension host capability response to one runtime. */
+	respondToRuntimeExtensionHostCapability(runtimeId: string, response: RpcExtensionHostCapabilityResponse): void {
+		this.respondToExtensionHostCapability({ ...response, runtimeId });
+	}
+
+	reportRuntimeExtensionHostCapabilityProgress(runtimeId: string, progress: RpcExtensionHostCapabilityProgress): void {
+		this.reportExtensionHostCapabilityProgress({ ...progress, runtimeId });
+	}
 
 	/**
 	 * Wait for agent to become idle (no streaming).
@@ -674,6 +991,88 @@ export class RpcClient {
 	// Internal
 	// =========================================================================
 
+	private getWritableInput(): RpcWritable | null {
+		return (this.socket ?? this.process?.stdin ?? null) as RpcWritable | null;
+	}
+
+	private connectToGlobalHost(port: number, token: string): Promise<boolean> {
+		return new Promise((resolve) => {
+			const socket = connect({ host: "127.0.0.1", port });
+			let authenticated = false;
+			let settled = false;
+			const timer = setTimeout(() => finish(false), 1_500);
+			const detachReader = attachJsonlLineReader(socket, (line) => {
+				if (!authenticated) {
+					try {
+						const message = JSON.parse(line) as { type?: string; clientId?: string };
+						if (message.type === "host_connected" && message.clientId === this.clientId) {
+							authenticated = true;
+							this.socket = socket;
+							this.stopReadingStdout = detachReader;
+							finish(true);
+						}
+					} catch {
+						finish(false);
+					}
+					return;
+				}
+				this.handleLine(line);
+			});
+
+			const finish = (success: boolean) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				if (!success) {
+					detachReader();
+					socket.destroy();
+				}
+				resolve(success);
+			};
+
+			socket.setNoDelay(true);
+			socket.once("connect", () => {
+				socket.write(serializeJsonLine({ type: "host_connect", token, clientId: this.clientId }));
+			});
+			socket.on("error", (error) => {
+				if (!authenticated) {
+					finish(false);
+					return;
+				}
+				const processError = new Error(`Pi GlobalHost socket error: ${error.message}`);
+				this.exitError = processError;
+				this.emitClientEvent({ type: "process_error", message: processError.message, stderr: this.stderr });
+				this.rejectPendingRequests(processError);
+			});
+			socket.once("close", () => {
+				if (!authenticated) {
+					finish(false);
+					return;
+				}
+				if (this.socket !== socket) return;
+				this.socket = null;
+				const error = new Error("Pi GlobalHost connection closed");
+				this.exitError = error;
+				this.emitClientEvent({
+					type: "process_exit",
+					code: null,
+					signal: null,
+					message: error.message,
+					stderr: this.stderr,
+				});
+				this.rejectPendingRequests(error);
+			});
+		});
+	}
+
+	private emitClientEvent(event: RpcClientEvent): void {
+		// Snapshot listeners so one callback can unsubscribe itself without
+		// shifting the live array and causing the next callback to miss the event.
+		for (const listener of [...this.clientEventListeners]) {
+			listener(event);
+		}
+	}
+
 	private handleLine(line: string): void {
 		try {
 			const data = JSON.parse(line);
@@ -688,9 +1087,7 @@ export class RpcClient {
 
 			// Otherwise it's an event
 			const event = data as RpcClientEvent;
-			for (const listener of this.clientEventListeners) {
-				listener(event);
-			}
+			this.emitClientEvent(event);
 			if (event.type === "tool_permission_request") {
 				this.handleToolPermissionRequest(event);
 				return;
@@ -702,8 +1099,11 @@ export class RpcClient {
 			if (event.type === "extension_ui_request" || event.type === "extension_error") {
 				return;
 			}
-			for (const listener of this.eventListeners) {
-				listener(event);
+			if (event.type === "process_exit" || event.type === "process_error" || event.type === "stdin_error") {
+				return;
+			}
+			for (const listener of [...this.eventListeners]) {
+				listener(event as AgentEvent);
 			}
 		} catch {
 			// Ignore non-JSON lines
@@ -711,11 +1111,18 @@ export class RpcClient {
 	}
 
 	private handleToolPermissionRequest(request: RpcToolPermissionRequest): void {
-		const handler = this.toolPermissionHandler;
+		const handler =
+			(request.runtimeId && this.runtimeToolPermissionHandlers.get(request.runtimeId)) ?? this.toolPermissionHandler;
 		const respond = (response: RpcToolPermissionResponse) => {
-			const stdin = this.process?.stdin;
+			const stdin = this.getWritableInput();
 			if (!stdin || stdin.destroyed || !stdin.writable) return;
-			stdin.write(serializeJsonLine(response));
+			stdin.write(
+				serializeJsonLine({
+					...response,
+					clientId: request.clientId,
+					runtimeId: request.runtimeId,
+				}),
+			);
 		};
 
 		if (!handler) {
@@ -746,11 +1153,17 @@ export class RpcClient {
 	}
 
 	private handleToolExecuteRequest(request: RpcToolExecuteRequest): void {
-		const executor = this.toolExecutor;
+		const executor = (request.runtimeId && this.runtimeToolExecutors.get(request.runtimeId)) ?? this.toolExecutor;
 		const respond = (response: RpcToolExecuteResponse) => {
-			const stdin = this.process?.stdin;
+			const stdin = this.getWritableInput();
 			if (!stdin || stdin.destroyed || !stdin.writable) return;
-			stdin.write(serializeJsonLine(response));
+			stdin.write(
+				serializeJsonLine({
+					...response,
+					clientId: request.clientId,
+					runtimeId: request.runtimeId,
+				}),
+			);
 		};
 
 		if (!executor) {
@@ -798,14 +1211,14 @@ export class RpcClient {
 
 	private async send(command: RpcCommandBody, timeoutMs = 30000): Promise<RpcResponse> {
 		const childProcess = this.process;
-		const stdin = childProcess?.stdin;
-		if (!childProcess || !stdin) {
+		const stdin = this.getWritableInput();
+		if (!stdin) {
 			throw new Error("Client not started");
 		}
 		if (this.exitError) {
 			throw this.exitError;
 		}
-		if (childProcess.exitCode !== null) {
+		if (childProcess && childProcess.exitCode !== null) {
 			const error = this.createProcessExitError(childProcess.exitCode, childProcess.signalCode);
 			this.exitError = error;
 			throw error;
@@ -817,7 +1230,7 @@ export class RpcClient {
 		}
 
 		const id = `req_${++this.requestId}`;
-		const fullCommand = { ...command, id } as RpcCommand;
+		const fullCommand = { ...command, clientId: this.clientId, id } as RpcCommand;
 
 		return new Promise((resolve, reject) => {
 			const timeout = setTimeout(() => {
@@ -850,11 +1263,228 @@ export class RpcClient {
 	private getData<T>(response: RpcResponse): T {
 		if (!response.success) {
 			const errorResponse = response as Extract<RpcResponse, { success: false }>;
-			throw new Error(errorResponse.error);
+			const error = new Error(errorResponse.userMessage ?? errorResponse.error) as Error & {
+				errorKind?: string;
+				recoverable?: boolean;
+				rawError?: string;
+			};
+			error.errorKind = errorResponse.errorKind;
+			error.recoverable = errorResponse.recoverable;
+			error.rawError = errorResponse.error;
+			throw error;
 		}
 		// Type assertion: we trust response.data matches T based on the command sent.
 		// This is safe because each public method specifies the correct T for its command.
 		const successResponse = response as Extract<RpcResponse, { success: true; data: unknown }>;
 		return successResponse.data as T;
+	}
+}
+
+export async function connectPiGlobalHost(options: ConnectPiGlobalHostOptions = {}): Promise<RpcClient> {
+	const { agentDir, ...clientOptions } = options;
+	const client = new RpcClient({
+		...clientOptions,
+		globalHost: { enabled: true, agentDir },
+	});
+	await client.start();
+	return client;
+}
+
+/**
+ * Runtime-scoped facade over one shared RpcClient transport.
+ *
+ * It owns no process. Closing the handle releases only its SessionRuntime;
+ * stopping the parent RpcClient terminates the shared host process.
+ */
+export class PiRuntimeHandle {
+	readonly runtimeId: string;
+	private readonly client: RpcClient;
+	private summary: RpcRuntimeSummary;
+
+	constructor(client: RpcClient, summary: RpcRuntimeSummary) {
+		this.client = client;
+		this.runtimeId = summary.runtimeId;
+		this.summary = summary;
+	}
+
+	get runtimeSummary(): RpcRuntimeSummary {
+		return { ...this.summary };
+	}
+
+	getStderr(): string {
+		return this.client.getStderr();
+	}
+
+	onEvent(listener: RpcEventListener): () => void {
+		return this.client.onEvent((event) => {
+			if (event.runtimeId === this.runtimeId) listener(event);
+		});
+	}
+
+	onClientEvent(listener: RpcClientEventListener): () => void {
+		return this.client.onClientEvent((event) => {
+			if (
+				"runtimeId" in event
+					? event.runtimeId === this.runtimeId
+					: event.type.startsWith("process_") ||
+						event.type === "stdin_error" ||
+						event.type === "background_task_event"
+			) {
+				listener(event);
+			}
+		});
+	}
+
+	async refreshState(): Promise<RpcSessionState> {
+		const result = await this.client.getRuntimeState(this.runtimeId);
+		this.summary = result.runtime;
+		return result.state;
+	}
+
+	getState(): Promise<RpcSessionState> {
+		return this.requestData({ type: "get_state" });
+	}
+
+	prompt(
+		message: string,
+		images?: ImageContent[],
+		options?: {
+			systemPrompt?: string;
+			clientMutationId?: string;
+			attachments?: import("@earendil-works/pi-ai/types").UserAttachmentMetadata[];
+		},
+	): Promise<void> {
+		return this.requestVoid({
+			type: "prompt",
+			message,
+			images,
+			systemPrompt: options?.systemPrompt,
+			clientMutationId: options?.clientMutationId,
+			attachments: options?.attachments,
+		});
+	}
+
+	steer(message: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
+		return this.requestVoid({ type: "steer", message, images, clientMutationId: options?.clientMutationId });
+	}
+
+	followUp(message: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
+		return this.requestVoid({ type: "follow_up", message, images, clientMutationId: options?.clientMutationId });
+	}
+
+	abort(): Promise<void> {
+		return this.requestVoid({ type: "abort" });
+	}
+
+	setAutoCompaction(enabled: boolean): Promise<void> {
+		return this.requestVoid({ type: "set_auto_compaction", enabled });
+	}
+
+	compact(customInstructions?: string): Promise<CompactionResult> {
+		return this.requestData({ type: "compact", customInstructions });
+	}
+
+	setModel(provider: string, modelId: string): Promise<{ provider: string; id: string }> {
+		return this.requestData({ type: "set_model", provider, modelId });
+	}
+
+	setThinkingLevel(level: ThinkingLevel): Promise<void> {
+		return this.requestVoid({ type: "set_thinking_level", level });
+	}
+
+	setSessionName(name: string): Promise<void> {
+		return this.requestVoid({ type: "set_session_name", name });
+	}
+
+	newSession(parentSession?: string): Promise<{ cancelled: boolean }> {
+		return this.requestData({ type: "new_session", parentSession });
+	}
+
+	switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
+		return this.requestData({ type: "switch_session", sessionPath });
+	}
+
+	runMiniCompletion(prompt: string): Promise<string | null> {
+		return this.requestData<{ text: string | null }>(
+			{ type: "run_mini_completion", prompt },
+			SECONDARY_LLM_TIMEOUT_MS,
+		).then((result) => result.text);
+	}
+
+	queryLlm(request: RpcLLMQueryRequest): Promise<RpcLLMQueryResult> {
+		return this.requestData({ type: "query_llm", request }, SECONDARY_LLM_TIMEOUT_MS);
+	}
+
+	listChildSessions(parentSessionId: string): Promise<RpcChildSessionInfo[]> {
+		return this.requestData<{ sessions: RpcChildSessionInfo[] }>({
+			type: "list_child_sessions",
+			parentSessionId,
+		}).then((result) => result.sessions);
+	}
+
+	getCommands(): Promise<RpcSlashCommand[]> {
+		return this.requestData<{ commands: RpcSlashCommand[] }>({ type: "get_commands" }).then(
+			(result) => result.commands,
+		);
+	}
+
+	invokeExtensionCommandResult(commandId: string, args?: string): Promise<RpcExtensionCommandResult> {
+		return this.requestData({ type: "invoke_extension_command", commandId, args });
+	}
+
+	reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
+		return this.requestData({ type: "reload_extensions" });
+	}
+
+	setToolPermissionHandler(handler: RpcToolPermissionHandler | null): Promise<void> {
+		return this.client.setRuntimeToolPermissionHandler(this.runtimeId, handler);
+	}
+
+	registerTools(tools: RpcHostToolDefinition[], executor: RpcToolExecutor): Promise<string[]> {
+		return this.client.registerRuntimeTools(this.runtimeId, tools, executor);
+	}
+
+	respondToExtensionUI(response: RpcExtensionUIResponse): void {
+		this.client.respondToRuntimeExtensionUI(this.runtimeId, response);
+	}
+
+	respondToExtensionHostCapability(response: RpcExtensionHostCapabilityResponse): void {
+		this.client.respondToRuntimeExtensionHostCapability(this.runtimeId, response);
+	}
+
+	reportExtensionHostCapabilityProgress(progress: RpcExtensionHostCapabilityProgress): void {
+		this.client.reportRuntimeExtensionHostCapabilityProgress(this.runtimeId, progress);
+	}
+
+	waitForIdle(timeout = 60_000): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				unsubscribe();
+				reject(
+					new Error(`Timeout waiting for runtime ${this.runtimeId} to become idle. Stderr: ${this.getStderr()}`),
+				);
+			}, timeout);
+			const unsubscribe = this.onEvent((event) => {
+				if (event.type === "agent_end") {
+					clearTimeout(timer);
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+	}
+
+	async close(): Promise<void> {
+		await this.client.closeRuntime(this.runtimeId);
+	}
+
+	private async requestVoid(command: RpcRuntimeCommandBody, timeoutMs?: number): Promise<void> {
+		const response = await this.client.requestRuntime(this.runtimeId, command, timeoutMs);
+		this.client.readResponseData<unknown>(response);
+	}
+
+	private async requestData<T>(command: RpcRuntimeCommandBody, timeoutMs?: number): Promise<T> {
+		const response = await this.client.requestRuntime(this.runtimeId, command, timeoutMs);
+		return this.client.readResponseData<T>(response);
 	}
 }

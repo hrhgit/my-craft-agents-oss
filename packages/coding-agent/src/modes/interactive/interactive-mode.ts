@@ -2097,6 +2097,16 @@ export class InteractiveMode {
 		// Create a context for shortcut handlers
 		const createContext = (): ExtensionContext => ({
 			ui: this.createExtensionUIContext(),
+			capabilities: {
+				supported: [],
+				invoke: async () => ({
+					status: "unsupported",
+					error: {
+						code: "host_capabilities_unavailable",
+						message: "Host capabilities are not available in TUI mode",
+					},
+				}),
+			},
 			hasUI: true,
 			cwd: this.sessionManager.getCwd(),
 			sessionManager: this.sessionManager,
@@ -2437,6 +2447,14 @@ export class InteractiveMode {
 	 */
 	private createExtensionUIContext(): ExtensionUIContext {
 		return {
+			capabilities: {
+				kind: "tui",
+				dialogs: true,
+				widgets: true,
+				customComponents: true,
+				terminalInput: true,
+				editorControl: true,
+			},
 			select: (title, options, opts) => this.showExtensionSelector(title, options, opts),
 			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
