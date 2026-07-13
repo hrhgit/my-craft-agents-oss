@@ -149,6 +149,7 @@ function createInput(overrides?: Partial<PreToolUseInput>): PreToolUseInput {
     activeSourceSlugs: [],
     allSourceSlugs: [],
     hasSourceActivation: true,
+    dataSourcesEnabled: true,
     permissionManager: createMockPermissionManager(),
     ...overrides,
   };
@@ -261,6 +262,51 @@ describe('runPreToolUseChecks', () => {
   // ============================================================
 
   describe('step 2: source blocking', () => {
+    it('blocks external source tools when the feature is disabled', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'mcp__linear__createIssue',
+        input: {},
+        activeSourceSlugs: ['linear'],
+        allSourceSlugs: ['linear'],
+        dataSourcesEnabled: false,
+      }));
+
+      expect(result).toEqual({
+        type: 'block',
+        reason: 'Data sources are disabled in Craft settings.',
+      });
+    });
+
+    it('blocks source-management session tools when the feature is disabled', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'mcp__session__source_test',
+        input: {},
+        dataSourcesEnabled: false,
+      }));
+
+      expect(result.type).toBe('block');
+    });
+
+    it('blocks direct API source tools when the feature is disabled', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'api_github',
+        input: { method: 'GET', path: '/repos' },
+        dataSourcesEnabled: false,
+      }));
+
+      expect(result.type).toBe('block');
+    });
+
+    it('keeps unrelated built-in session tools available when the feature is disabled', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'mcp__session__spawn_session',
+        input: {},
+        dataSourcesEnabled: false,
+      }));
+
+      expect(result.type).toBe('spawn_session_intercept');
+    });
+
     it('returns source_activation_needed for inactive MCP source (exists)', () => {
       const result = runPreToolUseChecks(createInput({
         toolName: 'mcp__linear__createIssue',

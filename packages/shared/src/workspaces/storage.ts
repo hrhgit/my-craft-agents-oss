@@ -23,7 +23,6 @@ import { getDefaultStatusConfig, saveStatusConfig, ensureDefaultIconFiles } from
 import { getDefaultLabelConfig, saveLabelConfig } from '../labels/storage.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
 import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
-import { normalizeThinkingLevel } from '../agent/thinking-levels.ts';
 import type {
   WorkspaceConfig,
   CreateWorkspaceInput,
@@ -32,6 +31,21 @@ import type {
 } from './types.ts';
 
 const DEFAULT_WORKSPACES_DIR = join(CONFIG_DIR, 'workspaces');
+const LEGACY_WORKSPACE_AI_DEFAULT_KEYS = ['provider', 'model', 'thinkingLevel'] as const;
+
+function removeLegacyWorkspaceAiDefaults(config: WorkspaceConfig): boolean {
+  if (!config.defaults) return false;
+
+  const defaults = config.defaults as unknown as Record<string, unknown>;
+  let removed = false;
+  for (const key of LEGACY_WORKSPACE_AI_DEFAULT_KEYS) {
+    if (key in defaults) {
+      delete defaults[key];
+      removed = true;
+    }
+  }
+  return removed;
+}
 
 // ============================================================
 // Path Utilities
@@ -157,10 +171,13 @@ export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
         : [...PERMISSION_MODE_ORDER];
     }
 
-    if (config.defaults && 'thinkingLevel' in config.defaults) {
-      // TODO: Remove legacy 'think' normalization after old persisted workspace configs
-      // have realistically aged out across upgrades.
-      config.defaults.thinkingLevel = normalizeThinkingLevel(config.defaults.thinkingLevel);
+    if (removeLegacyWorkspaceAiDefaults(config)) {
+      config.updatedAt = Date.now();
+      try {
+        atomicWriteFileSync(configPath, JSON.stringify(config, null, 2));
+      } catch {
+        // Keep the cleaned in-memory config when a read-only workspace cannot be migrated.
+      }
     }
 
     return config;
@@ -180,8 +197,10 @@ export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): 
 
   const storageConfig: WorkspaceConfig = {
     ...config,
+    defaults: config.defaults ? { ...config.defaults } : undefined,
     updatedAt: Date.now(),
   };
+  removeLegacyWorkspaceAiDefaults(storageConfig);
 
   // Use atomic write to prevent corruption on crash/interrupt
   atomicWriteFileSync(join(rootPath, 'config.json'), JSON.stringify(storageConfig, null, 2));
@@ -322,13 +341,8 @@ export function createWorkspaceAtPath(
   // Load global defaults from config-defaults.json
   const globalDefaults = loadConfigDefaults();
 
-  // Merge global defaults with provided defaults
-  // AI settings (provider, model, thinkingLevel) are left undefined
-  // so they fall back to app-level defaults
+  // Only workspace-scoped defaults are accepted here. AI defaults are global.
   const workspaceDefaults: WorkspaceConfig['defaults'] = {
-    model: undefined,
-    thinkingLevel: undefined,
-    // provider/model: undefined - fall back to Pi global defaults
     permissionMode: globalDefaults.workspaceDefaults.permissionMode,
     cyclablePermissionModes: globalDefaults.workspaceDefaults.cyclablePermissionModes,
     enabledSourceSlugs: [],

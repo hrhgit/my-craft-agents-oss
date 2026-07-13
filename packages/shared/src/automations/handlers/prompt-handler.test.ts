@@ -146,7 +146,7 @@ describe('PromptHandler', () => {
       handler.dispose();
     });
 
-    it('should leave thinkingLevel undefined when omitted (workspace default applies downstream)', async () => {
+    it('should leave thinkingLevel undefined when omitted (global default applies downstream)', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
         LabelAdd: [{

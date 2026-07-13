@@ -100,9 +100,9 @@ import { getSessionDataPath, getSessionPath, getSessionPlansPath, getPiNativeSes
 import { parseError, type AgentError } from './errors.ts';
 
 // Centralized PreToolUse pipeline
-import { runPreToolUseChecks, type PreToolUseCheckResult } from './core/pre-tool-use.ts';
+import { isDataSourceToolName, runPreToolUseChecks, type PreToolUseCheckResult } from './core/pre-tool-use.ts';
 import { getRtkPath } from './core/rtk-detector.ts';
-import { getRtkEnabled, getPiShellFullPassthrough } from '../config/storage.ts';
+import { getDataSourcesEnabled, getRtkEnabled, getPiShellFullPassthrough } from '../config/storage.ts';
 import type { RtkContext } from './core/rtk-rewrite.ts';
 
 // Workspace slug extraction for skill qualification
@@ -144,6 +144,16 @@ function isAskUserExtension(extensionId: string): boolean {
   return ASK_USER_EXTENSION_IDS.has(extensionId);
 }
 
+function parseAskUserPrompt(prompt: string): { title: string; message?: string } {
+  const contextMarker = ASK_USER_CONTEXT_MARKER.exec(prompt);
+  return {
+    title: (contextMarker ? prompt.slice(0, contextMarker.index) : prompt).trim(),
+    ...(contextMarker
+      ? { message: prompt.slice(contextMarker.index + contextMarker[0].length).trim() }
+      : {}),
+  };
+}
+
 function parseAskUserMultipleChoiceInput(title: string): {
   title: string;
   message?: string;
@@ -165,12 +175,8 @@ function parseAskUserMultipleChoiceInput(title: string): {
   });
   if (options.length === 0 || options.some((option) => option === null)) return null;
 
-  const contextMarker = ASK_USER_CONTEXT_MARKER.exec(prompt);
   return {
-    title: (contextMarker ? prompt.slice(0, contextMarker.index) : prompt).trim(),
-    ...(contextMarker
-      ? { message: prompt.slice(contextMarker.index + contextMarker[0].length).trim() }
-      : {}),
+    ...parseAskUserPrompt(prompt),
     options: options as Array<{ title: string; description?: string }>,
   };
 }
@@ -1224,7 +1230,7 @@ export class PiAgent extends BaseAgent {
         type: 'remoteui_request',
         requestId: event.id,
         kind: 'select',
-        title: event.title,
+        ...(isAskUser ? parseAskUserPrompt(event.title) : { title: event.title }),
         options: event.options
           .filter(option => !isAskUser || !/write my own answer/i.test(option))
           .map(title => ({ title })),
@@ -1247,7 +1253,8 @@ export class PiAgent extends BaseAgent {
       };
     }
     if (event.method === 'input') {
-      const multipleChoice = isAskUserExtension(extensionId)
+      const isAskUser = isAskUserExtension(extensionId);
+      const multipleChoice = isAskUser
         ? parseAskUserMultipleChoiceInput(event.title)
         : null;
       if (multipleChoice) {
@@ -1267,7 +1274,7 @@ export class PiAgent extends BaseAgent {
         type: 'remoteui_request',
         requestId: event.id,
         kind: 'editor',
-        title: event.title,
+        ...(isAskUser ? parseAskUserPrompt(event.title) : { title: event.title }),
         placeholder: event.placeholder,
         timeout: event.timeout,
         source: extensionId,
@@ -1478,6 +1485,7 @@ export class PiAgent extends BaseAgent {
       activeSourceSlugs: Array.from(this.sourceManager.getActiveSlugs()),
       allSourceSlugs: this.sourceManager.getAllSources().map(s => s.config.slug),
       hasSourceActivation: !!this.onSourceActivationRequest,
+      dataSourcesEnabled: getDataSourcesEnabled(),
       permissionManager: this.permissionManager,
       prerequisiteManager: this.prerequisiteManager,
       rtkContext,
@@ -1546,6 +1554,7 @@ export class PiAgent extends BaseAgent {
           activeSourceSlugs: Array.from(this.sourceManager.getActiveSlugs()),
           allSourceSlugs: this.sourceManager.getAllSources().map(s => s.config.slug),
           hasSourceActivation: !!this.onSourceActivationRequest,
+          dataSourcesEnabled: getDataSourcesEnabled(),
           permissionManager: this.permissionManager,
           prerequisiteManager: this.prerequisiteManager,
           rtkContext,
@@ -1639,6 +1648,10 @@ export class PiAgent extends BaseAgent {
    * Execute a host proxy tool requested by Pi RpcClient.
    */
   private async executeHostTool(request: PiRpcToolExecuteRequest): Promise<PiRpcHostToolResult> {
+    if (!getDataSourcesEnabled() && isDataSourceToolName(request.toolName)) {
+      return { content: 'Data sources are disabled in Craft settings.', isError: true };
+    }
+
     // Prerequisite check: block source tools until guide.md is read
     const prereqResult = this.prerequisiteManager.checkPrerequisites(request.toolName);
     if (!prereqResult.allowed) {

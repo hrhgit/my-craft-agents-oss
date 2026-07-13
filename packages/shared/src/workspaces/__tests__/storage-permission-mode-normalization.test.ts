@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadWorkspaceConfig } from '../storage.ts';
@@ -17,6 +17,32 @@ afterEach(() => {
 });
 
 describe('workspace storage: config normalization', () => {
+  it('removes legacy workspace AI defaults from memory and disk', () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-global-ai-defaults-'));
+    tempDirs.push(workspaceRoot);
+
+    const configPath = join(workspaceRoot, 'config.json');
+    writeFileSync(configPath, JSON.stringify({
+      id: 'ws_legacy_ai',
+      name: 'Legacy AI Defaults',
+      slug: 'legacy-ai-defaults',
+      defaults: {
+        provider: 'legacy-provider',
+        model: 'legacy-model',
+        thinkingLevel: 'high',
+        permissionMode: 'safe',
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }, null, 2), 'utf-8');
+
+    const loaded = loadWorkspaceConfig(workspaceRoot);
+    const persisted = JSON.parse(readFileSync(configPath, 'utf-8'));
+
+    expect(loaded?.defaults).toEqual({ permissionMode: 'safe' });
+    expect(persisted.defaults).toEqual({ permissionMode: 'safe' });
+  });
+
   it('maps canonical defaults.permissionMode and cyclablePermissionModes on read', () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-mode-map-'));
     tempDirs.push(workspaceRoot);
@@ -65,25 +91,4 @@ describe('workspace storage: config normalization', () => {
     expect(loaded?.defaults?.cyclablePermissionModes).toEqual(['safe', 'ask', 'allow-all']);
   });
 
-  it('normalizes legacy defaults.thinkingLevel=think on read', () => {
-    const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-thinking-legacy-'));
-    tempDirs.push(workspaceRoot);
-
-    const rawConfig = {
-      id: 'ws_789',
-      name: 'Legacy Thinking',
-      slug: 'legacy-thinking',
-      defaults: {
-        thinkingLevel: 'think',
-      },
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    writeFileSync(join(workspaceRoot, 'config.json'), JSON.stringify(rawConfig, null, 2), 'utf-8');
-
-    const loaded = loadWorkspaceConfig(workspaceRoot);
-    expect(loaded).not.toBeNull();
-    expect(loaded?.defaults?.thinkingLevel).toBe('medium');
-  });
 });

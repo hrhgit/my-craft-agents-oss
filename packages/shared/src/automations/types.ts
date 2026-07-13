@@ -64,7 +64,7 @@ export interface PromptAction {
   model?: string;
   /**
    * Thinking level for the created session.
-   * When omitted, falls back to the workspace default (then DEFAULT_THINKING_LEVEL).
+   * When omitted, falls back to the global default.
    */
   thinkingLevel?: ThinkingLevel;
 }
@@ -254,7 +254,7 @@ export interface PendingPrompt {
   provider?: string;
   /** Model ID for the created session (falls back to provider default if invalid) */
   model?: string;
-  /** Thinking level for the created session (falls back to workspace default when omitted) */
+  /** Thinking level for the created session (falls back to the global default when omitted) */
   thinkingLevel?: ThinkingLevel;
   /** Forum-topic name to bind the new session to (Telegram supergroup, when paired). */
   telegramTopic?: string;

@@ -36,6 +36,11 @@ import {
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 import { PiProviderFormDialog } from './PiProviderFormDialog'
 import type { PiCustomApi, PiGlobalProvider, PiGlobalProviderForDisplay } from '../../../shared/types'
+import {
+  DEFAULT_THINKING_LEVEL,
+  THINKING_LEVELS,
+  type ThinkingLevel,
+} from '@craft-agent/shared/agent/thinking-levels'
 
 const PI_API_LABELS: Record<PiCustomApi, string> = {
   'openai-completions': 'OpenAI Chat',
@@ -66,9 +71,16 @@ export function PiProvidersSection() {
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editingKey, setEditingKey] = React.useState<string | null>(null)
   const [editingProvider, setEditingProvider] = React.useState<PiGlobalProvider | undefined>(undefined)
+  const [defaultThinking, setDefaultThinking] = React.useState<ThinkingLevel>(DEFAULT_THINKING_LEVEL)
 
   const defaultProvider = settings.defaultProvider
   const defaultModel = settings.defaultModel
+
+  React.useEffect(() => {
+    window.electronAPI.getDefaultThinkingLevel()
+      .then(setDefaultThinking)
+      .catch(error => console.error('Failed to load default thinking level:', error))
+  }, [])
 
   // Models available under the current default provider (for the model switcher)
   const defaultProviderEntry = React.useMemo(
@@ -150,6 +162,19 @@ export function PiProvidersSection() {
     }
   }, [defaultProvider, refresh, t])
 
+  const handleDefaultThinkingChange = React.useCallback(async (value: string) => {
+    const next = value as ThinkingLevel
+    const previous = defaultThinking
+    setDefaultThinking(next)
+    try {
+      const result = await window.electronAPI.setDefaultThinkingLevel(next)
+      if (!result.success) setDefaultThinking(previous)
+    } catch (error) {
+      setDefaultThinking(previous)
+      console.error('Failed to update default thinking level:', error)
+    }
+  }, [defaultThinking])
+
   const existingKeys = React.useMemo(() => providers.map(p => p.key), [providers])
 
   return (
@@ -170,40 +195,55 @@ export function PiProvidersSection() {
       ) : null}
 
       <div className="space-y-8">
-        {/* Default provider + model switcher */}
+        {/* Global defaults for new chats */}
         <SettingsSection
-          title={t('settings.piProviders.defaultSection')}
-          description={t('settings.piProviders.defaultSectionDesc')}
+          title={t('settings.ai.defaultSection')}
+          description={t('settings.ai.defaultSectionDesc')}
         >
           <SettingsCard>
             {isLoading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
               </div>
-            ) : providers.length === 0 ? (
-              <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-                {t('settings.piProviders.noProviders')}
-              </div>
             ) : (
               <>
+                {providers.length === 0 ? (
+                  <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+                    {t('settings.piProviders.noProviders')}
+                  </div>
+                ) : (
+                  <>
+                    <SettingsMenuSelectRow
+                      label={t('settings.piProviders.provider')}
+                      description={t('settings.piProviders.providerDesc')}
+                      value={defaultProvider ?? ''}
+                      onValueChange={handleDefaultProviderChange}
+                      options={providers.map(p => ({
+                        value: p.key,
+                        label: p.key,
+                        description: hostOf(p.provider.baseUrl),
+                      }))}
+                    />
+                    <SettingsMenuSelectRow
+                      label={t('settings.piProviders.model')}
+                      description={t('settings.piProviders.modelDesc')}
+                      value={defaultModel ?? ''}
+                      onValueChange={handleDefaultModelChange}
+                      options={modelOptions}
+                      disabled={modelOptions.length === 0}
+                    />
+                  </>
+                )}
                 <SettingsMenuSelectRow
-                  label={t('settings.piProviders.provider')}
-                  description={t('settings.piProviders.providerDesc')}
-                  value={defaultProvider ?? ''}
-                  onValueChange={handleDefaultProviderChange}
-                  options={providers.map(p => ({
-                    value: p.key,
-                    label: p.key,
-                    description: hostOf(p.provider.baseUrl),
+                  label={t('settings.ai.thinking')}
+                  description={t('settings.ai.thinkingDesc')}
+                  value={defaultThinking}
+                  onValueChange={handleDefaultThinkingChange}
+                  options={THINKING_LEVELS.map(({ id, nameKey, descriptionKey }) => ({
+                    value: id,
+                    label: t(nameKey),
+                    description: t(descriptionKey),
                   }))}
-                />
-                <SettingsMenuSelectRow
-                  label={t('settings.piProviders.model')}
-                  description={t('settings.piProviders.modelDesc')}
-                  value={defaultModel ?? ''}
-                  onValueChange={handleDefaultModelChange}
-                  options={modelOptions}
-                  disabled={modelOptions.length === 0}
                 />
               </>
             )}

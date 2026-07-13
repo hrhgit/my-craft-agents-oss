@@ -5,6 +5,7 @@ import { getCredentialManager } from '@craft-agent/shared/credentials'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
+import { getDataSourcesEnabled } from '@craft-agent/shared/config'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sources.GET,
@@ -23,6 +24,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
 
   // Get all sources for a workspace
   server.handle(RPC_CHANNELS.sources.GET, async (ctx, workspaceId: string) => {
+    if (!getDataSourcesEnabled()) return []
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
     if (!wid) return []
     const workspace = getWorkspaceOrNull(wid, log, 'SOURCES_GET')

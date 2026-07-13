@@ -251,6 +251,8 @@ export interface ISessionManager {
    * `getOrCreateAgent`.
    */
   refreshProviderRuntime(provider: string): Promise<void>
+  /** Rebuild active source bridges after the global data-source feature changes. */
+  refreshDataSourcesRuntime?(): Promise<void>
   completeAuthRequest(sessionId: string, result: AuthResult): Promise<void>
   executePromptAutomation(input: ExecutePromptAutomationInput): Promise<{ sessionId: string }>
 
@@ -282,7 +284,7 @@ export interface ExecutePromptAutomationInput {
   mentions?: string[]
   provider?: string
   model?: string
-  /** Override the workspace default thinking level for the spawned session. */
+  /** Override the global default thinking level for the spawned session. */
   thinkingLevel?: ThinkingLevel
   automationName?: string
   /**

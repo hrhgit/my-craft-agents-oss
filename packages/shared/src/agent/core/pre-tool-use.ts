@@ -616,6 +616,8 @@ export interface PreToolUseInput {
   allSourceSlugs: string[];
   /** Whether the agent supports source activation (has onSourceActivationRequest callback) */
   hasSourceActivation: boolean;
+  /** Whether the global data-source feature is enabled. */
+  dataSourcesEnabled: boolean;
   /** PermissionManager for session-scoped whitelists */
   permissionManager: PermissionManagerLike;
   /** PrerequisiteManager for guide.md checking */
@@ -650,6 +652,28 @@ export interface PrerequisiteManagerLike {
 
 /** Built-in MCP servers that are always available (not user sources) */
 const BUILT_IN_MCP_SERVERS = new Set(['session', 'craft-agents-docs']);
+
+const DATA_SOURCE_SESSION_TOOLS = new Set([
+  'source_test',
+  'source_oauth_trigger',
+  'source_google_oauth_trigger',
+  'source_slack_oauth_trigger',
+  'source_microsoft_oauth_trigger',
+  'source_credential_prompt',
+]);
+
+/** Whether a tool belongs to the optional Craft data-source feature. */
+export function isDataSourceToolName(toolName: string): boolean {
+  const sessionToolName = toolName.startsWith('mcp__session__')
+    ? toolName.slice('mcp__session__'.length)
+    : toolName;
+  if (DATA_SOURCE_SESSION_TOOLS.has(sessionToolName)) return true;
+  if (toolName.startsWith('api_')) return true;
+
+  if (!toolName.startsWith('mcp__')) return false;
+  const serverName = toolName.split('__')[1];
+  return !!serverName && !BUILT_IN_MCP_SERVERS.has(serverName);
+}
 
 /** File write tools that require permission in ask mode */
 const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
@@ -697,6 +721,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     activeSourceSlugs,
     allSourceSlugs,
     hasSourceActivation,
+    dataSourcesEnabled,
     permissionManager,
     prerequisiteManager,
     backendMetadata,
@@ -740,6 +765,11 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   // ============================================================
   // 2. SOURCE BLOCKING (inactive MCP sources)
   // ============================================================
+  if (!dataSourcesEnabled && isDataSourceToolName(toolName)) {
+    onDebug?.(`Data-source feature disabled: blocking ${toolName}`);
+    return { type: 'block', reason: 'Data sources are disabled in Craft settings.' };
+  }
+
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__');
     const serverName = parts[1];

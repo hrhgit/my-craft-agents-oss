@@ -14,7 +14,6 @@ import {
 } from '@craft-agent/shared/config'
 import { normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
 import * as configStorage from '@craft-agent/shared/config/storage'
-import { readPiGlobalProviders } from '@craft-agent/shared/config'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
 import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '@craft-agent/server-core/handlers'
@@ -48,6 +47,8 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR,
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
+  RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED,
+  RPC_CHANNELS.tools.SET_DATA_SOURCES_ENABLED,
   RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION,
   RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION,
   RPC_CHANNELS.piExtensions.GET_SETTINGS,
@@ -135,7 +136,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Workspace Settings (per-workspace configuration)
   // ============================================================
 
-  // Get workspace settings (model, permission mode, working directory, credential strategy)
+  // Get settings that are genuinely scoped to a workspace.
   server.handle(RPC_CHANNELS.workspace.SETTINGS_GET, async (ctx, workspaceId: string) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
     if (!wid) return null
@@ -148,11 +149,8 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
     return {
       name: config?.name,
-      provider: config?.defaults?.provider,
-      model: config?.defaults?.model,
       permissionMode: config?.defaults?.permissionMode,
       cyclablePermissionModes: config?.defaults?.cyclablePermissionModes,
-      thinkingLevel: normalizeThinkingLevel(config?.defaults?.thinkingLevel),
       workingDirectory: workspace.rootPath,
       localMcpEnabled: config?.localMcpServers?.enabled ?? true,
       enabledSourceSlugs: config?.defaults?.enabledSourceSlugs ?? [],
@@ -166,14 +164,9 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     const normalizedValue = value
 
     // Validate key is a known workspace setting
-    const validKeys = ['name', 'provider', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'localMcpEnabled']
+    const validKeys = ['name', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'localMcpEnabled']
     if (!validKeys.includes(key)) {
       throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
-    }
-
-    if (key === 'provider' && normalizedValue !== undefined && normalizedValue !== null) {
-      const providers = readPiGlobalProviders()
-      if (!providers[String(normalizedValue)]) throw new Error(`Provider "${normalizedValue}" not found`)
     }
 
     const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
@@ -317,6 +310,15 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   server.handle(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED, async (_ctx, enabled: boolean) => {
     await configStorage.setBrowserToolEnabled(enabled)
+  })
+
+  server.handle(RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED, async () => {
+    return configStorage.getDataSourcesEnabled()
+  })
+
+  server.handle(RPC_CHANNELS.tools.SET_DATA_SOURCES_ENABLED, async (_ctx, enabled: boolean) => {
+    configStorage.setDataSourcesEnabled(enabled)
+    await deps.sessionManager.refreshDataSourcesRuntime?.()
   })
 
   // ============================================================

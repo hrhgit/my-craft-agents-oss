@@ -36,6 +36,10 @@ import type {
   RemoteUIRequest,
   RemoteUIResult,
 } from '@/components/extensions/RemoteUIModal'
+import type {
+  RemoteUIBatch,
+  RemoteUIBatchSubmission,
+} from '@/components/extensions/remote-ui-batch'
 
 export interface AppShellContextType {
   // Data
@@ -75,7 +79,10 @@ export interface AppShellContextType {
 
   /** Pi extension input currently replacing the composer for its owning session. */
   remoteUIRequest?: RemoteUIRequest | null
+  /** Full ask_user batch recovered from the active tool call when available. */
+  remoteUIBatch?: RemoteUIBatch | null
   respondRemoteUI?: (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => void
+  respondRemoteUIBatch?: (submission: RemoteUIBatchSubmission) => void
 
   // Unified session options map
   /** All session-scoped options in one map. Use useSessionOptionsFor() hook for easy access. */

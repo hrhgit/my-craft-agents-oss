@@ -116,7 +116,7 @@ Send a prompt to Craft Agent (creates a new session for scheduled prompts).
 - Use `@mentions` to reference sources or skills
 - Environment variables are expanded (e.g., `$CRAFT_LABEL`)
 
-**Provider & Model:** Optionally specify which AI provider and model to use for the created session. If omitted, the workspace defaults are used.
+**Provider & Model:** Optionally specify which AI provider and model to use for the created session. If omitted, the global defaults are used.
 
 ```json
 {
@@ -127,7 +127,7 @@ Send a prompt to Craft Agent (creates a new session for scheduled prompts).
 }
 ```
 
-The `provider` value is a Pi provider key configured in AI Settings. The `model` value is a model ID supported by that provider. If either is invalid or unavailable, Craft falls back to the workspace default. Both can be used independently or together.
+The `provider` value is a Pi provider key configured in AI Settings. The `model` value is a model ID supported by that provider. If either is invalid or unavailable, Craft falls back to the global default. Both can be used independently or together.
 
 #### Pi Prompt Automation 委托
 

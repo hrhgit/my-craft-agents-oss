@@ -14,6 +14,8 @@ export interface SettingsRowProps {
   label: React.ReactNode
   /** Optional description below label */
   description?: string
+  /** Optional description text styling */
+  descriptionClassName?: string
   /** Content on the right side */
   children?: React.ReactNode
   /** Click handler for the entire row */
@@ -39,6 +41,7 @@ export interface SettingsRowProps {
 export function SettingsRow({
   label,
   description,
+  descriptionClassName,
   children,
   onClick,
   action,
@@ -62,7 +65,7 @@ export function SettingsRow({
       <div className="flex-1 min-w-0">
         <div className={settingsUI.label}>{label}</div>
         {description && (
-          <div className={cn(settingsUI.description, settingsUI.labelDescriptionGap, 'truncate')}>
+          <div className={cn(settingsUI.description, settingsUI.labelDescriptionGap, 'truncate', descriptionClassName)}>
             {description}
           </div>
         )}

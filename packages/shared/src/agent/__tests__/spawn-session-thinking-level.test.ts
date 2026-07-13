@@ -4,8 +4,8 @@
  * pass it along to `createSession()`.
  *
  * Pairs with the corresponding fix in SessionManager.createSession that
- * reads `options?.thinkingLevel` as the first-precedence source (before
- * workspace default and global default). Without that fix, this field
+ * reads `options?.thinkingLevel` as the first-precedence source before the
+ * global default. Without that fix, this field
  * on the request would be silently dropped.
  */
 import { describe, it, expect, beforeEach } from 'bun:test';

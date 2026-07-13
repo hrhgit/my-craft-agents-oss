@@ -24,7 +24,7 @@ import {
   buildPiProjectionSnapshotFromHostProjection,
   PiProjectionBuilder,
 } from '@craft-agent/shared/agent/backend'
-import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
+import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDataSourcesEnabled, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker, SessionShareTransferService } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
@@ -455,6 +455,18 @@ async function applyBridgeUpdates(
     context,
     poolServerUrl,
   })
+}
+
+function loadRuntimeAllSources(workspaceRootPath: string): LoadedSource[] {
+  return getDataSourcesEnabled() ? loadAllSources(workspaceRootPath) : []
+}
+
+function loadRuntimeSourcesBySlugs(workspaceRootPath: string, sourceSlugs: string[]): LoadedSource[] {
+  return getDataSourcesEnabled() ? getSourcesBySlugs(workspaceRootPath, sourceSlugs) : []
+}
+
+function loadRuntimeWorkspaceSources(workspaceRootPath: string): LoadedSource[] {
+  return getDataSourcesEnabled() ? loadWorkspaceSources(workspaceRootPath) : []
 }
 
 /**
@@ -1577,12 +1589,12 @@ export class SessionManager implements ISessionManager {
     const callbacks: ConfigWatcherCallbacks = {
       onSourcesListChange: async (sources: LoadedSource[]) => {
         sessionLog.info(`Sources list changed in ${workspaceRootPath} (${sources.length} sources)`)
-        this.broadcastSourcesChanged(workspaceId, sources)
+        this.broadcastSourcesChanged(workspaceId, getDataSourcesEnabled() ? sources : [])
         await this.reloadSourcesForWorkspace(workspaceRootPath)
       },
       onSourceChange: async (slug: string, source: LoadedSource | null) => {
         sessionLog.info(`Source '${slug}' changed:`, source ? 'updated' : 'deleted')
-        const sources = loadWorkspaceSources(workspaceRootPath)
+        const sources = loadRuntimeWorkspaceSources(workspaceRootPath)
         this.broadcastSourcesChanged(workspaceId, sources)
         await this.reloadSourcesForWorkspace(workspaceRootPath)
       },
@@ -1590,7 +1602,7 @@ export class SessionManager implements ISessionManager {
         sessionLog.info(`Source guide changed: ${sourceSlug}`)
         // Broadcast the updated sources list so sidebar picks up guide changes
         // Note: Guide changes don't require session source reload (no server changes)
-        const sources = loadWorkspaceSources(workspaceRootPath)
+        const sources = loadRuntimeWorkspaceSources(workspaceRootPath)
         this.broadcastSourcesChanged(workspaceId, sources)
       },
       onStatusConfigChange: () => {
@@ -1874,7 +1886,7 @@ export class SessionManager implements ISessionManager {
     sessionLog.info(`Reloading sources for session ${managed.id}`)
 
     // Reload all sources from disk (craft-agents-docs is always available as MCP server)
-    const allSources = loadAllSources(workspaceRootPath)
+    const allSources = loadRuntimeAllSources(workspaceRootPath)
     managed.agent.setAllSources(allSources)
 
     // Rebuild MCP and API servers for session's enabled sources
@@ -2470,7 +2482,7 @@ export class SessionManager implements ISessionManager {
       const workspaceRootPath = managed.workspace.rootPath
       const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
       const enabledSlugs = managed.enabledSourceSlugs || []
-      const allSources = loadAllSources(workspaceRootPath)
+      const allSources = loadRuntimeAllSources(workspaceRootPath)
       const enabledSources = allSources.filter(s =>
         enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
       )
@@ -2798,8 +2810,8 @@ export class SessionManager implements ISessionManager {
       throw new Error(`Workspace ${workspaceId} not found`)
     }
 
-    // Get new session defaults from workspace config (with global fallback)
-    // Options.permissionMode overrides the workspace default (used by EditPopover for auto-execute)
+    // Workspace defaults remain for workspace-scoped behavior such as permissions and sources.
+    // Options.permissionMode overrides the workspace default (used by EditPopover for auto-execute).
     const workspaceRootPath = workspace.rootPath
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
     const globalDefaults = loadConfigDefaults()
@@ -2809,15 +2821,11 @@ export class SessionManager implements ISessionManager {
       ?? wsConfig?.defaults?.permissionMode
       ?? globalDefaults.workspaceDefaults.permissionMode
 
-    // Resolve thinking level with caller-first precedence, matching permissionMode above:
-    //   caller override → workspace default → global default.
+    // AI defaults are global: an explicit session value takes precedence.
     // normalizeThinkingLevel() tolerates undefined/unknown inputs.
     const defaultThinkingLevel =
       normalizeThinkingLevel(options?.thinkingLevel)
-      ?? normalizeThinkingLevel(wsConfig?.defaults?.thinkingLevel)
       ?? getDefaultThinkingLevel()
-    // Get default model from workspace config (used when no session-specific model is set)
-    const defaultModel = wsConfig?.defaults?.model
     const requestedProvider = options?.provider
     const sessionProvider = hasConfiguredPiProvider(requestedProvider)
       ? requestedProvider
@@ -2832,26 +2840,22 @@ export class SessionManager implements ISessionManager {
     // Resolve model tier hints ('fast' / 'default') to actual model IDs.
     // EditPopover uses tier hints instead of hardcoded Anthropic model names
     // so the right model is selected regardless of the active LLM provider.
-    let resolvedModelOption = options?.model || defaultModel
+    let resolvedModelOption = options?.model
     if (resolvedModelOption === 'fast' || resolvedModelOption === 'default') {
-      const tierProvider = resolveSessionProvider(
-        sessionProvider,
-        wsConfig?.defaults?.provider,
-      )
+      const tierProvider = resolveSessionProvider(sessionProvider)
       if (tierProvider) {
         const models = tierProvider.provider.models ?? []
         resolvedModelOption = resolvedModelOption === 'fast'
-          ? (models[1]?.id ?? models[0]?.id ?? defaultModel)
-          : (models[0]?.id ?? defaultModel)
+          ? (models[1]?.id ?? models[0]?.id)
+          : models[0]?.id
       } else {
-        resolvedModelOption = defaultModel
+        resolvedModelOption = undefined
       }
     }
 
     // Resolve backend target early for branching policy checks.
     const targetBackendContext = resolveBackendContext({
       sessionProvider,
-      workspaceDefaultProvider: wsConfig?.defaults?.provider,
       managedModel: resolvedModelOption,
     })
     const targetProviderType = targetBackendContext.providerConfig?.baseUrl ? 'pi_compat' : 'pi'
@@ -2911,7 +2915,6 @@ export class SessionManager implements ISessionManager {
 
       const sourceBackendContext = resolveBackendContext({
         sessionProvider: sourceManaged?.provider || sourceSession.provider,
-        workspaceDefaultProvider: wsConfig?.defaults?.provider,
         managedModel: sourceManaged?.model || sourceSession.model,
       })
       const sourceProviderType = sourceBackendContext.providerConfig?.baseUrl ? 'pi_compat' : 'pi'
@@ -3229,10 +3232,8 @@ export class SessionManager implements ISessionManager {
 
     if (!managed.agent) return
 
-    const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
     const backendContext = resolveBackendContext({
       sessionProvider: managed.provider,
-      workspaceDefaultProvider: workspaceConfig?.defaults?.provider,
       managedModel: managed.model,
     })
     const providerConfig = backendContext.providerConfig
@@ -3358,9 +3359,8 @@ export class SessionManager implements ISessionManager {
    *
    * Provider resolution order:
    * 1. session.provider (explicit per-session selection)
-   * 2. workspace.defaults.provider
-   * 3. global provider
-   * 4. fallback: no provider configured
+   * 2. global provider
+   * 3. fallback: no provider configured
    */
   private async getOrCreateAgent(managed: ManagedSession): Promise<AgentInstance> {
     // Recovery callbacks are synchronous once the agent is constructed. Load
@@ -3374,10 +3374,8 @@ export class SessionManager implements ISessionManager {
     // refresh fails, in which case the create branch below rebuilds it.
     await this.tryRefreshAgentRuntime(managed, 'send-path refresh')
 
-    const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
     const backendContext = resolveBackendContext({
       sessionProvider: managed.provider,
-      workspaceDefaultProvider: workspaceConfig?.defaults?.provider,
       managedModel: managed.model,
     })
     const providerConfig = backendContext.providerConfig
@@ -3432,7 +3430,7 @@ export class SessionManager implements ISessionManager {
 
       const sessionPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
       const enabledSlugs = managed.enabledSourceSlugs || []
-      const allSources = loadAllSources(managed.workspace.rootPath)
+      const allSources = loadRuntimeAllSources(managed.workspace.rootPath)
       const enabledSources = allSources.filter(s =>
         enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
       )
@@ -3951,7 +3949,7 @@ export class SessionManager implements ISessionManager {
           prompt: request.prompt,
           connection: request.provider,
           model: request.model,
-          enabledSources: request.enabledSourceSlugs,
+          enabledSources: getDataSourcesEnabled() ? request.enabledSourceSlugs : [],
           permissionMode: request.permissionMode,
           thinkingLevel: request.thinkingLevel,
           labels: request.labels,
@@ -4128,7 +4126,7 @@ export class SessionManager implements ISessionManager {
         }
 
         // Load the source to check if it exists and is ready
-        const sources = getSourcesBySlugs(workspaceRootPath, [sourceSlug])
+        const sources = loadRuntimeSourcesBySlugs(workspaceRootPath, [sourceSlug])
         if (sources.length === 0) {
           sessionLog.warn(`Source ${sourceSlug} not found in workspace`)
           return false
@@ -4154,7 +4152,7 @@ export class SessionManager implements ISessionManager {
         }
 
         // Build server configs for all enabled sources
-        const allEnabledSources = getSourcesBySlugs(workspaceRootPath, managed.enabledSourceSlugs || [])
+        const allEnabledSources = loadRuntimeSourcesBySlugs(workspaceRootPath, managed.enabledSourceSlugs || [])
         // Pass session path so large API responses can be saved to session folder
         const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
         const { mcpServers, apiServers, errors } = await buildServersFromSources(allEnabledSources, sessionPath, managed.tokenRefreshManager, managed.agent?.getSummarizeCallback())
@@ -4326,9 +4324,24 @@ export class SessionManager implements ISessionManager {
     }, managed.workspace.id)
   }
 
+  /** Apply the global data-source feature flag to every active runtime. */
+  async refreshDataSourcesRuntime(): Promise<void> {
+    const activeSessions = [...this.sessions.values()].filter(managed => managed.agent)
+    const results = await Promise.allSettled(activeSessions.map(managed => this.reloadSessionSources(managed)))
+
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index]
+      if (result?.status === 'rejected') {
+        sessionLog.warn(
+          `Failed to refresh data-source runtime for session ${activeSessions[index]?.id}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+        )
+      }
+    }
+  }
+
   /**
    * Clear per-session overrides for a provider that was deleted from Pi global
-   * config. The next resolution inherits the workspace/global default instead
+   * config. The next resolution inherits the global default instead
    * of silently routing through it while retaining the stale key.
    */
   async clearDeletedProviderReferences(provider: string): Promise<void> {
@@ -4479,7 +4492,7 @@ export class SessionManager implements ISessionManager {
 
     // If agent exists, build and apply servers immediately
     if (managed.agent) {
-      const sources = getSourcesBySlugs(workspaceRootPath, sourceSlugs)
+      const sources = loadRuntimeSourcesBySlugs(workspaceRootPath, sourceSlugs)
       // Pass session path so large API responses can be saved to session folder
       const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
       const { mcpServers, apiServers, errors } = await buildServersFromSources(sources, sessionPath, managed.tokenRefreshManager, managed.agent.getSummarizeCallback())
@@ -4488,7 +4501,7 @@ export class SessionManager implements ISessionManager {
       }
 
       // Set all sources for context (agent sees full list with descriptions, including built-ins)
-      const allSources = loadAllSources(workspaceRootPath)
+      const allSources = loadRuntimeAllSources(workspaceRootPath)
       managed.agent.setAllSources(allSources)
 
       // Set active source servers (tools are only available from these)
@@ -4885,10 +4898,11 @@ export class SessionManager implements ISessionManager {
       }
       // Update agent model if it already exists (takes effect on next query)
       if (managed.agent) {
-        // Fallback chain: session model > workspace default > provider default
-        const wsConfig = loadWorkspaceConfig(managed.workspace.rootPath)
-        const sessionConn = resolveSessionProvider(managed.provider, wsConfig?.defaults?.provider)
-        const effectiveModel = model ?? wsConfig?.defaults?.model ?? sessionConn?.provider.models?.[0]?.id
+        // Fallback chain: session model > global default.
+        const effectiveModel = resolveBackendContext({
+          sessionProvider: managed.provider,
+          managedModel: model ?? undefined,
+        }).resolvedModel
         if (effectiveModel) {
           sessionLog.info(`[updateSessionModel] Calling agent.setModel(${effectiveModel}) [agent exists=${!!managed.agent}]`)
           managed.agent.setModel(effectiveModel)
@@ -5436,7 +5450,7 @@ export class SessionManager implements ISessionManager {
     // Pre-enable sources required by invoked skills (Issue #249)
     // This eliminates the two-turn penalty where the agent discovers missing sources at runtime.
     // Uses targeted loadSkillBySlug() instead of loadAllSkills() to avoid O(N) filesystem scans.
-    if (options?.skillSlugs?.length) {
+    if (getDataSourcesEnabled() && options?.skillSlugs?.length) {
       try {
         const workspaceRoot = managed.workspace.rootPath
 
@@ -5455,7 +5469,7 @@ export class SessionManager implements ISessionManager {
           const toEnable: string[] = []
           const skipped: string[] = []
           const candidateSlugs = Array.from(requiredSources)
-          const loadedSources = getSourcesBySlugs(workspaceRoot, candidateSlugs)
+          const loadedSources = loadRuntimeSourcesBySlugs(workspaceRoot, candidateSlugs)
           const usableSources = new Set(
             loadedSources
               .filter(isSourceUsable)
@@ -5497,14 +5511,15 @@ export class SessionManager implements ISessionManager {
     try {
       const workspaceRootPath = managed.workspace.rootPath
       const enabledSlugs = managed.enabledSourceSlugs ?? []
-      const hasSources = enabledSlugs.length > 0
+      const dataSourcesEnabled = getDataSourcesEnabled()
+      const hasSources = dataSourcesEnabled && enabledSlugs.length > 0
 
       // Load enabled sources up-front so we can refresh tokens BEFORE getOrCreateAgent
       // runs its internal cold-session build. Otherwise that build sees stale tokens
       // and emits AUTH_REQUIRED, causing a brief "needs_auth" UI flicker before the
       // post-build refresh restores state (#710).
       const sources: LoadedSource[] = hasSources
-        ? getSourcesBySlugs(workspaceRootPath, enabledSlugs)
+        ? loadRuntimeSourcesBySlugs(workspaceRootPath, enabledSlugs)
         : []
 
       if (hasSources && managed.tokenRefreshManager) {
@@ -5524,12 +5539,17 @@ export class SessionManager implements ISessionManager {
       sendSpan.mark('agent.ready')
 
       // Always set all sources for context (even if none are enabled), including built-ins
-      const allSources = loadAllSources(workspaceRootPath)
+      const allSources = loadRuntimeAllSources(workspaceRootPath)
       agent.setAllSources(allSources)
       sendSpan.mark('sources.loaded')
 
-      // Apply source servers if any are enabled
-      if (hasSources) {
+      // Keep existing source selections persisted, but remove all runtime bridges while disabled.
+      if (!dataSourcesEnabled) {
+        const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
+        await agent.setSourceServers({}, {}, [])
+        await applyBridgeUpdates(agent, sessionPath, [], {}, sessionId, workspaceRootPath, 'data sources disabled', managed.poolServer?.url)
+        sendSpan.mark('servers.disabled')
+      } else if (hasSources) {
         const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
         // Single fresh build — tokens already refreshed above.
         const { mcpServers, apiServers, errors } = await buildServersFromSources(sources, sessionPath, managed.tokenRefreshManager, agent.getSummarizeCallback())
@@ -5578,7 +5598,6 @@ export class SessionManager implements ISessionManager {
 
       const messageBackendContext = resolveBackendContext({
         sessionProvider: managed.provider,
-        workspaceDefaultProvider: loadWorkspaceConfig(workspaceRootPath)?.defaults?.provider,
         managedModel: managed.model,
       })
       const modelInputAttachments = filterAttachmentsForModelInput(
@@ -6805,7 +6824,7 @@ export class SessionManager implements ISessionManager {
         const workspaceRootPath = managed.workspace.rootPath
         let toolDisplayMeta: ToolDisplayMeta | undefined
         if (formattedToolInput && Object.keys(formattedToolInput).length > 0) {
-          const allSources = loadAllSources(workspaceRootPath)
+          const allSources = loadRuntimeAllSources(workspaceRootPath)
           toolDisplayMeta = await resolveToolDisplayMeta(event.toolName, formattedToolInput, workspaceRootPath, allSources)
         }
         const shouldActivateOverlay = shouldActivateBrowserOverlay(
@@ -7141,8 +7160,7 @@ export class SessionManager implements ISessionManager {
    *
    * The options-object form replaced the previous positional-args signature
    * once the param list outgrew readability — `thinkingLevel` was the trigger.
-   * When `thinkingLevel` is omitted, `createSession` falls back to the
-   * workspace default (then DEFAULT_THINKING_LEVEL).
+   * When `thinkingLevel` is omitted, `createSession` uses the global default.
    */
   async executePromptAutomation(
     input: ExecutePromptAutomationInput,
@@ -7234,7 +7252,7 @@ export class SessionManager implements ISessionManager {
    * Resolve @mentions in automation prompts to source and skill slugs
    */
   private resolveAutomationMentions(workspaceRootPath: string, mentions: string[]): { sourceSlugs: string[]; skillSlugs: string[] } | undefined {
-    const sources = loadWorkspaceSources(workspaceRootPath)
+    const sources = loadRuntimeWorkspaceSources(workspaceRootPath)
     const skills = loadAllSkills(workspaceRootPath)
     const sourceSlugs: string[] = []
     const skillSlugs: string[] = []
@@ -7264,12 +7282,9 @@ export class SessionManager implements ISessionManager {
     if (messages.length === 0) return null
 
     const workspaceRootPath = managed.workspace.rootPath
-    const wsConfig = loadWorkspaceConfig(workspaceRootPath)
-    const defaultModel = wsConfig?.defaults?.model
     const backendContext = resolveBackendContext({
       sessionProvider: managed.provider,
-      workspaceDefaultProvider: wsConfig?.defaults?.provider,
-      managedModel: managed.model || defaultModel,
+      managedModel: managed.model,
     })
 
     const miniModel = backendContext.providerConfig?.models?.[1]?.id
@@ -7443,7 +7458,7 @@ export class SessionManager implements ISessionManager {
         ? (readPiGlobalProviders()[header.provider]?.baseUrl ? 'pi_compat' : 'pi')
         : undefined
       const compatibleConnection = sourceProviderType
-        ? this.findCompatibleProvider(workspaceRootPath, sourceProviderType)
+        ? this.findCompatibleProvider(sourceProviderType)
         : null
 
       if (compatibleConnection && storedSession.sdkSessionId) {
@@ -7458,7 +7473,7 @@ export class SessionManager implements ISessionManager {
         storedSession.sdkSessionId = undefined
         storedSession.provider = undefined
       }
-      // Clear thinking level so the session inherits the workspace default
+      // Clear thinking level so the session inherits the global default.
       storedSession.thinkingLevel = undefined
       storedSession.workingDirectory = workspaceRootPath
     }
@@ -7554,11 +7569,10 @@ export class SessionManager implements ISessionManager {
 
   /**
    * Find an Pi provider on this server that matches the given provider type.
-   * Checks workspace default first, then falls back to any matching connection.
+   * Checks the global default first, then falls back to any matching connection.
    */
-  private findCompatibleProvider(workspaceRootPath: string, providerType: string): string | null {
-    const wsConfig = loadWorkspaceConfig(workspaceRootPath)
-    const defaultSlug = wsConfig?.defaults?.provider
+  private findCompatibleProvider(providerType: string): string | null {
+    const defaultSlug = readPiGlobalSettings().defaultProvider
     if (defaultSlug) {
       const provider = readPiGlobalProviders()[defaultSlug]
       if (provider && (provider.baseUrl ? 'pi_compat' : 'pi') === providerType) return defaultSlug

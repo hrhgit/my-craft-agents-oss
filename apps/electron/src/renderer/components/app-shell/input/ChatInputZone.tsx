@@ -74,6 +74,9 @@ export function ChatInputZone({
   const remoteUIRequest = appShellContext?.remoteUIRequest?.sessionId === sessionId
     ? appShellContext.remoteUIRequest
     : null
+  const remoteUIBatch = appShellContext?.remoteUIBatch?.sessionId === sessionId
+    ? appShellContext.remoteUIBatch
+    : null
 
   const conversationMode = React.useMemo(() => conversationModeFromPlanState(planModeState), [planModeState])
 
@@ -216,7 +219,9 @@ export function ChatInputZone({
       {remoteUIRequest && appShellContext?.respondRemoteUI ? (
         <RemoteUIComposer
           request={remoteUIRequest}
+          batch={remoteUIBatch}
           onRespond={appShellContext.respondRemoteUI}
+          onRespondBatch={appShellContext.respondRemoteUIBatch}
         />
       ) : (
         <InputErrorBoundary

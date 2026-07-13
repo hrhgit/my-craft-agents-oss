@@ -14,8 +14,8 @@ import { THINKING_LEVEL_IDS, normalizeThinkingLevel } from '../agent/thinking-le
 // Zod Schemas
 // ============================================================================
 
-// Mirrors the workspace-default pattern in `config/storage.ts` so that the
-// legacy 'think' value is silently migrated to a current thinking level.
+// Accept the legacy 'think' value so persisted automations are silently
+// migrated to a current thinking level.
 const ThinkingLevelInputSchema = z
   .enum([...THINKING_LEVEL_IDS, 'think'])
   .transform((value) => normalizeThinkingLevel(value))

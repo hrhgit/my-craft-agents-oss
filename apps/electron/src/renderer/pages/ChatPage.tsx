@@ -672,7 +672,9 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 sessionStatuses={sessionStatuses}
                 onSessionStatusChange={handleSessionStatusChange}
                 workspaceId={activeWorkspaceId || undefined}
-                onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
+                onSourcesChange={onSessionSourcesChange
+                  ? (slugs) => onSessionSourcesChange(sessionId, slugs)
+                  : undefined}
                 workingDirectory={sessionMeta.workingDirectory}
                 messagesLoading={messageLoadState.messagesLoading}
                 searchQuery={sessionListSearchQuery}
@@ -747,7 +749,9 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             sessionStatuses={sessionStatuses}
             onSessionStatusChange={handleSessionStatusChange}
             workspaceId={activeWorkspaceId || undefined}
-            onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
+            onSourcesChange={onSessionSourcesChange
+              ? (slugs) => onSessionSourcesChange(sessionId, slugs)
+              : undefined}
             workingDirectory={workingDirectory}
             sessionFolderPath={session?.sessionFolderPath}
             messagesLoading={messageLoadState.messagesLoading}

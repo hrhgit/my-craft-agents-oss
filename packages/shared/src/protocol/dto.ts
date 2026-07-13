@@ -465,11 +465,8 @@ export interface UpdateInfo {
 
 export interface WorkspaceSettings {
   name?: string
-  provider?: string
-  model?: string
   permissionMode?: PermissionMode
   cyclablePermissionModes?: PermissionMode[]
-  thinkingLevel?: ThinkingLevel
   workingDirectory?: string
   localMcpEnabled?: boolean
   enabledSourceSlugs?: string[]

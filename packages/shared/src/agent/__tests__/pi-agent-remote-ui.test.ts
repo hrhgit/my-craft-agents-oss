@@ -78,6 +78,95 @@ describe('PiAgent RemoteUI bridge', () => {
     agent.destroy()
   })
 
+  it('splits ask-user single-select context without changing other extension titles', () => {
+    const { agent } = createAgent()
+    const map = (agent as any).mapExtensionUiRequest.bind(agent)
+    const canonicalTitle = '[1/3] Pick a theme\r\n\r\nContext:\r\nChoose one option.'
+    const legacyTitle = 'Pick a theme\n\nContext:\nChoose one option.'
+
+    expect(map({
+      type: 'extension_ui_request',
+      id: 'canonical-ask-user-select',
+      extensionId: 'ask-user',
+      method: 'select',
+      title: canonicalTitle,
+      options: ['Light', 'Dark'],
+    })).toMatchObject({
+      kind: 'select',
+      title: '[1/3] Pick a theme',
+      message: 'Choose one option.',
+    })
+    expect(map({
+      type: 'extension_ui_request',
+      id: 'legacy-ask-user-select',
+      extensionId: 'ask_user',
+      method: 'select',
+      title: legacyTitle,
+      options: ['Light', 'Dark'],
+    })).toMatchObject({
+      kind: 'select',
+      title: 'Pick a theme',
+      message: 'Choose one option.',
+    })
+
+    const otherExtension = map({
+      type: 'extension_ui_request',
+      id: 'other-extension-select',
+      extensionId: 'prompt-automation',
+      method: 'select',
+      title: legacyTitle,
+      options: ['Light', 'Dark'],
+    })
+    expect(otherExtension.title).toBe(legacyTitle)
+    expect(otherExtension.message).toBeUndefined()
+
+    agent.destroy()
+  })
+
+  it('splits ask-user editor context without changing other extension titles', () => {
+    const { agent } = createAgent()
+    const map = (agent as any).mapExtensionUiRequest.bind(agent)
+    const canonicalTitle = '[2/3] Describe the issue\r\n\r\nContext:\r\nInclude the affected workflow.'
+    const legacyTitle = 'Describe the issue\n\nContext:\nInclude the affected workflow.'
+
+    expect(map({
+      type: 'extension_ui_request',
+      id: 'canonical-ask-user-input',
+      extensionId: 'ask-user',
+      method: 'input',
+      title: canonicalTitle,
+      placeholder: 'Type your answer...',
+    })).toMatchObject({
+      kind: 'editor',
+      title: '[2/3] Describe the issue',
+      message: 'Include the affected workflow.',
+      placeholder: 'Type your answer...',
+    })
+    expect(map({
+      type: 'extension_ui_request',
+      id: 'legacy-ask-user-input',
+      extensionId: 'ask_user',
+      method: 'input',
+      title: legacyTitle,
+    })).toMatchObject({
+      kind: 'editor',
+      title: 'Describe the issue',
+      message: 'Include the affected workflow.',
+    })
+
+    const otherExtension = map({
+      type: 'extension_ui_request',
+      id: 'other-extension-input',
+      extensionId: 'prompt-automation',
+      method: 'input',
+      title: legacyTitle,
+    })
+    expect(otherExtension.title).toBe(legacyTitle)
+    expect(otherExtension.message).toBeUndefined()
+
+    agent.destroy()
+  })
+
   it('keeps multi-select title decoding scoped to ask-user extension IDs', () => {
     const { agent } = createAgent()
     const map = (agent as any).mapExtensionUiRequest.bind(agent)

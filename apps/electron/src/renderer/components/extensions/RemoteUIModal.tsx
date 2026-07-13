@@ -1,6 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
-import { Check, Send, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { ArrowUp, Check, ChevronLeft, ChevronRight, PencilLine, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type {
+  RemoteUIBatch,
+  RemoteUIBatchSubmission,
+  RemoteUIQuestionSpec,
+} from './remote-ui-batch'
+import { parseRemoteUIQuestionProgress } from './remote-ui-batch'
 
 export interface RemoteUIOption {
   title: string
@@ -42,6 +49,7 @@ export interface RemoteUIEditorRequest {
   requestId: string
   kind: 'editor'
   title: string
+  message?: string
   prefill?: string
   placeholder?: string
   source: string
@@ -72,272 +80,423 @@ export type RemoteUICancelReason = 'cancelled'
 
 export interface RemoteUIComposerProps {
   request: RemoteUIRequest
+  batch?: RemoteUIBatch | null
   onRespond: (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => void
+  onRespondBatch?: (submission: RemoteUIBatchSubmission) => void
 }
 
-export function RemoteUIComposer({ request, onRespond }: RemoteUIComposerProps) {
+export interface RemoteUIAnswerDraft {
+  selections: string[]
+  freeformText: string
+  comment: string
+  text: string
+  confirmed?: boolean
+}
+
+type RemoteUIQuestion = RemoteUIRequest | RemoteUIQuestionSpec
+
+export function isRemoteUICompositionKey(
+  event: { nativeEvent: { isComposing?: boolean; keyCode?: number } },
+  compositionActive: boolean,
+): boolean {
+  return compositionActive || Boolean(event.nativeEvent.isComposing) || event.nativeEvent.keyCode === 229
+}
+
+export function createRemoteUIAnswerDraft(question: RemoteUIQuestion): RemoteUIAnswerDraft {
+  return {
+    selections: [],
+    freeformText: '',
+    comment: '',
+    text: question.kind === 'editor' && 'prefill' in question ? question.prefill ?? '' : '',
+  }
+}
+
+export function selectRemoteUIOption(
+  draft: RemoteUIAnswerDraft,
+  title: string,
+  allowMultiple: boolean,
+): RemoteUIAnswerDraft {
+  const selections = allowMultiple
+    ? draft.selections.includes(title)
+      ? draft.selections.filter(value => value !== title)
+      : [...draft.selections, title]
+    : [title]
+  return { ...draft, selections, freeformText: '' }
+}
+
+export function setRemoteUIFreeform(
+  draft: RemoteUIAnswerDraft,
+  freeformText: string,
+): RemoteUIAnswerDraft {
+  return {
+    ...draft,
+    freeformText,
+    ...(freeformText.trim() ? { selections: [] } : {}),
+  }
+}
+
+export function remoteUIDraftResult(
+  question: RemoteUIQuestion,
+  draft: RemoteUIAnswerDraft,
+): RemoteUIResult | null {
+  if (question.kind === 'confirm') {
+    return typeof draft.confirmed === 'boolean' ? { confirmed: draft.confirmed } : null
+  }
+  if (question.kind === 'editor') {
+    const text = draft.text.trim()
+    return text ? { text } : null
+  }
+
+  const freeformText = draft.freeformText.trim()
+  if (freeformText) {
+    return {
+      selections: [],
+      freeformText,
+      ...(question.allowMultiple && draft.comment.trim() ? { comment: draft.comment.trim() } : {}),
+    }
+  }
+  if (draft.selections.length === 0) return null
+  return {
+    selections: draft.selections,
+    ...(draft.comment.trim() ? { comment: draft.comment.trim() } : {}),
+  }
+}
+
+function isAskUserExtension(value: string | undefined): boolean {
+  return value?.trim().toLowerCase().replaceAll('-', '_') === 'ask_user'
+}
+
+function visibleSelectOptions(question: Extract<RemoteUIQuestion, { kind: 'select' }>): RemoteUIOption[] {
+  const askUser = 'extensionId' in question && isAskUserExtension(question.extensionId)
+  return question.options.filter(option => !askUser || !/write my own answer/i.test(option.title))
+}
+
+function questionMessage(question: RemoteUIQuestion): string | undefined {
+  return 'message' in question ? question.message : undefined
+}
+
+export function RemoteUIComposer({
+  request,
+  batch,
+  onRespond,
+  onRespondBatch,
+}: RemoteUIComposerProps) {
+  const { t } = useTranslation()
+  const questions = useMemo<RemoteUIQuestion[]>(
+    () => batch?.questions ?? [request],
+    [batch, request],
+  )
+  const identity = batch?.id ?? request.requestId
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [drafts, setDrafts] = useState<RemoteUIAnswerDraft[]>(() => questions.map(createRemoteUIAnswerDraft))
+  const editorRef = useRef<HTMLTextAreaElement>(null)
+  const compositionActiveRef = useRef(false)
+  const question = questions[activeIndex] ?? request
+  const progress = batch
+    ? { current: activeIndex + 1, total: questions.length, title: question.title }
+    : parseRemoteUIQuestionProgress(question.title)
+  const displayTitle = progress?.title ?? question.title
+  const results = questions.map((item, index) => remoteUIDraftResult(item, drafts[index] ?? createRemoteUIAnswerDraft(item)))
+  const canSubmit = batch ? results.every(Boolean) : Boolean(results[0])
+
+  useEffect(() => {
+    setActiveIndex(0)
+    setDrafts(questions.map(createRemoteUIAnswerDraft))
+  }, [identity])
+
+  useEffect(() => {
+    if (question.kind !== 'editor') return
+    requestAnimationFrame(() => editorRef.current?.focus())
+  }, [activeIndex, identity, question.kind])
+
+  const updateDraft = (updater: (draft: RemoteUIAnswerDraft) => RemoteUIAnswerDraft) => {
+    setDrafts(previous => previous.map((draft, index) => index === activeIndex ? updater(draft) : draft))
+  }
+
+  const submit = () => {
+    if (!canSubmit) return
+    if (batch && onRespondBatch) {
+      onRespondBatch({
+        batchId: batch.id,
+        sessionId: batch.sessionId,
+        runtimeId: batch.runtimeId,
+        extensionId: batch.extensionId,
+        answers: batch.questions.map((item, index) => ({
+          question: item,
+          result: results[index]!,
+        })),
+      })
+      return
+    }
+    onRespond(results[0]!)
+  }
+
+  const handleTextareaEnter = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== 'Enter' || event.shiftKey || isRemoteUICompositionKey(event, compositionActiveRef.current)) return
+    event.preventDefault()
+    const currentResult = remoteUIDraftResult(question, drafts[activeIndex] ?? createRemoteUIAnswerDraft(question))
+    if (!currentResult) return
+    if (batch && activeIndex < questions.length - 1) {
+      setActiveIndex(index => index + 1)
+      return
+    }
+    submit()
+  }
+
   return (
     <section
-      aria-label={request.title}
-      className="overflow-hidden rounded-[12px] bg-background shadow-middle"
+      aria-label={displayTitle}
+      className="overflow-hidden rounded-lg border border-border/70 bg-background shadow-middle"
       data-remote-ui-composer
+      data-remote-ui-batch={batch ? 'true' : undefined}
     >
-      {request.kind === 'select' && <SelectComposer request={request} onRespond={onRespond} />}
-      {request.kind === 'confirm' && <ConfirmComposer request={request} onRespond={onRespond} />}
-      {request.kind === 'editor' && <EditorComposer request={request} onRespond={onRespond} />}
+      <form
+        onCompositionStart={() => { compositionActiveRef.current = true }}
+        onCompositionEnd={() => { compositionActiveRef.current = false }}
+        onSubmit={(event) => {
+          event.preventDefault()
+          submit()
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && !isRemoteUICompositionKey(event, compositionActiveRef.current)) {
+            onRespond(null, 'cancelled')
+          }
+        }}
+      >
+        <header className="flex items-start gap-3 border-b border-border/60 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            {progress && (
+              <div className="mb-1 text-[11px] font-medium tabular-nums text-muted-foreground" data-remote-ui-progress>
+                {progress.current} / {progress.total}
+              </div>
+            )}
+            <h2 id={`remote-ui-title-${request.requestId}`} className="text-sm font-semibold leading-5 text-foreground">
+              {displayTitle}
+            </h2>
+            {questionMessage(question) && (
+              <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
+                {questionMessage(question)}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => onRespond(null, 'cancelled')}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={t('remoteUI.skipQuestion')}
+            title={t('common.close')}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </header>
+
+        <div className="max-h-[min(48vh,440px)] overflow-y-auto px-2.5 py-2">
+          {question.kind === 'select' && (
+            <SelectQuestion
+              question={question}
+              draft={drafts[activeIndex] ?? createRemoteUIAnswerDraft(question)}
+              onChange={updateDraft}
+              onTextareaEnter={handleTextareaEnter}
+            />
+          )}
+          {question.kind === 'editor' && (
+            <textarea
+              ref={editorRef}
+              value={(drafts[activeIndex] ?? createRemoteUIAnswerDraft(question)).text}
+              onChange={event => updateDraft(draft => ({ ...draft, text: event.target.value }))}
+              onKeyDown={handleTextareaEnter}
+              rows={3}
+              placeholder={question.placeholder ?? t('remoteUI.answerPlaceholder')}
+              className="max-h-40 min-h-20 w-full resize-none rounded-md border border-border/70 bg-muted/35 px-3 py-2 text-sm leading-5 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground/20 focus:bg-muted/55 focus-visible:ring-2 focus-visible:ring-ring/35"
+              aria-label={t('remoteUI.answer')}
+            />
+          )}
+          {question.kind === 'confirm' && (
+            <div className="grid grid-cols-2 gap-2" role="group" aria-label={displayTitle}>
+              <button
+                type="button"
+                onClick={() => onRespond({ confirmed: false })}
+                className="h-9 rounded-md border border-border/70 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => onRespond({ confirmed: true })}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-foreground text-sm font-medium text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Check className="h-4 w-4" />
+                {t('common.ok')}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {question.kind !== 'confirm' && (
+          <footer className="flex min-h-12 items-center justify-between gap-3 border-t border-border/60 px-3 py-2">
+            <div className="flex h-8 items-center gap-1">
+              {batch && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setActiveIndex(index => Math.max(0, index - 1))}
+                    disabled={activeIndex === 0}
+                    className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={t('common.back')}
+                    title={t('common.back')}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveIndex(index => Math.min(questions.length - 1, index + 1))}
+                    disabled={activeIndex === questions.length - 1}
+                    className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={t('common.forward')}
+                    title={t('common.forward')}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {batch && (
+                <div className="flex items-center gap-1" aria-hidden="true">
+                  {questions.map((_, index) => (
+                    <span
+                      key={index}
+                      className={cn(
+                        'h-1.5 w-1.5 rounded-full bg-muted-foreground/25 transition-colors',
+                        results[index] && 'bg-muted-foreground/60',
+                        index === activeIndex && 'bg-foreground',
+                      )}
+                    />
+                  ))}
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={!canSubmit}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-[opacity,transform] hover:opacity-90 active:scale-95 disabled:cursor-default disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                aria-label={t('remoteUI.submitAnswer')}
+                title={t('remoteUI.submitAnswer')}
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            </div>
+          </footer>
+        )}
+      </form>
     </section>
   )
 }
 
-function ComposerHeader({ title, message, onSkip }: { title: string; message?: string; onSkip: () => void }) {
-  return (
-    <div className="flex items-start gap-3 px-3.5 pb-2 pt-3">
-      <div className="min-w-0 flex-1">
-        <h2 className="text-sm font-medium leading-5 text-foreground">{title}</h2>
-        {message && <p className="mt-0.5 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{message}</p>}
-      </div>
-      <button
-        type="button"
-        onClick={onSkip}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        aria-label="Skip question"
-        title="Skip"
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  )
-}
-
-function SelectComposer({ request, onRespond }: { request: RemoteUISelectRequest; onRespond: RemoteUIComposerProps['onRespond'] }) {
-  const { options = [], allowMultiple = false, allowComment = false } = request
-  // ask_user guarantees a direct freeform answer for every question. Older RPC
-  // fallbacks also include a synthetic "Write my own answer" option, which the
-  // inline composer replaces with the text field below.
-  const allowFreeform = request.allowFreeform || request.extensionId === 'ask_user'
-  const visibleOptions = options.filter(option =>
-    request.extensionId !== 'ask_user' || !/write my own answer/i.test(option.title),
-  )
-  const [selected, setSelected] = useState<string[]>([])
-  const [freeformText, setFreeformText] = useState('')
-  const [comment, setComment] = useState('')
-  const freeformRef = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    setSelected([])
-    setFreeformText('')
-    setComment('')
-  }, [request.requestId])
-
-  const submitSelections = (selections = selected) => {
-    if (selections.length === 0) return
-    onRespond({
-      selections,
-      ...(comment.trim() ? { comment: comment.trim() } : {}),
-    })
-  }
-
-  const chooseOption = (title: string) => {
-    if (!allowMultiple && !allowComment) {
-      submitSelections([title])
-      return
-    }
-    setSelected(previous => {
-      if (!allowMultiple) return previous.includes(title) ? [] : [title]
-      return previous.includes(title)
-        ? previous.filter(value => value !== title)
-        : [...previous, title]
-    })
-  }
-
-  const submitFreeform = () => {
-    const value = freeformText.trim()
-    if (!value) return
-    onRespond({
-      selections: [],
-      freeformText: value,
-      ...(comment.trim() ? { comment: comment.trim() } : {}),
-    })
-  }
+function SelectQuestion({
+  question,
+  draft,
+  onChange,
+  onTextareaEnter,
+}: {
+  question: Extract<RemoteUIQuestion, { kind: 'select' }>
+  draft: RemoteUIAnswerDraft
+  onChange: (updater: (draft: RemoteUIAnswerDraft) => RemoteUIAnswerDraft) => void
+  onTextareaEnter: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void
+}) {
+  const { t } = useTranslation()
+  const customAnswerRef = useRef<HTMLTextAreaElement>(null)
+  const allowMultiple = Boolean(question.allowMultiple)
+  const allowFreeform = Boolean(question.allowFreeform)
+    || ('extensionId' in question && isAskUserExtension(question.extensionId))
+  const options = visibleSelectOptions(question)
+  const customActive = Boolean(draft.freeformText.trim())
+  const showComment = Boolean(question.allowComment) && (!customActive || allowMultiple)
 
   return (
-    <div onKeyDown={(event) => {
-      if (event.key === 'Escape') onRespond(null, 'cancelled')
-    }}>
-      <ComposerHeader title={request.title} message={request.message} onSkip={() => onRespond(null, 'cancelled')} />
-
-      <div className="max-h-[min(46vh,420px)] overflow-y-auto px-2 pb-1">
-        <div className="flex flex-col gap-1">
-          {visibleOptions.map((option, index) => {
-            const isSelected = selected.includes(option.title)
-            const optionContent = (
-              <span className="min-w-0 flex-1 text-sm leading-5">
-                <span className="font-medium text-foreground">{option.title}</span>
-                {option.description && <span className="ml-2 text-muted-foreground">{option.description}</span>}
-              </span>
-            )
-
-            if (allowMultiple) {
-              return (
-                <label
-                  key={`${option.title}-${index}`}
-                  data-remote-ui-option
-                  className={cn(
-                    'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
-                    isSelected ? 'bg-muted' : 'hover:bg-muted/70',
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => chooseOption(option.title)}
-                    className="h-4 w-4 shrink-0 accent-foreground"
-                    aria-label={`Select ${option.title}`}
-                  />
-                  {optionContent}
-                </label>
-              )
-            }
-
-            return (
-              <button
-                key={`${option.title}-${index}`}
-                type="button"
-                data-remote-ui-option
-                onClick={() => chooseOption(option.title)}
-                className={cn(
-                  'flex min-h-11 w-full items-center rounded-md px-2 py-1.5 text-left transition-colors',
-                  isSelected ? 'bg-muted' : 'hover:bg-muted/70',
-                )}
-              >
-                {optionContent}
-              </button>
-            )
-          })}
-        </div>
-
-        {allowFreeform && (
-          <div data-remote-ui-freeform className="mt-1 flex items-end gap-2 rounded-md px-2 py-1.5 focus-within:bg-muted/60">
-            <textarea
-              ref={freeformRef}
-              value={freeformText}
-              onChange={event => setFreeformText(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  submitFreeform()
-                }
-              }}
-              rows={1}
-              placeholder="Type your own answer..."
-              className="max-h-28 min-h-7 flex-1 resize-none bg-transparent py-1 text-sm leading-5 outline-none placeholder:text-muted-foreground"
-              aria-label="Custom answer"
-            />
-            <button
-              type="button"
-              onClick={submitFreeform}
-              disabled={!freeformText.trim()}
-              className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-foreground text-background disabled:opacity-30"
-              aria-label="Send custom answer"
-              title="Send"
-            >
-              <Send className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
-
-        {allowComment && (
-          <textarea
-            value={comment}
-            onChange={event => setComment(event.target.value)}
-            rows={1}
-            placeholder="Additional comment (optional)"
-            className="mt-1 max-h-24 min-h-8 w-full resize-none rounded-md bg-muted/50 px-3 py-1.5 text-xs leading-5 outline-none placeholder:text-muted-foreground focus:bg-muted"
-            aria-label="Additional comment"
-          />
-        )}
-      </div>
-
-      <div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1.5">
-        {(allowMultiple || allowComment) && (
-          <button
-            type="button"
-            onClick={() => submitSelections()}
-            disabled={selected.length === 0}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-xs font-medium text-background disabled:opacity-30"
+    <div
+      className="flex flex-col gap-1"
+      role={allowMultiple ? 'group' : 'radiogroup'}
+      aria-label={question.title}
+    >
+      {options.map((option, index) => {
+        const selected = draft.selections.includes(option.title)
+        return (
+          <label
+            key={`${option.title}-${index}`}
+            data-remote-ui-option
+            className={cn(
+              'flex min-h-11 w-full cursor-pointer items-start gap-3 rounded-md border px-2.5 py-2 text-left transition-colors',
+              selected
+                ? 'border-foreground/15 bg-muted/75'
+                : 'border-transparent hover:border-border/70 hover:bg-muted/40',
+              'focus-within:ring-2 focus-within:ring-ring/35',
+            )}
           >
-            <Check className="h-3.5 w-3.5" />
-            Confirm
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => onRespond(null, 'cancelled')}
-          className="h-8 rounded-md border px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+            <input
+              type={allowMultiple ? 'checkbox' : 'radio'}
+              name={allowMultiple ? undefined : `remote-ui-${question.title}`}
+              checked={selected}
+              onChange={() => onChange(current => selectRemoteUIOption(current, option.title, allowMultiple))}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-foreground"
+              aria-label={option.title}
+            />
+            <span className="min-w-0 flex-1 text-sm leading-5">
+              <span className="font-medium text-foreground">{option.title}</span>
+              {option.description && (
+                <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{option.description}</span>
+              )}
+            </span>
+          </label>
+        )
+      })}
+
+      {allowFreeform && (
+        <div
+          data-remote-ui-custom-option
+          data-remote-ui-freeform
+          className={cn(
+            'flex min-h-11 items-start gap-3 rounded-md border px-2.5 py-2 transition-colors focus-within:ring-2 focus-within:ring-ring/35',
+            customActive ? 'border-foreground/15 bg-muted/75' : 'border-transparent hover:border-border/70 hover:bg-muted/40',
+          )}
         >
-          Skip
-        </button>
-      </div>
-    </div>
-  )
-}
+          {allowMultiple ? (
+            <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
+              <PencilLine className="h-3.5 w-3.5" />
+            </span>
+          ) : (
+            <input
+              type="radio"
+              name={`remote-ui-${question.title}`}
+              checked={customActive}
+              onChange={() => customAnswerRef.current?.focus()}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-foreground"
+              aria-label={t('remoteUI.customAnswer')}
+            />
+          )}
+          <textarea
+            ref={customAnswerRef}
+            value={draft.freeformText}
+            onChange={event => onChange(current => setRemoteUIFreeform(current, event.target.value))}
+            onKeyDown={onTextareaEnter}
+            rows={1}
+            placeholder={t('remoteUI.customAnswerPlaceholder')}
+            className="max-h-28 min-h-5 flex-1 resize-none bg-transparent text-sm leading-5 outline-none placeholder:text-muted-foreground"
+            aria-label={t('remoteUI.customAnswer')}
+          />
+        </div>
+      )}
 
-function ConfirmComposer({ request, onRespond }: { request: RemoteUIConfirmRequest; onRespond: RemoteUIComposerProps['onRespond'] }) {
-  return (
-    <div>
-      <ComposerHeader title={request.title} message={request.message} onSkip={() => onRespond(null, 'cancelled')} />
-      <div className="flex justify-end gap-2 px-3 pb-3">
-        <button type="button" onClick={() => onRespond({ confirmed: false })} className="h-8 rounded-md border px-3 text-xs font-medium hover:bg-muted">Cancel</button>
-        <button type="button" onClick={() => onRespond({ confirmed: true })} className="h-8 rounded-md bg-foreground px-3 text-xs font-medium text-background">Confirm</button>
-      </div>
-    </div>
-  )
-}
-
-function EditorComposer({ request, onRespond }: { request: RemoteUIEditorRequest; onRespond: RemoteUIComposerProps['onRespond'] }) {
-  const [text, setText] = useState(request.prefill ?? '')
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    setText(request.prefill ?? '')
-    requestAnimationFrame(() => textareaRef.current?.focus())
-  }, [request.requestId, request.prefill])
-
-  const submit = () => {
-    const value = text.trim()
-    if (value) onRespond({ text: value })
-  }
-
-  return (
-    <div onKeyDown={event => {
-      if (event.key === 'Escape') onRespond(null, 'cancelled')
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault()
-        submit()
-      }
-    }}>
-      <ComposerHeader title={request.title} onSkip={() => onRespond(null, 'cancelled')} />
-      <div className="flex items-end gap-2 px-3 pb-3">
+      {showComment && (
         <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={event => setText(event.target.value)}
-          rows={2}
-          placeholder={request.placeholder ?? 'Type your answer...'}
-          className="max-h-40 min-h-16 flex-1 resize-none rounded-md bg-muted/60 px-3 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground focus:bg-muted"
-          aria-label="Answer"
+          value={draft.comment}
+          onChange={event => onChange(current => ({ ...current, comment: event.target.value }))}
+          onKeyDown={onTextareaEnter}
+          rows={1}
+          placeholder={t('remoteUI.commentPlaceholder')}
+          className="mt-1 max-h-24 min-h-10 w-full resize-none rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs leading-5 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground/20 focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/35"
+          aria-label={t('remoteUI.comment')}
         />
-        <button
-          type="button"
-          onClick={submit}
-          disabled={!text.trim()}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-foreground text-background disabled:opacity-30"
-          aria-label="Send answer"
-          title="Send"
-        >
-          <Send className="h-4 w-4" />
-        </button>
-      </div>
+      )}
     </div>
   )
 }

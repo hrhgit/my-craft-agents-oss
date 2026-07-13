@@ -283,6 +283,10 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.settings.GET_MID_STREAM_BEHAVIOR,
   RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR,
 
+  // data-source feature flag — enforced by the workspace-owning runtime
+  RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED,
+  RPC_CHANNELS.tools.SET_DATA_SOURCES_ENABLED,
+
   // pi — provider config on workspace server
   RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS,
   RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL,

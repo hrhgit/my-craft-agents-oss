@@ -187,19 +187,17 @@ export const AGENT_PROVIDER: ModelProvider = 'pi';
 
 /**
  * Get Pi provider for a session.
- * Resolution order: session provider > workspace default provider > Pi global default
+ * Resolution order: session provider > Pi global default.
  *
  * @param sessionConnection - Connection slug from session (may be undefined)
- * @param workspaceDefaultConnection - Workspace default connection (may be undefined)
  * @returns The resolved Pi provider or null if not found
  */
 export function resolveSessionProvider(
   sessionProvider?: string,
-  workspaceDefaultProvider?: string,
 ): { key: string; provider: PiGlobalProvider } | null {
   const providers = readPiGlobalProviders();
   const globalDefault = readPiGlobalSettings().defaultProvider;
-  for (const key of [sessionProvider, workspaceDefaultProvider, globalDefault]) {
+  for (const key of [sessionProvider, globalDefault]) {
     if (key && providers[key]) return { key, provider: providers[key] };
   }
   const first = Object.entries(providers)[0];
@@ -217,13 +215,9 @@ export type ResolvedBackendContext = BackendResolutionContext;
  */
 export function resolveBackendContext(args: {
   sessionProvider?: string;
-  workspaceDefaultProvider?: string;
   managedModel?: string;
 }): ResolvedBackendContext {
-  const resolved = resolveSessionProvider(
-    args.sessionProvider,
-    args.workspaceDefaultProvider,
-  );
+  const resolved = resolveSessionProvider(args.sessionProvider);
   const provider = AGENT_PROVIDER;
   const resolvedModel = resolveModelForProvider(provider, args.managedModel, resolved?.provider ?? null);
 

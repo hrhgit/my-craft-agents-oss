@@ -286,6 +286,8 @@ export const RPC_CHANNELS = {
   tools: {
     GET_BROWSER_TOOL_ENABLED: 'tools:getBrowserToolEnabled',
     SET_BROWSER_TOOL_ENABLED: 'tools:setBrowserToolEnabled',
+    GET_DATA_SOURCES_ENABLED: 'tools:getDataSourcesEnabled',
+    SET_DATA_SOURCES_ENABLED: 'tools:setDataSourcesEnabled',
   },
   piExtensions: {
     GET_DELEGATE_PROMPT_AUTOMATION: 'piExtensions:getDelegatePromptAutomation',

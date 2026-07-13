@@ -32,6 +32,8 @@ import {
   SettingsInput,
 } from '@/components/settings'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
+import { useAtom } from 'jotai'
+import { dataSourcesEnabledAtom } from '@/atoms/sources'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
@@ -103,6 +105,8 @@ export default function AppSettingsPage() {
 
   // Tools state
   const [browserToolEnabled, setBrowserToolEnabled] = useState(true)
+  const [dataSourcesEnabled, setDataSourcesEnabled] = useAtom(dataSourcesEnabledAtom)
+  const [isSavingDataSources, setIsSavingDataSources] = useState(false)
 
   // Proxy state
   const [proxyForm, setProxyForm] = useState<ProxyFormState>(EMPTY_PROXY_FORM)
@@ -128,26 +132,28 @@ export default function AppSettingsPage() {
   const loadSettings = useCallback(async () => {
     if (!window.electronAPI) return
     try {
-      const [notificationsOn, keepAwakeOn, browserToolOn, proxySettings] = await Promise.all([
+      const [notificationsOn, keepAwakeOn, browserToolOn, dataSourcesOn, proxySettings] = await Promise.all([
         window.electronAPI.getNotificationsEnabled(),
         window.electronAPI.getKeepAwakeWhileRunning(),
         window.electronAPI.getBrowserToolEnabled(),
+        window.electronAPI.getDataSourcesEnabled(),
         window.electronAPI.getNetworkProxySettings(),
       ])
       setNotificationsEnabled(notificationsOn)
       setKeepAwakeEnabled(keepAwakeOn)
       setBrowserToolEnabled(browserToolOn)
+      setDataSourcesEnabled(dataSourcesOn)
       const form = toProxyFormState(proxySettings)
       setProxyForm(form)
       setSavedProxyForm(form)
     } catch (error) {
       console.error('Failed to load settings:', error)
     }
-  }, [])
+  }, [setDataSourcesEnabled])
 
   useEffect(() => {
     loadSettings()
-  }, [])
+  }, [loadSettings])
 
   const handleNotificationsEnabledChange = useCallback(async (enabled: boolean) => {
     setNotificationsEnabled(enabled)
@@ -163,6 +169,20 @@ export default function AppSettingsPage() {
     setBrowserToolEnabled(enabled)
     await window.electronAPI.setBrowserToolEnabled(enabled)
   }, [])
+
+  const handleDataSourcesEnabledChange = useCallback(async (enabled: boolean) => {
+    const previous = dataSourcesEnabled
+    setDataSourcesEnabled(enabled)
+    setIsSavingDataSources(true)
+    try {
+      await window.electronAPI.setDataSourcesEnabled(enabled)
+    } catch (error) {
+      setDataSourcesEnabled(previous ?? true)
+      console.error('Failed to save data-source setting:', error)
+    } finally {
+      setIsSavingDataSources(false)
+    }
+  }, [dataSourcesEnabled, setDataSourcesEnabled])
 
   // Proxy handlers
   const isProxyDirty = useMemo(() => {
@@ -238,6 +258,13 @@ export default function AppSettingsPage() {
                     description={t("settings.tools.builtInBrowserDesc")}
                     checked={browserToolEnabled}
                     onCheckedChange={handleBrowserToolEnabledChange}
+                  />
+                  <SettingsToggle
+                    label={t("settings.tools.dataSources")}
+                    description={t("settings.tools.dataSourcesDesc")}
+                    checked={dataSourcesEnabled ?? true}
+                    onCheckedChange={handleDataSourcesEnabledChange}
+                    disabled={dataSourcesEnabled === null || isSavingDataSources}
                   />
                 </SettingsCard>
               </SettingsSection>

@@ -21,12 +21,22 @@ import type {
   RemoteUIResult,
   RemoteUICancelReason,
 } from '../components/extensions/RemoteUIModal'
+import {
+  consumeRemoteUIBatchRequest,
+  isRemoteUIBatchReplayScope,
+  isRemoteUIBatchReplayStage,
+  startRemoteUIBatchReplay,
+  type RemoteUIBatchReplayState,
+  type RemoteUIBatchSubmission,
+} from '../components/extensions/remote-ui-batch'
 
 export interface UseRemoteUIRequestsResult {
   /** 当前需要展示的 remoteui:request（无则为 null） */
   currentRequest: RemoteUIRequest | null
   /** 用户确认/取消时调用：payload 为结果或 null + reason */
   respond: (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => void
+  /** 提交已在 renderer 中完整作答的 ask_user 题组。 */
+  respondBatch: (submission: RemoteUIBatchSubmission) => void
 }
 
 /**
@@ -65,6 +75,8 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
   // 正在响应的 requestId，避免 onOpenChange 在 React 卸载时重复触发
   const respondingRef = useRef<Set<string>>(new Set())
   const timeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const batchReplayRef = useRef<RemoteUIBatchReplayState | null>(null)
+  const batchReplayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   activeSessionIdRef.current = activeSessionId
 
@@ -76,10 +88,11 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
     request: RemoteUIRequest,
     payload: RemoteUIResult | null,
     reason?: RemoteUICancelReason | 'disconnected',
-  ) => {
+    onError?: () => void,
+  ): boolean => {
     if (typeof window.electronAPI?.sendRemoteUIResponse !== 'function') {
       console.warn('[RemoteUI] sendRemoteUIResponse not available on this server build')
-      return
+      return false
     }
     void window.electronAPI.sendRemoteUIResponse(
       request.sessionId || '',
@@ -88,7 +101,27 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
       reason,
     ).catch((err) => {
       console.error('[RemoteUI] Failed to send response:', err)
+      onError?.()
     })
+    return true
+  }, [])
+
+  const clearBatchReplay = useCallback(() => {
+    batchReplayRef.current = null
+    if (batchReplayTimeoutRef.current) clearTimeout(batchReplayTimeoutRef.current)
+    batchReplayTimeoutRef.current = null
+  }, [])
+
+  const setBatchReplay = useCallback((state: RemoteUIBatchReplayState | null, timeout?: number) => {
+    if (batchReplayTimeoutRef.current) clearTimeout(batchReplayTimeoutRef.current)
+    batchReplayTimeoutRef.current = null
+    batchReplayRef.current = state
+    if (state && timeout && timeout > 0) {
+      batchReplayTimeoutRef.current = setTimeout(() => {
+        batchReplayRef.current = null
+        batchReplayTimeoutRef.current = null
+      }, timeout)
+    }
   }, [])
 
   const clearRequestTimeout = useCallback((requestId: string) => {
@@ -118,6 +151,37 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
         currentRequestRef.current?.requestId === request.requestId ||
         queueRef.current.some(queued => queued.requestId === request.requestId)
       ) return
+
+      const replay = batchReplayRef.current
+      if (replay && isRemoteUIBatchReplayScope(replay, request)) {
+        const step = consumeRemoteUIBatchRequest(replay, request)
+        if (step) {
+          respondingRef.current.add(request.requestId)
+          setBatchReplay(step.nextState, request.timeout)
+          const sent = sendResponse(request, step.payload, undefined, () => {
+            clearBatchReplay()
+            setCurrentRequest(current => current ?? request)
+          })
+          if (!sent) {
+            clearBatchReplay()
+            respondingRef.current.delete(request.requestId)
+            setCurrentRequest(current => current ?? request)
+            return
+          }
+          setTimeout(() => respondingRef.current.delete(request.requestId), 0)
+          if (!step.nextState) {
+            setCurrentRequest(current => current ?? takeNextRemoteUIRequestForSession(
+              queueRef.current,
+              activeSessionIdRef.current,
+            ))
+          }
+          return
+        }
+        // A mismatched request at the expected stage means the original flow
+        // changed and must fail closed. A different stage can be a concurrent
+        // ask_user call in the same runtime, so leave the replay intact.
+        if (isRemoteUIBatchReplayStage(replay, request)) clearBatchReplay()
+      }
 
       if (request.timeout && request.timeout > 0) {
         const timer = setTimeout(() => {
@@ -152,7 +216,7 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
     })
 
     return cleanup
-  }, [activeSessionId, sendResponse])
+  }, [activeSessionId, clearBatchReplay, sendResponse, setBatchReplay])
 
   useEffect(() => () => {
     const pending = [currentRequestRef.current, ...queueRef.current].filter(
@@ -165,12 +229,16 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
       }
     }
     queueRef.current = []
-  }, [clearRequestTimeout, sendResponse])
+    clearBatchReplay()
+  }, [clearBatchReplay, clearRequestTimeout, sendResponse])
 
   const respond = useCallback(
     (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => {
       setCurrentRequest((current) => {
         if (!current) return null
+
+        const replay = batchReplayRef.current
+        if (!replay || isRemoteUIBatchReplayStage(replay, current)) clearBatchReplay()
 
         const { requestId } = current
         respondingRef.current.add(requestId)
@@ -188,11 +256,36 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
         return next
       })
     },
-    [clearRequestTimeout, sendResponse],
+    [clearBatchReplay, clearRequestTimeout, sendResponse],
   )
+
+  const respondBatch = useCallback((submission: RemoteUIBatchSubmission) => {
+    setCurrentRequest((current) => {
+      if (!current) return null
+      const step = startRemoteUIBatchReplay(submission, current)
+      if (!step) return current
+
+      const { requestId } = current
+      respondingRef.current.add(requestId)
+      clearRequestTimeout(requestId)
+      setBatchReplay(step.nextState, current.timeout)
+      const sent = sendResponse(current, step.payload, undefined, () => {
+        clearBatchReplay()
+        setCurrentRequest(visible => visible ?? current)
+      })
+      if (!sent) {
+        clearBatchReplay()
+        respondingRef.current.delete(requestId)
+        return current
+      }
+      setTimeout(() => respondingRef.current.delete(requestId), 0)
+      return null
+    })
+  }, [clearBatchReplay, clearRequestTimeout, sendResponse, setBatchReplay])
 
   return {
     currentRequest,
     respond,
+    respondBatch,
   }
 }

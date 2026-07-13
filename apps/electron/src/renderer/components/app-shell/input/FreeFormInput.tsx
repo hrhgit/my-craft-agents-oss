@@ -107,6 +107,7 @@ import {
   getContextUsagePercent,
 } from './context-usage'
 import { useModelVisionToggle } from './useModelVisionToggle'
+import { resolveMidStreamSendIntent } from './midstream-shortcuts'
 
 function formatFollowUpChipText(text: string, fallback: string, maxLength = 50): string {
   const normalized = text.replace(/\s+/g, ' ').trim()
@@ -510,12 +511,12 @@ export function FreeFormInput({
     return providerItems.find(entry => entry.key === currentProvider) ?? null
   }, [providerItems, currentProvider])
 
-  // Effective connection: canonical fallback chain (session → workspace default → global default → first)
+  // Effective connection: canonical fallback chain (session → global default → first)
   const effectiveProvider = resolveEffectiveProvider(currentProvider, defaultProvider, providerItems)
 
   // Effective connection details (with fallbacks) for model list
   // Unlike currentProviderDetails which is null when no explicit connection is set,
-  // this resolves to the actual connection being used (including workspace default)
+  // this resolves to the actual connection being used (including the global default)
   const effectiveProviderDetails = React.useMemo(() => {
     if (!effectiveProvider) return null
     return providerItems.find(entry => entry.key === effectiveProvider) ?? null
@@ -1521,28 +1522,16 @@ export function FreeFormInput({
       }
     }
 
-    // Skip submission during IME composition - user is confirming composed characters, not sending
-    // Handle send key based on user preference:
-    // - 'enter': Enter sends (Shift+Enter for newline)
-    // - 'cmd-enter': ⌘/Ctrl+Enter sends (Enter for newline)
-    if (sendMessageKey === 'enter') {
-      // Enter sends, Shift+Enter adds newline
-      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
-        e.preventDefault()
-        submitMessage('default')
-      }
-      // Also allow Cmd/Ctrl+Enter to send (power user shortcut)
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
-        e.preventDefault()
-        submitMessage('alternate')
-      }
-    } else {
-      // cmd-enter mode: ⌘/Ctrl+Enter sends, plain Enter adds newline
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
-        e.preventDefault()
-        submitMessage('alternate')
-      }
-      // Plain Enter is allowed to pass through (adds newline)
+    const midStreamSendIntent = resolveMidStreamSendIntent(sendMessageKey, {
+      key: e.key,
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+      ctrlKey: e.ctrlKey,
+      isComposing: e.nativeEvent.isComposing,
+    })
+    if (midStreamSendIntent) {
+      e.preventDefault()
+      submitMessage(midStreamSendIntent)
     }
     if (e.key === 'Escape') {
       // Skip blur if a popover/overlay is open — let the overlay handle ESC instead.
@@ -2857,8 +2846,6 @@ function WorkingDirectoryBadge({
     </>
   )
 }
-
-
 
 
 

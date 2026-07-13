@@ -74,10 +74,10 @@ import { MainContentPanel } from "./MainContentPanel"
 import { PanelStackContainer } from "./PanelStackContainer"
 import { CompactSessionListFilter } from "./CompactSessionListFilter"
 import type { ChatDisplayHandle } from "./ChatDisplay"
-import { LeftSidebar } from "./LeftSidebar"
+import { LeftSidebar, type LinkItem as LeftSidebarLinkItem } from "./LeftSidebar"
 import { useSessionSelectionStore } from "@/hooks/useSession"
 import { createInitialState } from "@/hooks/useMultiSelect"
-import { ensureSessionMessagesLoadedAtom } from "@/atoms/sessions"
+import { ensureSessionMessagesLoadedAtom, sessionAtomFamily } from "@/atoms/sessions"
 import { AppShellProvider, type AppShellContextType } from "@/context/AppShellContext"
 import { EscapeInterruptProvider, useEscapeInterrupt } from "@/context/EscapeInterruptContext"
 import { useTheme } from "@/context/ThemeContext"
@@ -90,7 +90,7 @@ import { useSetAtom } from "jotai"
 import type { Session, Workspace, FileAttachment, PermissionRequest, LoadedSource, LoadedSkill, PermissionMode, SourceFilter, AutomationFilter } from "../../../shared/types"
 import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/atoms/sessions"
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
-import { sourcesAtom } from "@/atoms/sources"
+import { dataSourcesEnabledAtom, sourcesAtom } from "@/atoms/sources"
 import { skillsAtom } from "@/atoms/skills"
 import { panelStackAtom, panelCountAtom, focusedPanelIdAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, parseSessionIdFromRoute } from "@/atoms/panel-stack"
 import { type SessionStatusId, type SessionStatus, statusConfigsToSessionStatuses } from "@/config/session-status-config"
@@ -129,6 +129,7 @@ import { FabNewChat } from "./FabNewChat"
 import { SendToWorkspaceDialog } from "./SendToWorkspaceDialog"
 import { MessagingDialogHost } from "@/components/messaging/MessagingDialogHost"
 import { useRemoteUIRequests } from "@/hooks/useRemoteUIRequests"
+import { buildRemoteUIBatch } from "@/components/extensions/remote-ui-batch"
 import { EditPopover, getEditConfig, type EditContextKey } from "@/components/ui/EditPopover"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import {
@@ -814,6 +815,30 @@ function AppShellContent({
   }, [])
   // Sources state (workspace-scoped)
   const [sources, setSources] = React.useState<LoadedSource[]>([])
+  const dataSourcesSetting = useAtomValue(dataSourcesEnabledAtom)
+  const dataSourcesEnabled = dataSourcesSetting === true
+  const setDataSourcesEnabled = useSetAtom(dataSourcesEnabledAtom)
+
+  React.useEffect(() => {
+    let cancelled = false
+    setDataSourcesEnabled(null)
+    window.electronAPI.getDataSourcesEnabled()
+      .then((enabled) => {
+        if (!cancelled) setDataSourcesEnabled(enabled)
+      })
+      .catch((error) => {
+        console.error('[Chat] Failed to load data-source setting:', error)
+        if (!cancelled) setDataSourcesEnabled(true)
+      })
+    return () => { cancelled = true }
+  }, [activeWorkspaceId, setDataSourcesEnabled])
+
+  React.useEffect(() => {
+    if (dataSourcesSetting === false && isSourcesNavigation(navState)) {
+      navigate(routes.view.allSessions())
+    }
+  }, [dataSourcesSetting, navState])
+
   // Sync sources to atom for NavigationContext auto-selection
   const setSourcesAtom = useSetAtom(sourcesAtom)
   React.useEffect(() => {
@@ -905,24 +930,27 @@ function AppShellContent({
 
   // Load sources from backend on mount
   React.useEffect(() => {
-    if (!activeWorkspaceId) return
+    if (!activeWorkspaceId || !dataSourcesEnabled) {
+      setSources([])
+      return
+    }
     window.electronAPI.getSources(activeWorkspaceId).then((loaded) => {
       setSources(loaded || [])
     }).catch(err => {
       console.error('[Chat] Failed to load sources:', err)
     })
-  }, [activeWorkspaceId])
+  }, [activeWorkspaceId, dataSourcesEnabled])
 
   // Subscribe to live source updates (when sources are added/removed dynamically)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onSourcesChanged((workspaceId, updatedSources) => {
-      if (workspaceId !== activeWorkspaceId) return
+      if (workspaceId !== activeWorkspaceId || !dataSourcesEnabled) return
       // Clear icon cache so updated source icons are re-fetched on render
       clearEntityIconCache({ entityType: 'source' })
       setSources(updatedSources || [])
     })
     return cleanup
-  }, [activeWorkspaceId])
+  }, [activeWorkspaceId, dataSourcesEnabled])
 
   // Subscribe to live skill updates (when skills are added/removed dynamically)
   React.useEffect(() => {
@@ -935,13 +963,14 @@ function AppShellContent({
 
   // Handle session source selection changes
   const handleSessionSourcesChange = React.useCallback(async (sessionId: string, sourceSlugs: string[]) => {
+    if (!dataSourcesEnabled) return
     try {
       await window.electronAPI.sessionCommand(sessionId, { type: 'setSources', sourceSlugs })
       // Session will emit a 'sources_changed' event that updates the session state
     } catch (err) {
       console.error('[Chat] Failed to set session sources:', err)
     }
-  }, [])
+  }, [dataSourcesEnabled])
 
   // Handle session label changes (add/remove via # menu or badge X)
   const handleSessionLabelsChange = React.useCallback(async (sessionId: string, labels: string[]) => {
@@ -1088,7 +1117,18 @@ function AppShellContent({
   )
   // Pi extension dialogs are visible only for the active session. Requests for
   // other sessions remain queued until that session becomes active.
-  const { currentRequest: remoteUIRequest, respond: respondRemoteUI } = useRemoteUIRequests(effectiveSessionId)
+  const {
+    currentRequest: remoteUIRequest,
+    respond: respondRemoteUI,
+    respondBatch: respondRemoteUIBatch,
+  } = useRemoteUIRequests(effectiveSessionId)
+  const remoteUIOwnerSession = useAtomValue(
+    sessionAtomFamily(remoteUIRequest?.sessionId ?? ''),
+  )
+  const remoteUIBatch = useMemo(() => {
+    if (!remoteUIRequest?.sessionId) return null
+    return buildRemoteUIBatch(remoteUIOwnerSession?.messages ?? [], remoteUIRequest)
+  }, [remoteUIOwnerSession?.messages, remoteUIRequest])
 
   // Focus chat input for the target session only (multi-panel safe).
   const focusChatInputForSession = useCallback((targetSessionId?: string | null) => {
@@ -1584,8 +1624,10 @@ function AppShellContent({
     enabledModes,
     sessionStatuses: effectiveSessionStatuses,
     remoteUIRequest,
+    remoteUIBatch,
     respondRemoteUI,
-    onSessionSourcesChange: handleSessionSourcesChange,
+    respondRemoteUIBatch,
+    onSessionSourcesChange: dataSourcesEnabled ? handleSessionSourcesChange : undefined,
     rightSidebarButton: null,
     isCompactMode: isAutoCompact,
     // Search state for ChatDisplay highlighting
@@ -1600,7 +1642,7 @@ function AppShellContent({
     automationTestResults,
     getAutomationHistory,
     onReplayAutomation: handleReplayAutomation,
-  }), [contextValue, handleDeleteSession, sources, skills, activeSessionWorkingDirectory, displayLabelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, remoteUIRequest, respondRemoteUI, handleSessionSourcesChange, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
+  }), [contextValue, handleDeleteSession, sources, skills, activeSessionWorkingDirectory, displayLabelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, remoteUIRequest, remoteUIBatch, respondRemoteUI, respondRemoteUIBatch, dataSourcesEnabled, handleSessionSourcesChange, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
@@ -1682,8 +1724,9 @@ function AppShellContent({
 
   // Handler for sources view (all sources)
   const handleSourcesClick = useCallback(() => {
+    if (!dataSourcesEnabled) return
     navigate(routes.view.sources())
-  }, [])
+  }, [dataSourcesEnabled])
 
   // Handlers for source type filter views (subcategories in Sources dropdown)
   const handleSourcesApiClick = useCallback(() => {
@@ -1950,14 +1993,16 @@ function AppShellContent({
     flattenTree(labelTree)
 
     // 3. Sources, Skills, Settings
-    result.push({ id: 'nav:sources', type: 'nav', action: handleSourcesClick })
+    if (dataSourcesEnabled) {
+      result.push({ id: 'nav:sources', type: 'nav', action: handleSourcesClick })
+    }
     result.push({ id: 'nav:skills', type: 'nav', action: handleSkillsClick })
     result.push({ id: 'nav:automations', type: 'nav', action: handleAutomationsClick })
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick() })
     result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
 
     return result
-  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleSettingsClick, handleWhatsNewClick])
+  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, dataSourcesEnabled, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleSettingsClick, handleWhatsNewClick])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -2347,7 +2392,7 @@ function AppShellContent({
                     // --- Separator ---
                     { id: "separator:chats-sources", type: "separator" },
                     // --- Sources & Skills Section ---
-                    {
+                    ...(dataSourcesEnabled ? [{
                       id: "nav:sources",
                       title: t("sidebar.sources"),
                       label: String(sources.length),
@@ -2403,7 +2448,7 @@ function AppShellContent({
                           },
                         },
                       ],
-                    },
+                    }] as LeftSidebarLinkItem[] : []),
                     {
                       id: "nav:skills",
                       title: t("sidebar.skills"),
@@ -3101,7 +3146,7 @@ function AppShellContent({
                     )
                   )}
                   {/* Add Source button (only for sources mode) - uses filter-aware edit config */}
-                  {isSourcesNavigation(navState) && activeWorkspace && (
+                  {dataSourcesEnabled && isSourcesNavigation(navState) && activeWorkspace && (
                     <EditPopover
                       trigger={
                         <HeaderIconButton
@@ -3145,7 +3190,7 @@ function AppShellContent({
               }
             />
             {/* Content: SessionList, SourcesListPanel, or SettingsNavigator based on navigation state */}
-            {isSourcesNavigation(navState) && (
+            {dataSourcesEnabled && isSourcesNavigation(navState) && (
               /* Sources List - filtered by type if sourceFilter is active */
               <SourcesListPanel
                 sources={sources}

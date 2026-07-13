@@ -540,6 +540,8 @@ export interface ElectronAPI {
   // Tools settings
   getBrowserToolEnabled(): Promise<boolean>
   setBrowserToolEnabled(enabled: boolean): Promise<void>
+  getDataSourcesEnabled(): Promise<boolean>
+  setDataSourcesEnabled(enabled: boolean): Promise<void>
 
   // Pi Extensions 集成开关
   getPiExtensionsDelegatePromptAutomation(): Promise<boolean>

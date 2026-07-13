@@ -14,3 +14,6 @@ import type { LoadedSource } from '../../shared/types'
  * NavigationContext reads from it for auto-selection.
  */
 export const sourcesAtom = atom<LoadedSource[]>([])
+
+/** null while the persisted global setting is loading. */
+export const dataSourcesEnabledAtom = atom<boolean | null>(null)

@@ -109,7 +109,7 @@ describe('validation', () => {
     });
 
     it('should migrate legacy thinkingLevel "think" to "medium"', () => {
-      // Mirrors the workspace-default migration in config/validators.ts so persisted
+      // Mirrors the legacy thinking-level migration in config/validators.ts so persisted
       // 'think' values from old configs don't break automation parsing.
       const config = {
         automations: {

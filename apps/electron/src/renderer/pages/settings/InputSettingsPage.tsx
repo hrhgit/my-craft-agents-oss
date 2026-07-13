@@ -11,18 +11,22 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { routes } from '@/lib/navigate'
 import { isMac } from '@/lib/platform'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
+import type { MidStreamBehavior } from '@craft-agent/shared/config/midstream-behavior'
 
 import {
   SettingsSection,
   SettingsCard,
   SettingsToggle,
   SettingsMenuSelectRow,
+  SettingsRow,
+  SettingsSegmentedControl,
 } from '@/components/settings'
 
 export const meta: DetailsPageMeta = {
@@ -46,21 +50,30 @@ export default function InputSettingsPage() {
   // Send message key state
   const [sendMessageKey, setSendMessageKey] = useState<'enter' | 'cmd-enter'>('enter')
 
+  // Follow-up behavior while a response is streaming
+  const [midStreamBehavior, setMidStreamBehaviorState] = useState<MidStreamBehavior>('queue')
+  const [isLoadingMidStreamBehavior, setIsLoadingMidStreamBehavior] = useState(true)
+  const alternateSendKey = isMac ? '⌘+Enter' : 'Ctrl+Enter'
+
   // Load settings on mount
   useEffect(() => {
     const loadSettings = async () => {
       if (!window.electronAPI) return
       try {
-        const [autoCapEnabled, spellCheckEnabled, sendKey] = await Promise.all([
+        const [autoCapEnabled, spellCheckEnabled, sendKey, followUpBehavior] = await Promise.all([
           window.electronAPI.getAutoCapitalisation(),
           window.electronAPI.getSpellCheck(),
           window.electronAPI.getSendMessageKey(),
+          window.electronAPI.getMidStreamBehavior(),
         ])
         setAutoCapitalisation(autoCapEnabled)
         setSpellCheck(spellCheckEnabled)
         setSendMessageKey(sendKey)
+        setMidStreamBehaviorState(followUpBehavior)
       } catch (error) {
         console.error('Failed to load input settings:', error)
+      } finally {
+        setIsLoadingMidStreamBehavior(false)
       }
     }
     loadSettings()
@@ -81,6 +94,22 @@ export default function InputSettingsPage() {
     setSendMessageKey(key)
     window.electronAPI.setSendMessageKey(key)
   }, [])
+
+  const handleMidStreamBehaviorChange = useCallback(async (value: MidStreamBehavior) => {
+    const previous = midStreamBehavior
+    setMidStreamBehaviorState(value)
+    try {
+      const result = await window.electronAPI.setMidStreamBehavior(value)
+      if (!result.success) {
+        setMidStreamBehaviorState(previous)
+        toast.error(t('settings.ai.midStream.updateFailed'), { description: result.error })
+      }
+    } catch (error) {
+      setMidStreamBehaviorState(previous)
+      console.error('Failed to update mid-stream behavior:', error)
+      toast.error(t('settings.ai.midStream.updateFailed'))
+    }
+  }, [midStreamBehavior, t])
 
   return (
     <div className="h-full flex flex-col">
@@ -120,6 +149,23 @@ export default function InputSettingsPage() {
                       { value: 'cmd-enter', label: isMac ? t("settings.input.cmdEnterKey") : t("settings.input.ctrlEnterKey"), description: t("settings.input.cmdEnterKeyDesc") },
                     ]}
                   />
+                  <SettingsRow
+                    label={t('settings.ai.midStream.title')}
+                    description={t('settings.ai.midStream.description', { alternateKey: alternateSendKey })}
+                    descriptionClassName="whitespace-normal overflow-visible text-clip"
+                  >
+                    <SettingsSegmentedControl
+                      value={midStreamBehavior}
+                      onValueChange={handleMidStreamBehaviorChange}
+                      disabled={isLoadingMidStreamBehavior}
+                      variant="pill"
+                      size="md"
+                      options={[
+                        { value: 'queue', label: t('settings.ai.midStream.queue') },
+                        { value: 'steer', label: t('settings.ai.midStream.steer') },
+                      ]}
+                    />
+                  </SettingsRow>
                 </SettingsCard>
               </SettingsSection>
             </div>

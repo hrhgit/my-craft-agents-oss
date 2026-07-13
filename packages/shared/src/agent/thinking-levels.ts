@@ -9,7 +9,7 @@
  * - High: Deep reasoning for complex tasks
  * - XHigh: Extra-high reasoning
  *
- * Session-level setting with workspace defaults.
+ * Session-level setting with a global default.
  *
  * Provider mappings:
  * - Anthropic: adaptive thinking + effort levels (current Opus models). On models that

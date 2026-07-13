@@ -306,6 +306,8 @@ export const CHANNEL_MAP = {
   // Tools settings
   getBrowserToolEnabled: invoke(RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED),
   setBrowserToolEnabled: invoke(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED),
+  getDataSourcesEnabled: invoke(RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED),
+  setDataSourcesEnabled: invoke(RPC_CHANNELS.tools.SET_DATA_SOURCES_ENABLED),
 
   // Pi Extensions 集成开关（控制全局 pi 扩展加载与 automation 委托）
   getPiExtensionsDelegatePromptAutomation: invoke(RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION),

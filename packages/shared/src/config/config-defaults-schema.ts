@@ -21,6 +21,7 @@ export interface ConfigDefaults {
     keepAwakeWhileRunning: boolean;
     richToolDescriptions: boolean;
     browserToolEnabled: boolean;
+    dataSourcesEnabled: boolean;
     /**
      * Allow remote agents to call `browser_tool evaluate <expression>`.
      * When false, the local dispatcher rejects with `BROWSER_REMOTE_EVALUATE_BLOCKED`.

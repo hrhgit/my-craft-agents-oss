@@ -39,3 +39,9 @@ For renderer and UI changes, validate in the browser first, then run the relevan
 - Treat `apps/webui/src` as the browser adapter/bootstrap layer. Do not duplicate the main application layout there.
 - Browser-only behavior belongs in the Web API adapter or explicit browser shims; native dialogs, menus, IPC, filesystem, subprocess, and window behavior still require Electron verification.
 - When comparing the two surfaces, check the same viewport sizes and states in both before changing platform-specific code.
+
+## Harness
+
+- Chat composers and interactive question cards use the Lucide `ArrowUp` icon for answer/message submission so all send actions share one visual language.
+- AI connection, model, and thinking defaults are global settings shown together in one `Default` section. Do not add per-workspace overrides or fields for these defaults; keep per-session choices available where needed.
+- Pi extension-specific GUI must be declared and shipped by the extension through versioned, host-rendered contribution APIs. Maximize extension freedom wherever isolation, validation, recovery, and fallback can preserve host stability. Give the main conversation panel the highest-freedom surfaces, including the transcript, tool cards, composer, and inline panels; also allow sidebar and navigation contributions through more constrained host-controlled surfaces. Keep Craft limited to generic surfaces, lifecycle, and rendering rather than hard-coding extension-specific GUI.

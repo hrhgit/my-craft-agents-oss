@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { resolveBackendContext } from '@craft-agent/shared/agent/backend'
-import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 import { buildRestartRequiredSignature } from './runtime-config.ts'
 
@@ -74,10 +73,8 @@ function injectSession(
   if (opts.backendRestartSignature !== undefined) {
     managed.backendRestartSignature = opts.backendRestartSignature
   } else {
-    const workspaceConfig = loadWorkspaceConfig(workspaceRoot)
     const ctx = resolveBackendContext({
       sessionProvider: provider,
-      workspaceDefaultProvider: workspaceConfig?.defaults?.provider,
     })
     managed.backendRestartSignature = buildRestartRequiredSignature({
       providerKey: ctx.providerKey,
