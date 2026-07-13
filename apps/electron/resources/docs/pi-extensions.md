@@ -38,6 +38,7 @@ The Quick Start below is a complete host-rendered example that you can install d
 - [Reloading](#reloading)
 - [Error Handling](#error-handling)
 - [Mode Behavior](#mode-behavior)
+- [AI-Operable Validation](#ai-operable-validation)
 - [Testing](#testing)
 - [Examples Reference](#examples-reference)
 
@@ -539,6 +540,23 @@ For runtime failures, check `%USERPROFILE%\.craft-agent\logs\runtime.log` and fi
 
 For extensions targeting both Pi and Craft, check `ctx.ui.capabilities.contributions` rather than inferring the host from `ctx.hasUI`.
 
+## AI-Operable Validation
+
+Craft GUI extensions must remain readable, operable, and verifiable through Craft's source-development UI validation framework. This is an authoring requirement for extension GUI, not an optional test-only convention.
+
+Host-rendered contributions inherit baseline semantics from Craft's primitives. Extension authors must still:
+
+- Use stable contribution and target IDs that do not depend on display text, array position, or rendered DOM structure.
+- Give every interactive control a concise accessible label and expose disabled, selected, busy, ready, and error state through the contribution model.
+- Route actions through commands owned by the extension so semantic and physical validation exercise the same production state transitions.
+- Publish state changes when they occur instead of requiring fixed-delay waits.
+
+When the development host advertises versioned validation capabilities, GUI extensions must declare host-validated readiness signals, typed actions, and bounded scenario primitives through those capabilities. Agents may compose registered scenarios and event flows, but extensions must not expose arbitrary renderer-state mutation or states that cannot occur in production.
+
+Sandbox UI Apps must provide equivalent semantics through the sandbox bridge. Do not make essential state or actions discoverable only through pixels, coordinates, private DOM structure, animation timing, or unstructured console output.
+
+Validation support must degrade safely: production packages and hosts without the development validation capability ignore validation declarations, while the extension's normal GUI and non-GUI behavior continue to work.
+
 ## Testing
 
 Before publishing a Craft GUI extension, verify:
@@ -553,6 +571,10 @@ Before publishing a Craft GUI extension, verify:
 8. Replace surfaces restore built-in UI when the contribution fails or disappears.
 9. Reload removes old GUI and republishes the new version.
 10. TUI and headless modes continue without Craft contribution support.
+11. Structured snapshots expose stable semantic IDs, labels, actions, and current state without relying on private DOM selectors.
+12. Ready, busy, completion, and failure transitions are observable without fixed sleeps.
+13. Registered scenarios use typed, production-valid state primitives and cannot mutate arbitrary renderer internals.
+14. Fast semantic validation and representative real renderer interaction both pass at their declared verification level.
 
 For sandbox apps, also verify:
 
@@ -561,6 +583,7 @@ For sandbox apps, also verify:
 3. Height requests remain within declared bounds.
 4. Stored and initial state are JSON-serializable and bounded.
 5. Multiple sandbox apps remain isolated on the same surface.
+6. The validation bridge exposes meaningful controls and state without requiring coordinate-only interaction.
 
 ## Legacy Widgets
 

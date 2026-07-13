@@ -1216,16 +1216,24 @@ export class PiAgent extends BaseAgent {
 
   private cancelPendingExtensionInteractions(reason: ExtensionInteractionCancelReasonV1): void {
     for (const [requestId, owner] of this.pendingExtensionInteractions) {
-      this.config.onExtensionEvent?.({
-        type: 'extension_interaction_cancel',
-        requestId,
-        schemaVersion: 1,
-        reason,
-        extensionId: owner.extensionId,
-        runtimeId: owner.runtimeId,
-        sessionId: owner.sessionId,
-      });
       this.rememberSettledExtensionInteraction(requestId);
+      try {
+        this.config.onExtensionEvent?.({
+          type: 'extension_interaction_cancel',
+          requestId,
+          schemaVersion: 1,
+          reason,
+          extensionId: owner.extensionId,
+          runtimeId: owner.runtimeId,
+          sessionId: owner.sessionId,
+        });
+      } catch (error) {
+        this.writePiRuntimeLog('warn', 'extension.interaction_cancel_broadcast_failed', {
+          extensionId: owner.extensionId,
+          requestId,
+          error,
+        });
+      }
     }
     this.pendingExtensionInteractions.clear();
   }
@@ -2120,6 +2128,23 @@ export class PiAgent extends BaseAgent {
       });
       this.pendingExtensionInteractions.delete(requestId);
       this.rememberSettledExtensionInteraction(requestId);
+      try {
+        this.config.onExtensionEvent?.({
+          type: 'extension_interaction_settled',
+          schemaVersion: 1,
+          requestId,
+          extensionId: interactionOwner.extensionId,
+          runtimeId: interactionOwner.runtimeId,
+          sessionId: interactionOwner.sessionId,
+          outcome: interaction.status,
+        });
+      } catch (error) {
+        this.writePiRuntimeLog('warn', 'extension.interaction_settled_broadcast_failed', {
+          extensionId: interactionOwner.extensionId,
+          requestId,
+          error,
+        });
+      }
       return true;
     }
     if (this.wasExtensionInteractionSettled(requestId)) {

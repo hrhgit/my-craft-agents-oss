@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'bun:test'
-import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1 } from '@craft-agent/shared/protocol'
+import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1, ExtensionInteractionBridgeSettledV1 } from '@craft-agent/shared/protocol'
 import type { RemoteUIRequest } from '../../components/extensions/RemoteUIModal'
 import {
   asExtensionInteractionCancel,
   asExtensionInteractionRequest,
+  asExtensionInteractionSettled,
   asRemoteUIRequest,
   extensionUIRequestKey,
   takeNextRemoteUIRequestForSession,
@@ -67,5 +68,17 @@ describe('remote UI session routing', () => {
     } satisfies ExtensionInteractionBridgeCancelV1
     expect(asExtensionInteractionCancel(cancellation)).toEqual(cancellation)
     expect(asExtensionInteractionCancel({ ...cancellation, reason: 'unknown' })).toBeNull()
+
+    const settlement = {
+      type: 'extension_interaction_settled',
+      requestId: 'same-id',
+      sessionId: 'session-a',
+      runtimeId: 'runtime-a',
+      extensionId: 'ask-user',
+      schemaVersion: 1,
+      outcome: 'submitted',
+    } satisfies ExtensionInteractionBridgeSettledV1
+    expect(asExtensionInteractionSettled(settlement)).toEqual(settlement)
+    expect(asExtensionInteractionSettled({ ...settlement, outcome: 'unknown' })).toBeNull()
   })
 })

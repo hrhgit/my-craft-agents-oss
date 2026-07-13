@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   validateExtensionInteractionRequestV1,
   validateExtensionInteractionResponseV1,
+  validateExtensionInteractionBridgeSettledV1,
 } from './extension-interactions.ts'
 
 const request = {
@@ -61,5 +62,46 @@ describe('extension interaction v1 validation', () => {
       schemaVersion: 1,
       fields: [{ id: 'secret', kind: 'text', label: 'Secret', multiline: true, sensitive: true }],
     })).toContain('cannot be both multiline and sensitive')
+  })
+
+  it('counts an enabled Other answer in choice bounds', () => {
+    expect(validateExtensionInteractionRequestV1({
+      schemaVersion: 1,
+      fields: [{
+        id: 'targets',
+        kind: 'choice',
+        label: 'Targets',
+        multiple: true,
+        allowOther: true,
+        options: [{ id: 'known', label: 'Known' }],
+        maxSelections: 2,
+      }],
+    })).toBeNull()
+    expect(validateExtensionInteractionRequestV1({
+      schemaVersion: 1,
+      fields: [{
+        id: 'targets',
+        kind: 'choice',
+        label: 'Targets',
+        multiple: true,
+        options: [{ id: 'known', label: 'Known' }],
+        maxSelections: 2,
+      }],
+    })).toContain('bounds')
+  })
+
+  it('strictly validates host settlement events', () => {
+    const event = {
+      type: 'extension_interaction_settled',
+      schemaVersion: 1,
+      requestId: 'request',
+      extensionId: 'extension',
+      runtimeId: 'runtime',
+      sessionId: 'session',
+      outcome: 'submitted',
+    }
+    expect(validateExtensionInteractionBridgeSettledV1(event)).toBeNull()
+    expect(validateExtensionInteractionBridgeSettledV1({ ...event, outcome: 'unknown' })).toContain('Unsupported')
+    expect(validateExtensionInteractionBridgeSettledV1({ ...event, forged: true })).toContain('Invalid')
   })
 })

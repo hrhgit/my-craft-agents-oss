@@ -44,7 +44,8 @@ export function createExtensionEventForwarder(
       sessionId
       && (event.type === 'remoteui_request'
         || event.type === 'extension_interaction_request'
-        || event.type === 'extension_interaction_cancel')
+        || event.type === 'extension_interaction_cancel'
+        || event.type === 'extension_interaction_settled')
     ) {
       event = { ...event, sessionId }
     }

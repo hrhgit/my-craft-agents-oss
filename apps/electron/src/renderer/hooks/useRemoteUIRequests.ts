@@ -19,9 +19,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   validateExtensionInteractionBridgeCancelV1,
   validateExtensionInteractionBridgeRequestV1,
+  validateExtensionInteractionBridgeSettledV1,
   validateExtensionInteractionResponseV1,
   type ExtensionInteractionBridgeCancelV1,
   type ExtensionInteractionBridgeRequestV1,
+  type ExtensionInteractionBridgeSettledV1,
   type ExtensionInteractionResponseV1,
 } from '@craft-agent/shared/protocol'
 import type {
@@ -70,6 +72,12 @@ export function asExtensionInteractionRequest(event: unknown): ExtensionInteract
 export function asExtensionInteractionCancel(event: unknown): ExtensionInteractionBridgeCancelV1 | null {
   return validateExtensionInteractionBridgeCancelV1(event) === null
     ? event as ExtensionInteractionBridgeCancelV1
+    : null
+}
+
+export function asExtensionInteractionSettled(event: unknown): ExtensionInteractionBridgeSettledV1 | null {
+  return validateExtensionInteractionBridgeSettledV1(event) === null
+    ? event as ExtensionInteractionBridgeSettledV1
     : null
 }
 
@@ -169,15 +177,15 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
     if (typeof window.electronAPI?.onExtensionEvent !== 'function') return
 
     const cleanup = window.electronAPI.onExtensionEvent((event) => {
-      const cancellation = asExtensionInteractionCancel(event)
-      if (cancellation) {
-        const cancelledKey = extensionUIRequestKey(cancellation)
-        rememberResponding(cancelledKey)
-        externallySettledRef.current.add(cancelledKey)
-        clearRequestTimeout(cancelledKey)
-        queueRef.current = queueRef.current.filter(request => extensionUIRequestKey(request) !== cancelledKey)
+      const settlement = asExtensionInteractionCancel(event) ?? asExtensionInteractionSettled(event)
+      if (settlement) {
+        const settledKey = extensionUIRequestKey(settlement)
+        rememberResponding(settledKey)
+        externallySettledRef.current.add(settledKey)
+        clearRequestTimeout(settledKey)
+        queueRef.current = queueRef.current.filter(request => extensionUIRequestKey(request) !== settledKey)
         setCurrentRequest(current => {
-          if (!current || extensionUIRequestKey(current) !== cancelledKey) return current
+          if (!current || extensionUIRequestKey(current) !== settledKey) return current
           const next = takeNextRemoteUIRequestForSession(queueRef.current, activeSessionIdRef.current)
           currentRequestRef.current = next
           return next

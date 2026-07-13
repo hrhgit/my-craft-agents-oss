@@ -258,6 +258,7 @@ function InteractionField({
       {field.kind === 'text' && draft.kind === 'text' && (
         field.multiline && !field.sensitive ? (
           <textarea
+            aria-label={field.label}
             value={draft.value}
             onChange={changeEvent => onChange(() => ({ kind: 'text', value: changeEvent.target.value }))}
             rows={3}
@@ -268,6 +269,7 @@ function InteractionField({
           />
         ) : (
           <input
+            aria-label={field.label}
             type={field.sensitive ? 'password' : 'text'}
             value={draft.value}
             onChange={changeEvent => onChange(() => ({ kind: 'text', value: changeEvent.target.value }))}

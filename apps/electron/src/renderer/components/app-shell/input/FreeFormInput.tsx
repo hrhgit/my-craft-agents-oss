@@ -289,7 +289,7 @@ export interface FreeFormInputProps {
   onWorkingDirectoryChange?: (path: string) => void
   /** Session folder path (for "Reset to Session Root" option) */
   sessionFolderPath?: string
-  /** Session ID for scoping events like approve-plan */
+  /** Session ID for scoping session-bound events */
   sessionId?: string
   /** Disable send action (for tutorial guidance) */
   disableSend?: boolean

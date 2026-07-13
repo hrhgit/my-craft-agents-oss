@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import type { ExtensionInteractionFieldV1 } from '@craft-agent/shared/protocol'
+import { renderToStaticMarkup } from 'react-dom/server'
+import type { ExtensionInteractionBridgeRequestV1, ExtensionInteractionFieldV1 } from '@craft-agent/shared/protocol'
 import {
+  ExtensionInteractionComposer,
   interactionDraftAnswer,
   isInteractionDraftValid,
   selectInteractionOption,
@@ -50,5 +52,26 @@ describe('ExtensionInteractionComposer', () => {
     expect(isInteractionDraftValid(singleChoice, other)).toBe(true)
     expect(selectedAgain).toMatchObject({ selectedOptionIds: ['new-york'], otherText: '' })
     expect(isInteractionDraftValid(singleChoice, selectedAgain)).toBe(true)
+  })
+
+  it('gives single-line and multiline text controls stable accessible names', () => {
+    const event: ExtensionInteractionBridgeRequestV1 = {
+      type: 'extension_interaction_request',
+      requestId: 'text-inputs',
+      extensionId: 'ask-user',
+      runtimeId: 'runtime',
+      sessionId: 'session',
+      request: {
+        schemaVersion: 1,
+        fields: [
+          { id: 'name', kind: 'text', label: 'Display name' },
+          { id: 'notes', kind: 'text', label: 'Release notes', multiline: true },
+        ],
+      },
+    }
+
+    const markup = renderToStaticMarkup(<ExtensionInteractionComposer event={event} onRespond={() => {}} />)
+    expect(markup).toContain('aria-label="Display name"')
+    expect(markup).toContain('aria-label="Release notes"')
   })
 })

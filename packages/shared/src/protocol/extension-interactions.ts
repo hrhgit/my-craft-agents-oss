@@ -82,6 +82,17 @@ export interface ExtensionInteractionBridgeCancelV1 {
   reason: ExtensionInteractionCancelReasonV1
 }
 
+/** Host-authored notification that another client completed an interaction. */
+export interface ExtensionInteractionBridgeSettledV1 {
+  type: 'extension_interaction_settled'
+  requestId: string
+  extensionId: string
+  runtimeId: string
+  sessionId: string
+  schemaVersion: 1
+  outcome: 'submitted' | 'cancelled'
+}
+
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
 const cancelReasons = new Set<string>(['user', 'timeout', 'aborted', 'host-disconnected', 'runtime-disposed'])
 
@@ -154,7 +165,8 @@ export function validateExtensionInteractionRequestV1(value: unknown): string | 
       if (!optionalString(field.otherLabel, 128) || !optionalString(field.commentLabel, 128)) return `Choice labels on ${field.id} are invalid`
       if (field.otherLabel !== undefined && field.allowOther !== true) return `Choice otherLabel on ${field.id} requires allowOther`
       if (field.commentLabel !== undefined && field.allowComment !== true) return `Choice commentLabel on ${field.id} requires allowComment`
-      if (!optionalBoundedInteger(field.minSelections, 0, field.options.length) || !optionalBoundedInteger(field.maxSelections, 1, field.options.length)) return `Choice bounds on ${field.id} are invalid`
+      const selectionCapacity = field.options.length + (field.allowOther === true ? 1 : 0)
+      if (!optionalBoundedInteger(field.minSelections, 0, selectionCapacity) || !optionalBoundedInteger(field.maxSelections, 1, selectionCapacity)) return `Choice bounds on ${field.id} are invalid`
       if (typeof field.minSelections === 'number' && typeof field.maxSelections === 'number' && field.minSelections > field.maxSelections) return `Choice bounds on ${field.id} are inconsistent`
       if (field.multiple !== true && (Number(field.maxSelections ?? 1) > 1 || Number(field.minSelections ?? 0) > 1)) return `Single-choice field ${field.id} cannot require multiple selections`
       const optionIds = new Set<string>()
@@ -213,6 +225,14 @@ export function validateExtensionInteractionBridgeCancelV1(value: unknown): stri
   const event = record(value)
   if (!event || !onlyKeys(event, ['type', 'requestId', 'extensionId', 'runtimeId', 'sessionId', 'schemaVersion', 'reason'])) return 'Invalid interaction cancellation event'
   if (event.type !== 'extension_interaction_cancel' || event.schemaVersion !== 1 || !cancelReasons.has(String(event.reason))) return 'Unsupported interaction cancellation event'
+  for (const key of ['requestId', 'extensionId', 'runtimeId', 'sessionId'] as const) if (!boundedString(event[key], 256)) return `${key} must be a non-empty bounded string`
+  return null
+}
+
+export function validateExtensionInteractionBridgeSettledV1(value: unknown): string | null {
+  const event = record(value)
+  if (!event || !onlyKeys(event, ['type', 'requestId', 'extensionId', 'runtimeId', 'sessionId', 'schemaVersion', 'outcome'])) return 'Invalid interaction settlement event'
+  if (event.type !== 'extension_interaction_settled' || event.schemaVersion !== 1 || (event.outcome !== 'submitted' && event.outcome !== 'cancelled')) return 'Unsupported interaction settlement event'
   for (const key of ['requestId', 'extensionId', 'runtimeId', 'sessionId'] as const) if (!boundedString(event[key], 256)) return `${key} must be a non-empty bounded string`
   return null
 }

@@ -6,7 +6,7 @@ function createAgent(onExtensionEvent?: BackendConfig['onExtensionEvent']) {
   const agent = new PiAgent({
     provider: 'pi',
     workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/craft-agent-test' } as any,
-    session: { id: 'session-test', workspaceRootPath: '/tmp/craft-agent-test', createdAt: 0, lastUsedAt: 0 } as any,
+    session: { craftId: 'session-test', workspaceRootPath: '/tmp/craft-agent-test', createdAt: 0, lastUsedAt: 0 } as any,
     isHeadless: true,
     onExtensionEvent,
   } satisfies BackendConfig)
@@ -77,7 +77,8 @@ describe('PiAgent RemoteUI bridge', () => {
   })
 
   it('passes interaction v1 through with trusted ownership and structured answers', () => {
-    const { agent, responses } = createAgent()
+    const bridgeEvents: unknown[] = []
+    const { agent, responses } = createAgent(event => bridgeEvents.push(event))
     const map = (agent as any).mapExtensionUiRequest.bind(agent)
     const bridgeEvent = map({
       type: 'extension_ui_request',
@@ -123,9 +124,52 @@ describe('PiAgent RemoteUI bridge', () => {
         answers: [{ fieldId: 'targets', kind: 'choice', selectedOptionIds: ['new-york', 'paris'] }],
       },
     }])
+    expect(bridgeEvents).toContainEqual({
+      type: 'extension_interaction_settled',
+      schemaVersion: 1,
+      requestId: 'interaction-1',
+      extensionId: 'ask-user',
+      runtimeId: 'runtime-1',
+      sessionId: 'session-test',
+      outcome: 'submitted',
+    })
 
     expect(agent.sendRemoteUIResponse('interaction-1', null, 'cancelled')).toBe(true)
     expect(responses).toHaveLength(1)
+
+    agent.destroy()
+  })
+
+  it('commits interaction state even when host event broadcasting fails', () => {
+    const { agent, responses } = createAgent(() => { throw new Error('bridge unavailable') })
+    const map = (agent as any).mapExtensionUiRequest.bind(agent)
+    map({
+      type: 'extension_ui_request',
+      id: 'interaction-broadcast-failure',
+      extensionId: 'ask-user',
+      runtimeId: 'runtime-1',
+      method: 'interact',
+      request: { schemaVersion: 1, fields: [{ id: 'confirm', kind: 'confirm', label: 'Continue?' }] },
+    })
+
+    expect(agent.sendRemoteUIResponse('interaction-broadcast-failure', {
+      schemaVersion: 1,
+      status: 'submitted',
+      answers: [{ fieldId: 'confirm', kind: 'confirm', value: true }],
+    })).toBe(true)
+    expect(agent.sendRemoteUIResponse('interaction-broadcast-failure', null, 'cancelled')).toBe(true)
+    expect(responses).toHaveLength(1)
+
+    map({
+      type: 'extension_ui_request',
+      id: 'interaction-cancel-broadcast-failure',
+      extensionId: 'ask-user',
+      runtimeId: 'runtime-1',
+      method: 'interact',
+      request: { schemaVersion: 1, fields: [{ id: 'confirm', kind: 'confirm', label: 'Continue?' }] },
+    })
+    expect(() => (agent as any).cancelPendingExtensionInteractions('runtime-disposed')).not.toThrow()
+    expect((agent as any).pendingExtensionInteractions.size).toBe(0)
 
     agent.destroy()
   })

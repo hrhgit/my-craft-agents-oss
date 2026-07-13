@@ -78,10 +78,19 @@ describe('Pi extension contribution bridge', () => {
       schemaVersion: 1,
       reason: 'aborted',
     })
+    forward({
+      type: 'extension_interaction_settled',
+      ...route,
+      sessionId: 'untrusted-session',
+      requestId: 'interaction-2',
+      schemaVersion: 1,
+      outcome: 'submitted',
+    })
 
     expect(payloads).toEqual([
       expect.objectContaining({ type: 'extension_interaction_request', sessionId: 'trusted-session' }),
       expect.objectContaining({ type: 'extension_interaction_cancel', sessionId: 'trusted-session' }),
+      expect.objectContaining({ type: 'extension_interaction_settled', sessionId: 'trusted-session' }),
     ])
   })
 })
