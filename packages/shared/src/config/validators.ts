@@ -257,7 +257,7 @@ export function validatePreferences(): ValidationResult {
 /**
  * Validate all config files
  * @param workspaceId - Optional workspace ID for source validation
- * @param workspaceRoot - Optional workspace root path for skill and status validation
+ * @param workspaceRoot - Optional workspace root path for workspace validation
  */
 export function validateAll(workspaceId?: string, workspaceRoot?: string): ValidationResult {
   const results: ValidationResult[] = [
@@ -271,11 +271,9 @@ export function validateAll(workspaceId?: string, workspaceRoot?: string): Valid
     results.push(validateAllSources(workspaceId));
   }
 
-  // Include skill, status, label, automations, and permissions validation if workspaceRoot is provided
+  // Include workspace-scoped validation if workspaceRoot is provided
   if (workspaceRoot) {
     results.push(validateAllSkills(workspaceRoot));
-    results.push(validateStatuses(workspaceRoot));
-    results.push(validateLabels(workspaceRoot));
     results.push(validateAutomations(workspaceRoot));
     results.push(validateAllPermissions(workspaceRoot));
   }
@@ -858,446 +856,6 @@ export function validateAllSkills(workspaceRoot: string): ValidationResult {
     errors.push(...result.errors);
     warnings.push(...result.warnings);
   }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings,
-  };
-}
-
-// ============================================================
-// Status Validators
-// ============================================================
-
-const STATUS_CONFIG_FILE = 'statuses/config.json';
-
-/** Required fixed statuses that must always exist */
-const REQUIRED_FIXED_STATUS_IDS = ['todo', 'done', 'cancelled'] as const;
-
-/**
- * Status icons are simple strings: emoji characters, URLs, or local filenames
- * such as "in-progress.svg" which resolve to statuses/icons/in-progress.svg.
- * When icon is omitted, local icon files (statuses/icons/{id}.svg) are still
- * auto-discovered at runtime.
- */
-const StatusIconSchema = z.string();
-
-/**
- * Zod schema for individual status configuration
- */
-const StatusConfigSchema = z.object({
-  id: z.string().regex(/^[a-z0-9-]+$/, 'Status ID must be lowercase alphanumeric with hyphens'),
-  label: z.string().min(1, 'Status label is required'),
-  color: EntityColorSchema.optional(),
-  icon: StatusIconSchema.optional(),
-  category: z.enum(['open', 'closed']),
-  isFixed: z.boolean(),
-  isDefault: z.boolean(),
-  order: z.number().int().min(0),
-});
-
-/**
- * Zod schema for workspace status configuration
- */
-const WorkspaceStatusConfigSchema = z.object({
-  version: z.number().int().min(1),
-  statuses: z.array(StatusConfigSchema),
-  defaultStatusId: z.string().min(1),
-});
-
-/**
- * Validate statuses configuration for a workspace
- * @param workspaceRoot - Absolute path to workspace root folder
- */
-export function validateStatuses(workspaceRoot: string): ValidationResult {
-  const configPath = join(workspaceRoot, STATUS_CONFIG_FILE);
-  const file = STATUS_CONFIG_FILE;
-
-  // Check if config file exists (optional - defaults are used if missing)
-  if (!existsSync(configPath)) {
-    return {
-      valid: true,
-      errors: [],
-      warnings: [{
-        file,
-        path: '',
-        message: 'Status config does not exist (using defaults)',
-        severity: 'warning',
-        suggestion: 'Statuses will use default configuration. Edit to customize.',
-      }],
-    };
-  }
-
-  // Read file and delegate to content-based validator
-  let raw: string;
-  try {
-    raw = readFileSync(configPath, 'utf-8');
-  } catch (e) {
-    return {
-      valid: false,
-      errors: [{
-        file,
-        path: '',
-        message: `Cannot read file: ${e instanceof Error ? e.message : 'Unknown error'}`,
-        severity: 'error',
-      }],
-      warnings: [],
-    };
-  }
-
-  // Icons are auto-discovered from statuses/icons/{id}.{ext} at runtime,
-  // not referenced in config, so no FS checks needed here.
-  return validateStatusesContent(raw);
-}
-
-/**
- * Validate statuses config from a JSON string (no disk reads).
- * Used by PreToolUse hook to validate before writing to disk.
- * Runs schema validation and semantic checks. Skips icon file existence checks.
- */
-export function validateStatusesContent(jsonString: string): ValidationResult {
-  const file = 'statuses/config.json';
-  const errors: ValidationIssue[] = [];
-  const warnings: ValidationIssue[] = [];
-
-  // Parse JSON
-  let content: unknown;
-  try {
-    content = safeJsonParse(jsonString);
-  } catch (e) {
-    return {
-      valid: false,
-      errors: [{
-        file,
-        path: '',
-        message: `Invalid JSON: ${e instanceof Error ? e.message : 'Unknown error'}`,
-        severity: 'error',
-      }],
-      warnings: [],
-    };
-  }
-
-  // Validate schema
-  const result = WorkspaceStatusConfigSchema.safeParse(content);
-  if (!result.success) {
-    errors.push(...zodErrorToIssues(result.error, file));
-    return { valid: false, errors, warnings };
-  }
-
-  const config = result.data;
-
-  // Semantic validations (same as validateStatuses but without FS checks)
-
-  // 1. Check required fixed statuses exist
-  const statusIds = new Set(config.statuses.map(s => s.id));
-  for (const requiredId of REQUIRED_FIXED_STATUS_IDS) {
-    if (!statusIds.has(requiredId)) {
-      errors.push({
-        file,
-        path: 'statuses',
-        message: `Required fixed status '${requiredId}' is missing`,
-        severity: 'error',
-        suggestion: `Add the '${requiredId}' status - it's required for the system to function`,
-      });
-    }
-  }
-
-  // 2. Check for duplicate IDs
-  const seenIds = new Set<string>();
-  for (const status of config.statuses) {
-    if (seenIds.has(status.id)) {
-      errors.push({
-        file,
-        path: `statuses[id=${status.id}]`,
-        message: `Duplicate status ID '${status.id}'`,
-        severity: 'error',
-        suggestion: 'Each status must have a unique ID',
-      });
-    }
-    seenIds.add(status.id);
-  }
-
-  // 3. Check defaultStatusId references an existing status
-  if (!statusIds.has(config.defaultStatusId)) {
-    errors.push({
-      file,
-      path: 'defaultStatusId',
-      message: `Default status '${config.defaultStatusId}' does not exist in statuses array`,
-      severity: 'error',
-      suggestion: 'Set defaultStatusId to an existing status ID (typically "todo")',
-    });
-  }
-
-  // 4. Check fixed statuses have correct isFixed flag
-  for (const status of config.statuses) {
-    const shouldBeFixed = (REQUIRED_FIXED_STATUS_IDS as readonly string[]).includes(status.id);
-    if (shouldBeFixed && !status.isFixed) {
-      warnings.push({
-        file,
-        path: `statuses[id=${status.id}].isFixed`,
-        message: `Status '${status.id}' should have isFixed: true`,
-        severity: 'warning',
-        suggestion: 'This is a required system status and should be marked as fixed',
-      });
-    }
-  }
-
-  // 5. Check that at least one status is in each category
-  const hasOpen = config.statuses.some(s => s.category === 'open');
-  const hasClosed = config.statuses.some(s => s.category === 'closed');
-  if (!hasOpen) {
-    errors.push({
-      file,
-      path: 'statuses',
-      message: 'No status with category "open" - sessions will not appear in inbox',
-      severity: 'error',
-    });
-  }
-  if (!hasClosed) {
-    warnings.push({
-      file,
-      path: 'statuses',
-      message: 'No status with category "closed" - sessions cannot be archived',
-      severity: 'warning',
-    });
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings,
-  };
-}
-
-// ============================================================
-// Labels Validators
-// ============================================================
-
-import { validateAutoLabelRule } from '../labels/auto/validation.ts';
-
-const LABEL_CONFIG_FILE = 'labels/config.json';
-
-/** Maximum nesting depth for label tree (prevents excessively deep hierarchies) */
-const MAX_LABEL_DEPTH = 5;
-
-/**
- * Zod schema for individual label configuration.
- * Recursive: each label can have optional children forming a tree.
- * IDs are simple slugs (lowercase alphanumeric + hyphens).
- */
-/**
- * Zod schema for auto-label rules (regex patterns for automatic label application).
- * Validates pattern is non-empty; regex validity is checked semantically below.
- */
-const AutoLabelRuleSchema = z.object({
-  pattern: z.string().min(1, 'Auto-label rule pattern is required'),
-  flags: z.string().optional(),
-  valueTemplate: z.string().optional(),
-  description: z.string().optional(),
-});
-
-const BaseLabelConfigSchema = z.object({
-  id: z.string().regex(
-    /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
-    'Label ID must be a simple slug (lowercase alphanumeric + hyphens, e.g., "bug", "frontend")'
-  ),
-  name: z.string().min(1, 'Label name is required'),
-  color: EntityColorSchema.optional(),
-  icon: z.string().optional(),
-  /** Optional hint: what type of value this label carries (omit for boolean labels) */
-  valueType: z.enum(['string', 'number', 'date', 'link']).optional(),
-  /** Auto-label rules: regex patterns that scan messages and apply labels automatically */
-  autoRules: z.array(AutoLabelRuleSchema).optional(),
-});
-
-// Recursive schema: LabelConfig can have children which are also LabelConfigs.
-// Zod supports lazy() for recursive types.
-type LabelConfigSchemaType = z.ZodType<{
-  id: string;
-  name: string;
-  color?: unknown;
-  icon?: string;
-  valueType?: 'string' | 'number' | 'date' | 'link';
-  autoRules?: Array<{ pattern: string; flags?: string; valueTemplate?: string; description?: string }>;
-  children?: LabelConfigSchemaType[];
-}>;
-
-const LabelConfigSchema: z.ZodType<any> = BaseLabelConfigSchema.extend({
-  children: z.lazy(() => z.array(LabelConfigSchema)).optional(),
-});
-
-/**
- * Zod schema for workspace label configuration (recursive tree)
- */
-const WorkspaceLabelConfigSchema = z.object({
-  version: z.number().int().min(1),
-  labels: z.array(LabelConfigSchema),
-});
-
-/**
- * Validate labels configuration for a workspace (reads from disk)
- * @param workspaceRoot - Absolute path to workspace root folder
- */
-export function validateLabels(workspaceRoot: string): ValidationResult {
-  const configPath = join(workspaceRoot, LABEL_CONFIG_FILE);
-  const file = LABEL_CONFIG_FILE;
-
-  // Labels config is optional — no config means no labels (valid state)
-  if (!existsSync(configPath)) {
-    return {
-      valid: true,
-      errors: [],
-      warnings: [{
-        file,
-        path: '',
-        message: 'Labels config does not exist (no labels configured)',
-        severity: 'warning',
-      }],
-    };
-  }
-
-  let raw: string;
-  try {
-    raw = readFileSync(configPath, 'utf-8');
-  } catch (e) {
-    return {
-      valid: false,
-      errors: [{
-        file,
-        path: '',
-        message: `Cannot read file: ${e instanceof Error ? e.message : 'Unknown error'}`,
-        severity: 'error',
-      }],
-      warnings: [],
-    };
-  }
-
-  return validateLabelsContent(raw);
-}
-
-/**
- * Validate labels config from a JSON string (no disk reads).
- * Used by PreToolUse hook to validate before writing to disk.
- * Checks schema validation and semantic rules (unique IDs, max depth).
- */
-export function validateLabelsContent(jsonString: string): ValidationResult {
-  const file = 'labels/config.json';
-  const errors: ValidationIssue[] = [];
-  const warnings: ValidationIssue[] = [];
-
-  // Parse JSON
-  let content: unknown;
-  try {
-    content = safeJsonParse(jsonString);
-  } catch (e) {
-    return {
-      valid: false,
-      errors: [{
-        file,
-        path: '',
-        message: `Invalid JSON: ${e instanceof Error ? e.message : 'Unknown error'}`,
-        severity: 'error',
-      }],
-      warnings: [],
-    };
-  }
-
-  // Validate schema (recursive, includes EntityColor validation via Zod)
-  const result = WorkspaceLabelConfigSchema.safeParse(content);
-  if (!result.success) {
-    errors.push(...zodErrorToIssues(result.error, file));
-    return { valid: false, errors, warnings };
-  }
-
-  const config = result.data;
-
-  // 1. Check for globally unique IDs across the entire tree
-  const seenIds = new Set<string>();
-  function checkUniqueIds(labels: any[], path: string): void {
-    for (let i = 0; i < labels.length; i++) {
-      const label = labels[i];
-      if (seenIds.has(label.id)) {
-        errors.push({
-          file,
-          path: `${path}[${i}].id`,
-          message: `Duplicate label ID '${label.id}' — IDs must be globally unique across the tree`,
-          severity: 'error',
-          suggestion: 'Each label must have a unique ID regardless of nesting level',
-        });
-      }
-      seenIds.add(label.id);
-      if (label.children && label.children.length > 0) {
-        checkUniqueIds(label.children, `${path}[${i}].children`);
-      }
-    }
-  }
-  checkUniqueIds(config.labels, 'labels');
-
-  // 2. Check max nesting depth (prevents excessively deep hierarchies)
-  function checkDepth(labels: any[], depth: number, path: string): void {
-    if (depth > MAX_LABEL_DEPTH) {
-      errors.push({
-        file,
-        path,
-        message: `Label tree exceeds maximum depth of ${MAX_LABEL_DEPTH} levels`,
-        severity: 'error',
-        suggestion: `Flatten the hierarchy — ${MAX_LABEL_DEPTH} levels should be sufficient for any organization scheme`,
-      });
-      return;
-    }
-    for (let i = 0; i < labels.length; i++) {
-      const label = labels[i];
-      if (label.children && label.children.length > 0) {
-        checkDepth(label.children, depth + 1, `${path}[${i}].children`);
-      }
-    }
-  }
-  checkDepth(config.labels, 1, 'labels');
-
-  // 3. Validate auto-label rules (regex patterns on regular labels)
-  function checkAutoRules(labels: any[], path: string): void {
-    for (let i = 0; i < labels.length; i++) {
-      const label = labels[i];
-      if (label.autoRules && Array.isArray(label.autoRules)) {
-        for (let j = 0; j < label.autoRules.length; j++) {
-          const rule = label.autoRules[j];
-          if (rule.pattern) {
-            const ruleResult = validateAutoLabelRule(rule.pattern, rule.flags);
-            for (const err of ruleResult.errors) {
-              errors.push({
-                file,
-                path: `${path}[${i}].autoRules[${j}].pattern`,
-                message: err,
-                severity: 'error',
-                suggestion: 'Fix the regex pattern or remove the rule',
-              });
-            }
-            for (const warn of ruleResult.warnings) {
-              warnings.push({
-                file,
-                path: `${path}[${i}].autoRules[${j}].pattern`,
-                message: warn,
-                severity: 'warning',
-              });
-            }
-          } else {
-            errors.push({
-              file,
-              path: `${path}[${i}].autoRules[${j}]`,
-              message: 'Auto-label rule must have a "pattern" field',
-              severity: 'error',
-              suggestion: 'Add a regex pattern string to the rule',
-            });
-          }
-        }
-      }
-      if (label.children && label.children.length > 0) {
-        checkAutoRules(label.children, `${path}[${i}].children`);
-      }
-    }
-  }
-  checkAutoRules(config.labels, 'labels');
 
   return {
     valid: errors.length === 0,
@@ -1926,7 +1484,7 @@ export function formatValidationResult(result: ValidationResult): string {
  * Result of detecting what type of config file a path corresponds to.
  */
 export interface ConfigFileDetection {
-  type: 'source' | 'skill' | 'statuses' | 'labels' | 'permissions' | 'tool-icons' | 'automations';
+  type: 'source' | 'skill' | 'permissions' | 'tool-icons' | 'automations';
   /** Slug of the source or skill (if applicable) */
   slug?: string;
   /** Display file path for error messages */
@@ -1940,8 +1498,6 @@ export interface ConfigFileDetection {
  * Matches patterns:
  * - .../sources/{slug}/config.json → source config
  * - .../.pi/skills/{slug}/SKILL.md → skill definition
- * - .../statuses/config.json → status workflow config
- * - .../labels/config.json → label config
  * - .../permissions.json (workspace or source-level) → permission rules
  */
 export function detectConfigFileType(filePath: string, workspaceRootPath: string): ConfigFileDetection | null {
@@ -1968,16 +1524,6 @@ export function detectConfigFileType(filePath: string, workspaceRootPath: string
   const skillMatch = relativePath.match(/^\.pi\/skills\/([^/]+)\/SKILL\.md$/);
   if (skillMatch) {
     return { type: 'skill', slug: skillMatch[1], displayFile: `.pi/skills/${skillMatch[1]}/SKILL.md` };
-  }
-
-  // Match: statuses/config.json
-  if (relativePath === 'statuses/config.json') {
-    return { type: 'statuses', displayFile: 'statuses/config.json' };
-  }
-
-  // Match: labels/config.json
-  if (relativePath === 'labels/config.json') {
-    return { type: 'labels', displayFile: 'labels/config.json' };
   }
 
   // Match: automations config file
@@ -2040,10 +1586,6 @@ export function validateConfigFileContent(
       return validateSourceConfigContent(content);
     case 'skill':
       return validateSkillContent(content, detection.slug || 'unknown');
-    case 'statuses':
-      return validateStatusesContent(content);
-    case 'labels':
-      return validateLabelsContent(content);
     case 'automations':
       return validateAutomationsContent(content, detection.displayFile);
     case 'permissions':

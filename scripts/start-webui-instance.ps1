@@ -2,6 +2,8 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $launcherStateRoot = Join-Path $repoRoot '.craft-agent\portmux'
+$launchStatePath = Join-Path $env:TEMP 'craft-agent-webui\instance-1\webui-launch-state.json'
+. (Join-Path $PSScriptRoot 'webui-process-utils.ps1')
 
 if (-not (Get-Command portmux -ErrorAction SilentlyContinue)) {
   throw 'portmux is required to start the WebUI test environment.'
@@ -25,27 +27,16 @@ function Open-ExclusiveFile {
 }
 
 function Get-RunningWebuiUrl {
-  $escapedRepoRoot = [Regex]::Escape($repoRoot)
-  $viteProcesses = @(
-    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
-      Where-Object {
-        $_.CommandLine -match $escapedRepoRoot -and
-        $_.CommandLine -match 'vite\.js.+apps[\\/]webui[\\/]vite\.config\.ts'
-      } |
-      Sort-Object CreationDate
-  )
-
-  foreach ($process in $viteProcesses) {
-    $listener = Get-NetTCPConnection -State Listen -OwningProcess $process.ProcessId -ErrorAction SilentlyContinue |
-      Where-Object { $_.LocalAddress -in @('127.0.0.1', '::1', '0.0.0.0', '::') } |
-      Sort-Object LocalPort |
-      Select-Object -First 1
-    if ($null -ne $listener) {
-      return "http://localhost:$($listener.LocalPort)"
-    }
+  $port = Get-WebuiAssignedPort -ProjectPath $repoRoot
+  if ($null -eq $port -or $port -ge 65535) { return $null }
+  if ((Test-Path -LiteralPath $launchStatePath) -and
+      -not (Test-WebuiLaunchStateActive -Path $launchStatePath)) {
+    return $null
   }
-
-  return $null
+  if (-not (Test-WebuiHttpReady -Port $port) -or -not (Test-WebuiTcpPort -Port ($port + 1))) {
+    return $null
+  }
+  return "http://localhost:$port"
 }
 
 function Open-WebuiUrl {
@@ -53,6 +44,21 @@ function Open-WebuiUrl {
 
   Write-Host "[Craft Agents Web] Opening shared WebUI: $Url" -ForegroundColor Cyan
   Start-Process $Url
+}
+
+function Clear-StaleWebuiLaunch {
+  $state = Read-WebuiLaunchState $launchStatePath
+  if ($null -eq $state -or (Test-WebuiProcessRecordActive $state.launcher)) { return }
+  if ((Normalize-WebuiPath ([string]$state.repoRoot)) -ne (Normalize-WebuiPath $repoRoot)) { return }
+
+  $webuiPort = [int]$state.webuiPort
+  $rpcPort = [int]$state.rpcPort
+  $stopped = Stop-WebuiLaunchState -Path $launchStatePath
+  if (Stop-LegacyWebuiViteProcess -RepoRoot $repoRoot -WebuiPort $webuiPort) { $stopped++ }
+  if (Stop-LegacyWebuiRpcProcess -WebuiPort $webuiPort -RpcPort $rpcPort) { $stopped++ }
+  if ($stopped -gt 0) {
+    Write-Host "[Craft Agents Web] Cleaned up $stopped stale WebUI process tree(s) before requesting a port." -ForegroundColor Cyan
+  }
 }
 
 $existingUrl = Get-RunningWebuiUrl
@@ -91,6 +97,7 @@ try {
     exit 0
   }
 
+  Clear-StaleWebuiLaunch
   Write-Host '[Craft Agents Web] Starting the shared WebUI with ~/.craft-agent...' -ForegroundColor Cyan
   & portmux start --project $repoRoot
   exit $LASTEXITCODE

@@ -18,6 +18,8 @@ import {
   type MobileMenuRow,
 } from './mobile-menu-pages'
 import type { AppMenuProps } from './types'
+import { CrossfadeAvatar } from '@/components/ui/avatar'
+import { cn } from '@/lib/utils'
 
 const SNAPPY_SPRING = { type: 'spring' as const, stiffness: 400, damping: 36, mass: 0.8 }
 const BACKDROP_FADE = { duration: 0.18 }
@@ -145,6 +147,7 @@ export function MobileAppMenu(props: AppMenuProps) {
   const dispatchAction = (row: MobileMenuRow) => {
     switch (row.action.kind) {
       case 'navigate':
+        if (row.action.to === 'workspaces') props.workspaceNavigation.refreshRemoteHealth()
         dispatch({ type: 'push', page: row.action.to })
         return
       case 'callback':
@@ -189,6 +192,7 @@ export function MobileAppMenu(props: AppMenuProps) {
         onPop={pop}
         onClose={close}
         onActivateRow={dispatchAction}
+        workspaceNavigation={props.workspaceNavigation}
         t={t}
       />
     </>
@@ -201,10 +205,11 @@ interface SheetProps {
   onPop: () => void
   onClose: () => void
   onActivateRow: (row: MobileMenuRow) => void
+  workspaceNavigation: AppMenuProps['workspaceNavigation']
   t: (key: string) => string
 }
 
-function MobileMenuSheet({ state, pages, onPop, onClose, onActivateRow, t }: SheetProps) {
+function MobileMenuSheet({ state, pages, onPop, onClose, onActivateRow, workspaceNavigation, t }: SheetProps) {
   const portalTarget = useMobileMenuPortalTarget(state.isOpen)
   if (!portalTarget) return null
 
@@ -238,6 +243,7 @@ function MobileMenuSheet({ state, pages, onPop, onClose, onActivateRow, t }: She
               onPop={onPop}
               onClose={onClose}
               onActivateRow={onActivateRow}
+              workspaceNavigation={workspaceNavigation}
               t={t}
             />
           </motion.div>
@@ -255,6 +261,7 @@ interface PageStackProps {
   onPop: () => void
   onClose: () => void
   onActivateRow: (row: MobileMenuRow) => void
+  workspaceNavigation: AppMenuProps['workspaceNavigation']
   t: (key: string) => string
 }
 
@@ -262,7 +269,7 @@ interface PageStackProps {
  * Renders the page stack with a slide-in / slide-out animation per sub-page.
  * Lower pages stay rendered underneath but are visually covered.
  */
-function PageStack({ pages, stack, onPop, onClose, onActivateRow, t }: PageStackProps) {
+function PageStack({ pages, stack, onPop, onClose, onActivateRow, workspaceNavigation, t }: PageStackProps) {
   return (
     <div className="absolute inset-0">
       {stack.map((pageId, depth) => {
@@ -277,6 +284,14 @@ function PageStack({ pages, stack, onPop, onClose, onActivateRow, t }: PageStack
             exit={{ x: '100%' }}
             transition={SNAPPY_SPRING}
           >
+            {pageId === 'workspaces' ? (
+              <MobileWorkspacePage
+                navigation={workspaceNavigation}
+                onBack={onPop}
+                onClose={onClose}
+                t={t}
+              />
+            ) : (
             <MobileMenuPage
               title={t(page.titleKey)}
               showBack={depth > 0}
@@ -289,6 +304,7 @@ function PageStack({ pages, stack, onPop, onClose, onActivateRow, t }: PageStack
                     <MobileMenuItem
                       icon={renderRowIcon(row.iconName, row.id)}
                       label={t(row.labelKey)}
+                      description={row.description ? t(row.description) : undefined}
                       affordance={affordanceFor(row.action)}
                       onClick={() => onActivateRow(row)}
                     />
@@ -296,10 +312,87 @@ function PageStack({ pages, stack, onPop, onClose, onActivateRow, t }: PageStack
                 ))}
               </ul>
             </MobileMenuPage>
+            )}
           </motion.div>
         )
       })}
     </div>
+  )
+}
+
+function MobileWorkspacePage({
+  navigation,
+  onBack,
+  onClose,
+  t,
+}: {
+  navigation: AppMenuProps['workspaceNavigation']
+  onBack: () => void
+  onClose: () => void
+  t: (key: string) => string
+}) {
+  return (
+    <MobileMenuPage title={t('workspace.workspaces')} showBack onBack={onBack} onClose={onClose}>
+      <ul className="py-2">
+        {navigation.items.map(item => (
+          <li key={item.workspace.id}>
+            <div className={cn('flex min-h-[56px] items-center px-2', item.isActive && 'bg-foreground/5')}>
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-[6px] px-2 py-2 text-left active:bg-foreground/10"
+                onClick={() => { void navigation.selectWorkspace(item.workspace.id).then(onClose) }}
+              >
+                <CrossfadeAvatar
+                  src={item.iconUrl}
+                  alt={item.workspace.name}
+                  className="h-7 w-7 shrink-0 rounded-full ring-1 ring-border/50"
+                  fallbackClassName="rounded-full bg-muted text-sm"
+                  fallback={item.workspace.name.charAt(0) || 'W'}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[15px] leading-tight">{item.workspace.name}</span>
+                  {item.workspace.remoteServer && (
+                    <span className={cn('mt-0.5 flex items-center gap-1 truncate text-[12px]', item.isDisconnected ? 'text-destructive' : 'text-foreground/45')}>
+                      {item.isDisconnected ? <Icons.CloudOff className="h-3 w-3 shrink-0" /> : <Icons.Cloud className="h-3 w-3 shrink-0" />}
+                      <span className="truncate">{item.isDisconnected ? item.disconnectLabel : item.workspace.remoteServer.url}</span>
+                    </span>
+                  )}
+                </span>
+                {item.hasUnread && <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />}
+                {item.isActive && <Icons.Check className="h-4 w-4 shrink-0 text-foreground/55" />}
+              </button>
+              {!item.isActive && !item.isDisconnected && (
+                <button
+                  type="button"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] text-foreground/45 active:bg-foreground/10 active:text-foreground"
+                  aria-label={t('sidebarMenu.openInNewWindow')}
+                  onClick={() => { void navigation.openWorkspaceInNewWindow(item.workspace.id).then(onClose) }}
+                >
+                  <Icons.ExternalLink className="h-4 w-4" />
+                </button>
+              )}
+              {!item.isActive && (
+                <button
+                  type="button"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] text-foreground/45 active:bg-destructive/10 active:text-destructive"
+                  aria-label={t('workspace.removeWorkspace')}
+                  onClick={() => { void navigation.removeWorkspace(item.workspace) }}
+                >
+                  <Icons.Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </li>
+        ))}
+        <li className="mt-1 border-t border-foreground/5 pt-1">
+          <MobileMenuItem
+            icon={<Icons.FolderPlus className="h-5 w-5" />}
+            label={t('workspace.addWorkspace')}
+            onClick={() => { onClose(); navigation.openCreation() }}
+          />
+        </li>
+      </ul>
+    </MobileMenuPage>
   )
 }
 

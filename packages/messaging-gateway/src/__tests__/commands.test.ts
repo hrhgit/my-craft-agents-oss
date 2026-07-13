@@ -18,7 +18,6 @@ function makeSession(id: string, name: string, lastMessageAt: number): Session {
     createdAt: lastMessageAt - 1000,
     updatedAt: lastMessageAt,
     lastMessageAt,
-    isArchived: false,
   } as unknown as Session
 }
 

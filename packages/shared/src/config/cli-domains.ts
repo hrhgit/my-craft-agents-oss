@@ -1,4 +1,4 @@
-export type CliDomainNamespace = 'label' | 'source' | 'skill' | 'automation' | 'permission' | 'theme'
+export type CliDomainNamespace = 'source' | 'skill' | 'automation' | 'permission' | 'theme'
 
 export interface CliDomainPolicy {
   namespace: CliDomainNamespace
@@ -11,18 +11,6 @@ export interface CliDomainPolicy {
 }
 
 const POLICIES: Record<CliDomainNamespace, CliDomainPolicy> = {
-  label: {
-    namespace: 'label',
-    helpCommand: 'craft-agent label --help',
-    workspacePathScopes: ['labels/**'],
-    readActions: ['list', 'get', 'auto-rule-list', 'auto-rule-validate'],
-    quickExamples: [
-      'craft-agent label list',
-      'craft-agent label create --name "Bug" --color "accent"',
-      'craft-agent label update bug --json \'{"name":"Bug Report"}\'',
-    ],
-    bashGuardPaths: ['labels/**'],
-  },
   source: {
     namespace: 'source',
     helpCommand: 'craft-agent source --help',

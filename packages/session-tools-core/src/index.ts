@@ -119,13 +119,11 @@ export type {
   StdioValidationResult,
   McpValidationResult,
   ApiTestResult,
-  // Session self-management types
+  // Session query types
   SessionInfo,
   SessionListItem,
   ListSessionsOptions,
   ListSessionsResult,
-  ResolvedLabelsResult,
-  ResolvedStatusResult,
 } from './context.ts';
 
 export { createNodeFileSystem } from './context.ts';

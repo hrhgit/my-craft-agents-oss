@@ -19,8 +19,6 @@ import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
 import { CONFIG_DIR, PI_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
-import { getDefaultStatusConfig, saveStatusConfig, ensureDefaultIconFiles } from '../statuses/storage.ts';
-import { getDefaultLabelConfig, saveLabelConfig } from '../labels/storage.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
 import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
 import type {
@@ -32,6 +30,19 @@ import type {
 
 const DEFAULT_WORKSPACES_DIR = join(CONFIG_DIR, 'workspaces');
 const LEGACY_WORKSPACE_AI_DEFAULT_KEYS = ['provider', 'model', 'thinkingLevel'] as const;
+const RETIRED_WORKSPACE_ORGANIZATION_PATHS = ['labels', 'statuses', 'views.json'] as const;
+
+function removeRetiredWorkspaceOrganization(rootPath: string): void {
+  for (const relativePath of RETIRED_WORKSPACE_ORGANIZATION_PATHS) {
+    const target = join(rootPath, relativePath);
+    if (!existsSync(target)) continue;
+    try {
+      rmSync(target, { recursive: true });
+    } catch (error) {
+      console.warn(`[workspaces] Failed to remove retired organization path: ${target}`, error);
+    }
+  }
+}
 
 function removeLegacyWorkspaceAiDefaults(config: WorkspaceConfig): boolean {
   if (!config.defaults) return false;
@@ -150,6 +161,8 @@ export function countSessionsByCwd(rootPath: string): number {
 export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
   const configPath = join(rootPath, 'config.json');
   if (!existsSync(configPath)) return null;
+
+  removeRetiredWorkspaceOrganization(rootPath);
 
   try {
     const config = readJsonFileSync<WorkspaceConfig>(configPath);
@@ -368,20 +381,14 @@ export function createWorkspaceAtPath(
   // workspace-skill fallback paths in pre-tool-use.ts and skill-validate.ts;
   // the stale `loadWorkspaceSkills` reference previously documented here
   // does not exist in the codebase).
-  // `sources/`, labels/, statuses/, automations/ remain craft-shell
-  // owned and are still created below.
+  // `sources/` and `automations/` remain Craft-owned.
   mkdirSync(rootPath, { recursive: true });
   mkdirSync(getWorkspaceSourcesPath(rootPath), { recursive: true });
 
   // Save config
   saveWorkspaceConfig(rootPath, config);
 
-  // Initialize status configuration with defaults
-  saveStatusConfig(rootPath, getDefaultStatusConfig());
-  ensureDefaultIconFiles(rootPath);
-
-  // Initialize label configuration with defaults (two nested groups + valued labels)
-  saveLabelConfig(rootPath, getDefaultLabelConfig());
+  removeRetiredWorkspaceOrganization(rootPath);
 
   // Initialize plugin manifest for SDK integration (enables skills, commands, agents)
   ensurePluginManifest(rootPath, name);

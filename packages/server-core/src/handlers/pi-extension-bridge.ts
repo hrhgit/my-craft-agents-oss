@@ -22,7 +22,7 @@ import type { EventSink } from '@craft-agent/server-core/transport'
  * CoreBackendConfig.onExtensionEvent。当 PiAgent 收到 Pi RpcClient 的扩展事件时，
  * 通过此回调将事件广播到渲染进程。
  *
- * 对 remoteui_request 事件注入 sessionId，以便渲染进程在回传响应时
+ * 对临时交互事件注入受信 sessionId，以便渲染进程在回传响应时
  * 能定位到发起请求的会话（SessionManager.sendRemoteUIResponse 据此查找 agent）。
  *
  * @param eventSink - SessionManager 的事件分发器
@@ -39,8 +39,13 @@ export function createExtensionEventForwarder(
   return (event: ExtensionBridgeEvent) => {
     if (!eventSink) return
 
-    // 为 remoteui_request 注入 sessionId（渲染进程回传响应时需要）
-    if (event.type === 'remoteui_request' && sessionId) {
+    // 临时交互的会话归属由 host 注入，不接受扩展提供的路由身份。
+    if (
+      sessionId
+      && (event.type === 'remoteui_request'
+        || event.type === 'extension_interaction_request'
+        || event.type === 'extension_interaction_cancel')
+    ) {
       event = { ...event, sessionId }
     }
 

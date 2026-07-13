@@ -1,6 +1,5 @@
 import type { ComponentEntry, CategoryGroup, Category } from './types'
 import { onboardingComponents } from './onboarding'
-import { chatComponents } from './chat'
 import { turnCardComponents, fullscreenOverlayComponents } from './turn-card'
 import { turnCardModesComponents } from './turn-card-modes'
 import { messagesComponents } from './messages'
@@ -10,10 +9,7 @@ import { markdownComponents } from './markdown'
 import { iconComponents } from './icons'
 import { oauthComponents } from './oauth'
 import { toastsComponents } from './toasts'
-import { sessionListComponents } from './session-list'
 import { editPopoverComponents } from './edit-popover'
-import { automationComponents } from './automations'
-import { entityListComponents } from './entity-lists'
 import { browserUiComponents } from './browser-ui'
 import { plannerComponents } from './planner'
 import { customShadowsComponents } from './custom-shadows'
@@ -22,15 +18,12 @@ import { containerTransitionsComponents } from './container-transitions'
 import { apiKeyInputComponents } from './api-key-input'
 import { messagingComponents } from './messaging'
 import { imageSupportComponents } from './image-support'
-import { mobileWebUIComponents } from './mobile-webui'
 
 export * from './types'
 
 export const componentRegistry: ComponentEntry[] = [
-  ...mobileWebUIComponents,
   ...apiKeyInputComponents,
   ...onboardingComponents,
-  ...chatComponents,
   ...turnCardComponents,
   ...turnCardModesComponents,
   ...fullscreenOverlayComponents,
@@ -41,10 +34,7 @@ export const componentRegistry: ComponentEntry[] = [
   ...markdownComponents,
   ...iconComponents,
   ...oauthComponents,
-  ...sessionListComponents,
   ...editPopoverComponents,
-  ...automationComponents,
-  ...entityListComponents,
   ...browserUiComponents,
   ...plannerComponents,
   ...customShadowsComponents,

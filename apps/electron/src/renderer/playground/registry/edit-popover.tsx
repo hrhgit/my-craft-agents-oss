@@ -284,19 +284,16 @@ const mockAppShellContext = {
     console.log('[Playground] Send message to session:', sessionId, message)
   },
   onRenameSession: () => {},
-  onFlagSession: () => {},
-  onUnflagSession: () => {},
   onMarkSessionRead: () => {},
   onMarkSessionUnread: () => {},
   onSetActiveViewingSession: () => {},
-  onSessionStatusChange: () => {},
   onDeleteSession: async () => true,
 }
 
 // Sample edit context for playground
 const sampleEditContext: EditContext = {
-  label: 'Label Configuration',
-  filePath: '/playground/labels/config.json',
+  label: 'Automation Configuration',
+  filePath: '/playground/automations.json',
   context: 'Playground demo of EditPopover component.',
 }
 
@@ -502,5 +499,4 @@ export const editPopoverComponents: ComponentEntry[] = [
     }),
   },
 ]
-
 

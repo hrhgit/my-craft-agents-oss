@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, jest } from 'bun:test'
 import { PiAgent } from '../pi-agent.ts'
 import { AbortReason } from '../core/session-lifecycle.ts'
 import type { BackendConfig } from '../backend/types.ts'
@@ -110,6 +110,45 @@ describe('PiAgent abort', () => {
 
     expect(stopped).toBe(true)
     expect((agent as any).rpcClient).toBeNull()
+    agent.destroy()
+  })
+
+  it('releases the runtime before a stalled abort can exhaust the renderer request timeout', async () => {
+    jest.useFakeTimers()
+    const agent = createAgent()
+    let stopped = false
+    ;(agent as any)._isProcessing = true
+    ;(agent as any).rpcClient = {
+      abort: () => new Promise<void>(() => {}),
+      stop: async () => { stopped = true },
+    }
+
+    try {
+      const aborting = agent.abort(AbortReason.UserStop)
+      await Promise.resolve()
+      expect(stopped).toBe(false)
+
+      jest.advanceTimersByTime(5_000)
+      await aborting
+
+      expect(stopped).toBe(true)
+      expect((agent as any).rpcClient).toBeNull()
+    } finally {
+      jest.useRealTimers()
+      agent.destroy()
+    }
+  })
+
+  it('does not start a runtime solely to reload extensions', async () => {
+    const agent = createAgent()
+    let startupAttempts = 0
+    ;(agent as any).ensureRpcClient = async () => {
+      startupAttempts++
+      throw new Error('should not start')
+    }
+
+    await expect(agent.reloadExtensions()).resolves.toEqual({ reloaded: false, deferred: false })
+    expect(startupAttempts).toBe(0)
     agent.destroy()
   })
 })

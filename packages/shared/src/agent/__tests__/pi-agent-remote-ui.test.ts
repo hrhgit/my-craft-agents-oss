@@ -2,12 +2,13 @@ import { describe, expect, it } from 'bun:test'
 import { PiAgent } from '../pi-agent.ts'
 import type { BackendConfig } from '../backend/types.ts'
 
-function createAgent() {
+function createAgent(onExtensionEvent?: BackendConfig['onExtensionEvent']) {
   const agent = new PiAgent({
     provider: 'pi',
     workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/craft-agent-test' } as any,
     session: { id: 'session-test', workspaceRootPath: '/tmp/craft-agent-test', createdAt: 0, lastUsedAt: 0 } as any,
     isHeadless: true,
+    onExtensionEvent,
   } satisfies BackendConfig)
   const responses: unknown[] = []
   ;(agent as any).rpcClient = { respondToExtensionUI: (response: unknown) => responses.push(response) }
@@ -19,7 +20,7 @@ describe('PiAgent RemoteUI bridge', () => {
     const { agent } = createAgent()
     const map = (agent as any).mapExtensionUiRequest.bind(agent)
 
-    expect(map({ type: 'extension_ui_request', id: 'select', extensionId: 'ask-user', method: 'select', title: 'Pick one', options: ['A'] })).toMatchObject({
+    expect(map({ type: 'extension_ui_request', id: 'select', extensionId: 'legacy-extension', method: 'select', title: 'Pick one', options: ['A'] })).toMatchObject({
       type: 'remoteui_request', kind: 'select', requestId: 'select', options: [{ title: 'A' }],
     })
     expect(map({ type: 'extension_ui_request', id: 'confirm', extensionId: 'ambiguity-dictionary', method: 'confirm', title: 'Continue?', message: 'Confirm it' })).toMatchObject({
@@ -31,161 +32,26 @@ describe('PiAgent RemoteUI bridge', () => {
     expect(map({ type: 'extension_ui_request', id: 'editor', extensionId: 'subagent', method: 'editor', title: 'Logs', prefill: 'log text' })).toMatchObject({
       type: 'remoteui_request', kind: 'editor', requestId: 'editor', prefill: 'log text',
     })
-    expect(map({
-      type: 'extension_ui_request',
-      id: 'ask-user-single',
-      extensionId: 'ask-user',
-      method: 'select',
-      title: 'Pick an approach',
-      options: ['Prototype', '✏️ Write my own answer...'],
-    })).toMatchObject({
-      type: 'remoteui_request',
-      kind: 'select',
-      requestId: 'ask-user-single',
-      options: [{ title: 'Prototype' }],
-      allowFreeform: true,
-    })
     agent.destroy()
   })
 
-  it('maps canonical ask-user multi-select input titles to structured select requests', () => {
-    const { agent } = createAgent()
-    const map = (agent as any).mapExtensionUiRequest.bind(agent)
-
-    expect(map({
-      type: 'extension_ui_request',
-      id: 'ask-user-multiple',
-      extensionId: 'ask-user',
-      method: 'input',
-      title: '[2/3] 多选测试：请选择两个或更多常用工具。\r\n\r\nContext:\r\n这是纯多选测试。\r\n\r\nOptions (select one or more):\r\n1. VS Code\r\n2. Git\r\n3. Docker\r\n4. Postman',
-      placeholder: 'Type your selection(s)...',
-    })).toMatchObject({
-      type: 'remoteui_request',
-      kind: 'select',
-      requestId: 'ask-user-multiple',
-      title: '[2/3] 多选测试：请选择两个或更多常用工具。',
-      message: '这是纯多选测试。',
-      options: [
-        { title: 'VS Code' },
-        { title: 'Git' },
-        { title: 'Docker' },
-        { title: 'Postman' },
-      ],
-      allowMultiple: true,
-      allowFreeform: true,
-    })
-
-    agent.destroy()
-  })
-
-  it('splits ask-user single-select context without changing other extension titles', () => {
-    const { agent } = createAgent()
-    const map = (agent as any).mapExtensionUiRequest.bind(agent)
-    const canonicalTitle = '[1/3] Pick a theme\r\n\r\nContext:\r\nChoose one option.'
-    const legacyTitle = 'Pick a theme\n\nContext:\nChoose one option.'
-
-    expect(map({
-      type: 'extension_ui_request',
-      id: 'canonical-ask-user-select',
-      extensionId: 'ask-user',
-      method: 'select',
-      title: canonicalTitle,
-      options: ['Light', 'Dark'],
-    })).toMatchObject({
-      kind: 'select',
-      title: '[1/3] Pick a theme',
-      message: 'Choose one option.',
-    })
-    expect(map({
-      type: 'extension_ui_request',
-      id: 'legacy-ask-user-select',
-      extensionId: 'ask_user',
-      method: 'select',
-      title: legacyTitle,
-      options: ['Light', 'Dark'],
-    })).toMatchObject({
-      kind: 'select',
-      title: 'Pick a theme',
-      message: 'Choose one option.',
-    })
-
-    const otherExtension = map({
-      type: 'extension_ui_request',
-      id: 'other-extension-select',
-      extensionId: 'prompt-automation',
-      method: 'select',
-      title: legacyTitle,
-      options: ['Light', 'Dark'],
-    })
-    expect(otherExtension.title).toBe(legacyTitle)
-    expect(otherExtension.message).toBeUndefined()
-
-    agent.destroy()
-  })
-
-  it('splits ask-user editor context without changing other extension titles', () => {
-    const { agent } = createAgent()
-    const map = (agent as any).mapExtensionUiRequest.bind(agent)
-    const canonicalTitle = '[2/3] Describe the issue\r\n\r\nContext:\r\nInclude the affected workflow.'
-    const legacyTitle = 'Describe the issue\n\nContext:\nInclude the affected workflow.'
-
-    expect(map({
-      type: 'extension_ui_request',
-      id: 'canonical-ask-user-input',
-      extensionId: 'ask-user',
-      method: 'input',
-      title: canonicalTitle,
-      placeholder: 'Type your answer...',
-    })).toMatchObject({
-      kind: 'editor',
-      title: '[2/3] Describe the issue',
-      message: 'Include the affected workflow.',
-      placeholder: 'Type your answer...',
-    })
-    expect(map({
-      type: 'extension_ui_request',
-      id: 'legacy-ask-user-input',
-      extensionId: 'ask_user',
-      method: 'input',
-      title: legacyTitle,
-    })).toMatchObject({
-      kind: 'editor',
-      title: 'Describe the issue',
-      message: 'Include the affected workflow.',
-    })
-
-    const otherExtension = map({
-      type: 'extension_ui_request',
-      id: 'other-extension-input',
-      extensionId: 'prompt-automation',
-      method: 'input',
-      title: legacyTitle,
-    })
-    expect(otherExtension.title).toBe(legacyTitle)
-    expect(otherExtension.message).toBeUndefined()
-
-    agent.destroy()
-  })
-
-  it('keeps multi-select title decoding scoped to ask-user extension IDs', () => {
+  it('does not decode extension-specific data from legacy dialog titles', () => {
     const { agent } = createAgent()
     const map = (agent as any).mapExtensionUiRequest.bind(agent)
     const encodedTitle = 'Choose areas\n\nOptions (select one or more):\n1. UI\n2. Backend'
 
     expect(map({
       type: 'extension_ui_request',
-      id: 'legacy-ask-user',
-      extensionId: 'ask_user',
+      id: 'legacy-input',
+      extensionId: 'legacy-extension',
       method: 'input',
       title: encodedTitle,
-    })).toMatchObject({ kind: 'select', allowMultiple: true })
-    expect(map({
-      type: 'extension_ui_request',
-      id: 'other-extension',
-      extensionId: 'prompt-automation',
-      method: 'input',
+    })).toMatchObject({
+      type: 'remoteui_request',
+      kind: 'editor',
+      requestId: 'legacy-input',
       title: encodedTitle,
-    })).toMatchObject({ kind: 'editor', title: encodedTitle })
+    })
 
     agent.destroy()
   })
@@ -206,6 +72,126 @@ describe('PiAgent RemoteUI bridge', () => {
       { type: 'extension_ui_response', id: 'confirm', confirmed: true },
       { type: 'extension_ui_response', id: 'cancel', cancelled: true },
     ])
+
+    agent.destroy()
+  })
+
+  it('passes interaction v1 through with trusted ownership and structured answers', () => {
+    const { agent, responses } = createAgent()
+    const map = (agent as any).mapExtensionUiRequest.bind(agent)
+    const bridgeEvent = map({
+      type: 'extension_ui_request',
+      id: 'interaction-1',
+      extensionId: 'ask-user',
+      clientId: 'client-1',
+      runtimeId: 'runtime-1',
+      sessionId: 'pi-session-1',
+      method: 'interact',
+      request: {
+        schemaVersion: 1,
+        fields: [{
+          id: 'targets',
+          kind: 'choice',
+          label: 'Targets',
+          multiple: true,
+          options: [{ id: 'new-york', label: 'New York, US' }, { id: 'paris', label: 'Paris, FR' }],
+        }],
+      },
+    })
+
+    expect(bridgeEvent).toMatchObject({
+      type: 'extension_interaction_request',
+      requestId: 'interaction-1',
+      extensionId: 'ask-user',
+      runtimeId: 'runtime-1',
+    })
+    agent.sendRemoteUIResponse('interaction-1', {
+      schemaVersion: 1,
+      status: 'submitted',
+      answers: [{ fieldId: 'targets', kind: 'choice', selectedOptionIds: ['new-york', 'paris'] }],
+    })
+    expect(responses).toEqual([{
+      type: 'extension_ui_response',
+      id: 'interaction-1',
+      extensionId: 'ask-user',
+      clientId: 'client-1',
+      runtimeId: 'runtime-1',
+      sessionId: 'pi-session-1',
+      interaction: {
+        schemaVersion: 1,
+        status: 'submitted',
+        answers: [{ fieldId: 'targets', kind: 'choice', selectedOptionIds: ['new-york', 'paris'] }],
+      },
+    }])
+
+    expect(agent.sendRemoteUIResponse('interaction-1', null, 'cancelled')).toBe(true)
+    expect(responses).toHaveLength(1)
+
+    agent.destroy()
+  })
+
+  it('settles interaction requests that Craft cannot safely render', () => {
+    const { agent, responses } = createAgent()
+    const map = (agent as any).mapExtensionUiRequest.bind(agent)
+
+    expect(map({
+      type: 'extension_ui_request',
+      id: 'invalid-interaction',
+      extensionId: 'ask-user',
+      runtimeId: 'runtime-1',
+      method: 'interact',
+      request: {
+        schemaVersion: 1,
+        fields: [{ id: 'secret', kind: 'text', label: 'Secret', multiline: true, sensitive: true }],
+      },
+    })).toBeNull()
+    expect(responses).toEqual([expect.objectContaining({
+      type: 'extension_ui_response',
+      id: 'invalid-interaction',
+      extensionId: 'ask-user',
+      interaction: { schemaVersion: 1, status: 'cancelled', reason: 'host-disconnected' },
+    })])
+
+    agent.destroy()
+  })
+
+  it('forwards Pi interaction cancellation only for the trusted owner', () => {
+    const events: unknown[] = []
+    const { agent } = createAgent(event => events.push(event))
+    const map = (agent as any).mapExtensionUiRequest.bind(agent)
+    const handle = (agent as any).handlePiClientEvent.bind(agent)
+    map({
+      type: 'extension_ui_request',
+      id: 'interaction-cancel',
+      extensionId: 'ask-user',
+      runtimeId: 'runtime-1',
+      method: 'interact',
+      request: { schemaVersion: 1, fields: [{ id: 'confirm', kind: 'confirm', label: 'Continue?' }] },
+    })
+
+    handle({
+      type: 'extension_ui_cancel',
+      id: 'interaction-cancel',
+      extensionId: 'forged-owner',
+      runtimeId: 'runtime-1',
+      schemaVersion: 1,
+      reason: 'aborted',
+    })
+    expect(events).toEqual([])
+    handle({
+      type: 'extension_ui_cancel',
+      id: 'interaction-cancel',
+      extensionId: 'ask-user',
+      runtimeId: 'runtime-1',
+      schemaVersion: 1,
+      reason: 'aborted',
+    })
+    expect(events).toEqual([expect.objectContaining({
+      type: 'extension_interaction_cancel',
+      requestId: 'interaction-cancel',
+      extensionId: 'ask-user',
+      reason: 'aborted',
+    })])
 
     agent.destroy()
   })

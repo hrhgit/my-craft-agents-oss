@@ -24,7 +24,7 @@ export default defineConfig({
   base: './',
   build: {
     outDir: resolve(__dirname, 'dist'),
-    emptyDirBeforeWrite: true,
+    emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
       input: {

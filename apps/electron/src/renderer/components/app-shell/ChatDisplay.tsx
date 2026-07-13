@@ -46,7 +46,6 @@ import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequ
 import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
 import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
-import type { ExtensionCommandResult } from "@craft-agent/core/types"
 import {
   TurnCard,
   UserMessageBubble,
@@ -75,7 +74,7 @@ import { collectFileChangesFromActivities, getFirstFileChangeIdForActivity } fro
 import { resolveBranchNewPanelOption } from "./branching"
 import { handleErrorMessageAction } from "./error-message-actions"
 import { piProjectionAtomFamily } from "@/atoms/pi-projection"
-import { selectActivePiPlanArtifact, selectPendingPiCredential, selectPendingPiPermission, selectPiPlanModeState, selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
+import { selectPendingPiCredential, selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
 import { buildPiTurnOverlay, buildPiTurns, getPiTurnSearchText } from "./pi-turn-model"
 
 // ============================================================================
@@ -188,16 +187,6 @@ interface ChatDisplayProps {
   // Skill selection (for @mentions)
   /** Available skills for @mention autocomplete */
   skills?: LoadedSkill[]
-  // Label selection (for #labels)
-  /** Available label configs (tree) for label menu and badge display */
-  labels?: import('@craft-agent/shared/labels').LabelConfig[]
-  /** Callback when labels change */
-  onLabelsChange?: (labels: string[]) => void
-  // State/status selection (for # menu and ActiveOptionBadges)
-  /** Available workflow states */
-  sessionStatuses?: import('@/config/session-status-config').SessionStatus[]
-  /** Callback when session state changes */
-  onSessionStatusChange?: (stateId: string) => void
   /** Workspace ID for loading skill icons */
   workspaceId?: string
   // Working directory (per session)
@@ -482,12 +471,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onSourcesChange,
   // Skills (for @mentions)
   skills,
-  // Labels (for #labels)
-  labels,
-  onLabelsChange,
-  // States (for # menu and badge)
-  sessionStatuses,
-  onSessionStatusChange,
   workspaceId,
   // Working directory
   workingDirectory,
@@ -1328,45 +1311,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
   }
 
-  const invokePlanArtifactCommand = useCallback(async (
-    command: 'plan-execute' | 'plan-refine',
-    artifactId: string,
-  ): Promise<ExtensionCommandResult> => {
-    if (!session) return { invoked: false, error: 'Session is unavailable.' }
-    if (command === 'plan-execute') {
-      try {
-        await window.electronAPI.sessionCommand(session.id, { type: 'setPermissionMode', mode: 'allow-all' })
-      } catch (error) {
-        return { invoked: false, error: `Failed to switch to Allow-all: ${error instanceof Error ? error.message : String(error)}` }
-      }
-    }
-    try {
-      return await window.electronAPI.invokeExtensionCommand(session.id, command, { artifactId })
-    } catch (error) {
-      return { invoked: false, error: error instanceof Error ? error.message : String(error) }
-    }
-  }, [session])
-
-  const executePlanArtifactWithCompact = useCallback(async (artifactId: string): Promise<ExtensionCommandResult> => {
-    if (!session) return { invoked: false, error: 'Session is unavailable.' }
-    try {
-      await window.electronAPI.sessionCommand(session.id, { type: 'setPermissionMode', mode: 'allow-all' })
-      await window.electronAPI.sessionCommand(session.id, {
-        type: 'setPendingPlanExecution',
-        artifactId,
-      })
-      handleSubmit('/compact')
-      return { invoked: true }
-    } catch (error) {
-      return { invoked: false, error: error instanceof Error ? error.message : String(error) }
-    }
-  }, [session, handleSubmit])
-
-  const refinePlanArtifact = useCallback(async (artifactId: string): Promise<ExtensionCommandResult> => {
-    if (!session) return { invoked: false, error: 'Session is unavailable.' }
-    return invokePlanArtifactCommand('plan-refine', artifactId)
-  }, [invokePlanArtifactCommand, session])
-
   const handleSaveAndSendFollowUp = useCallback((_target: {
     messageId: string
     annotationId: string
@@ -1465,19 +1409,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }
     return undefined
   }, [effectivePendingCredential, effectivePendingPermission])
-
-  const projectedPlanModeState = React.useMemo(
-    () => piProjection.syncState === 'synced' ? selectPiPlanModeState(projectionEntities) : undefined,
-    [piProjection.syncState, projectionEntities],
-  )
-  const effectivePlanModeState = projectedPlanModeState
-  const projectedActivePlanArtifact = React.useMemo(
-    () => piProjection.syncState === 'synced'
-      ? selectActivePiPlanArtifact(projectionEntities, effectivePlanModeState?.activeArtifactId)
-      : undefined,
-    [effectivePlanModeState?.activeArtifactId, piProjection.syncState, projectionEntities],
-  )
-  const activePlanArtifact = projectedActivePlanArtifact
 
   // Keep ref in sync for scroll handler
   totalTurnCountRef.current = allTurns.length
@@ -1947,9 +1878,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           }
                         }}
                         onSaveAndSendFollowUp={handleSaveAndSendFollowUp}
-                        onExecutePlanArtifact={(artifactId) => invokePlanArtifactCommand('plan-execute', artifactId)}
-                        onExecutePlanArtifactWithCompact={executePlanArtifactWithCompact}
-                        onRefinePlanArtifact={refinePlanArtifact}
                         onPopOut={(text) => {
                           // Open raw markdown source in code viewer
                           setOverlayState({
@@ -2075,18 +2003,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             onPermissionModeChange={onPermissionModeChange}
             tasks={backgroundTasks}
             sessionId={session.id}
-            planModeState={effectivePlanModeState}
-            activePlanArtifact={activePlanArtifact}
             readOnly={session.readOnly}
             sessionFolderPath={sessionFolderPath}
             onKillTask={(taskId) => killTask(taskId, backgroundTasks.find(t => t.id === taskId)?.type ?? 'shell')}
             onInsertMessage={onInputChange}
-            sessionLabels={session.labels}
-            labels={labels}
-            onLabelsChange={onLabelsChange}
-            sessionStatuses={sessionStatuses}
-            currentSessionStatus={session.sessionStatus || 'todo'}
-            onSessionStatusChange={onSessionStatusChange}
             inputProps={{
               placeholder,
               disabled: isInputDisabled || session.readOnly,
@@ -2400,6 +2320,7 @@ function MessageBubble({
         badges={message.badges}
         isPending={message.isPending}
         isQueued={message.isQueued}
+        timestamp={message.timestamp}
         onUrlClick={onOpenUrl}
         onFileClick={onOpenFile}
         compactMode={compactMode}

@@ -144,7 +144,6 @@ export const AutomationMatcherSchema = z.object({
   cron: z.string().optional(),
   timezone: z.string().optional(),
   permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional(),
-  labels: z.array(z.string()).optional(),
   enabled: z.boolean().optional(),
   conditions: z.array(AutomationConditionSchema).optional(),
   // Telegram forum-topic name (1–128 chars). Silently ignored at runtime when
@@ -158,9 +157,7 @@ export const AutomationMatcherSchema = z.object({
  * Old names are accepted during schema validation and silently rewritten to canonical names.
  * A console.warn() is emitted at runtime so users know to update their configs.
  */
-export const DEPRECATED_EVENT_ALIASES: Record<string, string> = {
-  'TodoStateChange': 'SessionStatusChange',
-};
+export const DEPRECATED_EVENT_ALIASES: Record<string, string> = {};
 
 /** All valid event names: canonical events + deprecated aliases. Derived from types.ts. */
 export const VALID_EVENTS: readonly string[] = [

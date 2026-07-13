@@ -20,12 +20,6 @@ import {
   handleError,
   handleTypedError,
   handleSourcesChanged,
-  handleLabelsChanged,
-  handleSessionStatusChanged,
-  handleSessionFlagged,
-  handleSessionUnflagged,
-  handleSessionArchived,
-  handleSessionUnarchived,
   handleNameChanged,
   handlePermissionRequest,
   handleCredentialRequest,
@@ -150,24 +144,6 @@ export function processEvent(
 
     case 'sources_changed':
       return handleSourcesChanged(state, event)
-
-    case 'labels_changed':
-      return handleLabelsChanged(state, event)
-
-    case 'session_status_changed':
-      return handleSessionStatusChanged(state, event)
-
-    case 'session_flagged':
-      return handleSessionFlagged(state, event)
-
-    case 'session_unflagged':
-      return handleSessionUnflagged(state, event)
-
-    case 'session_archived':
-      return handleSessionArchived(state, event)
-
-    case 'session_unarchived':
-      return handleSessionUnarchived(state, event)
 
     case 'name_changed':
       return handleNameChanged(state, event)

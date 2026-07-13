@@ -534,62 +534,6 @@ describe('runPreToolUseChecks', () => {
       expect(mockExistsSync).not.toHaveBeenCalled();
     });
 
-    it('blocks direct label folder reads and suggests craft-agent label help when feature is enabled', () => {
-      mockCraftAgentsCliFlag = true;
-
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'Read',
-        input: { file_path: '/test/workspace/labels/config.json' },
-      }));
-
-      expect(result.type).toBe('block');
-      if (result.type === 'block') {
-        expect(result.reason).toContain('craft-agent label');
-        expect(result.reason).toContain('craft-agent label --help');
-        expect(result.reason).toContain('labels/');
-      }
-    });
-
-    it('blocks direct label config writes and suggests craft-agent label help when feature is enabled', () => {
-      mockCraftAgentsCliFlag = true;
-      mockDetectConfigFileType.mockImplementation(() => ({ type: 'labels', displayFile: 'labels/config.json' }));
-
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'Write',
-        input: { file_path: '/test/workspace/labels/config.json', content: '{}' },
-      }));
-
-      expect(result.type).toBe('block');
-      if (result.type === 'block') {
-        expect(result.reason).toContain('craft-agent label');
-        expect(result.reason).toContain('craft-agent label --help');
-      }
-    });
-
-    it('does not apply config-file CLI redirect when feature is disabled', () => {
-      mockCraftAgentsCliFlag = false;
-      mockDetectConfigFileType.mockImplementation(() => ({ type: 'labels', displayFile: 'labels/config.json' }));
-
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'Write',
-        input: { file_path: '/test/workspace/labels/config.json', content: '{}' },
-      }));
-
-      expect(result.type).toBe('allow');
-    });
-
-    it('does not block label config writes when feature is disabled', () => {
-      mockCraftAgentsCliFlag = false;
-      mockDetectConfigFileType.mockImplementation(() => ({ type: 'labels', displayFile: 'labels/config.json' }));
-
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'Write',
-        input: { file_path: '/test/workspace/labels/config.json', content: '{}' },
-      }));
-
-      expect(result.type).toBe('allow');
-    });
-
     it('does not block bash commands touching automations files when feature is disabled', () => {
       mockCraftAgentsCliFlag = false;
 
@@ -670,32 +614,6 @@ describe('runPreToolUseChecks', () => {
       }
     });
 
-    it('blocks bash commands touching labels paths and points to craft-agent label --help when feature is enabled', () => {
-      mockCraftAgentsCliFlag = true;
-
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'Bash',
-        input: { command: 'python3 scripts/update.py labels/config.json' },
-        permissionMode: 'allow-all',
-      }));
-
-      expect(result.type).toBe('block');
-      if (result.type === 'block') {
-        expect(result.reason).toContain('craft-agent label --help');
-        expect(result.reason).toContain('craft-agent label');
-      }
-    });
-
-    it('allows bash craft-agent label commands through labels guard', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'Bash',
-        input: { command: 'craft-agent label list' },
-        permissionMode: 'allow-all',
-      }));
-
-      expect(result.type).toBe('allow');
-    });
-
     it('blocks bash commands touching automations files and points to craft-agent automation --help when feature is enabled', () => {
       mockCraftAgentsCliFlag = true;
 
@@ -734,15 +652,6 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('allow');
     });
 
-    it('does not block unrelated non-workspace labels paths in bash commands', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'Bash',
-        input: { command: 'python3 script.py /tmp/labels/config.json' },
-        permissionMode: 'allow-all',
-      }));
-
-      expect(result.type).toBe('allow');
-    });
   });
 
   // ============================================================

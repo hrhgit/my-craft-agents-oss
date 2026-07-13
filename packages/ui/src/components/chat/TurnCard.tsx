@@ -2,7 +2,7 @@ import * as React from 'react'
 import { useMemo, useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react'
 import i18n from 'i18next'
 import { useTranslation } from 'react-i18next'
-import type { ToolDisplayMeta, AnnotationV1, ExtensionCommandResult, PlanArtifactV1 } from '@craft-agent/core'
+import type { ToolDisplayMeta, AnnotationV1, PlanArtifactV1 } from '@craft-agent/core'
 import { normalizePath, pathStartsWith, stripPathPrefix } from '@craft-agent/shared/utils/path-strings'
 import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { motion, AnimatePresence } from 'motion/react'
@@ -83,7 +83,6 @@ import { useAnnotationCancelRestore } from '../annotations/use-annotation-cancel
 import { DocumentFormattedMarkdownOverlay } from '../overlay'
 import { AcceptPlanDropdown } from './AcceptPlanDropdown'
 import { CompactAcceptPlanDrawer } from './CompactAcceptPlanDrawer'
-import { PlanArtifactCard } from './PlanArtifactCard'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -316,10 +315,6 @@ export interface TurnCardProps {
   onAcceptPlan?: () => void
   /** Callback when user accepts the plan with compaction (compact conversation first, then execute) */
   onAcceptPlanWithCompact?: () => void
-  /** Structured plan artifact actions. */
-  onExecutePlanArtifact?: (artifactId: string) => Promise<ExtensionCommandResult>
-  onExecutePlanArtifactWithCompact?: (artifactId: string) => Promise<ExtensionCommandResult>
-  onRefinePlanArtifact?: (artifactId: string) => Promise<ExtensionCommandResult>
   /** Whether this is the last response in the session (shows Accept Plan button only for last response) */
   isLastResponse?: boolean
   /** Session folder path for stripping from file paths in tool display */
@@ -513,8 +508,6 @@ function getToolDisplayName(name: string): string {
   // Friendly display names for specific tools
   const displayNames: Record<string, string> = {
     'TodoWrite': 'Todo List Updated',
-    'set_session_labels': 'Set Session Labels',
-    'set_session_status': 'Set Session Status',
     'get_session_info': 'Get Session Info',
     'list_sessions': 'List Sessions',
   }
@@ -2795,9 +2788,6 @@ export const TurnCard = React.memo(function TurnCard({
   renderActionsMenu,
   onAcceptPlan,
   onAcceptPlanWithCompact,
-  onExecutePlanArtifact,
-  onExecutePlanArtifactWithCompact,
-  onRefinePlanArtifact,
   isLastResponse,
   sessionFolderPath,
   displayMode = 'detailed',
@@ -3206,24 +3196,7 @@ export const TurnCard = React.memo(function TurnCard({
               transition={{ duration: 0.3, ease: "easeOut" }}
               className={cn("select-text", hasActivities && "mt-2")}
             >
-              {renderMessageNode(response.messageId, response.artifact ? <PlanArtifactCard
-                artifact={response.artifact}
-                content={response.text}
-                onOpenFile={onOpenFile}
-                onOpenUrl={onOpenUrl}
-                onExecute={onExecutePlanArtifact}
-                onExecuteWithCompact={onExecutePlanArtifactWithCompact}
-                onRefine={onRefinePlanArtifact}
-                sessionId={sessionId}
-                messageId={response.messageId}
-                annotations={response.annotations}
-                onAddAnnotation={onAddAnnotation}
-                onRemoveAnnotation={onRemoveAnnotation}
-                onUpdateAnnotation={onUpdateAnnotation}
-                onBranch={onBranch && response.messageId ? () => onBranch(response.messageId!) : undefined}
-                completedAt={completedAt}
-                durationMs={durationMs}
-              /> : <ResponseCard
+              {renderMessageNode(response.messageId, <ResponseCard
                 text={response.text}
                 isStreaming={response.isStreaming}
                 streamStartTime={response.streamStartTime}
@@ -3257,24 +3230,7 @@ export const TurnCard = React.memo(function TurnCard({
       {/* Non-animated version for regular app use */}
       {!animateResponse && response && !isBuffering && (
         <div className={cn("select-text", hasActivities && "mt-2")}>
-          {renderMessageNode(response.messageId, response.artifact ? <PlanArtifactCard
-            artifact={response.artifact}
-            content={response.text}
-            onOpenFile={onOpenFile}
-            onOpenUrl={onOpenUrl}
-            onExecute={onExecutePlanArtifact}
-            onExecuteWithCompact={onExecutePlanArtifactWithCompact}
-            onRefine={onRefinePlanArtifact}
-            sessionId={sessionId}
-            messageId={response.messageId}
-            annotations={response.annotations}
-            onAddAnnotation={onAddAnnotation}
-            onRemoveAnnotation={onRemoveAnnotation}
-            onUpdateAnnotation={onUpdateAnnotation}
-            onBranch={onBranch && response.messageId ? () => onBranch(response.messageId!) : undefined}
-            completedAt={completedAt}
-            durationMs={durationMs}
-          /> : <ResponseCard
+          {renderMessageNode(response.messageId, <ResponseCard
             text={response.text}
             isStreaming={response.isStreaming}
             streamStartTime={response.streamStartTime}

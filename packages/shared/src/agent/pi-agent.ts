@@ -44,6 +44,12 @@ import { AbortReason } from './backend/types.ts';
 import { getBackendRuntime } from './backend/internal/driver-types.ts';
 import { SourceActivationDrainController } from './source-activation-drain.ts';
 import type { ExtensionContributionV1 } from '../protocol/extension-contributions.ts';
+import {
+  validateExtensionInteractionRequestV1,
+  validateExtensionInteractionResponseV1,
+  type ExtensionInteractionCancelReasonV1,
+  type ExtensionInteractionResponseV1,
+} from '../protocol/extension-interactions.ts';
 
 import type { PermissionMode } from './mode-manager.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
@@ -116,7 +122,7 @@ import { writeRuntimeLog, type RuntimeLogLevel } from '../utils/runtime-log.ts';
 /**
  * Convert the renderer's typed RemoteUI payload back to Pi's scalar dialog
  * protocol. Pi select/input/editor requests resolve with a string, while the
- * renderer uses result objects to support the richer ask_user interaction.
+ * renderer uses result objects for the generic host-rendered interaction.
  */
 function remoteUIResponseValue(payload: unknown): string {
   if (!payload || typeof payload !== 'object') return String(payload ?? '');
@@ -129,57 +135,10 @@ function remoteUIResponseValue(payload: unknown): string {
   if (typeof result.text === 'string') return result.text;
   if (typeof result.freeformText === 'string') return result.freeformText;
   if (Array.isArray(result.selections)) {
-    // The ask_user fallback parses multi-select responses as comma-separated
-    // values. Preserve every selected option instead of dropping all but one.
     const selections = result.selections.filter((selection): selection is string => typeof selection === 'string');
     if (selections.length > 0) return selections.join(', ');
   }
   return '';
-}
-
-const ASK_USER_EXTENSION_IDS = new Set(['ask-user', 'ask_user']);
-const ASK_USER_MULTIPLE_OPTIONS_MARKER = /(?:\r?\n){2}Options \(select one or more\):[ \t]*(?:\r?\n)/;
-const ASK_USER_CONTEXT_MARKER = /(?:\r?\n){2}Context:[ \t]*(?:\r?\n)/;
-
-function isAskUserExtension(extensionId: string): boolean {
-  return ASK_USER_EXTENSION_IDS.has(extensionId);
-}
-
-function parseAskUserPrompt(prompt: string): { title: string; message?: string } {
-  const contextMarker = ASK_USER_CONTEXT_MARKER.exec(prompt);
-  return {
-    title: (contextMarker ? prompt.slice(0, contextMarker.index) : prompt).trim(),
-    ...(contextMarker
-      ? { message: prompt.slice(contextMarker.index + contextMarker[0].length).trim() }
-      : {}),
-  };
-}
-
-function parseAskUserMultipleChoiceInput(title: string): {
-  title: string;
-  message?: string;
-  options: Array<{ title: string; description?: string }>;
-} | null {
-  const optionsMarker = ASK_USER_MULTIPLE_OPTIONS_MARKER.exec(title);
-  if (!optionsMarker || optionsMarker.index === undefined) return null;
-
-  const prompt = title.slice(0, optionsMarker.index).trim();
-  const rawOptions = title
-    .slice(optionsMarker.index + optionsMarker[0].length)
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
-  const options = rawOptions.map((line) => {
-    const match = /^(\d+)\.\s+(.+?)(?:\s+\u2014\s+(.+))?$/.exec(line);
-    if (!match) return null;
-    return { title: match[2]!, ...(match[3] ? { description: match[3] } : {}) };
-  });
-  if (options.length === 0 || options.some((option) => option === null)) return null;
-
-  return {
-    ...parseAskUserPrompt(prompt),
-    options: options as Array<{ title: string; description?: string }>,
-  };
 }
 
 // ============================================================
@@ -192,6 +151,28 @@ export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
 ]);
 
 const PI_RPC_START_TIMEOUT_MS = 15_000;
+const PI_ABORT_ACK_TIMEOUT_MS = 5_000;
+const SETTLED_EXTENSION_INTERACTION_TTL_MS = 5 * 60_000;
+const MAX_SETTLED_EXTENSION_INTERACTIONS = 512;
+
+function craftRpcUiCapabilities() {
+  return {
+    kind: 'craft' as const,
+    dialogs: true,
+    widgets: true,
+    editorControl: true,
+    contributions: true,
+    interactionSchemas: [1],
+  };
+}
+
+interface PendingExtensionInteractionOwner {
+  extensionId: string;
+  runtimeId: string;
+  sessionId: string;
+  clientId?: string;
+  wireSessionId?: string;
+}
 
 const AWS_ENVIRONMENT_AUTH_VARS = [
   'AWS_ACCESS_KEY_ID',
@@ -267,7 +248,6 @@ export interface PiSpawnChildSessionOptions {
   enabledSources?: string[];
   permissionMode?: PermissionMode;
   thinkingLevel?: ThinkingLevel;
-  labels?: string[];
   name?: string;
   workingDirectory?: string;
   attachments?: Array<{ path: string; name?: string }>;
@@ -386,6 +366,11 @@ export class PiAgent extends BaseAgent {
     resolve: (allowed: boolean) => void;
     toolName: string;
   }> = new Map();
+
+  /** Trusted interaction ownership captured from Pi, never accepted from the renderer. */
+  private pendingExtensionInteractions = new Map<string, PendingExtensionInteractionOwner>();
+  /** Prevent late or duplicate interaction responses from falling through to the legacy scalar protocol. */
+  private settledExtensionInteractions = new Map<string, number>();
 
   // Metadata captured before PreToolUse stripping, keyed by toolCallId.
   // This provides a deterministic bridge when Pi event metadata is unavailable.
@@ -690,6 +675,7 @@ export class PiAgent extends BaseAgent {
             sessionDir,
             sessionId: this.config.session?.craftId,
             forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
+            uiCapabilities: craftRpcUiCapabilities(),
           },
         });
         this.rpcHostLease = lease;
@@ -714,6 +700,7 @@ export class PiAgent extends BaseAgent {
           ...clientOptions.env,
           ...this.config.envOverrides,
           ...(craftSessionDir ? { CRAFT_SESSION_DIR: craftSessionDir } : {}),
+          PI_RPC_UI_CAPABILITIES: JSON.stringify(craftRpcUiCapabilities()),
         },
       });
       rpcClient = legacyClient;
@@ -1033,6 +1020,39 @@ export class PiAgent extends BaseAgent {
       return;
     }
 
+    if ((event as unknown as { type?: string }).type === 'extension_ui_cancel') {
+      const cancelled = event as unknown as {
+        id?: unknown
+        extensionId?: unknown
+        clientId?: unknown
+        runtimeId?: unknown
+        sessionId?: unknown
+        schemaVersion?: unknown
+        reason?: unknown
+      };
+      if (typeof cancelled.id !== 'string' || cancelled.schemaVersion !== 1) return;
+      const owner = this.pendingExtensionInteractions.get(cancelled.id);
+      if (!owner) return;
+      if (cancelled.extensionId !== owner.extensionId) return;
+      if (cancelled.clientId !== undefined && cancelled.clientId !== owner.clientId) return;
+      if (cancelled.runtimeId !== undefined && cancelled.runtimeId !== owner.runtimeId) return;
+      if (cancelled.sessionId !== undefined && cancelled.sessionId !== owner.wireSessionId) return;
+      const reason = cancelled.reason as ExtensionInteractionCancelReasonV1;
+      if (!['user', 'timeout', 'aborted', 'host-disconnected', 'runtime-disposed'].includes(reason)) return;
+      this.pendingExtensionInteractions.delete(cancelled.id);
+      this.rememberSettledExtensionInteraction(cancelled.id);
+      this.config.onExtensionEvent?.({
+        type: 'extension_interaction_cancel',
+        requestId: cancelled.id,
+        schemaVersion: 1,
+        reason,
+        extensionId: owner.extensionId,
+        runtimeId: owner.runtimeId,
+        sessionId: owner.sessionId,
+      });
+      return;
+    }
+
     if (event.type === 'extension_ui_request') {
       const bridgeEvent = this.mapExtensionUiRequest(event);
       if (bridgeEvent) this.config.onExtensionEvent?.(bridgeEvent);
@@ -1101,6 +1121,7 @@ export class PiAgent extends BaseAgent {
       pending.resolve(false);
     }
     this.pendingPermissions.clear();
+    this.cancelPendingExtensionInteractions('host-disconnected');
     this.preToolMetadataByCallId.clear();
 
     try { this.unsubscribePiEvent?.(); } catch {}
@@ -1193,11 +1214,97 @@ export class PiAgent extends BaseAgent {
     };
   }
 
+  private cancelPendingExtensionInteractions(reason: ExtensionInteractionCancelReasonV1): void {
+    for (const [requestId, owner] of this.pendingExtensionInteractions) {
+      this.config.onExtensionEvent?.({
+        type: 'extension_interaction_cancel',
+        requestId,
+        schemaVersion: 1,
+        reason,
+        extensionId: owner.extensionId,
+        runtimeId: owner.runtimeId,
+        sessionId: owner.sessionId,
+      });
+      this.rememberSettledExtensionInteraction(requestId);
+    }
+    this.pendingExtensionInteractions.clear();
+  }
+
+  private rememberSettledExtensionInteraction(requestId: string): void {
+    const now = Date.now();
+    for (const [id, settledAt] of this.settledExtensionInteractions) {
+      if (now - settledAt > SETTLED_EXTENSION_INTERACTION_TTL_MS) this.settledExtensionInteractions.delete(id);
+    }
+    this.settledExtensionInteractions.delete(requestId);
+    this.settledExtensionInteractions.set(requestId, now);
+    while (this.settledExtensionInteractions.size > MAX_SETTLED_EXTENSION_INTERACTIONS) {
+      const oldest = this.settledExtensionInteractions.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.settledExtensionInteractions.delete(oldest);
+    }
+  }
+
+  private wasExtensionInteractionSettled(requestId: string): boolean {
+    const settledAt = this.settledExtensionInteractions.get(requestId);
+    if (settledAt === undefined) return false;
+    if (Date.now() - settledAt <= SETTLED_EXTENSION_INTERACTION_TTL_MS) return true;
+    this.settledExtensionInteractions.delete(requestId);
+    return false;
+  }
+
   private mapExtensionUiRequest(event: Extract<PiRpcClientEvent, { type: 'extension_ui_request' }>): ExtensionBridgeEvent | null {
     const extensionId = 'extensionId' in event && typeof event.extensionId === 'string'
       ? event.extensionId
       : 'pi-extension';
     const route = this.extensionEventRoute(extensionId, event.runtimeId);
+    if ((event as unknown as { method?: string }).method === 'interact') {
+      const interactionEvent = event as unknown as {
+        id: string
+        request: unknown
+        timeout?: number
+      };
+      const error = validateExtensionInteractionRequestV1(interactionEvent.request);
+      if (error) {
+        this.writePiRuntimeLog('warn', 'extension.interaction_rejected', {
+          extensionId,
+          requestId: interactionEvent.id,
+          error,
+        });
+        if (typeof interactionEvent.id === 'string' && interactionEvent.id.length > 0) {
+          try {
+            (this.rpcClient?.respondToExtensionUI as ((response: unknown) => void) | undefined)?.({
+              type: 'extension_ui_response',
+              id: interactionEvent.id,
+              extensionId,
+              ...(event.clientId ? { clientId: event.clientId } : {}),
+              ...(event.runtimeId ? { runtimeId: event.runtimeId } : {}),
+              ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+              interaction: { schemaVersion: 1, status: 'cancelled', reason: 'host-disconnected' },
+            });
+            this.rememberSettledExtensionInteraction(interactionEvent.id);
+          } catch (responseError) {
+            this.writePiRuntimeLog('warn', 'extension.interaction_rejection_response_failed', {
+              extensionId,
+              requestId: interactionEvent.id,
+              error: responseError,
+            });
+          }
+        }
+        return null;
+      }
+      this.pendingExtensionInteractions.set(interactionEvent.id, {
+        ...route,
+        clientId: event.clientId,
+        wireSessionId: event.sessionId,
+      });
+      return {
+        type: 'extension_interaction_request',
+        requestId: interactionEvent.id,
+        request: interactionEvent.request as import('../protocol/extension-interactions.ts').ExtensionInteractionRequestV1,
+        timeout: interactionEvent.timeout,
+        ...route,
+      };
+    }
     if ((event as { method: string }).method === 'contribution') {
       const contributionEvent = event as unknown as {
         operation: 'upsert' | 'remove' | 'reset' | 'snapshot'
@@ -1258,17 +1365,12 @@ export class PiAgent extends BaseAgent {
       };
     }
     if (event.method === 'select') {
-      const isAskUser = isAskUserExtension(extensionId);
-      const hasFreeformOption = isAskUser && event.options.some(option => /write my own answer/i.test(option));
       return {
         type: 'remoteui_request',
         requestId: event.id,
         kind: 'select',
-        ...(isAskUser ? parseAskUserPrompt(event.title) : { title: event.title }),
-        options: event.options
-          .filter(option => !isAskUser || !/write my own answer/i.test(option))
-          .map(title => ({ title })),
-        ...(hasFreeformOption ? { allowFreeform: true } : {}),
+        title: event.title,
+        options: event.options.map(title => ({ title })),
         timeout: event.timeout,
         source: extensionId,
         ...route,
@@ -1287,28 +1389,11 @@ export class PiAgent extends BaseAgent {
       };
     }
     if (event.method === 'input') {
-      const isAskUser = isAskUserExtension(extensionId);
-      const multipleChoice = isAskUser
-        ? parseAskUserMultipleChoiceInput(event.title)
-        : null;
-      if (multipleChoice) {
-        return {
-          type: 'remoteui_request',
-          requestId: event.id,
-          kind: 'select',
-          ...multipleChoice,
-          allowMultiple: true,
-          allowFreeform: true,
-          timeout: event.timeout,
-          source: extensionId,
-          ...route,
-        };
-      }
       return {
         type: 'remoteui_request',
         requestId: event.id,
         kind: 'editor',
-        ...(isAskUser ? parseAskUserPrompt(event.title) : { title: event.title }),
+        title: event.title,
         placeholder: event.placeholder,
         timeout: event.timeout,
         source: extensionId,
@@ -2003,9 +2088,44 @@ export class PiAgent extends BaseAgent {
    * 回复 remoteui:request。payload=null 表示取消。
    * 由渲染进程通过 IPC → SessionManager → 此方法转发到 Pi。
    */
-  sendRemoteUIResponse(requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): void {
+  sendRemoteUIResponse(requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): boolean {
     const client = this.rpcClient;
-    if (!client) return;
+    if (!client) return false;
+    const interactionOwner = this.pendingExtensionInteractions.get(requestId);
+    if (interactionOwner) {
+      const interaction: ExtensionInteractionResponseV1 = reason || payload === null
+        ? {
+            schemaVersion: 1,
+            status: 'cancelled',
+            reason: reason === 'disconnected' || reason === 'no_remote' ? 'host-disconnected' : 'user',
+          }
+        : payload as ExtensionInteractionResponseV1;
+      const error = validateExtensionInteractionResponseV1(interaction);
+      if (error) {
+        this.writePiRuntimeLog('warn', 'extension.interaction_response_rejected', {
+          extensionId: interactionOwner.extensionId,
+          requestId,
+          error,
+        });
+        return false;
+      }
+      (client.respondToExtensionUI as (response: unknown) => void)({
+        type: 'extension_ui_response',
+        id: requestId,
+        extensionId: interactionOwner.extensionId,
+        runtimeId: interactionOwner.runtimeId,
+        ...(interactionOwner.clientId ? { clientId: interactionOwner.clientId } : {}),
+        ...(interactionOwner.wireSessionId ? { sessionId: interactionOwner.wireSessionId } : {}),
+        interaction,
+      });
+      this.pendingExtensionInteractions.delete(requestId);
+      this.rememberSettledExtensionInteraction(requestId);
+      return true;
+    }
+    if (this.wasExtensionInteractionSettled(requestId)) {
+      this.writePiRuntimeLog('debug', 'extension.interaction_duplicate_response_ignored', { requestId });
+      return true;
+    }
     if (payload === null || reason) {
       client.respondToExtensionUI({ type: 'extension_ui_response', id: requestId, cancelled: true });
     } else if (typeof payload === 'object' && payload && 'confirmed' in payload) {
@@ -2017,6 +2137,7 @@ export class PiAgent extends BaseAgent {
         value: remoteUIResponseValue(payload),
       });
     }
+    return true;
   }
 
   /**
@@ -2055,7 +2176,13 @@ export class PiAgent extends BaseAgent {
   }
 
   async reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
-    const client = await this.ensureRpcClient();
+    const client = this.rpcClient;
+    // A runtime that is not open has no extension code to refresh. Its next
+    // startup will load the current extension files, so do not resurrect idle
+    // or force-closed sessions solely for a manual reload.
+    if (!client) return { reloaded: false, deferred: false };
+    if (this.rpcClientReady) await this.rpcClientReady;
+    if (this.rpcClient !== client) return { reloaded: false, deferred: false };
     return await client.reloadExtensions();
   }
 
@@ -2476,14 +2603,26 @@ export class PiAgent extends BaseAgent {
     this._isProcessing = false;
     this.suppressAbortedTurnEvents = true;
 
+    let abortTimeout: ReturnType<typeof setTimeout> | null = null;
     try {
-      await this.rpcClient?.abort();
+      const client = this.rpcClient;
+      if (client) {
+        await Promise.race([
+          client.abort(),
+          new Promise<never>((_, reject) => {
+            abortTimeout = setTimeout(() => {
+              reject(new Error(`Pi abort acknowledgment timed out after ${PI_ABORT_ACK_TIMEOUT_MS}ms`));
+            }, PI_ABORT_ACK_TIMEOUT_MS);
+          }),
+        ]);
+      }
     } catch (error) {
       this.writePiRuntimeLog('warn', 'chat.abort_failed', { error });
       // If the cooperative abort command fails, release this runtime so the
       // stopped generation cannot continue publishing events in the background.
       await this.stopRpcClient();
     } finally {
+      if (abortTimeout) clearTimeout(abortTimeout);
       // Wake the chat consumer even if the transport failed while aborting.
       this.eventQueue.complete();
     }
@@ -2610,6 +2749,7 @@ export class PiAgent extends BaseAgent {
       });
     }
     const hostLease = this.rpcHostLease;
+    this.cancelPendingExtensionInteractions('runtime-disposed');
     this.unsubscribePiEvent?.();
     this.unsubscribePiEvent = null;
     this.unsubscribePiClientEvent?.();

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'bun:test'
+import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1 } from '@craft-agent/shared/protocol'
 import type { RemoteUIRequest } from '../../components/extensions/RemoteUIModal'
-import { asRemoteUIRequest, takeNextRemoteUIRequestForSession } from '../useRemoteUIRequests'
+import {
+  asExtensionInteractionCancel,
+  asExtensionInteractionRequest,
+  asRemoteUIRequest,
+  extensionUIRequestKey,
+  takeNextRemoteUIRequestForSession,
+} from '../useRemoteUIRequests'
 
 function request(requestId: string, sessionId: string): RemoteUIRequest {
   return {
@@ -31,5 +38,34 @@ describe('remote UI session routing', () => {
     expect(asRemoteUIRequest({ ...request('select', 'session-a'), kind: 'select', options: [] })?.kind).toBe('select')
     expect(asRemoteUIRequest({ ...request('editor', 'session-a'), kind: 'editor' })?.kind).toBe('editor')
     expect(asRemoteUIRequest({ ...request('bad', 'session-a'), kind: 'custom' })).toBeNull()
+  })
+
+  it('strictly accepts interaction v1 requests and cancellation events', () => {
+    const interaction = {
+      type: 'extension_interaction_request',
+      requestId: 'same-id',
+      sessionId: 'session-a',
+      runtimeId: 'runtime-a',
+      extensionId: 'ask-user',
+      request: {
+        schemaVersion: 1,
+        fields: [{ id: 'choice', kind: 'choice', label: 'Choose', options: [{ id: 'one', label: 'One' }] }],
+      },
+    } satisfies ExtensionInteractionBridgeRequestV1
+    expect(asExtensionInteractionRequest(interaction)).toEqual(interaction)
+    expect(asExtensionInteractionRequest({ ...interaction, forged: true })).toBeNull()
+    expect(extensionUIRequestKey(interaction)).not.toBe(extensionUIRequestKey({ ...interaction, runtimeId: 'runtime-b' }))
+
+    const cancellation = {
+      type: 'extension_interaction_cancel',
+      requestId: 'same-id',
+      sessionId: 'session-a',
+      runtimeId: 'runtime-a',
+      extensionId: 'ask-user',
+      schemaVersion: 1,
+      reason: 'aborted',
+    } satisfies ExtensionInteractionBridgeCancelV1
+    expect(asExtensionInteractionCancel(cancellation)).toEqual(cancellation)
+    expect(asExtensionInteractionCancel({ ...cancellation, reason: 'unknown' })).toBeNull()
   })
 })

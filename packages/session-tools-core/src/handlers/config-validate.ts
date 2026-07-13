@@ -20,7 +20,7 @@ import {
 import { getSourceConfigPath } from '../source-helpers.ts';
 
 export interface ConfigValidateArgs {
-  target: 'config' | 'sources' | 'statuses' | 'preferences' | 'permissions' | 'automations' | 'tool-icons' | 'all';
+  target: 'config' | 'sources' | 'preferences' | 'permissions' | 'automations' | 'tool-icons' | 'all';
   sourceSlug?: string;
 }
 
@@ -52,9 +52,6 @@ export async function handleConfigValidate(
           } else {
             result = ctx.validators.validateAllSources(ctx.workspacePath);
           }
-          break;
-        case 'statuses':
-          result = ctx.validators.validateStatuses(ctx.workspacePath);
           break;
         case 'preferences':
           result = ctx.validators.validatePreferences();
@@ -128,14 +125,6 @@ export async function handleConfigValidate(
       }
     }
 
-    case 'statuses': {
-      const result = validateJsonFileHasFields(
-        join(ctx.workspacePath, 'statuses', 'config.json'),
-        ['statuses']
-      );
-      return successResponse(formatValidationResult(result));
-    }
-
     case 'preferences': {
       const result = validateJsonFileHasFields(
         join(craftAgentRoot, 'preferences.json'),
@@ -186,7 +175,7 @@ export async function handleConfigValidate(
 
     default:
       return errorResponse(
-        `Unknown validation target: ${target}. Valid targets: config, sources, statuses, preferences, permissions, automations, tool-icons, all`
+        `Unknown validation target: ${target}. Valid targets: config, sources, preferences, permissions, automations, tool-icons, all`
       );
   }
 }

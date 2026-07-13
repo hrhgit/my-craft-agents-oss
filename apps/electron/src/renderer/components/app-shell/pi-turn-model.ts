@@ -482,7 +482,10 @@ export function buildPiTurns(
       const mutationId = stringValue(payload.clientMutationId)
       if (mutationId) aliases.add(mutationId)
       const existing = users.get(messageId)
-      const timestamp = numberValue(payload.timestamp) ?? overlay.get(messageId)?.timestamp ?? entity.createdSeq
+      const timestamp = numberValue(payload.timestamp)
+        ?? overlay.get(messageId)?.timestamp
+        ?? wallClockTimestamp(entity.createdAt)
+        ?? entity.createdSeq
       if (existing) {
         existing.turnId ??= entity.turnId
         existing.text = typeof payload.text === 'string' ? payload.text : existing.text
@@ -519,7 +522,7 @@ export function buildPiTurns(
         aliases,
         turnId: entity.turnId,
         seq: entity.createdSeq,
-        timestamp: ui?.timestamp ?? entity.createdSeq,
+        timestamp: ui?.timestamp ?? wallClockTimestamp(entity.createdAt) ?? entity.createdSeq,
         text: '',
         optimistic: payload.optimistic === true,
         queued: queuedState(payload),

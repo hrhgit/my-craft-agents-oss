@@ -1,13 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, Check, ChevronLeft, ChevronRight, PencilLine, X } from 'lucide-react'
+import { ArrowUp, Check, PencilLine, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type {
-  RemoteUIBatch,
-  RemoteUIBatchSubmission,
-  RemoteUIQuestionSpec,
-} from './remote-ui-batch'
-import { parseRemoteUIQuestionProgress } from './remote-ui-batch'
 
 export interface RemoteUIOption {
   title: string
@@ -80,9 +74,7 @@ export type RemoteUICancelReason = 'cancelled'
 
 export interface RemoteUIComposerProps {
   request: RemoteUIRequest
-  batch?: RemoteUIBatch | null
   onRespond: (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => void
-  onRespondBatch?: (submission: RemoteUIBatchSubmission) => void
 }
 
 export interface RemoteUIAnswerDraft {
@@ -93,7 +85,7 @@ export interface RemoteUIAnswerDraft {
   confirmed?: boolean
 }
 
-type RemoteUIQuestion = RemoteUIRequest | RemoteUIQuestionSpec
+type RemoteUIQuestion = RemoteUIRequest
 
 export function isRemoteUICompositionKey(
   event: { nativeEvent: { isComposing?: boolean; keyCode?: number } },
@@ -162,13 +154,8 @@ export function remoteUIDraftResult(
   }
 }
 
-function isAskUserExtension(value: string | undefined): boolean {
-  return value?.trim().toLowerCase().replaceAll('-', '_') === 'ask_user'
-}
-
 function visibleSelectOptions(question: Extract<RemoteUIQuestion, { kind: 'select' }>): RemoteUIOption[] {
-  const askUser = 'extensionId' in question && isAskUserExtension(question.extensionId)
-  return question.options.filter(option => !askUser || !/write my own answer/i.test(option.title))
+  return question.options
 }
 
 function questionMessage(question: RemoteUIQuestion): string | undefined {
@@ -177,69 +164,41 @@ function questionMessage(question: RemoteUIQuestion): string | undefined {
 
 export function RemoteUIComposer({
   request,
-  batch,
   onRespond,
-  onRespondBatch,
 }: RemoteUIComposerProps) {
   const { t } = useTranslation()
-  const questions = useMemo<RemoteUIQuestion[]>(
-    () => batch?.questions ?? [request],
-    [batch, request],
-  )
-  const identity = batch?.id ?? request.requestId
-  const [activeIndex, setActiveIndex] = useState(0)
-  const [drafts, setDrafts] = useState<RemoteUIAnswerDraft[]>(() => questions.map(createRemoteUIAnswerDraft))
+  const question = request
+  const identity = request.requestId
+  const [draft, setDraft] = useState<RemoteUIAnswerDraft>(() => createRemoteUIAnswerDraft(question))
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const compositionActiveRef = useRef(false)
-  const question = questions[activeIndex] ?? request
-  const progress = batch
-    ? { current: activeIndex + 1, total: questions.length, title: question.title }
-    : parseRemoteUIQuestionProgress(question.title)
-  const displayTitle = progress?.title ?? question.title
-  const results = questions.map((item, index) => remoteUIDraftResult(item, drafts[index] ?? createRemoteUIAnswerDraft(item)))
-  const canSubmit = batch ? results.every(Boolean) : Boolean(results[0])
+  const displayTitle = question.title
+  const result = remoteUIDraftResult(question, draft)
+  const canSubmit = Boolean(result)
 
   useEffect(() => {
-    setActiveIndex(0)
-    setDrafts(questions.map(createRemoteUIAnswerDraft))
-  }, [identity])
+    setDraft(createRemoteUIAnswerDraft(question))
+  }, [identity, question])
 
   useEffect(() => {
     if (question.kind !== 'editor') return
     requestAnimationFrame(() => editorRef.current?.focus())
-  }, [activeIndex, identity, question.kind])
+  }, [identity, question.kind])
 
   const updateDraft = (updater: (draft: RemoteUIAnswerDraft) => RemoteUIAnswerDraft) => {
-    setDrafts(previous => previous.map((draft, index) => index === activeIndex ? updater(draft) : draft))
+    setDraft(updater)
   }
 
   const submit = () => {
     if (!canSubmit) return
-    if (batch && onRespondBatch) {
-      onRespondBatch({
-        batchId: batch.id,
-        sessionId: batch.sessionId,
-        runtimeId: batch.runtimeId,
-        extensionId: batch.extensionId,
-        answers: batch.questions.map((item, index) => ({
-          question: item,
-          result: results[index]!,
-        })),
-      })
-      return
-    }
-    onRespond(results[0]!)
+    onRespond(result!)
   }
 
   const handleTextareaEnter = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Enter' || event.shiftKey || isRemoteUICompositionKey(event, compositionActiveRef.current)) return
     event.preventDefault()
-    const currentResult = remoteUIDraftResult(question, drafts[activeIndex] ?? createRemoteUIAnswerDraft(question))
+    const currentResult = remoteUIDraftResult(question, draft)
     if (!currentResult) return
-    if (batch && activeIndex < questions.length - 1) {
-      setActiveIndex(index => index + 1)
-      return
-    }
     submit()
   }
 
@@ -248,7 +207,6 @@ export function RemoteUIComposer({
       aria-label={displayTitle}
       className="overflow-hidden rounded-lg border border-border/70 bg-background shadow-middle"
       data-remote-ui-composer
-      data-remote-ui-batch={batch ? 'true' : undefined}
     >
       <form
         onCompositionStart={() => { compositionActiveRef.current = true }}
@@ -265,11 +223,6 @@ export function RemoteUIComposer({
       >
         <header className="flex items-start gap-3 border-b border-border/60 px-4 py-3">
           <div className="min-w-0 flex-1">
-            {progress && (
-              <div className="mb-1 text-[11px] font-medium tabular-nums text-muted-foreground" data-remote-ui-progress>
-                {progress.current} / {progress.total}
-              </div>
-            )}
             <h2 id={`remote-ui-title-${request.requestId}`} className="text-sm font-semibold leading-5 text-foreground">
               {displayTitle}
             </h2>
@@ -294,7 +247,7 @@ export function RemoteUIComposer({
           {question.kind === 'select' && (
             <SelectQuestion
               question={question}
-              draft={drafts[activeIndex] ?? createRemoteUIAnswerDraft(question)}
+              draft={draft}
               onChange={updateDraft}
               onTextareaEnter={handleTextareaEnter}
             />
@@ -302,7 +255,7 @@ export function RemoteUIComposer({
           {question.kind === 'editor' && (
             <textarea
               ref={editorRef}
-              value={(drafts[activeIndex] ?? createRemoteUIAnswerDraft(question)).text}
+              value={draft.text}
               onChange={event => updateDraft(draft => ({ ...draft, text: event.target.value }))}
               onKeyDown={handleTextareaEnter}
               rows={3}
@@ -334,47 +287,8 @@ export function RemoteUIComposer({
 
         {question.kind !== 'confirm' && (
           <footer className="flex min-h-12 items-center justify-between gap-3 border-t border-border/60 px-3 py-2">
-            <div className="flex h-8 items-center gap-1">
-              {batch && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setActiveIndex(index => Math.max(0, index - 1))}
-                    disabled={activeIndex === 0}
-                    className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label={t('common.back')}
-                    title={t('common.back')}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveIndex(index => Math.min(questions.length - 1, index + 1))}
-                    disabled={activeIndex === questions.length - 1}
-                    className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label={t('common.forward')}
-                    title={t('common.forward')}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </>
-              )}
-            </div>
+            <div />
             <div className="flex items-center gap-2">
-              {batch && (
-                <div className="flex items-center gap-1" aria-hidden="true">
-                  {questions.map((_, index) => (
-                    <span
-                      key={index}
-                      className={cn(
-                        'h-1.5 w-1.5 rounded-full bg-muted-foreground/25 transition-colors',
-                        results[index] && 'bg-muted-foreground/60',
-                        index === activeIndex && 'bg-foreground',
-                      )}
-                    />
-                  ))}
-                </div>
-              )}
               <button
                 type="submit"
                 disabled={!canSubmit}
@@ -407,7 +321,6 @@ function SelectQuestion({
   const customAnswerRef = useRef<HTMLTextAreaElement>(null)
   const allowMultiple = Boolean(question.allowMultiple)
   const allowFreeform = Boolean(question.allowFreeform)
-    || ('extensionId' in question && isAskUserExtension(question.extensionId))
   const options = visibleSelectOptions(question)
   const customActive = Boolean(draft.freeformText.trim())
   const showComment = Boolean(question.allowComment) && (!customActive || allowMultiple)
@@ -500,6 +413,3 @@ function SelectQuestion({
     </div>
   )
 }
-
-/** @deprecated Remote UI is now rendered inline in the chat composer. */
-export const RemoteUIModal = RemoteUIComposer

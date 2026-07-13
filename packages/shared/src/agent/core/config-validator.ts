@@ -40,10 +40,6 @@ const CRAFT_AGENT_CONFIG_PATTERNS = [
   /\.craft-agent\/permissions\/[^/]+\.json$/,
   // Theme
   /\.craft-agent\/workspaces\/[^/]+\/theme\.json$/,
-  // Statuses
-  /\.craft-agent\/workspaces\/[^/]+\/statuses\/config\.json$/,
-  // Labels
-  /\.craft-agent\/workspaces\/[^/]+\/labels\.json$/,
   // Tool icons
   /\.craft-agent\/tool-icons\/tool-icons\.json$/,
 ];

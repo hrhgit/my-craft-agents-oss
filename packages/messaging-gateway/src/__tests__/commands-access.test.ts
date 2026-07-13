@@ -43,7 +43,6 @@ function makeSession(id: string): Session {
     createdAt: Date.now() - 1000,
     updatedAt: Date.now(),
     lastMessageAt: Date.now(),
-    isArchived: false,
   } as unknown as Session
 }
 

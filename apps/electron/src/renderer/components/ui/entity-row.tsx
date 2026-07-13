@@ -299,7 +299,7 @@ export function EntityRow({
               <div className={cn("font-sans truncate min-w-0", titleClassName)}>
                 {title}
               </div>
-              {titleSuffix && <div className="shrink-0 flex items-center">{titleSuffix}</div>}
+              {titleSuffix && <div className="shrink-0 flex items-center empty:hidden">{titleSuffix}</div>}
               <div className="shrink-0 ml-auto relative -mr-1">
                 <span className={cn(
                   menuOpen || contextMenuOpen || compactMenuOpen
@@ -359,7 +359,7 @@ export function EntityRow({
               <div className={cn("font-medium font-sans line-clamp-2 min-w-0 -mb-[2px]", titleClassName)}>
                 {title}
               </div>
-              {titleSuffix && <div className="shrink-0 self-center flex items-center">{titleSuffix}</div>}
+              {titleSuffix && <div className="shrink-0 self-center flex items-center empty:hidden">{titleSuffix}</div>}
             </div>
           )}
 

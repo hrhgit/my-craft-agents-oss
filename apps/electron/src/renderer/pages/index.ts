@@ -15,7 +15,6 @@ export {
   InputSettingsPage,
   WorkspaceSettingsPage,
   PermissionsSettingsPage,
-  LabelsSettingsPage,
   ShortcutsPage,
   PreferencesPage,
 } from './settings'

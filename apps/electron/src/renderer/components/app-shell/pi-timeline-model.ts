@@ -1,5 +1,5 @@
 import type { CredentialRequest, PermissionRequest, PiProjectionEntityV1 } from '@craft-agent/shared/protocol'
-import { isPlanArtifactV1, isPlanModeStateV1, type PlanArtifactV1, type PlanModeStateV1 } from '@craft-agent/core'
+import { isPlanArtifactV1, type PlanArtifactV1 } from '@craft-agent/core'
 
 export type PiTimelineItem =
   | {
@@ -11,6 +11,7 @@ export type PiTimelineItem =
       contentKind: 'text' | 'thinking'
       text: string
       streaming: boolean
+      timestamp?: number
     }
   | {
       type: 'tool'
@@ -142,6 +143,7 @@ export function buildPiTimelineItems(entities: readonly PiProjectionEntityV1[]):
           role: payload.role === 'user' ? 'user' : 'assistant', text,
           contentKind: payload.contentKind === 'thinking' ? 'thinking' : 'text',
           streaming: payload.streaming === true,
+          timestamp: typeof payload.timestamp === 'number' ? payload.timestamp : entity.createdAt,
         }]
       }
 
@@ -309,26 +311,4 @@ export function selectPendingPiCredential(
     headerNames,
     passwordRequired: typeof payload.passwordRequired === 'boolean' ? payload.passwordRequired : undefined,
   }
-}
-
-export function selectPiPlanModeState(entities: readonly PiProjectionEntityV1[]): PlanModeStateV1 | undefined {
-  const entity = entities
-    .filter(candidate => candidate.kind === 'plan_mode_state')
-    .sort((a, b) => b.lastSeq - a.lastSeq)[0]
-  return entity && isPlanModeStateV1(entity.payload) ? entity.payload : undefined
-}
-
-export function selectActivePiPlanArtifact(
-  entities: readonly PiProjectionEntityV1[],
-  activeArtifactId?: string,
-): PlanArtifactV1 | undefined {
-  const artifacts = entities
-    .filter(candidate => candidate.entityType === 'artifact_ref')
-    .sort((a, b) => b.lastSeq - a.lastSeq)
-    .flatMap(candidate => {
-      const payload = record(candidate.payload)
-      return payload && isPlanArtifactV1(payload.artifact) ? [payload.artifact] : []
-    })
-  return (activeArtifactId ? artifacts.find(artifact => artifact.artifactId === activeArtifactId) : undefined)
-    ?? artifacts[0]
 }

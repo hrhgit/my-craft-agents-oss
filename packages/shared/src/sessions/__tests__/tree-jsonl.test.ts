@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -20,6 +20,7 @@ import {
   appendStoredMessagesViaPiSessionManager,
   looksLikeTreeSessionJsonl,
   projectTreeSessionProjectionAsStoredSession,
+  readTreeSessionHeader,
   readTreeSessionJsonl,
   writeCraftSessionOverlay,
 } from '../tree-jsonl'
@@ -399,7 +400,6 @@ Active: none
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
     stored!.name = 'Unified session'
-    stored!.labels = ['important']
 
     writeSessionJsonl(sessionFile, stored!)
 
@@ -411,13 +411,11 @@ Active: none
 
       expect(header.type).toBe('session')
       expect(header.craft.name).toBe('Unified session')
-      expect(header.craft.labels).toEqual(['important'])
       expect(second.type).toBe('message')
       expect(second.message.role).toBe('user')
 
       const reloaded = readSessionJsonl(sessionFile)
       expect(reloaded?.name).toBe('Unified session')
-      expect(reloaded?.labels).toEqual(['important'])
     })
   })
 
@@ -498,7 +496,6 @@ Active: none
         craft: {
           id: 'craft-owned-session',
           name: 'Craft title',
-          labels: ['ui-state'],
           permissionMode: 'ask',
           workingDirectory: '/craft/stale-mirror',
         },
@@ -512,8 +509,44 @@ Active: none
     expect(stored?.piCwd).toBe('/pi/source-of-truth')
     expect(stored?.workingDirectory).toBe('/pi/source-of-truth')
     expect(stored?.name).toBe('Craft title')
-    expect(stored?.labels).toEqual(['ui-state'])
     expect(stored?.permissionMode).toBe('ask')
+  })
+
+  it('atomically strips retired organization metadata while preserving all later JSONL bytes', async () => {
+    const header = {
+      type: 'session',
+      version: 3,
+      id: 'legacy-organized',
+      timestamp: '2026-07-01T00:00:00.000Z',
+      cwd: '/work/project',
+      craft: {
+        id: 'legacy-organized',
+        name: 'Keep me',
+        transferredSessionSummary: 'x'.repeat(9000),
+        sessionStatus: 'done',
+        labels: ['important'],
+        isFlagged: true,
+        isArchived: true,
+        archivedAt: 12345,
+      },
+    }
+    const laterLines = '\n  {"type":"message","id":"u1","parentId":null,"timestamp":"2026-07-01T00:00:01.000Z","message":{"role":"user","content":"keep exact spacing"}}\r\n'
+    await Bun.write(sessionFile, JSON.stringify(header) + laterLines)
+    const originalTimestamp = new Date('2026-06-15T12:00:00.000Z')
+    utimesSync(sessionFile, originalTimestamp, originalTimestamp)
+
+    const loaded = readTreeSessionHeader(sessionFile)
+    expect(loaded?.craft?.id).toBe('legacy-organized')
+    expect(loaded?.craft?.name).toBe('Keep me')
+    expect(loaded?.craft?.transferredSessionSummary).toHaveLength(9000)
+
+    const migrated = await Bun.file(sessionFile).text()
+    expect(migrated.slice(migrated.indexOf('\n'))).toBe(laterLines)
+    expect(statSync(sessionFile).mtimeMs).toBe(originalTimestamp.getTime())
+    const firstPass = migrated
+
+    expect(readTreeSessionHeader(sessionFile)?.craft?.transferredSessionSummary).toHaveLength(9000)
+    expect(await Bun.file(sessionFile).text()).toBe(firstPass)
   })
 
   it('preserves Craft-only UI fields without copying canonical message content', async () => {
@@ -750,6 +783,20 @@ Active: none
     const listed = listSessions(workspaceRoot)
     expect(listed.map(s => s.craftId)).toContain(session.craftId)
     expect(listed.find(s => s.craftId === session.craftId)?.workingDirectory).toBe(workspaceRoot)
+  })
+
+  it('keeps hidden mini sessions out of the unified session list', async () => {
+    const piRoot = join(dir, 'pi-sessions-hidden')
+    const workspaceRoot = join(dir, 'workspace-hidden')
+    mkdirSync(workspaceRoot, { recursive: true })
+    setSharedPiSessionsDirForTests(piRoot)
+
+    const visible = await createSession(workspaceRoot, { name: 'Visible' })
+    const hidden = await createSession(workspaceRoot, { name: 'Hidden', hidden: true })
+
+    expect(listSessions(workspaceRoot).map(session => session.craftId)).toContain(visible.craftId)
+    expect(listSessions(workspaceRoot).map(session => session.craftId)).not.toContain(hidden.craftId)
+    expect(loadSession(workspaceRoot, hidden.craftId)?.hidden).toBe(true)
   })
 
   it('rejects nested legacy session.jsonl paths inside the Pi session bucket', () => {

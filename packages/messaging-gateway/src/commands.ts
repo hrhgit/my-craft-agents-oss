@@ -662,7 +662,6 @@ export class Commands {
 
   private getRecentSessions(): ReturnType<ISessionManager['getSessions']> {
     return this.sessionManager.getSessions(this.workspaceId)
-      .filter((s) => !s.isArchived)
       .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
       .slice(0, 10)
   }

@@ -20,13 +20,7 @@ import { DEFAULT_WEBHOOK_METHOD } from './constants'
 // ============================================================================
 
 export type AppEvent =
-  | 'LabelAdd'
-  | 'LabelRemove'
-  | 'LabelConfigChange'
   | 'PermissionModeChange'
-  | 'FlagChange'
-  | 'TodoStateChange'
-  | 'SessionStatusChange'
   | 'SchedulerTick'
 
 export type AgentEvent =
@@ -47,8 +41,7 @@ export type AgentEvent =
 export type AutomationTrigger = AppEvent | AgentEvent
 
 export const APP_EVENTS: AppEvent[] = [
-  'LabelAdd', 'LabelRemove', 'LabelConfigChange',
-  'PermissionModeChange', 'FlagChange', 'TodoStateChange', 'SessionStatusChange', 'SchedulerTick'
+  'PermissionModeChange', 'SchedulerTick'
 ]
 
 export const AGENT_EVENTS: AgentEvent[] = [
@@ -113,9 +106,6 @@ export type AutomationConditionUI = TimeConditionUI | StateConditionUI | Logical
 /** Human-friendly field names for state conditions */
 const FIELD_LABELS: Record<string, string> = {
   permissionMode: 'permission mode',
-  sessionStatus: 'session status',
-  isFlagged: 'flagged',
-  labels: 'label',
   sessionName: 'session name',
 }
 
@@ -144,11 +134,9 @@ function describeLeaf(c: AutomationConditionUI): string {
       }
       if (c.contains) return `has ${label} "${c.contains}"`
       if (c.not_value !== undefined) {
-        if (c.field === 'isFlagged') return c.not_value ? 'not flagged' : 'is flagged'
         return `${label} is not ${String(c.not_value)}`
       }
       if (c.value !== undefined) {
-        if (c.field === 'isFlagged') return c.value ? 'is flagged' : 'not flagged'
         return `${label} is ${String(c.value)}`
       }
       return label
@@ -217,8 +205,6 @@ export interface AutomationListItem {
   timezone?: string
   /** Permission mode */
   permissionMode?: PermissionMode
-  /** Labels for prompt sessions */
-  labels?: string[]
   /** Conditions that must pass before actions run */
   conditions?: AutomationConditionUI[]
   /** The actions this automation performs */
@@ -304,13 +290,7 @@ export interface TestResult {
 /** Maps internal event names to user-friendly labels */
 export const EVENT_DISPLAY_NAMES: Record<AutomationTrigger, string> = {
   // App events
-  LabelAdd:             'Label Added',
-  LabelRemove:          'Label Removed',
-  LabelConfigChange:    'Label Settings Changed',
   PermissionModeChange: 'Permission Changed',
-  FlagChange:           'Flag Changed',
-  TodoStateChange:      'Task Updated',
-  SessionStatusChange:  'Status Changed',
   SchedulerTick:        'Scheduled',
 
   // Agent events
@@ -351,10 +331,7 @@ export function getPermissionDisplayName(mode?: PermissionMode): string {
 
 export type EventCategory =
   | 'scheduled'
-  | 'label'
   | 'permission'
-  | 'flag'
-  | 'todo'
   | 'agent-pre'
   | 'agent-post'
   | 'agent-error'
@@ -382,7 +359,6 @@ interface AutomationsConfigMatcher {
   cron?: string
   timezone?: string
   permissionMode?: PermissionMode
-  labels?: string[]
   conditions?: AutomationConditionUI[]
   enabled?: boolean
   actions?: RawAction[]
@@ -475,7 +451,6 @@ export function parseAutomationsConfig(json: unknown): AutomationListItem[] {
         cron: matcher.cron,
         timezone: matcher.timezone,
         permissionMode: matcher.permissionMode,
-        labels: matcher.labels,
         conditions: matcher.conditions,
         actions,
         telegramTopic,
@@ -491,18 +466,9 @@ export function getEventCategory(event: AutomationTrigger): EventCategory {
   switch (event) {
     case 'SchedulerTick':
       return 'scheduled'
-    case 'LabelAdd':
-    case 'LabelRemove':
-    case 'LabelConfigChange':
-      return 'label'
     case 'PermissionModeChange':
     case 'PermissionRequest':
       return 'permission'
-    case 'FlagChange':
-      return 'flag'
-    case 'TodoStateChange':
-    case 'SessionStatusChange':
-      return 'todo'
     case 'PreToolUse':
     case 'UserPromptSubmit':
     case 'Setup':

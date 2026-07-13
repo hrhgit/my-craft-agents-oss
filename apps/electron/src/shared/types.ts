@@ -441,8 +441,6 @@ export interface ElectronAPI {
 
   // Session Info Panel
   getSessionFiles(sessionId: string): Promise<SessionFile[]>
-  getSessionNotes(sessionId: string): Promise<string>
-  setSessionNotes(sessionId: string, content: string): Promise<void>
   watchSessionFiles(sessionId: string): Promise<void>
   unwatchSessionFiles(): Promise<void>
   onSessionFilesChanged(callback: (sessionId: string) => void): () => void
@@ -480,22 +478,6 @@ export interface ElectronAPI {
 
   // Skills change listener (live updates when skills are added/removed/modified)
   onSkillsChanged(callback: (workspaceId: string, skills: LoadedSkill[]) => void): () => void
-
-  // Statuses (workspace-scoped)
-  listStatuses(workspaceId: string): Promise<import('@craft-agent/shared/statuses').StatusConfig[]>
-  reorderStatuses(workspaceId: string, orderedIds: string[]): Promise<void>
-  onStatusesChanged(callback: (workspaceId: string) => void): () => void
-
-  // Labels (workspace-scoped)
-  listLabels(workspaceId: string): Promise<import('@craft-agent/shared/labels').LabelConfig[]>
-  createLabel(workspaceId: string, input: import('@craft-agent/shared/labels').CreateLabelInput): Promise<import('@craft-agent/shared/labels').LabelConfig>
-  deleteLabel(workspaceId: string, labelId: string): Promise<{ stripped: number }>
-  onLabelsChanged(callback: (workspaceId: string) => void): () => void
-
-
-  // Views (workspace-scoped, stored in views.json)
-  listViews(workspaceId: string): Promise<import('@craft-agent/shared/views').ViewConfig[]>
-  saveViews(workspaceId: string, views: import('@craft-agent/shared/views').ViewConfig[]): Promise<void>
 
   // Generic workspace image loading/saving
   readWorkspaceImage(workspaceId: string, relativePath: string): Promise<string>
@@ -769,13 +751,7 @@ export type RightSidebarPanel =
 /**
  * Session filter options
  */
-export type SessionFilter =
-  | { kind: 'allSessions' }
-  | { kind: 'flagged' }
-  | { kind: 'state'; stateId: string }
-  | { kind: 'label'; labelId: string }
-  | { kind: 'view'; viewId: string }
-  | { kind: 'archived' }
+export type SessionFilter = { kind: 'allSessions' }
 
 /**
  * Settings subpage options - re-exported from settings-registry (single source of truth)
@@ -911,12 +887,7 @@ export const getNavigationStateKey = (state: NavigationState): string => {
     return `settings:${state.subpage}`
   }
   // Chats
-  const f = state.filter
-  let base: string
-  if (f.kind === 'state') base = `state:${f.stateId}`
-  else if (f.kind === 'label') base = `label:${f.labelId}`
-  else if (f.kind === 'view') base = `view:${f.viewId}`
-  else base = f.kind
+  const base = 'allSessions'
   if (state.details) {
     return `${base}/chat/${state.details.sessionId}`
   }
@@ -965,28 +936,17 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
 
   // Handle sessions
   const parseSessionsKey = (filterKey: string, sessionId?: string): NavigationState | null => {
-    let filter: SessionFilter
-    if (filterKey === 'allSessions') filter = { kind: 'allSessions' }
-    else if (filterKey === 'flagged') filter = { kind: 'flagged' }
-    else if (filterKey === 'archived') filter = { kind: 'archived' }
-    else if (filterKey.startsWith('state:')) {
-      const stateId = filterKey.slice(6)
-      if (!stateId) return null
-      filter = { kind: 'state', stateId }
-    } else if (filterKey.startsWith('label:')) {
-      const labelId = filterKey.slice(6)
-      if (!labelId) return null
-      filter = { kind: 'label', labelId }
-    } else if (filterKey.startsWith('view:')) {
-      const viewId = filterKey.slice(5)
-      if (!viewId) return null
-      filter = { kind: 'view', viewId }
-    } else {
+    if (filterKey !== 'allSessions'
+      && filterKey !== 'flagged'
+      && filterKey !== 'archived'
+      && !filterKey.startsWith('state:')
+      && !filterKey.startsWith('label:')
+      && !filterKey.startsWith('view:')) {
       return null
     }
     return {
       navigator: 'sessions',
-      filter,
+      filter: { kind: 'allSessions' },
       details: sessionId ? { type: 'session', sessionId } : null,
     }
   }

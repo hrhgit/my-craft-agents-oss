@@ -13,12 +13,7 @@ import type { ThinkingLevel } from '../agent/thinking-levels.ts';
 
 /** App events - handled by Craft */
 export type AppEvent =
-  | 'LabelAdd'
-  | 'LabelRemove'
-  | 'LabelConfigChange'
   | 'PermissionModeChange'
-  | 'FlagChange'
-  | 'SessionStatusChange'
   | 'SchedulerTick';
 
 /** Agent events emitted by backend runtimes */
@@ -40,8 +35,7 @@ export type AgentEvent =
 export type AutomationEvent = AppEvent | AgentEvent;
 
 export const APP_EVENTS: AppEvent[] = [
-  'LabelAdd', 'LabelRemove', 'LabelConfigChange',
-  'PermissionModeChange', 'FlagChange', 'SessionStatusChange', 'SchedulerTick'
+  'PermissionModeChange', 'SchedulerTick'
 ];
 
 export const AGENT_EVENTS: AgentEvent[] = [
@@ -121,7 +115,7 @@ export interface TimeCondition {
 /** State/field check condition with HA-style from/to for transitions */
 export interface StateCondition {
   condition: 'state';
-  /** Field name to check (e.g. 'permissionMode', 'sessionStatus', 'labels', 'isFlagged') */
+  /** Event payload field name to check (for example, 'permissionMode') */
   field: string;
   /** Exact value match */
   value?: unknown;
@@ -161,8 +155,6 @@ export interface AutomationMatcher {
   timezone?: string;
   /** Permission mode for sessions created by prompt actions. */
   permissionMode?: PermissionMode;
-  /** Labels to apply to sessions created by prompt actions */
-  labels?: string[];
   /** Whether this automation matcher is enabled. Defaults to true. Set to false to disable without removing. */
   enabled?: boolean;
   /** Optional conditions that must all pass (AND) after matcher matches, before actions fire */
@@ -246,8 +238,6 @@ export interface PendingPrompt {
    * The caller should resolve which are sources vs skills based on available configurations.
    */
   mentions: string[];
-  /** Labels to apply to the created session */
-  labels?: string[];
   /** Permission mode for the created session (from matcher config) */
   permissionMode?: PermissionMode;
   /** Pi provider key for the created session (falls back to default if not found) */
@@ -318,9 +308,6 @@ export interface AgentAutomationInput {
  */
 export interface SessionMetadataSnapshot {
   permissionMode?: string;
-  labels?: string[];
-  isFlagged?: boolean;
-  sessionStatus?: string;
   /** Session name (user-defined or auto-generated) */
   sessionName?: string;
 }

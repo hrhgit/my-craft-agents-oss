@@ -13,7 +13,6 @@ import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
 import type { AuthResult } from '@craft-agent/shared/agent'
 import type {
   Session,
-  SessionStatus,
   CreateSessionOptions,
   FileAttachment,
   SendMessageOptions,
@@ -56,12 +55,7 @@ export interface ISessionManager {
   // Session state
   // ---------------------------------------------------------------------------
 
-  flagSession(sessionId: string): Promise<void>
-  unflagSession(sessionId: string): Promise<void>
-  archiveSession(sessionId: string): Promise<void>
-  unarchiveSession(sessionId: string): Promise<void>
   renameSession(sessionId: string, name: string): Promise<void>
-  setSessionStatus(sessionId: string, status: SessionStatus): Promise<void>
   markSessionRead(sessionId: string): Promise<void>
   markSessionUnread(sessionId: string): Promise<void>
   markAllSessionsRead(workspaceId: string): Promise<void>
@@ -76,7 +70,6 @@ export interface ISessionManager {
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void
   updateWorkingDirectory(sessionId: string, path: string): void
   setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void>
-  setSessionLabels(sessionId: string, labels: string[]): void
   setSessionProvider(sessionId: string, provider: string): Promise<void>
   clearDeletedProviderReferences(provider: string): Promise<void>
   updateSessionModel(sessionId: string, workspaceId: string, model: string | null, provider?: string): Promise<void>

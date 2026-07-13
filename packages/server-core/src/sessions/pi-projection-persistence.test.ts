@@ -134,6 +134,54 @@ describe('Pi projection persistence', () => {
     expect(JSON.parse(readFileSync(sidecarPath, 'utf8'))).toEqual(rebuilt)
   })
 
+  it('rebuilds a legacy sidecar whose user messages have no wall-clock time', async () => {
+    const workspace = {
+      id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
+    } as never
+    const timestamp = 1_783_861_200_000
+    const header = await createSession(workspaceRoot, { name: 'Pi history' })
+    const sessionFile = getSessionFilePath(workspaceRoot, header.craftId)
+    appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspaceRoot, [
+      { id: 'source-user', type: 'user', content: 'restore my timestamp', timestamp },
+    ])
+
+    const managed = createManagedSession(header, workspace, { messagesLoaded: true })
+    const host = new SessionManager()
+    const internals = host as unknown as {
+      sessions: Map<string, typeof managed>
+      piProjectionWrites: Map<string, Promise<void>>
+    }
+    internals.sessions.set(managed.id, managed)
+    const sidecarPath = join(getSessionPath(workspaceRoot, managed.id), 'pi-projection-v1.json')
+    mkdirSync(dirname(sidecarPath), { recursive: true })
+    writeFileSync(sidecarPath, JSON.stringify({
+      schemaVersion: 1,
+      sessionId: managed.id,
+      runtimeId: `history:${managed.id}`,
+      lastSeq: 1,
+      entities: [{
+        entityId: 'content:user:legacy',
+        entityType: 'content_block',
+        entityVersion: 1,
+        createdSeq: 1,
+        kind: 'user_text',
+        payload: { role: 'user', messageId: 'legacy', text: 'restore my timestamp', streaming: false },
+        lastEventId: 'legacy:1',
+        lastSeq: 1,
+      }],
+    }), 'utf8')
+
+    const rebuilt = await host.getPiProjectionSnapshot(managed.id)
+    const user = rebuilt?.entities.find(entity => entity.kind === 'user_text')
+
+    expect(user).toMatchObject({
+      createdAt: timestamp,
+      payload: expect.objectContaining({ text: 'restore my timestamp', timestamp }),
+    })
+    await internals.piProjectionWrites.get(managed.id)
+    expect(JSON.parse(readFileSync(sidecarPath, 'utf8'))).toEqual(rebuilt)
+  })
+
   it('rebuilds an invalid sidecar from the public Pi session projection', async () => {
     const workspace = {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),

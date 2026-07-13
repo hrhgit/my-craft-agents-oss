@@ -30,7 +30,6 @@ import {
   validateConfig,
   validateSource,
   validateAllSources,
-  validateStatuses,
   validatePreferences,
   validateAll,
   validateSkill,
@@ -120,7 +119,6 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
     validateConfig: () => validateConfig(),
     validateSource: (wsPath: string, slug: string) => validateSource(wsPath, slug),
     validateAllSources: (wsPath: string) => validateAllSources(wsPath),
-    validateStatuses: (wsPath: string) => validateStatuses(wsPath),
     validatePreferences: () => validatePreferences(),
     validatePermissions: (wsPath: string, sourceSlug?: string) => {
       if (sourceSlug) {

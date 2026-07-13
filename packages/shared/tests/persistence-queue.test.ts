@@ -219,12 +219,10 @@ describe('SessionPersistenceQueue', () => {
     expect(existsSync(filePath)).toBe(false);
   });
 
-  it('preserves externally edited header metadata when a stale queued write flushes', async () => {
+  it('preserves active externally edited metadata while stripping retired organization fields', async () => {
     const session = {
       ...createTestSession('external-metadata-session', testDir, 'sdk-external'),
       name: 'old name',
-      labels: [],
-      isFlagged: false,
     };
 
     queue.enqueue(session);
@@ -234,8 +232,11 @@ describe('SessionPersistenceQueue', () => {
     const lines = readFileSync(filePath, 'utf-8').trim().split('\n');
     const header = JSON.parse(lines[0]);
     header.craft.name = 'external name';
+    header.craft.sessionStatus = 'done';
     header.craft.labels = ['external'];
     header.craft.isFlagged = true;
+    header.craft.isArchived = true;
+    header.craft.archivedAt = 12345;
     writeFileSync(filePath, [JSON.stringify(header), ...lines.slice(1)].join('\n') + '\n', 'utf-8');
 
     queue.enqueue({
@@ -246,8 +247,11 @@ describe('SessionPersistenceQueue', () => {
 
     const updated = readWrittenHeader(testDir, session.craftId);
     expect(updated.craft.name).toBe('external name');
-    expect(updated.craft.labels).toEqual(['external']);
-    expect(updated.craft.isFlagged).toBe(true);
+    expect(updated.craft.sessionStatus).toBeUndefined();
+    expect(updated.craft.labels).toBeUndefined();
+    expect(updated.craft.isFlagged).toBeUndefined();
+    expect(updated.craft.isArchived).toBeUndefined();
+    expect(updated.craft.archivedAt).toBeUndefined();
 
     queue.enqueue({
       ...session,
@@ -257,7 +261,10 @@ describe('SessionPersistenceQueue', () => {
 
     const updatedAgain = readWrittenHeader(testDir, session.craftId);
     expect(updatedAgain.craft.name).toBe('external name');
-    expect(updatedAgain.craft.labels).toEqual(['external']);
-    expect(updatedAgain.craft.isFlagged).toBe(true);
+    expect(updatedAgain.craft.sessionStatus).toBeUndefined();
+    expect(updatedAgain.craft.labels).toBeUndefined();
+    expect(updatedAgain.craft.isFlagged).toBeUndefined();
+    expect(updatedAgain.craft.isArchived).toBeUndefined();
+    expect(updatedAgain.craft.archivedAt).toBeUndefined();
   });
 });

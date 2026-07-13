@@ -98,7 +98,6 @@ export function useAutomations(
       automationName: automation.name,
       actions: automation.actions,
       permissionMode: automation.permissionMode,
-      labels: automation.labels,
       telegramTopic: automation.telegramTopic,
     }).then((result) => {
       const actions = result.actions
@@ -166,7 +165,7 @@ export function useAutomations(
       return entries.map(e => ({
         id: `${e.id}-${e.ts}`,
         automationId: e.id,
-        event: automation?.event ?? 'LabelAdd',
+        event: automation?.event ?? 'SchedulerTick',
         status: e.ok ? 'success' as const : 'error' as const,
         duration: e.webhook?.durationMs ?? 0,
         timestamp: e.ts,

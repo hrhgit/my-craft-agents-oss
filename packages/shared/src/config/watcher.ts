@@ -44,11 +44,6 @@ import { permissionsConfigCache, getAppPermissionsDir } from '../agent/permissio
 import { getWorkspacePath, getWorkspaceSourcesPath, getWorkspaceSkillsPath, getWorkspacePiSessionsDir } from '../workspaces/storage.ts';
 import type { LoadedSkill } from '../skills/types.ts';
 import { loadSkill, loadAllSkills, invalidateSkillsCache, skillNeedsIconDownload, downloadSkillIcon } from '../skills/storage.ts';
-import {
-  loadStatusConfig,
-  statusNeedsIconDownload,
-  downloadStatusIcon,
-} from '../statuses/storage.ts';
 import { readSessionHeader } from '../sessions/jsonl.ts';
 import { getSessionFilePath } from '../sessions/storage.ts';
 import type { SessionHeader } from '../sessions/types.ts';
@@ -140,22 +135,12 @@ export interface ConfigWatcherCallbacks {
   /** Called when a source's permissions.json changes */
   onSourcePermissionsChange?: (sourceSlug: string) => void;
 
-  // Status callbacks
-  /** Called when statuses config.json changes */
-  onStatusConfigChange?: (workspaceId: string) => void;
-  /** Called when a status icon file changes */
-  onStatusIconChange?: (workspaceId: string, iconFilename: string) => void;
-
-  // Label callbacks
-  /** Called when labels config.json changes */
-  onLabelConfigChange?: (workspaceId: string) => void;
-
   // Automations callbacks
   /** Called when automations.json changes */
   onAutomationsConfigChange?: (workspaceId: string) => void;
 
   // Session callbacks
-  /** Called when a session's JSONL header is modified externally (labels, name, flags, etc.) */
+  /** Called when a session's JSONL header is modified externally. */
   onSessionMetadataChange?: (sessionId: string, header: SessionHeader) => void;
 
   // Theme callbacks (app-level only)
@@ -444,7 +429,7 @@ export class ConfigWatcher {
    *
      * Session files live under `~/.pi/agent/sessions/{encoded-cwd}/`.
    * The workspace watcher above can't see these files, so a separate watcher
-   * is needed to detect external metadata changes (labels, name, flags) made
+   * is needed to detect external metadata changes (for example, name) made
    * by other instances or the Pi CLI.
    */
   private watchPiSessionsDir(): void {
@@ -553,39 +538,6 @@ export class ConfigWatcher {
       return;
     }
 
-    // Statuses changes: statuses/...
-    if (parts[0] === 'statuses' && parts.length >= 2) {
-      const file = parts[1];
-
-      // config.json change
-      if (file === 'config.json') {
-        this.debounce('statuses-config', () => this.handleStatusConfigChange());
-        return;
-      }
-
-      // Icon file changes: statuses/icons/*.svg, *.png, etc.
-      if (file === 'icons' && parts.length >= 3) {
-        const iconFilename = parts[2];
-        if (iconFilename) {
-          this.debounce(`statuses-icon:${iconFilename}`, () => {
-            this.handleStatusIconChange(iconFilename);
-          });
-        }
-        return;
-      }
-    }
-
-    // Labels changes: labels/...
-    if (parts[0] === 'labels' && parts.length >= 2) {
-      const file = parts[1];
-
-      // config.json change
-      if (file === 'config.json') {
-        this.debounce('labels-config', () => this.handleLabelConfigChange());
-        return;
-      }
-
-    }
   }
 
   /**
@@ -958,59 +910,6 @@ export class ConfigWatcher {
     }
   }
 
-  // ============================================================
-  // Statuses Handlers
-  // ============================================================
-
-  /**
-   * Handle statuses config.json change
-   * Downloads icons for any status with URL icon and no local file
-   */
-  private handleStatusConfigChange(): void {
-    debug('[ConfigWatcher] Statuses config.json changed:', this.workspaceId);
-
-    // Load config and check for icons that need downloading
-    const config = loadStatusConfig(this.workspaceDir);
-    for (const status of config.statuses) {
-      if (statusNeedsIconDownload(this.workspaceDir, status)) {
-        debug('[ConfigWatcher] Downloading status icon:', status.id);
-        downloadStatusIcon(this.workspaceDir, status.id, status.icon!)
-          .then((iconPath) => {
-            if (iconPath) {
-              debug('[ConfigWatcher] Status icon downloaded:', status.id, iconPath);
-              // Re-emit config change to update UI with new icon
-              this.callbacks.onStatusConfigChange?.(this.workspaceId);
-            }
-          })
-          .catch((err) => {
-            debug('[ConfigWatcher] Status icon download failed:', status.id, err);
-          });
-      }
-    }
-
-    this.callbacks.onStatusConfigChange?.(this.workspaceId);
-  }
-
-  /**
-   * Handle status icon file change
-   */
-  private handleStatusIconChange(iconFilename: string): void {
-    debug('[ConfigWatcher] Status icon changed:', this.workspaceId, iconFilename);
-    this.callbacks.onStatusIconChange?.(this.workspaceId, iconFilename);
-  }
-
-  // ============================================================
-  // Labels Handlers
-  // ============================================================
-
-  /**
-   * Handle labels config.json change.
-   */
-  private handleLabelConfigChange(): void {
-    debug('[ConfigWatcher] Labels config.json changed:', this.workspaceId);
-    this.callbacks.onLabelConfigChange?.(this.workspaceId);
-  }
-
   /**
    * Handle automations config change.
    */
@@ -1025,8 +924,8 @@ export class ConfigWatcher {
 
   /**
    * Handle a Pi session JSONL change — reads only line 1 and emits if valid.
-   * This enables detection of external metadata changes (labels, name, flags)
-   * made by other instances, scripts, or manual edits.
+   * This enables detection of external metadata changes made by other
+   * instances, scripts, or manual edits.
    */
   private handleSessionMetadataChange(sessionId: string): void {
     // session files now live under ~/.pi/agent/sessions/{encoded-cwd}/.

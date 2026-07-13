@@ -17,10 +17,6 @@ export interface Session {
   name?: string;                 // Optional user-defined name
   createdAt: number;
   lastUsedAt: number;
-  // Inbox/Archive features
-  isArchived?: boolean;          // Whether this session is archived
-  isFlagged?: boolean;           // Whether this session is flagged
-  status?: string;               // Workflow status (dynamic ID validated at runtime via shared/protocol)
   // Read/unread tracking
   lastReadMessageId?: string;    // ID of the last message the user has read
 }
@@ -35,8 +31,6 @@ export interface StoredSession extends Session {
 
 /**
  * Session metadata for listing (without loading full messages)
- * Extended with archive status for Inbox/Archive features
- *
  * NOTE: 此接口为 IPC 契约层（ElectronAPI）的运行时 DTO，使用 `id` 字段。
  * 持久化层使用 `@craft-agent/shared/sessions` 的 `SessionHeader` 接口，其对应字段
  * 名为 `craftId`。二者在运行时通过 managedToSession 等 mapper 显式映射
@@ -52,9 +46,5 @@ export interface SessionMetadata {
   messageCount: number;
   preview?: string;        // Preview of first user message
   sdkSessionId?: string;
-  // Inbox/Archive features
-  isArchived?: boolean;    // Whether this session is archived
-  isFlagged?: boolean;     // Whether this session is flagged
-  status?: string;        // Workflow status (dynamic ID validated at runtime via shared/protocol)
   hidden?: boolean;        // Whether this session is hidden from session list
 }

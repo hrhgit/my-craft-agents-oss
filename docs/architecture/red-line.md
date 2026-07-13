@@ -44,9 +44,8 @@ add, change, and extend them without touching Pi.
 - UI rendering (React, shadcn, Tailwind, the GUI OKLCH theme — distinct from
   Pi's TUI theme).
 - Workspace registry, switching, and per-workspace configuration UI.
-- Multi-session inbox, status workflow (Todo/In Progress/Needs Review/Done),
-  flagging, session naming.
-- Automations engine (LabelAdd, SchedulerTick, PreToolUse triggers, etc.) —
+- Multi-session history, unread tracking, session naming.
+- Automations engine (SchedulerTick, PreToolUse triggers, etc.) —
   Craft listens to its own events and drives Pi via `RpcClient`.
 - Messaging gateway (Telegram, WhatsApp), pairing, bindings.
 - Browser pane manager (local and remote-bridged).

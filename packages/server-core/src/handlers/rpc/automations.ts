@@ -203,7 +203,6 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
           workspaceId: payload.workspaceId,
           workspaceRootPath: workspace.rootPath,
           prompt: action.prompt,
-          labels: payload.labels,
           permissionMode: payload.permissionMode,
           mentions: references.mentions,
           provider: action.provider,

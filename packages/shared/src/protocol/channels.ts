@@ -35,8 +35,6 @@ export const RPC_CHANNELS = {
     GET_MODEL: 'session:getModel',
     SET_MODEL: 'session:setModel',
     GET_FILES: 'sessions:getFiles',
-    GET_NOTES: 'sessions:getNotes',
-    SET_NOTES: 'sessions:setNotes',
     WATCH_FILES: 'sessions:watchFiles',
     UNWATCH_FILES: 'sessions:unwatchFiles',
     FILES_CHANGED: 'sessions:filesChanged',
@@ -239,21 +237,6 @@ export const RPC_CHANNELS = {
     OPEN_EDITOR: 'skills:openEditor',
     OPEN_FINDER: 'skills:openFinder',
     CHANGED: 'skills:changed',
-  },
-  statuses: {
-    LIST: 'statuses:list',
-    REORDER: 'statuses:reorder',
-    CHANGED: 'statuses:changed',
-  },
-  labels: {
-    LIST: 'labels:list',
-    CREATE: 'labels:create',
-    DELETE: 'labels:delete',
-    CHANGED: 'labels:changed',
-  },
-  views: {
-    LIST: 'views:list',
-    SAVE: 'views:save',
   },
   toolIcons: {
     GET_MAPPINGS: 'toolIcons:getMappings',

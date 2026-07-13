@@ -18,6 +18,22 @@ function setupConfigDir() {
     }, null, 2),
     'utf-8',
   )
+
+  writeFileSync(
+    join(configDir, 'config-defaults.json'),
+    JSON.stringify({
+      version: 'test',
+      description: 'test defaults',
+      defaults: { dataSourcesEnabled: false },
+      workspaceDefaults: {
+        thinkingLevel: 'medium',
+        permissionMode: 'ask',
+        cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
+        localMcpServers: { enabled: true },
+      },
+    }, null, 2),
+    'utf-8',
+  )
   return { configDir, configPath }
 }
 
@@ -40,9 +56,9 @@ function runEval(configDir: string, code: string): string {
 }
 
 describe('data-source feature storage', () => {
-  it('defaults to enabled for existing configs', () => {
+  it('defaults to disabled when the setting is absent', () => {
     const { configDir } = setupConfigDir()
-    expect(runEval(configDir, 'console.log(String(getDataSourcesEnabled()))')).toBe('true')
+    expect(runEval(configDir, 'console.log(String(getDataSourcesEnabled()))')).toBe('false')
   })
 
   it('persists disabled state in the global config', () => {
@@ -53,7 +69,7 @@ describe('data-source feature storage', () => {
     expect(config.dataSourcesEnabled).toBe(false)
   })
 
-  it('round-trips enabled state across processes', () => {
+  it('round-trips an explicitly enabled state across processes', () => {
     const { configDir, configPath } = setupConfigDir()
     const config = JSON.parse(readFileSync(configPath, 'utf-8'))
     config.dataSourcesEnabled = false

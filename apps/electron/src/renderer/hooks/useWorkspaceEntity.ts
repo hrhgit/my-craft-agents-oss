@@ -3,7 +3,7 @@
  *
  * Generic hook for loading workspace-scoped entities (labels, statuses, views,
  * global config, etc). Encapsulates the isLoading / error / refresh / subscribe
- * pattern duplicated across useLabels, useStatuses, useViews, usePiGlobalConfig.
+ * pattern shared by workspace-backed configuration hooks such as usePiGlobalConfig.
  *
  * Workspace ID semantics:
  * - `string`  → workspace-scoped fetch (fetcher receives the id)
@@ -26,7 +26,7 @@ export interface UseWorkspaceEntityOptions<T> {
   fetcher: (workspaceId: string | undefined) => Promise<T | null>
   /** Optional: subscribe to live change events. Called when workspaceId changes. */
   subscribe?: (workspaceId: string | undefined, onChange: () => void) => () => void
-  /** Tag for error logging (e.g. 'useLabels'). */
+  /** Tag for error logging. */
   tag: string
 }
 

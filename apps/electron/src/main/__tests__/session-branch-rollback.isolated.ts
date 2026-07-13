@@ -180,7 +180,6 @@ mock.module('@craft-agent/shared/automations', () => ({
     constructor(..._args: unknown[]) {}
     setInitialSessionMetadata() {}
     reloadConfig() { return { errors: [], automationCount: 0 } }
-    emitLabelConfigChange = async () => {}
   },
   validateAutomationsConfig: () => ({ valid: true, errors: [], config: { automations: {} } }),
   validateAutomationsContent: () => ({ valid: true, errors: [], warnings: [] }),
@@ -209,9 +208,6 @@ mock.module('@craft-agent/shared/sessions', () => ({
       permissionMode: opts?.permissionMode ?? 'ask',
       workingDirectory: opts?.workingDirectory,
       hidden: !!opts?.hidden,
-      labels: [],
-      isFlagged: false,
-      sessionStatus: opts?.sessionStatus,
       createdAt: now,
       lastUsedAt: now,
       workspaceRootPath: workspaceRootPath,

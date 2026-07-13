@@ -6,7 +6,6 @@ import { describe, it, expect } from 'bun:test';
 import {
   validateSourceConfigContent,
   validateSkillContent,
-  validateStatusesContent,
   validatePermissionsContent,
   detectConfigFileType,
   validateConfigFileContent,
@@ -202,101 +201,6 @@ Content.
 });
 
 // ============================================================
-// validateStatusesContent
-// ============================================================
-
-describe('validateStatusesContent', () => {
-  const validStatuses = {
-    version: 1,
-    defaultStatusId: 'todo',
-    statuses: [
-      { id: 'todo', label: 'To Do', category: 'open', isFixed: true, isDefault: true, order: 0 },
-      { id: 'in-progress', label: 'In Progress', category: 'open', isFixed: false, isDefault: false, order: 1 },
-      { id: 'done', label: 'Done', category: 'closed', isFixed: true, isDefault: false, order: 2 },
-      { id: 'cancelled', label: 'Cancelled', category: 'closed', isFixed: true, isDefault: false, order: 3 },
-    ],
-  };
-
-  it('passes for valid statuses config', () => {
-    const result = validateStatusesContent(JSON.stringify(validStatuses));
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
-
-  it('fails for invalid JSON', () => {
-    const result = validateStatusesContent('not json');
-    expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toContain('Invalid JSON');
-  });
-
-  it('fails when required fixed status is missing', () => {
-    const config = {
-      ...validStatuses,
-      statuses: validStatuses.statuses.filter(s => s.id !== 'cancelled'),
-    };
-    const result = validateStatusesContent(JSON.stringify(config));
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.message.includes("'cancelled'"))).toBe(true);
-  });
-
-  it('fails when defaultStatusId references non-existent status', () => {
-    const config = {
-      ...validStatuses,
-      defaultStatusId: 'non-existent',
-    };
-    const result = validateStatusesContent(JSON.stringify(config));
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.message.includes('non-existent'))).toBe(true);
-  });
-
-  it('fails when duplicate status IDs exist', () => {
-    const config = {
-      ...validStatuses,
-      statuses: [
-        ...validStatuses.statuses,
-        { id: 'todo', label: 'Duplicate', category: 'open', isFixed: false, isDefault: false, order: 4 },
-      ],
-    };
-    const result = validateStatusesContent(JSON.stringify(config));
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.message.includes('Duplicate'))).toBe(true);
-  });
-
-  it('fails when no open category status exists', () => {
-    const config = {
-      version: 1,
-      defaultStatusId: 'todo',
-      statuses: [
-        { id: 'todo', label: 'To Do', category: 'closed', isFixed: true, isDefault: true, order: 0 },
-        { id: 'done', label: 'Done', category: 'closed', isFixed: true, isDefault: false, order: 1 },
-        { id: 'cancelled', label: 'Cancelled', category: 'closed', isFixed: true, isDefault: false, order: 2 },
-      ],
-    };
-    const result = validateStatusesContent(JSON.stringify(config));
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.message.includes('open'))).toBe(true);
-  });
-
-  it('warns when fixed status does not have isFixed flag', () => {
-    const config = {
-      ...validStatuses,
-      statuses: validStatuses.statuses.map(s =>
-        s.id === 'todo' ? { ...s, isFixed: false } : s
-      ),
-    };
-    const result = validateStatusesContent(JSON.stringify(config));
-    expect(result.valid).toBe(true); // Warnings don't make it invalid
-    expect(result.warnings.some(w => w.message.includes('isFixed'))).toBe(true);
-  });
-
-  it('fails for schema violations (missing required fields)', () => {
-    const config = { version: 1, statuses: [] };
-    const result = validateStatusesContent(JSON.stringify(config));
-    expect(result.valid).toBe(false);
-  });
-});
-
-// ============================================================
 // validatePermissionsContent
 // ============================================================
 
@@ -376,16 +280,6 @@ describe('detectConfigFileType', () => {
     expect(result!.displayFile).toBe('.pi/skills/commit/SKILL.md');
   });
 
-  it('detects statuses config', () => {
-    const result = detectConfigFileType(
-      `${workspaceRoot}/statuses/config.json`,
-      workspaceRoot
-    );
-    expect(result).not.toBeNull();
-    expect(result!.type).toBe('statuses');
-    expect(result!.displayFile).toBe('statuses/config.json');
-  });
-
   it('detects workspace-level permissions.json', () => {
     const result = detectConfigFileType(
       `${workspaceRoot}/permissions.json`,
@@ -459,21 +353,6 @@ description: Test skill
 Content here.
 `;
     const result = validateConfigFileContent(detection, content);
-    expect(result).not.toBeNull();
-    expect(result!.valid).toBe(true);
-  });
-
-  it('dispatches to statuses validator', () => {
-    const detection = { type: 'statuses' as const, displayFile: 'statuses/config.json' };
-    const config = JSON.stringify({
-      version: 1, defaultStatusId: 'todo',
-      statuses: [
-        { id: 'todo', label: 'To Do', category: 'open', isFixed: true, isDefault: true, order: 0 },
-        { id: 'done', label: 'Done', category: 'closed', isFixed: true, isDefault: false, order: 1 },
-        { id: 'cancelled', label: 'Cancelled', category: 'closed', isFixed: true, isDefault: false, order: 2 },
-      ],
-    });
-    const result = validateConfigFileContent(detection, config);
     expect(result).not.toBeNull();
     expect(result!.valid).toBe(true);
   });

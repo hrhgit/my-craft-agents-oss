@@ -661,7 +661,7 @@ export async function patchPiExtensionConfig(
 // ===== Shell GUI 命名空间（shellGui.<name>.*）=====
 //
 // craft shell 的 GUI 开关与 agent 行为字段（showStatusBadge/widgetVisible/
-// planMode.* / craft 全局开关等）回归 ~/.pi/agent/settings.json 的 `shellGui.<name>.*`
+// craft 全局开关等）回归 ~/.pi/agent/settings.json 的 `shellGui.<name>.*`
 // 命名空间。pi CLI 单独运行时忽略此字段（pi settings-manager.ts 中 shellGui 为可选）。
 
 /**

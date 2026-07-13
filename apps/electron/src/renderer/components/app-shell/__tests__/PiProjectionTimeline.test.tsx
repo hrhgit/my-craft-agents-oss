@@ -12,7 +12,7 @@ describe('PiProjectionTimeline', () => {
   })
 
   it('renders user requests with the shared message card', () => {
-    expect(source).toContain("import { ActivityCardsOverlay, PlanArtifactCard, UserMessageBubble")
+    expect(source).toContain("import { ActivityCardsOverlay, UserMessageBubble")
     expect(source).toContain('<UserMessageBubble')
     expect(source).toContain('content={item.text}')
   })

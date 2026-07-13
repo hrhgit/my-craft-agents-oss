@@ -20,6 +20,7 @@ export interface MobileMenuItemProps {
   onClick: () => void
   destructive?: boolean
   className?: string
+  accessory?: React.ReactNode
 }
 
 /**
@@ -34,6 +35,7 @@ export function MobileMenuItem({
   onClick,
   destructive,
   className,
+  accessory,
 }: MobileMenuItemProps) {
   return (
     <button
@@ -62,6 +64,7 @@ export function MobileMenuItem({
           </span>
         )}
       </span>
+      {accessory}
       {affordance === 'chevron' && (
         <Icons.ChevronRight className="h-4 w-4 shrink-0 text-foreground/40" strokeWidth={1.75} />
       )}

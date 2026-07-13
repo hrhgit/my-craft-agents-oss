@@ -11,7 +11,6 @@ import {
   setRemoteUIFreeform,
   type RemoteUIRequest,
 } from './RemoteUIModal'
-import type { RemoteUIBatch } from './remote-ui-batch'
 
 const i18n = createInstance()
 await i18n.use(initReactI18next).init({
@@ -44,18 +43,16 @@ const baseRequest = {
   requestId: 'request-1',
   source: 'extension',
   sessionId: 'session-1',
-  extensionId: 'ask-user',
+  extensionId: 'legacy-extension',
   runtimeId: 'runtime-1',
 } as const
 
-function renderComposer(request: RemoteUIRequest, batch?: RemoteUIBatch): string {
+function renderComposer(request: RemoteUIRequest): string {
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
       <RemoteUIComposer
         request={request}
-        batch={batch}
         onRespond={() => {}}
-        onRespondBatch={() => {}}
       />
     </I18nextProvider>,
   )
@@ -114,35 +111,6 @@ describe('RemoteUIComposer', () => {
     expect(html).toContain('placeholder="Type the change to make"')
     expect(html).toContain('aria-label="Answer"')
     expect(html).not.toContain('value="Type the change to make"')
-  })
-
-  it('renders real previous and next controls for a recovered question batch', () => {
-    const request: RemoteUIRequest = {
-      ...baseRequest,
-      kind: 'select',
-      title: '[1/3] Choose an approach',
-      options: [{ title: 'Prototype' }],
-    }
-    const batch: RemoteUIBatch = {
-      id: 'batch-1',
-      sessionId: 'session-1',
-      runtimeId: 'runtime-1',
-      extensionId: 'ask-user',
-      questions: [
-        { kind: 'select', title: 'Choose an approach', options: [{ title: 'Prototype' }], allowMultiple: false, allowFreeform: true, allowComment: false },
-        { kind: 'select', title: 'Choose tools', options: [{ title: 'Git' }], allowMultiple: true, allowFreeform: true, allowComment: false },
-        { kind: 'editor', title: 'Describe the issue' },
-      ],
-    }
-
-    const html = renderComposer(request, batch)
-
-    expect(html).toContain('data-remote-ui-batch="true"')
-    expect(html).toContain('1 / 3')
-    expect(html).toContain('aria-label="Back"')
-    expect(html).toContain('aria-label="Forward"')
-    expect(html).toContain('lucide-chevron-left')
-    expect(html).toContain('lucide-chevron-right')
   })
 
   it('keeps custom text and preset selections mutually exclusive', () => {

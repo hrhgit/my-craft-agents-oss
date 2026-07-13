@@ -4,21 +4,15 @@ import type { PiProjectionState } from '@/atoms/pi-projection'
 import { cn } from '@/lib/utils'
 import { CollapsibleMarkdownProvider, Markdown, StreamingMarkdown } from '@/components/markdown'
 import { ActivityCardsOverlay, UserMessageBubble, extractOverlayCards, type ActivityItem } from '@craft-agent/ui'
-import type { ExtensionCommandResult } from '@craft-agent/core'
 import type { CredentialResponse } from '../../../shared/types'
 import { MemoizedAuthRequestCard } from '@/components/chat/AuthRequestCard'
 import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, type PiTimelineItem } from './pi-timeline-model'
 import { ExtensionContributionZone, ExtensionReplaceZone } from '@/components/extensions/ExtensionContributionZone'
 
-type PlanAction = (artifactId: string) => Promise<ExtensionCommandResult>
-
 interface PiProjectionTimelineProps {
   projection: PiProjectionState
   onOpenFile: (path: string) => void
   onOpenUrl: (url: string) => void
-  onExecutePlanArtifact?: PlanAction
-  onExecutePlanArtifactWithCompact?: PlanAction
-  onRefinePlanArtifact?: PlanAction
   onRespondToCredential?: (sessionId: string, requestId: string, response: CredentialResponse) => void
   searchQuery?: string
   currentMatchIndex?: number
@@ -103,6 +97,7 @@ function ContentBlock({ item, onOpenFile, onOpenUrl }: {
       <div data-pi-entity-id={item.id}>
         <UserMessageBubble
           content={item.text}
+          timestamp={item.timestamp}
           onUrlClick={onOpenUrl}
           onFileClick={onOpenFile}
         />

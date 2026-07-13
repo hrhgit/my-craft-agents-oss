@@ -67,11 +67,9 @@ describe('spawn_session thinkingLevel forwarding', () => {
       thinkingLevel: 'xhigh',
       permissionMode: 'ask',
       model: 'claude-opus-4-7',
-      labels: ['test'],
     });
     expect(captured[0]?.thinkingLevel).toBe('xhigh');
     expect(captured[0]?.permissionMode).toBe('ask');
     expect(captured[0]?.model).toBe('claude-opus-4-7');
-    expect(captured[0]?.labels).toEqual(['test']);
   });
 });

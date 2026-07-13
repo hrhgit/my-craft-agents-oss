@@ -24,7 +24,6 @@ import { MAX_CONDITION_DEPTH_EXCLUSIVE } from './conditions-constants.ts';
  */
 const TRANSITION_FIELDS: Record<string, { to: string; from: string }> = {
   permissionMode: { to: 'newMode', from: 'oldMode' },
-  sessionStatus: { to: 'newState', from: 'oldState' },
 };
 
 /** Map 3-letter weekday names to JS Date.getDay() / Intl weekday numbers (1=Mon..7=Sun) */

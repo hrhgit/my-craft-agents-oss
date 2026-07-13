@@ -12,12 +12,6 @@ import type {
   ErrorEvent,
   TypedErrorEvent,
   SourcesChangedEvent,
-  LabelsChangedEvent,
-  SessionStatusChangedEvent,
-  SessionFlaggedEvent,
-  SessionUnflaggedEvent,
-  SessionArchivedEvent,
-  SessionUnarchivedEvent,
   NameChangedEvent,
   PermissionRequestEvent,
   CredentialRequestEvent,
@@ -602,112 +596,6 @@ export function handleSourcesChanged(
         ...session,
         enabledSourceSlugs: event.enabledSourceSlugs,
       },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle labels_changed - update session's labels
- */
-export function handleLabelsChanged(
-  state: SessionState,
-  event: LabelsChangedEvent
-): ProcessResult {
-  const { session, streaming } = state
-
-  return {
-    state: {
-      session: {
-        ...session,
-        labels: event.labels,
-      },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle session_status_changed - update session's sessionStatus (external metadata change or agent tool)
- */
-export function handleSessionStatusChanged(
-  state: SessionState,
-  event: SessionStatusChangedEvent
-): ProcessResult {
-  const { session, streaming } = state
-  return {
-    state: {
-      session: { ...session, sessionStatus: event.sessionStatus },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle session_flagged - mark session as flagged
- */
-export function handleSessionFlagged(
-  state: SessionState,
-  _event: SessionFlaggedEvent
-): ProcessResult {
-  const { session, streaming } = state
-  return {
-    state: {
-      session: { ...session, isFlagged: true },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle session_unflagged - mark session as unflagged
- */
-export function handleSessionUnflagged(
-  state: SessionState,
-  _event: SessionUnflaggedEvent
-): ProcessResult {
-  const { session, streaming } = state
-  return {
-    state: {
-      session: { ...session, isFlagged: false },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle session_archived - mark session as archived
- */
-export function handleSessionArchived(
-  state: SessionState,
-  _event: SessionArchivedEvent
-): ProcessResult {
-  const { session, streaming } = state
-  return {
-    state: {
-      session: { ...session, isArchived: true, archivedAt: Date.now() },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle session_unarchived - mark session as unarchived
- */
-export function handleSessionUnarchived(
-  state: SessionState,
-  _event: SessionUnarchivedEvent
-): ProcessResult {
-  const { session, streaming } = state
-  return {
-    state: {
-      session: { ...session, isArchived: false, archivedAt: undefined },
       streaming,
     },
     effects: [],

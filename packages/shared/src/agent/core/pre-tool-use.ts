@@ -31,7 +31,6 @@ import {
 import {
   CLI_DOMAIN_POLICIES,
   CRAFT_AGENTS_CLI_BASH_GUARD_SCOPE_ENTRIES,
-  CRAFT_AGENTS_CLI_WORKSPACE_SCOPE_ENTRIES,
   type CliDomainNamespace,
 } from '../../config/cli-domains.ts';
 import { FEATURE_FLAGS } from '../../feature-flags.ts';
@@ -129,10 +128,6 @@ export const FILE_PATH_TOOLS = new Set([
 
 /** Tools that can write config files */
 export const CONFIG_WRITE_TOOLS = new Set(['Write', 'Edit']);
-
-/** File tools blocked for labels domain. */
-export const LABELS_BLOCKED_FILE_TOOLS = new Set(['Read', 'Write', 'Edit']);
-
 
 // ============================================================
 // PATH EXPANSION
@@ -327,7 +322,6 @@ export function stripToolMetadata(
  * Validates:
  * - sources/{slug}/config.json
  * - .pi/skills/{slug}/SKILL.md
- * - statuses/config.json
  * - permissions.json
  * - theme.json
  * - tool-icons/tool-icons.json
@@ -406,14 +400,12 @@ export function validateConfigWrite(
 function buildCliDomainBlockMessage(namespace: CliDomainNamespace, context: string): string {
   const policy = CLI_DOMAIN_POLICIES[namespace]
   const noun = namespace === 'automation' ? 'automation' : namespace
-  const quickExamplesHeading = namespace === 'label' ? 'Quick examples:' : 'Examples:'
-
   return [
     `${context}`,
     `Use \`craft-agent ${namespace} ...\` instead.`,
     `Run \`${policy.helpCommand}\` for the full ${noun} command reference.`,
     '',
-    quickExamplesHeading,
+    'Examples:',
     ...policy.quickExamples.map(example => `  ${example}`),
   ].join('\n')
 }
@@ -450,7 +442,6 @@ function matchesPathScope(relativePath: string, scope: string): boolean {
 }
 
 function detectCliNamespaceFromConfigDetection(detection: ConfigFileDetection): CliDomainNamespace | null {
-  if (detection.type === 'labels') return 'label'
   if (detection.type === 'automations') return 'automation'
   if (detection.type === 'source') return 'source'
   if (detection.type === 'skill') return 'skill'
@@ -459,7 +450,6 @@ function detectCliNamespaceFromConfigDetection(detection: ConfigFileDetection): 
 
 /**
  * For selected config domains, enforce CLI usage instead of direct file operations.
- * - labels/**: strict block on Read/Write/Edit
  * - sources/{slug}/config.json: redirect on Write/Edit
  * - .pi/skills/{slug}/SKILL.md: redirect on Write/Edit
  * - automations.json: redirect on Write/Edit
@@ -471,23 +461,6 @@ export function getConfigCliRedirect(
   workingDirectory?: string,
 ): { message: string } | null {
   const filePath = input.file_path as string | undefined;
-
-  if (filePath && LABELS_BLOCKED_FILE_TOOLS.has(toolName)) {
-    const relativePath = getWorkspaceRelativePath(filePath, workspaceRootPath, workingDirectory)
-    if (relativePath) {
-      const labelsScopeMatch = CRAFT_AGENTS_CLI_WORKSPACE_SCOPE_ENTRIES.find(
-        entry => entry.namespace === 'label' && matchesPathScope(relativePath, entry.scope)
-      )
-      if (labelsScopeMatch) {
-        return {
-          message: buildCliDomainBlockMessage(
-            'label',
-            `Direct ${toolName} operations in labels/ are blocked.`
-          ),
-        }
-      }
-    }
-  }
 
   if (!CONFIG_WRITE_TOOLS.has(toolName)) return null;
   if (!filePath) return null;
@@ -519,7 +492,7 @@ export function getConfigDomainBashRedirect(
   const command = typeof input.command === 'string' ? input.command.trim() : '';
   if (!command) return null;
 
-  if (/^craft-agent\s+(label|automation|source|skill)\b/.test(command)) {
+  if (/^craft-agent\s+(automation|source|skill)\b/.test(command)) {
     return null;
   }
 
@@ -545,12 +518,11 @@ export function getConfigDomainBashRedirect(
     for (const entry of bashGuardEntries) {
       if (!matchesPathScope(relativePath, entry.scope)) continue
 
-      const context = entry.namespace === 'label'
-        ? 'Direct Bash operations targeting the workspace labels/ folder are blocked.'
-        : `Direct Bash operations targeting \`${relativePath}\` are blocked.`
-
       return {
-        message: buildCliDomainBlockMessage(entry.namespace, context),
+        message: buildCliDomainBlockMessage(
+          entry.namespace,
+          `Direct Bash operations targeting \`${relativePath}\` are blocked.`,
+        ),
       }
     }
   }
@@ -822,7 +794,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     wasModified = true;
   }
 
-  // 5b. Config-domain Bash guard (block direct labels/automations path operations unless using craft-agent)
+  // 5b. Config-domain Bash guard (block guarded paths unless using craft-agent)
   if (FEATURE_FLAGS.craftAgentsCli && toolName === 'Bash') {
     const configDomainBashRedirect = getConfigDomainBashRedirect(currentInput, workspaceRootPath, workingDirectory);
     if (configDomainBashRedirect) {
@@ -836,7 +808,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     return { type: 'block', reason: configResult.error! };
   }
 
-  // 5d. Config file CLI redirect (labels + automations)
+  // 5d. Config file CLI redirect
   if (FEATURE_FLAGS.craftAgentsCli) {
     const cliRedirect = getConfigCliRedirect(toolName, currentInput, workspaceRootPath, workingDirectory);
     if (cliRedirect) {

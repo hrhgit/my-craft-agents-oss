@@ -177,7 +177,7 @@ export default function AppSettingsPage() {
     try {
       await window.electronAPI.setDataSourcesEnabled(enabled)
     } catch (error) {
-      setDataSourcesEnabled(previous ?? true)
+      setDataSourcesEnabled(previous ?? false)
       console.error('Failed to save data-source setting:', error)
     } finally {
       setIsSavingDataSources(false)
@@ -262,7 +262,7 @@ export default function AppSettingsPage() {
                   <SettingsToggle
                     label={t("settings.tools.dataSources")}
                     description={t("settings.tools.dataSourcesDesc")}
-                    checked={dataSourcesEnabled ?? true}
+                    checked={dataSourcesEnabled ?? false}
                     onCheckedChange={handleDataSourcesEnabledChange}
                     disabled={dataSourcesEnabled === null || isSavingDataSources}
                   />

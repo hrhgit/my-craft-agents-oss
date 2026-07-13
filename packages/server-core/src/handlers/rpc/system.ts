@@ -49,7 +49,10 @@ interface ParsedInternalDeepLink {
 const COMPOUND_ROUTE_PREFIXES = new Set([
   'allSessions',
   'flagged',
+  'archived',
   'state',
+  'label',
+  'view',
   'sources',
   'settings',
   'skills',

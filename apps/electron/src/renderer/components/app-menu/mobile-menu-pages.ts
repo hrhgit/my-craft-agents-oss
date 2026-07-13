@@ -7,7 +7,7 @@ import {
 } from '../../../shared/menu-schema'
 
 /** Identifies one of the mobile menu pages. */
-export type MobileMenuPageId = 'root' | 'settings' | 'help' | 'debug'
+export type MobileMenuPageId = 'root' | 'workspaces' | 'settings' | 'help' | 'debug'
 
 /**
  * What a mobile menu row does on tap.
@@ -75,6 +75,12 @@ export function buildMobileMenuPages({ hasNewWindow, isDebugMode }: BuildOptions
   // on mobile — the page would render but be useless.
   rootRows.push(
     {
+      id: 'workspaces',
+      iconName: 'Folders',
+      labelKey: 'workspace.workspaces',
+      action: { kind: 'navigate', to: 'workspaces' },
+    },
+    {
       id: 'settings',
       iconName: 'Settings',
       labelKey: 'sidebar.settings',
@@ -140,6 +146,7 @@ export function buildMobileMenuPages({ hasNewWindow, isDebugMode }: BuildOptions
 
   return [
     { id: 'root', titleKey: 'menu.craftMenu', rows: rootRows },
+    { id: 'workspaces', titleKey: 'workspace.workspaces', rows: [] },
     { id: 'settings', titleKey: 'sidebar.settings', rows: settingsRows },
     { id: 'help', titleKey: 'menu.help', rows: helpRows },
     { id: 'debug', titleKey: DEBUG_MENU.labelKey, rows: debugRows },

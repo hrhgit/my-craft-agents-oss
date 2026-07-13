@@ -31,7 +31,7 @@ export const CRAFT_SESSION_METADATA_FIELDS = [
   // Timestamps
   'createdAt', 'lastUsedAt', 'lastMessageAt',
   // Display
-  'name', 'isFlagged', 'sessionStatus', 'labels', 'hidden',
+  'name', 'hidden',
   // Read tracking
   'lastReadMessageId', 'hasUnread',
   // Config
@@ -42,8 +42,6 @@ export const CRAFT_SESSION_METADATA_FIELDS = [
   'sharedUrl', 'sharedId',
   // Plan execution
   'pendingPlanExecution', 'planModeState',
-  // Archive
-  'isArchived', 'archivedAt',
   // Branching
   'branchFromMessageId',
   'branchFromSdkSessionId',
@@ -74,21 +72,6 @@ export const SESSION_COMPUTED_METADATA_FIELDS = [
 ] as const;
 
 export type SessionComputedMetadataField = typeof SESSION_COMPUTED_METADATA_FIELDS[number];
-
-/**
- * Session status (user-controlled, never automatic)
- *
- * Dynamic status ID referencing workspace status config.
- * Validated at runtime via validateSessionStatus().
- * Falls back to 'todo' if status doesn't exist.
- */
-export type SessionStatus = string;
-
-/**
- * Built-in status IDs (for TypeScript consumers)
- * These are the default statuses but users can add/remove custom ones
- */
-export type BuiltInStatusId = 'todo' | 'in-progress' | 'needs-review' | 'done' | 'cancelled';
 
 /**
  * Session token usage tracking
@@ -167,12 +150,6 @@ export interface CraftSessionMetadata {
 
   /** 用户自定义名称 */
   name?: string;
-  /** 是否标记 */
-  isFlagged?: boolean;
-  /** 用户控制的 session 状态（决定 inbox vs completed） */
-  sessionStatus?: SessionStatus;
-  /** 标签（bare IDs 或 "id::value" 条目） */
-  labels?: string[];
   /** 是否从 session 列表隐藏（如 mini edit sessions） */
   hidden?: boolean;
 
@@ -246,15 +223,6 @@ export interface CraftSessionMetadata {
 
   /** Session-authoritative Pi Plan Mode state. UI must not infer this from local preferences. */
   planModeState?: PlanModeStateV1;
-
-  // ============================================
-  // Craft 归档
-  // ============================================
-
-  /** 是否归档 */
-  isArchived?: boolean;
-  /** 归档时间戳（用于保留策略） */
-  archivedAt?: number;
 
   // ============================================
   // Craft 分支

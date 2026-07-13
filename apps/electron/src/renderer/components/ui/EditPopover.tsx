@@ -80,11 +80,6 @@ export type EditContextKey =
   | 'add-source-mcp'   // Filter-specific: user is viewing MCPs
   | 'add-source-local' // Filter-specific: user is viewing Local Folders
   | 'add-skill'
-  | 'edit-statuses'
-  | 'edit-labels'
-  | 'edit-auto-rules'
-  | 'add-label'
-  | 'edit-views'
   | 'edit-tool-icons'
   | 'automation-config'
 
@@ -400,120 +395,6 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     overridePlaceholderKey: 'editPopover.placeholder.addSkill',
   }),
 
-  // Status configuration context
-  'edit-statuses': (location) => ({
-    context: {
-      label: 'Status Configuration',
-      filePath: `${location}/statuses/config.json`,
-      context:
-        'The user wants to customize session statuses (workflow states). ' +
-        'Statuses are stored in statuses/config.json with fields: id, label, icon, category (open/closed), order, isFixed, isDefault. ' +
-        'Fixed statuses (todo, done, cancelled) cannot be deleted but can be reordered or have their label changed. ' +
-        'Icon can be an emoji, an https URL, or a local filename like "name.svg" that maps to statuses/icons/name.svg. ' +
-        'Category "open" shows in inbox, "closed" shows in archive. ' +
-        'After editing, call config_validate with target "statuses" to verify the changes. ' +
-        'Confirm clearly when done.',
-    },
-    example: 'Add a "Blocked" status',
-    displayLabelKey: 'editPopover.label.statusConfiguration',
-    exampleKey: 'editPopover.example.editStatuses',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
-  }),
-
-  // Label configuration context
-  'edit-labels': (location) => ({
-    context: {
-      label: 'Label Configuration',
-      filePath: `${location}/labels/config.json`,
-      context:
-        'The user wants to customize session labels (tagging/categorization). ' +
-        'Labels are stored in labels/config.json as a hierarchical tree. ' +
-        'Each label has: id (slug, globally unique), name (display), color (optional EntityColor), children (sub-labels array). ' +
-        'Colors use EntityColor format: string shorthand (e.g. "blue") or { light, dark } object for theme-aware colors. ' +
-        'Labels are color-only (no icons) — rendered as colored circles in the UI. ' +
-        'Children form a recursive tree structure — array position determines display order. ' +
-        'Read ~/.craft-agent/docs/labels.md for full format reference. ' +
-        'Confirm clearly when done.',
-    },
-    example: 'Add a "Bug" label with red color',
-    displayLabelKey: 'editPopover.label.labelConfiguration',
-    exampleKey: 'editPopover.example.editLabels',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
-  }),
-
-  // Auto-label rules context (focused on regex patterns within labels)
-  'edit-auto-rules': (location) => ({
-    context: {
-      label: 'Auto-Apply Rules',
-      filePath: `${location}/labels/config.json`,
-      context:
-        'The user wants to edit auto-apply rules (regex patterns that auto-tag sessions). ' +
-        'Rules live inside the autoRules array on individual labels in labels/config.json. ' +
-        'Each rule has: pattern (regex with capture groups), flags (default "gi"), valueTemplate ($1/$2 substitution), description. ' +
-        'Multiple rules on the same label = multiple ways to trigger. The "g" flag is always enforced. ' +
-        'Avoid catastrophic backtracking patterns (e.g., (a+)+). ' +
-        'Read ~/.craft-agent/docs/labels.md for full format reference. ' +
-        'Confirm clearly when done.',
-    },
-    example: 'Add a rule to detect GitHub issue URLs',
-    displayLabelKey: 'editPopover.label.autoApplyRules',
-    exampleKey: 'editPopover.example.editAutoRules',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
-  }),
-
-  // Add new label context (triggered from the # menu when no labels match)
-  'add-label': (location) => ({
-    context: {
-      label: 'Add Label',
-      filePath: `${location}/labels/config.json`,
-      context:
-        'The user wants to create a new label from the # inline menu. ' +
-        'Labels are stored in labels/config.json as a hierarchical tree. ' +
-        'Each label has: id (slug, globally unique), name (display), color (optional EntityColor), children (sub-labels array). ' +
-        'Colors use EntityColor format: string shorthand (e.g. "blue") or { light, dark } object for theme-aware colors. ' +
-        'Labels are color-only (no icons) — rendered as colored circles in the UI. ' +
-        'Read ~/.craft-agent/docs/labels.md for full format reference. ' +
-        'Confirm clearly when done.',
-    },
-    example: 'A red "Bug" label',
-    overridePlaceholder: 'What label would you like to create?',
-    displayLabelKey: 'editPopover.label.addLabel',
-    exampleKey: 'editPopover.example.addLabel',
-    overridePlaceholderKey: 'editPopover.placeholder.addLabel',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
-  }),
-
-  // Views configuration context
-  'edit-views': (location) => ({
-    context: {
-      label: 'Views Configuration',
-      filePath: `${location}/views.json`,
-      context:
-        'The user wants to edit views (dynamic, expression-based filters). ' +
-        'Views are stored in views.json at the workspace root under a "views" array. ' +
-        'Each view has: id (unique slug), name (display text), description (optional), color (optional EntityColor), expression (Filtrex string). ' +
-        'Expressions are evaluated against session context fields: name, preview, sessionStatus (also available as deprecated alias todoState), permissionMode, model, lastMessageRole, ' +
-        'lastUsedAt, createdAt, messageCount, labelCount, isFlagged, hasUnread, isProcessing, hasPendingPlan, tokenUsage.*, labels. ' +
-        'Available functions: daysSince(timestamp), contains(array, value). ' +
-        'Colors use EntityColor format: string shorthand (e.g. "orange") or { light, dark } object. ' +
-        'Confirm clearly when done.',
-    },
-    example: 'Add a "Stale" view for sessions inactive > 7 days',
-    displayLabelKey: 'editPopover.label.viewsConfiguration',
-    exampleKey: 'editPopover.example.editViews',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
-  }),
-
   // Tool icons configuration context
   'edit-tool-icons': (location) => ({
     context: {
@@ -642,8 +523,7 @@ export interface EditPopoverProps {
   modal?: boolean
   /**
    * Default value to pre-fill the input with.
-   * Useful when the user types something (e.g., "#Test") and clicks "Add new label" -
-   * the input can be pre-filled with "Add new label Test".
+   * Useful when an entry point already has a short instruction to pre-fill.
    */
   defaultValue?: string
   /**
@@ -676,7 +556,7 @@ interface EditPromptResult {
  *
  * @example
  * // With user instructions (for EditPopover submit)
- * const { prompt, badges } = buildEditPrompt(context, "Add a Blocked status")
+ * const { prompt, badges } = buildEditPrompt(context, "Allow git fetch")
  *
  * // Without user instructions (for context menu - opens window with context pre-filled)
  * const { prompt, badges } = buildEditPrompt(context, "")

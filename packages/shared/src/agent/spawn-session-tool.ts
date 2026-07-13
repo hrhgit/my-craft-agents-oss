@@ -33,7 +33,6 @@ interface SpawnSessionToolArgs {
   enabledSourceSlugs?: string[];
   permissionMode?: 'safe' | 'ask' | 'allow-all';
   thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-  labels?: string[];
   workingDirectory?: string;
   attachments?: Array<{ path: string; name?: string }>;
 }
@@ -57,7 +56,7 @@ Use this to delegate tasks to parallel sessions — research, analysis, drafts, 
 Call with help=true first to discover available providers, models, and sources.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: provider, model, permissionMode, thinkingLevel, enabledSourceSlugs, labels. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. workingDirectory is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
+Optional overrides: provider, model, permissionMode, thinkingLevel, enabledSourceSlugs. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. workingDirectory is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
 
 thinkingLevel is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring.
 
@@ -80,8 +79,6 @@ Only use 'attachments' for existing file paths on disk — the tool reads them a
         .describe('Permission mode for the new session'),
       thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional()
         .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the global default.'),
-      labels: z.array(z.string()).optional()
-        .describe('Labels for the new session'),
       workingDirectory: z.string().optional()
         .describe('Deprecated and ignored. New sessions run from the workspace root; create or switch workspace to use another folder.'),
       attachments: z.array(z.object({

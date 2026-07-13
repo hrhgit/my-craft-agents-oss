@@ -17,7 +17,7 @@ import type { ActionExecutionResult } from './types.ts';
 export interface LoggedAutomationEvent {
   /** Unique event ID (UUID) */
   id: string;
-  /** Event type (e.g., 'LabelAdd', 'PermissionModeChange') */
+  /** Event type (e.g., 'PermissionModeChange') */
   type: string;
   /** ISO 8601 UTC timestamp */
   time: string;

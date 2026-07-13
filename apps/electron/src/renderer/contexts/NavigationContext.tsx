@@ -52,7 +52,7 @@ import { routes, type Route, type ViewRoute } from '../../shared/routes'
 import { parsePermissionMode } from '@craft-agent/shared/agent/mode-types'
 import { NAVIGATE_EVENT, type NavigateOptions } from '../lib/navigate'
 import { normalizePanelRouteForReconcile } from './navigation-reconcile'
-import { buildSemanticHistoryKey, canRunInitialRestore } from './navigation-history'
+import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch, type WorkspaceSwitchDestination } from './navigation-history'
 import * as storage from '@/lib/local-storage'
 import type {
   DeepLinkNavigation,
@@ -146,6 +146,9 @@ interface NavigationProviderProps {
   isSessionsReady?: boolean
   /** Remote workspace ID — when set, sessions with this ID are also considered part of the workspace */
   remoteWorkspaceId?: string | null
+  /** One-shot destination for an explicit workspace list selection. */
+  workspaceSwitchDestination?: WorkspaceSwitchDestination | null
+  onWorkspaceSwitchDestinationConsumed?: () => void
 }
 
 export function NavigationProvider({
@@ -160,6 +163,8 @@ export function NavigationProvider({
   isReady = true,
   isSessionsReady = true,
   remoteWorkspaceId,
+  workspaceSwitchDestination,
+  onWorkspaceSwitchDestinationConsumed,
 }: NavigationProviderProps) {
   const { t } = useTranslation()
   const { setState: setSession } = useSessionSelectionStore()
@@ -537,29 +542,7 @@ export function NavigationProvider({
         s => !s.hidden && (!workspaceId || s.workspaceId === workspaceId)
       )
 
-      return visibleSessions.filter((session) => {
-        switch (filter.kind) {
-          case 'allSessions':
-            return session.isArchived !== true
-          case 'flagged':
-            return session.isFlagged === true && session.isArchived !== true
-          case 'archived':
-            return session.isArchived === true
-          case 'state':
-            return session.sessionStatus === filter.stateId && session.isArchived !== true
-          case 'label': {
-            if (session.isArchived === true) return false
-            if (!session.labels?.length) return false
-            if (filter.labelId === '__all__') return true
-            return session.labels.some(l => l === filter.labelId || l.startsWith(`${filter.labelId}::`))
-          }
-          case 'view':
-            if (session.isArchived === true) return false
-            return true
-          default:
-            return false
-        }
-      })
+      return visibleSessions
     },
     [sessionMetas, workspaceId]
   )
@@ -699,25 +682,7 @@ export function NavigationProvider({
             await window.electronAPI.sessionCommand(session.id, { type: 'rename', name: parsed.params.name })
           }
 
-          if (parsed.params.status) {
-            updateSessionMeta(session.id, { sessionStatus: parsed.params.status })
-          }
-          if (parsed.params.label) {
-            updateSessionMeta(session.id, { labels: [parsed.params.label] })
-          }
-
-          if (parsed.params.status) {
-            await window.electronAPI.sessionCommand(session.id, { type: 'setSessionStatus', state: parsed.params.status })
-          }
-          if (parsed.params.label) {
-            await window.electronAPI.sessionCommand(session.id, { type: 'setLabels', labels: [parsed.params.label] })
-          }
-
-          // Determine navigation filter
-          const filter: import('../../shared/types').SessionFilter =
-            parsed.params.status ? { kind: 'state', stateId: parsed.params.status } :
-            parsed.params.label ? { kind: 'label', labelId: parsed.params.label } :
-            { kind: 'allSessions' }
+          const filter: import('../../shared/types').SessionFilter = { kind: 'allSessions' }
 
           if (options?.newPanel) {
             // Open the new session in a new panel using lane-aware routing (pushPanel auto-focuses it)
@@ -778,18 +743,6 @@ export function NavigationProvider({
         case 'delete-session':
           if (parsed.id) {
             await window.electronAPI.deleteSession(parsed.id)
-          }
-          break
-
-        case 'flag-session':
-          if (parsed.id) {
-            await window.electronAPI.sessionCommand(parsed.id, { type: 'flag' })
-          }
-          break
-
-        case 'unflag-session':
-          if (parsed.id) {
-            await window.electronAPI.sessionCommand(parsed.id, { type: 'unflag' })
           }
           break
 
@@ -989,17 +942,11 @@ export function NavigationProvider({
       const savedSearch = storage.get<string>(storage.KEYS.workspaceUrl, '', workspaceSlug)
 
       const url = new URL(window.location.href)
-      if (savedSearch) {
-        // Replace all params with the saved workspace's URL
-        url.search = savedSearch
-      } else {
-        // No saved state — default to allSessions
-        for (const key of [...url.searchParams.keys()]) {
-          url.searchParams.delete(key)
-        }
-        url.searchParams.set('ws', workspaceSlug)
-        url.searchParams.set('route', 'allSessions')
-      }
+      url.search = resolveWorkspaceSwitchSearch({
+        destination: workspaceSwitchDestination,
+        savedSearch,
+        workspaceSlug,
+      })
 
       // Push a new history entry for the workspace switch
       const seq = nextHistorySeqRef.current++
@@ -1012,6 +959,7 @@ export function NavigationProvider({
       reconcileFromUrlParamsRef.current(new URLSearchParams(url.search))
       lastSemanticHistoryKeyRef.current = getSemanticHistoryKey()
     }
+    onWorkspaceSwitchDestinationConsumed?.()
 
     initialRouteRestoredRef.current = true
 
@@ -1019,7 +967,7 @@ export function NavigationProvider({
       suppressPushRef.current = false
       lastSemanticHistoryKeyRef.current = getSemanticHistoryKey()
     })
-  }, [workspaceId, workspaceSlug, store, updateCanGoBackForward, getSemanticHistoryKey, isSessionsReady])
+  }, [workspaceId, workspaceSlug, store, updateCanGoBackForward, getSemanticHistoryKey, isSessionsReady, workspaceSwitchDestination, onWorkspaceSwitchDestinationConsumed])
 
   // =========================================================================
   // INITIAL ROUTE RESTORATION (CMD+R reload)
@@ -1186,29 +1134,7 @@ export function NavigationProvider({
       return
     }
 
-    const filter = navigationState.filter
-    switch (filter.kind) {
-      case 'allSessions':
-        navigate(routes.view.allSessions(sessionId))
-        break
-      case 'flagged':
-        navigate(routes.view.flagged(sessionId))
-        break
-      case 'archived':
-        navigate(routes.view.archived(sessionId))
-        break
-      case 'state':
-        navigate(routes.view.state(filter.stateId, sessionId))
-        break
-      case 'label':
-        navigate(routes.view.label(filter.labelId, sessionId))
-        break
-      case 'view':
-        navigate(routes.view.view(filter.viewId, sessionId))
-        break
-      default:
-        navigate(routes.view.allSessions(sessionId))
-    }
+    navigate(routes.view.allSessions(sessionId))
   }, [navigationState, navigate])
 
   // =========================================================================

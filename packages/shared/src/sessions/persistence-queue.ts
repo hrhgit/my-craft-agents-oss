@@ -15,9 +15,6 @@ interface PendingWrite {
 
 interface HeaderMetadataSignature {
   name?: string
-  labels?: string[]
-  isFlagged?: boolean
-  sessionStatus?: string
   permissionMode?: string
   hasUnread?: boolean
   lastReadMessageId?: string
@@ -26,9 +23,6 @@ interface HeaderMetadataSignature {
 function getHeaderMetadataSignature(header: SessionHeader): string {
   const signature: HeaderMetadataSignature = {
     name: header.name,
-    labels: header.labels,
-    isFlagged: header.isFlagged,
-    sessionStatus: header.sessionStatus,
     permissionMode: header.permissionMode,
     hasUnread: header.hasUnread,
     lastReadMessageId: header.lastReadMessageId,

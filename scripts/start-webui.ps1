@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
+. (Join-Path $PSScriptRoot 'webui-process-utils.ps1')
 
 function Write-Step {
   param([string]$Message)
@@ -132,6 +133,23 @@ $rpcPort = if (-not $PortmuxManaged -and $env:CRAFT_RPC_PORT) {
   $webuiPort + 1
 }
 
+$logDir = Join-Path $env:TEMP "craft-agent-webui\instance-$webuiInstance"
+New-Item -ItemType Directory -Force $logDir | Out-Null
+$launchStatePath = Join-Path $logDir 'webui-launch-state.json'
+$staleProcessCount = Stop-WebuiLaunchState -Path $launchStatePath
+if ($staleProcessCount -gt 0) {
+  Write-Step "Cleaned up $staleProcessCount stale WebUI process tree(s) from the previous launch."
+}
+$completeWebuiAlreadyRunning = (Test-WebuiHttpReady -Port $webuiPort) -and (Test-WebuiTcpPort $rpcPort)
+if (-not $completeWebuiAlreadyRunning) {
+  if (Stop-LegacyWebuiViteProcess -RepoRoot $repoRoot -WebuiPort $webuiPort) {
+    Write-Step "Cleaned up a legacy orphaned Vite process on port $webuiPort."
+  }
+  if (Stop-LegacyWebuiRpcProcess -WebuiPort $webuiPort -RpcPort $rpcPort) {
+    Write-Step "Cleaned up a legacy orphaned RPC process on port $rpcPort."
+  }
+}
+
 foreach ($port in @($webuiPort, $rpcPort)) {
   if (-not (Test-PortAvailable $port)) {
     Fail-And-Wait "Port $port cannot be bound. Close the conflicting process, or run start-webui.cmd again if the shared WebUI is already running."
@@ -144,7 +162,9 @@ $env:CRAFT_RPC_PORT = "$rpcPort"
 $env:CRAFT_WEBUI_PORT = "$webuiPort"
 $env:CRAFT_WEBUI_INSTANCE = "$webuiInstance"
 $env:CRAFT_CONFIG_DIR = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".craft-agent"
-$env:CRAFT_WEBUI_DIR = (Join-Path $repoRoot "apps\webui\dist")
+# Vite serves the application in development. The RPC server only needs the
+# source login page so it can host auth/API routes without a production build.
+$env:CRAFT_WEBUI_DIR = (Join-Path $repoRoot "apps\webui\src")
 $env:CRAFT_WEBUI_AUTO_LOGIN = "true"
 $env:CRAFT_WEBUI_HOST = "127.0.0.1"
 $env:CRAFT_WEBUI_WS_URL = "ws://localhost:$webuiPort/ws"
@@ -156,11 +176,22 @@ $vitePath = Join-Path $repoRoot "node_modules\.bin\vite.exe"
 if (-not (Test-Path $vitePath)) {
   Fail-And-Wait "Vite executable not found at $vitePath. Run bun install first."
 }
-$logDir = Join-Path $env:TEMP "craft-agent-webui\instance-$webuiInstance"
-New-Item -ItemType Directory -Force $logDir | Out-Null
 $serverErrorLog = Join-Path $logDir "webui-server.error.log"
 $viteErrorLog = Join-Path $logDir "webui-vite.error.log"
+$viteStandardInput = Join-Path $logDir 'webui-vite.stdin'
+New-Item -ItemType File -Force $viteStandardInput | Out-Null
 $processes = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
+$launcherProcess = Get-Process -Id $PID
+
+function Save-LaunchState {
+  Write-WebuiLaunchState `
+    -Path $launchStatePath `
+    -LauncherProcess $launcherProcess `
+    -ChildProcesses $processes `
+    -RepoRoot $repoRoot `
+    -WebuiPort $webuiPort `
+    -RpcPort $rpcPort
+}
 
 function Start-HeadlessServer {
   param([int]$RestartAttempt = 0)
@@ -168,7 +199,7 @@ function Start-HeadlessServer {
   $suffix = if ($RestartAttempt -gt 0) { ".restart-$RestartAttempt" } else { "" }
   $stdoutLog = Join-Path $logDir "webui-server$suffix.log"
   $stderrLog = Join-Path $logDir "webui-server$suffix.error.log"
-  $script = if ($RestartAttempt -gt 0) { "server:dev:raw" } else { "server:dev:webui" }
+  $script = if ($RestartAttempt -gt 0) { "server:dev:runtime" } else { "server:dev:webui" }
 
   $process = Start-Process -FilePath $bunPath `
     -ArgumentList @("run", $script) `
@@ -191,16 +222,19 @@ try {
   Write-Step "Starting WebUI instance $webuiInstance (config: $env:CRAFT_CONFIG_DIR)..."
   $serverState = Start-HeadlessServer
   $server = $serverState.Process
+  Save-LaunchState
 
   Write-Step "Starting Vite WebUI dev server..."
   $webui = Start-Process -FilePath $vitePath `
     -ArgumentList @("dev", "--config", "apps/webui/vite.config.ts") `
     -WorkingDirectory $repoRoot `
     -WindowStyle Hidden `
+    -RedirectStandardInput $viteStandardInput `
     -RedirectStandardOutput (Join-Path $logDir "webui-vite.log") `
     -RedirectStandardError $viteErrorLog `
     -PassThru
   $processes.Add($webui)
+  Save-LaunchState
 
   if (-not (Wait-ForPort $rpcPort)) {
     throw "Headless server did not start on ws://127.0.0.1:$rpcPort within 180 seconds. See $serverErrorLog."
@@ -244,6 +278,7 @@ try {
 
       $serverState = Start-HeadlessServer -RestartAttempt $restartAttempt
       $server = $serverState.Process
+      Save-LaunchState
       $rpcUnavailableChecks = 0
       Write-Step "Headless server restart attempt $restartAttempt started (PID $($server.Id))."
 
@@ -263,8 +298,8 @@ try {
   exit 1
 } finally {
   foreach ($process in $processes) {
-    if (-not $process.HasExited) {
-      & taskkill.exe /PID $process.Id /T /F *> $null
-    }
+    $record = New-WebuiProcessRecord $process
+    if ($null -ne $record) { $null = Stop-WebuiProcessRecord $record }
   }
+  Remove-WebuiLaunchState -Path $launchStatePath -LauncherProcess $launcherProcess
 }

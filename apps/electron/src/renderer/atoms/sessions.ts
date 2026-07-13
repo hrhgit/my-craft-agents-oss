@@ -25,7 +25,6 @@ export interface SessionMeta {
   workspaceId: string
   lastMessageAt?: number
   isProcessing?: boolean
-  isFlagged?: boolean
   lastReadMessageId?: string
   workingDirectory?: string
   enabledSourceSlugs?: string[]
@@ -41,12 +40,8 @@ export interface SessionMeta {
    * Set to false when user views the session (and not processing).
    */
   hasUnread?: boolean
-  /** Labels for filtering (additive tags, many-per-session) */
-  labels?: string[]
-  /** Permission mode ('safe', 'ask', 'allow-all') — used by view expressions */
+  /** Permission mode ('safe', 'ask', 'allow-all'). */
   permissionMode?: string
-  /** Session status for filtering */
-  sessionStatus?: string
   /** Role/type of the last message (for badge display without loading messages) */
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
   /** Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration) */
@@ -69,10 +64,6 @@ export interface SessionMeta {
   messageCount?: number
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean
-  /** Whether this session is archived */
-  isArchived?: boolean
-  /** Timestamp when session was archived (for retention policy) */
-  archivedAt?: number
   /** Display-only sessions projected from Pi runtime cannot be mutated by Craft. */
   readOnly?: boolean
 }
@@ -103,8 +94,16 @@ export function extractSessionMeta(session: Session): SessionMeta {
     workspaceName: _wn, thinkingLevel: _tl, currentStatus: _cs,
     isAsyncOperationOngoing,
     messageCount, lastFinalMessageId: sessionLastFinal,
-    ...sessionFields
+    ...rawSessionFields
   } = session
+
+  // Imported legacy payloads may still carry retired organization metadata.
+  const sessionFields = { ...rawSessionFields } as typeof rawSessionFields & Record<string, unknown>
+  delete sessionFields.sessionStatus
+  delete sessionFields.labels
+  delete sessionFields.isFlagged
+  delete sessionFields.isArchived
+  delete sessionFields.archivedAt
 
   return {
     ...sessionFields,
@@ -540,7 +539,7 @@ export const syncSessionsToAtomsAtom = atom(
  * Uses promise deduplication to prevent redundant IPC calls from concurrent requests.
  *
  * IMPORTANT: This only merges messages into the existing session atom.
- * UI state fields (hasUnread, isFlagged, sessionStatus, etc.) are preserved from
+ * In-memory UI state such as hasUnread is preserved from
  * the in-memory atom, NOT overwritten with potentially stale disk data.
  * This prevents a race condition where optimistic updates (e.g., clearing the
  * NEW badge on session view) get clobbered by async message loading that reads
@@ -585,7 +584,7 @@ async function loadSessionMessages(
     }
 
     // Merge messages and disk-only fields into existing session, preserving in-memory UI state.
-    // The renderer's atom is authoritative for UI fields (hasUnread, isFlagged, etc.)
+    // The renderer's atom is authoritative for transient UI fields such as hasUnread
     // because optimistic updates may have changed them since the disk write.
     // tokenUsage and sessionFolderPath are only returned by getSession() (not getSessions()),
     // so they must be explicitly merged here to be available after app restart.

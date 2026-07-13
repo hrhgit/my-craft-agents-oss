@@ -1,5 +1,4 @@
 import { RemoteUIComposer, type RemoteUIRequest } from '@/components/extensions/RemoteUIModal'
-import type { RemoteUIBatch } from '@/components/extensions/remote-ui-batch'
 import type { ComponentEntry } from './types'
 
 const requestBase = {
@@ -7,7 +6,7 @@ const requestBase = {
   requestId: 'preview-request',
   source: 'preview',
   sessionId: 'preview-session',
-  extensionId: 'ask-user',
+  extensionId: 'legacy-extension',
   runtimeId: 'preview-runtime',
 } as const
 
@@ -40,46 +39,6 @@ const multipleRequest: RemoteUIRequest = {
   allowFreeform: true,
 }
 
-const batchRequest: RemoteUIRequest = {
-  ...requestBase,
-  requestId: 'preview-batch',
-  kind: 'select',
-  title: '[1/3] Choose an interface theme',
-  options: [{ title: 'Light' }, { title: 'Dark' }, { title: 'Follow system' }],
-}
-
-const questionBatch: RemoteUIBatch = {
-  id: 'preview-batch',
-  sessionId: requestBase.sessionId,
-  runtimeId: requestBase.runtimeId,
-  extensionId: requestBase.extensionId,
-  questions: [
-    {
-      kind: 'select',
-      title: 'Choose an interface theme',
-      message: 'This question accepts one answer.',
-      options: [{ title: 'Light' }, { title: 'Dark' }, { title: 'Follow system' }],
-      allowMultiple: false,
-      allowFreeform: true,
-      allowComment: false,
-    },
-    {
-      kind: 'select',
-      title: 'Choose your everyday tools',
-      message: 'This question accepts multiple answers.',
-      options: [{ title: 'VS Code' }, { title: 'Git' }, { title: 'Docker' }, { title: 'Postman' }],
-      allowMultiple: true,
-      allowFreeform: true,
-      allowComment: false,
-    },
-    {
-      kind: 'editor',
-      title: 'What else should the agent know?',
-      message: 'Add any final detail before submitting the batch.',
-    },
-  ],
-}
-
 export const inputComponents: ComponentEntry[] = [{
   id: 'remote-ui-composer',
   name: 'Remote UI Composer',
@@ -88,11 +47,10 @@ export const inputComponents: ComponentEntry[] = [{
   component: RemoteUIComposer,
   layout: 'top',
   props: [],
-    mockData: () => ({ request: selectRequest, onRespond: () => {}, onRespondBatch: () => {} }),
+    mockData: () => ({ request: selectRequest, onRespond: () => {} }),
   variants: [
     { name: 'Select', props: { request: selectRequest } },
     { name: 'Multiple select', props: { request: multipleRequest } },
-    { name: 'Question batch', props: { request: batchRequest, batch: questionBatch } },
     {
       name: 'Direct input',
       props: {

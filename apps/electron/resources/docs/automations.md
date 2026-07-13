@@ -64,15 +64,8 @@ craft-agent automation validate
 
 | Event | Trigger | Match Value |
 |-------|---------|-------------|
-| `LabelAdd` | Label added to session | Label ID (e.g., `bug`, not `Bug`) |
-| `LabelRemove` | Label removed from session | Label ID (e.g., `bug`, not `Bug`) |
-| `LabelConfigChange` | Label configuration changed | Always matches |
 | `PermissionModeChange` | Permission mode changed | New mode name |
-| `FlagChange` | Session flagged/unflagged | `true` or `false` |
-| `SessionStatusChange` | Session status changed | New status (e.g., `done`, `in_progress`) |
 | `SchedulerTick` | Runs every minute | Uses cron matching |
-
-> **Note:** `TodoStateChange` is a deprecated alias for `SessionStatusChange`. Existing configs using the old name will continue to work but will show a deprecation warning during validation.
 
 ### Agent Events
 
@@ -233,7 +226,7 @@ These are automatically set by the automation system based on the triggering eve
 
 | Variable | Description | Available For |
 |----------|-------------|---------------|
-| `$CRAFT_EVENT` | Event name (e.g., `LabelAdd`) | All events |
+| `$CRAFT_EVENT` | Event name (e.g., `PreToolUse`) | All events |
 | `$CRAFT_EVENT_DATA` | Full event payload as JSON | All events |
 | `$CRAFT_SESSION_ID` | Session ID | Events with session context |
 | `$CRAFT_SESSION_NAME` | Session name | Events with session context |
@@ -243,10 +236,7 @@ These are automatically set by the automation system based on the triggering eve
 
 | Event | Variable | Description |
 |-------|----------|-------------|
-| `LabelAdd` / `LabelRemove` | `$CRAFT_LABEL` | The label that was added/removed |
 | `PermissionModeChange` | `$CRAFT_OLD_MODE`, `$CRAFT_NEW_MODE` | Previous and new permission mode |
-| `FlagChange` | `$CRAFT_IS_FLAGGED` | `true` or `false` |
-| `SessionStatusChange` | `$CRAFT_OLD_STATE`, `$CRAFT_NEW_STATE` | Previous and new status |
 | `SchedulerTick` | `$CRAFT_LOCAL_TIME`, `$CRAFT_LOCAL_DATE` | Current time (`14:30`) and date (`2026-03-09`) |
 
 ### User-Defined Webhook Secrets (CRAFT_WH_*)
@@ -407,14 +397,14 @@ Check fields from the event payload. Useful for filtering on specific transition
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `field` | string | Payload field name (e.g., `permissionMode`, `sessionStatus`, `labels`, `isFlagged`) |
+| `field` | string | Payload field name (for example, `permissionMode` or `sessionName`) |
 | `value` | any | Exact match |
 | `from` | any | Previous value (for transition events) |
 | `to` | any | New value (for transition events) |
-| `contains` | string | Array membership check (e.g., check if a label is present) |
+| `contains` | string | Array or string membership check |
 | `not_value` | any | Matches anything except this value |
 
-**Transition fields:** For `permissionMode` and `sessionStatus`, `from`/`to` automatically resolve to the correct payload keys (`oldMode`/`newMode`, `oldState`/`newState`).
+**Transition fields:** For `permissionMode`, `from`/`to` automatically resolve to `oldMode`/`newMode`.
 
 ### Logical Composition
 
@@ -435,7 +425,7 @@ Combine conditions with `and`, `or`, and `not`:
   "condition": "or",
   "conditions": [
     { "condition": "state", "field": "permissionMode", "value": "allow-all" },
-    { "condition": "state", "field": "isFlagged", "value": true }
+    { "condition": "time", "after": "09:00", "before": "17:00" }
   ]
 }
 ```
@@ -476,22 +466,6 @@ The `permissionMode` field controls the permission level of sessions created by 
 - `ask` - Session prompts for approval before write operations
 - `allow-all` - Session auto-approves all operations
 
-## Labels for Prompt Actions
-
-Prompt actions can specify labels that will be applied to the session they create:
-
-```json
-{
-  "cron": "0 9 * * *",
-  "labels": ["Scheduled", "morning-briefing"],
-  "actions": [
-    { "type": "prompt", "prompt": "Give me today's priorities" }
-  ]
-}
-```
-
-This creates a session with the "Scheduled" and "morning-briefing" labels applied automatically.
-
 ## Telegram Topic Routing
 
 When a Telegram supergroup is paired in **Settings → Messaging → Telegram**, set
@@ -500,10 +474,9 @@ forum topic. The topic is created on first use and reused thereafter.
 
 ```json
 {
-  "matcher": "^urgent$",
   "telegramTopic": "Urgent Alerts",
   "actions": [
-    { "type": "prompt", "prompt": "Look at the urgent issue: $LABEL" }
+    { "type": "prompt", "prompt": "Review the latest alert and summarize it." }
   ]
 }
 ```
@@ -544,7 +517,6 @@ Verify by checking the supergroup row in Settings shows the group title. If auto
         "name": "Daily Weather Report",
         "cron": "0 8 * * *",
         "timezone": "Europe/Budapest",
-        "labels": ["Scheduled", "weather"],
         "actions": [
           { "type": "prompt", "prompt": "Run the @weather skill and give me today's forecast" }
         ]
@@ -574,7 +546,6 @@ Use a `time` condition to restrict a daily schedule to weekdays only:
             "timezone": "Europe/Budapest"
           }
         ],
-        "labels": ["Scheduled", "ai-news"],
         "actions": [
           { "type": "prompt", "prompt": "Run the @ai-news skill and summarize today's AI developments" }
         ]
@@ -616,48 +587,6 @@ Only notify when permission mode changes specifically from `safe` to `allow-all`
 }
 ```
 
-### Log Label Changes
-
-```json
-{
-  "version": 2,
-  "automations": {
-    "LabelAdd": [
-      {
-        "actions": [
-          { "type": "prompt", "prompt": "The label $CRAFT_LABEL was added. Log this change with a timestamp." }
-        ]
-      }
-    ],
-    "LabelRemove": [
-      {
-        "actions": [
-          { "type": "prompt", "prompt": "The label $CRAFT_LABEL was removed. Log this change with a timestamp." }
-        ]
-      }
-    ]
-  }
-}
-```
-
-### Urgent Label Notification
-
-```json
-{
-  "version": 2,
-  "automations": {
-    "LabelAdd": [
-      {
-        "matcher": "^urgent$",
-        "actions": [
-          { "type": "prompt", "prompt": "An urgent label was added to this session. Triage the session and summarise what needs immediate attention." }
-        ]
-      }
-    ]
-  }
-}
-```
-
 ### Permission Mode Change Notification
 
 ```json
@@ -676,34 +605,6 @@ Only notify when permission mode changes specifically from `safe` to `allow-all`
 }
 ```
 
-### Slack Notification on Status Change
-
-Sends a Slack message when a session is marked as done. Requires `CRAFT_WH_SLACK_URL` in your shell profile.
-
-```json
-{
-  "version": 2,
-  "automations": {
-    "SessionStatusChange": [
-      {
-        "name": "Notify Slack on Done",
-        "matcher": "^done$",
-        "actions": [
-          {
-            "type": "webhook",
-            "url": "${CRAFT_WH_SLACK_URL}",
-            "method": "POST",
-            "body": {
-              "text": ":white_check_mark: Session *${CRAFT_SESSION_NAME}* marked as done"
-            }
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
 ### Mixed Actions (Prompt + Webhook)
 
 A single automation can have both prompt and webhook actions. They execute in order.
@@ -712,20 +613,20 @@ A single automation can have both prompt and webhook actions. They execute in or
 {
   "version": 2,
   "automations": {
-    "LabelAdd": [
+    "PermissionModeChange": [
       {
-        "name": "Urgent: Notify and Triage",
-        "matcher": "^urgent$",
+        "name": "Permission Escalation: Notify and Review",
+        "matcher": "^allow-all$",
         "actions": [
           {
             "type": "webhook",
             "url": "${CRAFT_WH_SLACK_URL}",
             "method": "POST",
-            "body": { "text": ":rotating_light: Urgent label added to *${CRAFT_SESSION_NAME}*" }
+            "body": { "text": ":warning: Permission mode escalated for *${CRAFT_SESSION_NAME}*" }
           },
           {
             "type": "prompt",
-            "prompt": "An urgent label was added. Triage the session and summarise what needs immediate attention."
+            "prompt": "Review the permission escalation and summarize any security implications."
           }
         ]
       }
@@ -769,7 +670,7 @@ A single automation can have both prompt and webhook actions. They execute in or
 {
   "version": 2,
   "automations": {
-    "SessionStatusChange": [
+    "PostToolUse": [
       {
         "name": "Log to External API",
         "actions": [
@@ -784,8 +685,7 @@ A single automation can have both prompt and webhook actions. They execute in or
             "body": {
               "event": "${CRAFT_EVENT}",
               "session_id": "${CRAFT_SESSION_ID}",
-              "old_status": "${CRAFT_OLD_STATE}",
-              "new_status": "${CRAFT_NEW_STATE}"
+              "payload": "${CRAFT_EVENT_DATA}"
             }
           }
         ]
@@ -859,17 +759,17 @@ To protect against runaway automations (e.g., an automation that indirectly trig
 | Event | Max fires / minute |
 |-------|--------------------|
 | `SchedulerTick` | 60 (1/sec) |
-| All others (`LabelAdd`, `FlagChange`, `PreToolUse`, etc.) | 10 |
+| All others (`PermissionModeChange`, `PreToolUse`, etc.) | 10 |
 
 When a limit is hit, further events of that type are **silently dropped** for the remainder of the 60-second window. A warning is logged. The window resets automatically.
 
-**Example:** If you have a `LabelAdd` task that triggers a prompt which adds a label back to a session, it will fire at most 10 times before being rate-limited — preventing infinite session creation.
+**Example:** If an event automation indirectly triggers itself, it will fire at most 10 times before being rate-limited.
 
 ## Troubleshooting
 
 ### Automation not firing
 
-1. **Check event name** - Must be exact (e.g., `LabelAdd` not `labeladd`)
+1. **Check event name** - Must be exact (e.g., `PreToolUse` not `pretooluse`)
 2. **Check matcher** - Regex must match the event value
 3. **Check cron** - For SchedulerTick, verify cron expression with an online tool
 4. **Check logs** - Look for `[automations]` or `[Scheduler]` in the logs

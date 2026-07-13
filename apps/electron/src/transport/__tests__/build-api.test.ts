@@ -62,6 +62,14 @@ describe('buildClientApi chunked invokes', () => {
     })
   })
 
+  it('allows extension reload to outlive per-runtime interruption cleanup', () => {
+    expect(CHANNEL_MAP.reloadPiExtensions).toMatchObject({
+      type: 'invoke',
+      channel: RPC_CHANNELS.piExtensions.RELOAD,
+      timeoutMs: 120_000,
+    })
+  })
+
   it('uses direct invoke for payloads below the threshold', async () => {
     const { client, calls } = makeClient()
     const api = buildClientApi(client, channelMap) as any

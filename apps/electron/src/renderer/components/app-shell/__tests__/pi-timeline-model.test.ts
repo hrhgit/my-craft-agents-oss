@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { PiProjectionEntityV1 } from '@craft-agent/shared/protocol'
-import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, selectActivePiPlanArtifact, selectPendingPiCredential, selectPendingPiPermission, selectPiPlanModeState, selectPiProcessingStatusMessage, selectPiRuntimeState } from '../pi-timeline-model'
+import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, selectPendingPiCredential, selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from '../pi-timeline-model'
 
 function entity(overrides: Partial<PiProjectionEntityV1>): PiProjectionEntityV1 {
   return {
@@ -144,20 +144,6 @@ describe('buildPiTimelineItems', () => {
         sourceName: 'Google Drive', status: 'resolved', resolution: 'completed',
       },
     })])[0]).toMatchObject({ type: 'auth', request: { status: 'completed' } })
-  })
-
-  it('selects Pi-native plan state and its active artifact', () => {
-    const artifact = {
-      schemaVersion: 1 as const, kind: 'plan' as const, artifactId: 'plan-1', revision: 1,
-      state: 'ready' as const, review: { status: 'passed' as const }, checklist: [], createdAt: 1,
-    }
-    const entities = [
-      entity({ entityId: 'state', entityType: 'conversation', kind: 'plan_mode_state', payload: { schemaVersion: 1, phase: 'ready', activeArtifactId: 'plan-1', updatedAt: 2 } }),
-      entity({ entityId: 'artifact:plan-1', entityType: 'artifact_ref', kind: 'plan_artifact', payload: { artifact, content: '# Plan' } }),
-    ]
-    const state = selectPiPlanModeState(entities)
-    expect(state).toMatchObject({ phase: 'ready', activeArtifactId: 'plan-1' })
-    expect(selectActivePiPlanArtifact(entities, state?.activeArtifactId)).toEqual(artifact)
   })
 
   it('derives processing from the latest Pi lifecycle event and preserves errors', () => {

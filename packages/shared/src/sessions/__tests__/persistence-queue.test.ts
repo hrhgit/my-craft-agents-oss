@@ -31,8 +31,8 @@ describe('session persistence header conflict helpers', () => {
   })
 
   it('metadata signature changes when metadata changes', () => {
-    const a = makeHeader({ name: 'A', labels: ['x'] })
-    const b = makeHeader({ name: 'B', labels: ['x'] })
+    const a = makeHeader({ name: 'A' })
+    const b = makeHeader({ name: 'B' })
 
     expect(getHeaderMetadataSignature(a)).not.toBe(getHeaderMetadataSignature(b))
   })

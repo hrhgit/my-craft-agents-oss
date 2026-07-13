@@ -33,8 +33,6 @@ import { handleTransformData } from './handlers/transform-data.ts';
 import { handleScriptSandbox } from './handlers/script-sandbox.ts';
 import { handleRenderTemplate } from './handlers/render-template.ts';
 import { handleSendDeveloperFeedback } from './handlers/send-developer-feedback.ts';
-import { handleSetSessionLabels } from './handlers/set-session-labels.ts';
-import { handleSetSessionStatus } from './handlers/set-session-status.ts';
 import { handleGetSessionInfo } from './handlers/get-session-info.ts';
 import { handleListSessions } from './handlers/list-sessions.ts';
 import { handleSendAgentMessage } from './handlers/send-agent-message.ts';
@@ -45,7 +43,7 @@ import { handleListMessagingChannels, handleUnbindMessagingChannel } from './han
 // ============================================================
 
 export const ConfigValidateSchema = z.object({
-  target: z.enum(['config', 'sources', 'statuses', 'preferences', 'permissions', 'automations', 'tool-icons', 'all'])
+  target: z.enum(['config', 'sources', 'preferences', 'permissions', 'automations', 'tool-icons', 'all'])
     .describe('Which config file(s) to validate'),
   sourceSlug: z.string().optional().describe('Validate a specific source by slug'),
 });
@@ -140,7 +138,6 @@ export const SpawnSessionSchema = z.object({
   permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional().describe('Permission mode for the new session'),
   thinkingLevel: z.enum(['off', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
     .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the global default.'),
-  labels: z.array(z.string()).optional().describe('Labels for the new session'),
   workingDirectory: z.string().optional().describe('Deprecated and ignored. New sessions run from the workspace root; create or switch workspace to use another folder.'),
   attachments: z.array(z.object({
     path: z.string().describe('Absolute file path on disk'),
@@ -148,26 +145,13 @@ export const SpawnSessionSchema = z.object({
   })).optional().describe('Files to include with the prompt'),
 });
 
-// Session self-management tools
-export const SetSessionLabelsSchema = z.object({
-  sessionId: z.string().optional().describe('Session ID to update. Omit to update the current session.'),
-  labels: z.array(z.string()).describe('Labels to set (replaces all existing labels)'),
-});
-
-export const SetSessionStatusSchema = z.object({
-  sessionId: z.string().optional().describe('Session ID to update. Omit to update the current session.'),
-  status: z.string().describe('Status to set (e.g., "todo", "in_progress", "done")'),
-});
-
 export const GetSessionInfoSchema = z.object({
   sessionId: z.string().optional().describe('Session ID to query. Omit to get info about the current session.'),
 });
 
 export const ListSessionsSchema = z.object({
-  status: z.string().optional().describe('Filter by status'),
-  label: z.string().optional().describe('Filter by label'),
   search: z.string().optional().describe('Substring match on session name'),
-  sortBy: z.enum(['recent', 'name', 'status']).optional().describe('Sort order (default: recent)'),
+  sortBy: z.enum(['recent', 'name']).optional().describe('Sort order (default: recent)'),
   limit: z.number().optional().describe('Max sessions to return (default 20, max 100)'),
   offset: z.number().optional().describe('Skip first N results (for pagination)'),
 });
@@ -203,7 +187,6 @@ Returns structured validation results with errors, warnings, and suggestions.
 **Targets:**
 - \`config\`: Validates config.json (workspaces, model, settings)
 - \`sources\`: Validates all source config.json files
-- \`statuses\`: Validates statuses config.json
 - \`preferences\`: Validates preferences.json
 - \`permissions\`: Validates permissions.json files
 - \`automations\`: Validates automations.json configuration
@@ -388,7 +371,7 @@ Use this to delegate tasks to parallel sessions — research, analysis, drafts, 
 Call with help=true first to discover available providers, models, and sources.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, \`thinkingLevel\`, \`enabledSourceSlugs\`, \`labels\`. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. \`workingDirectory\` is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
+Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, \`thinkingLevel\`, \`enabledSourceSlugs\`. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. \`workingDirectory\` is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
@@ -399,24 +382,14 @@ Only use 'attachments' for existing file paths on disk — the tool reads them a
 
 Use this to share anything that would help improve the product — issues you hit, ideas for better tools, suggestions for improved workflows, or patterns you notice. Write in markdown with as much detail as possible. This is your direct line to the developers.`,
 
-  set_session_labels: `Set labels on the current session or a specific session by ID. Replaces all existing labels.
-
-Use this to tag sessions for filtering or to trigger label-based automations (LabelAdd/LabelRemove events).
-Pass an empty array to clear all labels. Omit sessionId to target the current session.`,
-
-  set_session_status: `Set the status of the current session or a specific session by ID (e.g., "todo", "in_progress", "done").
-
-Use this to signal completion or trigger status-based automations (SessionStatusChange events).
-Omit sessionId to target the current session.`,
-
   get_session_info: `Get metadata about the current session or a specific session by ID.
 
-Returns labels, status, name, permission mode, and other details.
+Returns name, permission mode, and other details.
 Call with no arguments to introspect your own session state.`,
 
   list_sessions: `List sessions in the workspace. Returns total count + paginated results.
 
-Use filters (status, label, search) to narrow results instead of fetching everything. Default limit is 20 sessions.
+Use search to narrow results instead of fetching everything. Default limit is 20 sessions.
 Use get_session_info for full details on a specific session (list-then-detail pattern).`,
 
   send_agent_message: `Send a message to another session. The message is delivered with your session ID so the target can reply back.
@@ -494,9 +467,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   // Browser tool (backend-specific — requires BrowserPaneManager in Electron)
   // Single CLI-like tool that handles all browser actions via command string.
   { name: 'browser_tool', description: TOOL_DESCRIPTIONS.browser_tool, inputSchema: BrowserToolSchema, executionMode: 'backend', safeMode: 'allow', handler: null },
-  // Session self-management tools (registry — use context callbacks to reach SessionManager)
-  { name: 'set_session_labels', description: TOOL_DESCRIPTIONS.set_session_labels, inputSchema: SetSessionLabelsSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionLabels },
-  { name: 'set_session_status', description: TOOL_DESCRIPTIONS.set_session_status, inputSchema: SetSessionStatusSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionStatus },
+  // Session query tools (registry — use context callbacks to reach SessionManager)
   { name: 'get_session_info', description: TOOL_DESCRIPTIONS.get_session_info, inputSchema: GetSessionInfoSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleGetSessionInfo },
   { name: 'list_sessions', description: TOOL_DESCRIPTIONS.list_sessions, inputSchema: ListSessionsSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListSessions },
   // Inter-session messaging

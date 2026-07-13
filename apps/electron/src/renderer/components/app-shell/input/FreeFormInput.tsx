@@ -36,11 +36,6 @@ import {
   type MentionItem,
   type MentionItemType,
 } from '@/components/ui/mention-menu'
-import {
-  InlineLabelMenu,
-  useInlineLabelMenu,
-} from '@/components/ui/label-menu'
-import type { LabelConfig } from '@craft-agent/shared/labels'
 import { parseMentions } from '@/lib/mentions'
 import { RichTextInput, type RichTextInputHandle } from '@/components/ui/rich-text-input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
@@ -67,7 +62,6 @@ import { ImageSupportWarningBanner } from './ImageSupportWarningBanner'
 import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, type ModelDefinition } from '@config/models'
 import { piProviderModelSupportsImages } from '@craft-agent/shared/config/pi-provider-models'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
-import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import { SourceSelectorPopover } from '@/components/ui/SourceSelectorPopover'
 import { CompactSourceSelector } from '@/components/ui/CompactSourceSelector'
@@ -86,7 +80,6 @@ import {
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { hasOpenOverlay } from '@/lib/overlay-detection'
 import { ToolbarStatusSlot } from './ToolbarStatusSlot'
-import { buildPlanApprovalMessage } from '../plan-approval-message'
 import { shouldHandleScopedInputEvent } from './input-event-guards'
 import { clearPendingFocusForSession, consumePendingFocusForSession } from './focus-input-events'
 import {
@@ -288,13 +281,6 @@ export interface FreeFormInputProps {
   // Skill selection (for @mentions)
   /** Available skills for @mention autocomplete */
   skills?: LoadedSkill[]
-  // Label selection (for #labels)
-  /** Available labels for #label autocomplete */
-  labels?: LabelConfig[]
-  /** Currently applied session labels */
-  sessionLabels?: string[]
-  /** Callback when a label is added via # menu */
-  onLabelAdd?: (labelId: string) => void
   /** Workspace ID for loading skill icons */
   workspaceId?: string
   /** Current working directory path */
@@ -305,8 +291,6 @@ export interface FreeFormInputProps {
   sessionFolderPath?: string
   /** Session ID for scoping events like approve-plan */
   sessionId?: string
-  /** Current session status of the session (for # menu state selection) */
-  currentSessionStatus?: string
   /** Disable send action (for tutorial guidance) */
   disableSend?: boolean
   /** Whether the session is empty (no messages yet) - affects context badge prominence */
@@ -392,15 +376,11 @@ export function FreeFormInput({
   enabledSourceSlugs = [],
   onSourcesChange,
   skills = [],
-  labels = [],
-  sessionLabels = [],
-  onLabelAdd,
   workspaceId,
   workingDirectory,
   onWorkingDirectoryChange,
   sessionFolderPath,
   sessionId,
-  currentSessionStatus,
   disableSend = false,
   isEmptySession = false,
   contextStatus,
@@ -422,7 +402,6 @@ export function FreeFormInput({
     t("chatInput.placeholder.workOn"),
     t("chatInput.placeholder.shiftTab"),
     t("chatInput.placeholder.mention"),
-    t("chatInput.placeholder.labels"),
     t("chatInput.placeholder.newLine"),
     t("chatInput.placeholder.sidebar", { key: cmdKey }),
     t("chatInput.placeholder.focusMode", { key: cmdKey }),
@@ -526,16 +505,6 @@ export function FreeFormInput({
     () => getConnectionModelContextWindow(effectiveProviderDetails?.provider.models, currentModel),
     [currentModel, effectiveProviderDetails?.provider.models],
   )
-
-
-  // Access sessionStatuses and onSessionStatusChange from context for the # menu state picker
-  const sessionStatuses = appShellCtx?.sessionStatuses ?? []
-  const onSessionStatusChange = appShellCtx?.onSessionStatusChange
-  // Resolve workspace rootPath for "Add New Label" deep link
-  const workspaceRootPath = React.useMemo(() => {
-    if (!appShellCtx || !workspaceId) return null
-    return appShellCtx.workspaces.find(w => w.id === workspaceId)?.rootPath ?? null
-  }, [appShellCtx, workspaceId])
 
   // Workspace slug for SDK skill qualification (server-computed)
   // SDK expects "workspaceSlug:skillSlug" format, NOT UUID
@@ -751,187 +720,7 @@ export function FreeFormInput({
     return () => window.removeEventListener('craft:insert-text', handleInsertText as EventListener)
   }, [sessionId, isFocusedPanel, syncToParent, richInputRef])
 
-  const clearInputDraft = React.useCallback(() => {
-    setInput('')
-    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
-    onInputChange?.('')
-    prevInputValueRef.current = ''
-  }, [onInputChange])
-
   const handleToggleModelVision = useModelVisionToggle()
-
-  const consumeInputDraftSnapshot = React.useCallback((): string => {
-    const snapshot = input.trim()
-    clearInputDraft()
-    return snapshot
-  }, [input, clearInputDraft])
-
-  type PlanApprovalEventDetail = {
-    sessionId?: string
-    planPath?: string
-    includeDraftInput?: boolean
-    source?: string
-  }
-
-  // Legacy role=plan compatibility. Structured assistant artifacts use
-  // /plan-execute directly from PlanArtifactCard instead of this event.
-  React.useEffect(() => {
-    const handleApprovePlan = (e: CustomEvent<PlanApprovalEventDetail>) => {
-      // Only handle if this event is for our session
-      if (e.detail?.sessionId && e.detail.sessionId !== sessionId) {
-        return
-      }
-
-      const shouldIncludeDraft = e.detail?.includeDraftInput !== false
-      const draftInput = shouldIncludeDraft ? consumeInputDraftSnapshot() : ''
-      const planPath = e.detail?.planPath
-
-      if (permissionMode !== 'allow-all') {
-        onPermissionModeChange?.('allow-all')
-      }
-      const text = buildPlanApprovalMessage({
-        planPath,
-        draftInput,
-      })
-      onSubmit(text, undefined)
-    }
-
-    window.addEventListener('craft:approve-plan', handleApprovePlan as EventListener)
-    return () => window.removeEventListener('craft:approve-plan', handleApprovePlan as EventListener)
-  }, [sessionId, permissionMode, onPermissionModeChange, onSubmit, consumeInputDraftSnapshot])
-
-  // Listen for craft:approve-plan-with-compact events (Accept & Compact option)
-  // This compacts the conversation first, then executes the plan.
-  // The pending state is persisted to survive page reloads (CMD+R).
-  React.useEffect(() => {
-    const handleApprovePlanWithCompact = async (e: CustomEvent<PlanApprovalEventDetail>) => {
-      // Only handle if this event is for our session
-      if (e.detail?.sessionId && e.detail.sessionId !== sessionId) {
-        return
-      }
-
-      const planPath = e.detail?.planPath
-      const shouldIncludeDraft = e.detail?.includeDraftInput !== false
-      const draftInputSnapshot = shouldIncludeDraft ? consumeInputDraftSnapshot() : ''
-
-      // Switch to allow-all (Auto) mode if in Explore mode
-      if (permissionMode !== 'allow-all') {
-        onPermissionModeChange?.('allow-all')
-      }
-
-      // Persist the pending plan execution state BEFORE sending /compact.
-      // This allows reload recovery if CMD+R happens during compaction.
-      if (sessionId && planPath) {
-        await window.electronAPI.sessionCommand(sessionId, {
-          type: 'setPendingPlanExecution',
-          planPath: planPath ?? '',
-          draftInputSnapshot,
-        })
-      }
-
-      // Send /compact to trigger compaction
-      onSubmit('/compact', undefined)
-
-      // Set up a one-time listener for compaction complete.
-      // This handles the normal case (no reload during compaction).
-      const handleCompactionComplete = async (compactEvent: CustomEvent<{ sessionId?: string }>) => {
-        // Only handle if this is for our session
-        if (compactEvent.detail?.sessionId !== sessionId) {
-          return
-        }
-
-        // Remove the listener (one-time use)
-        window.removeEventListener('craft:compaction-complete', handleCompactionComplete as unknown as EventListener)
-
-        if (planPath) {
-          const executionMessage = buildPlanApprovalMessage({ planPath, draftInput: draftInputSnapshot })
-          onSubmit(executionMessage, undefined)
-        }
-
-        // Clear the pending state since we just sent the execution message
-        if (sessionId) {
-          await window.electronAPI.sessionCommand(sessionId, {
-            type: 'clearPendingPlanExecution',
-          })
-        }
-      }
-
-      window.addEventListener('craft:compaction-complete', handleCompactionComplete as unknown as EventListener)
-    }
-
-    window.addEventListener('craft:approve-plan-with-compact', handleApprovePlanWithCompact as unknown as EventListener)
-    return () => window.removeEventListener('craft:approve-plan-with-compact', handleApprovePlanWithCompact as unknown as EventListener)
-  }, [sessionId, permissionMode, onPermissionModeChange, onSubmit, consumeInputDraftSnapshot])
-
-  // Reload recovery: Check for pending plan execution on mount.
-  // If the page reloaded after compaction completed (awaitingCompaction = false),
-  // we need to send the plan execution message that was interrupted by the reload.
-  // Also listen for compaction-complete in case CMD+R happened during compaction.
-  React.useEffect(() => {
-    if (!sessionId) return
-
-    let hasExecuted = false
-
-    const isExpectedReconnectError = (error: unknown): boolean => {
-      const message = error instanceof Error ? error.message : String(error)
-      return message.includes('Connection closed')
-        || message.includes('Client disconnected')
-        || message.includes('transport')
-        || message.includes('socket')
-    }
-
-    const executePendingPlan = async () => {
-      if (hasExecuted) return
-
-      try {
-        const pending = await window.electronAPI.getPendingPlanExecution(sessionId)
-        if (!pending || pending.awaitingCompaction || pending.executionDispatched) return
-
-        if (pending.artifactId) {
-          const result = await window.electronAPI.invokeExtensionCommand(sessionId, 'plan-execute', {
-            artifactId: pending.artifactId,
-          })
-          if (!result.invoked) {
-            toast.error('Could not execute the compacted plan', { description: result.error })
-            return
-          }
-        } else if (pending.planPath) {
-          onSubmit(buildPlanApprovalMessage({
-            planPath: pending.planPath,
-            draftInput: pending.draftInputSnapshot,
-          }), undefined)
-        } else {
-          toast.error('Pending plan execution is missing its target.')
-          return
-        }
-
-        hasExecuted = true
-        await window.electronAPI.sessionCommand(sessionId, { type: 'markPendingPlanExecutionDispatched' })
-        await window.electronAPI.sessionCommand(sessionId, { type: 'clearPendingPlanExecution' })
-      } catch (error) {
-        if (!isExpectedReconnectError(error)) {
-          console.error('[FreeFormInput] Failed to resume pending plan execution:', error)
-        }
-      }
-    }
-
-    // Check immediately on mount (handles case where compaction already completed)
-    executePendingPlan()
-
-    // Also listen for compaction-complete in case CMD+R happened during compaction.
-    // When compaction finishes after reload, this listener will trigger execution.
-    const handleCompactionComplete = async (e: CustomEvent<{ sessionId: string }>) => {
-      if (e.detail?.sessionId !== sessionId) return
-      // Small delay to ensure markCompactionComplete has been called
-      await new Promise(resolve => setTimeout(resolve, 100))
-      executePendingPlan()
-    }
-
-    window.addEventListener('craft:compaction-complete', handleCompactionComplete as unknown as EventListener)
-    return () => {
-      window.removeEventListener('craft:compaction-complete', handleCompactionComplete as unknown as EventListener)
-    }
-  }, [sessionId, onSubmit])
 
   // Listen for craft:focus-input events (restore focus after popover/dropdown closes)
   React.useEffect(() => {
@@ -1135,47 +924,6 @@ export function FreeFormInput({
     // Use workspace slug (not UUID) for SDK skill qualification
     workspaceId: workspaceSlug,
   })
-
-  // Inline label menu hook (for #labels)
-  const handleLabelSelect = React.useCallback((labelId: string) => {
-    onLabelAdd?.(labelId)
-  }, [onLabelAdd])
-
-  const inlineLabel = useInlineLabelMenu({
-    inputRef: richInputRef,
-    labels,
-    sessionLabels,
-    onSelect: handleLabelSelect,
-    sessionStatuses,
-    activeStateId: currentSessionStatus,
-  })
-
-  // "Add New Label" handler: cleans up the #trigger text and opens a controlled
-  // EditPopover so the user can describe the label before the agent creates it.
-  const [addLabelPopoverOpen, setAddLabelPopoverOpen] = React.useState(false)
-  const [addLabelPrefill, setAddLabelPrefill] = React.useState('')
-  const handleAddLabel = React.useCallback((prefill: string) => {
-    if (!workspaceRootPath) return
-
-    // Remove the #trigger text from input
-    const cleaned = inlineLabel.handleSelect('')
-    setInput(cleaned)
-    syncToParent(cleaned)
-    inlineLabel.close()
-
-    // Store the prefill text (e.g., "Test" from "#Test") to pre-fill the popover
-    // Format: "Add new label {prefill}" so user can just press enter or modify
-    setAddLabelPrefill(prefill ? t('labels.addNewLabel', { prefill }) : '')
-
-    // Open the EditPopover for label creation
-    setAddLabelPopoverOpen(true)
-  }, [workspaceRootPath, inlineLabel, syncToParent, t])
-
-  // Memoize the add-label config so the EditPopover doesn't recreate on every render
-  const addLabelEditConfig = React.useMemo(() => {
-    if (!workspaceRootPath) return null
-    return getEditConfig('add-label', workspaceRootPath)
-  }, [workspaceRootPath])
 
   // Report height changes to parent (for external animation sync)
   React.useLayoutEffect(() => {
@@ -1510,18 +1258,6 @@ export function FreeFormInput({
       }
     }
 
-    // Don't submit when label menu is open - let it handle navigation keys
-    if (inlineLabel.isOpen) {
-      if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-        return
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        inlineLabel.close()
-        return
-      }
-    }
-
     const midStreamSendIntent = resolveMidStreamSendIntent(sendMessageKey, {
       key: e.key,
       shiftKey: e.shiftKey,
@@ -1586,10 +1322,7 @@ export function FreeFormInput({
     // Update inline mention state (for @mentions - skills, sources, folders)
     inlineMention.handleInputChange(nextValue, cursorPosition)
 
-    // Update inline label state (for #labels)
-    inlineLabel.handleInputChange(nextValue, cursorPosition)
-
-    // Auto-capitalize first letter (but not for slash commands, @mentions, or #labels)
+    // Auto-capitalize first letter (but not for slash commands or @mentions)
     // Only if autoCapitalisation setting is enabled
     let newValue = nextValue
     if (autoCapitalisation && nextValue.length > 0 && nextValue.charAt(0) !== '/' && nextValue.charAt(0) !== '@' && nextValue.charAt(0) !== '#') {
@@ -1613,7 +1346,7 @@ export function FreeFormInput({
       setInput(newValue)
       syncToParent(newValue)
     }
-  }, [inlineSlash, inlineMention, inlineLabel, syncToParent, autoCapitalisation, refreshExtensionCommands])
+  }, [inlineSlash, inlineMention, syncToParent, autoCapitalisation, refreshExtensionCommands])
 
   // Handle inline slash command selection (removes the /command text)
   const handleInlineSlashCommandSelect = React.useCallback((commandId: SlashCommandId) => {
@@ -1642,25 +1375,6 @@ export function FreeFormInput({
       richInputRef.current?.setSelectionRange(cursorPosition, cursorPosition)
     }, 0)
   }, [inlineMention, syncToParent])
-
-  // Handle inline label selection (removes the #label text from input)
-  const handleInlineLabelSelect = React.useCallback((labelId: string) => {
-    const newValue = inlineLabel.handleSelect(labelId)
-    setInput(newValue)
-    syncToParent(newValue)
-    richInputRef.current?.focus()
-  }, [inlineLabel, syncToParent])
-
-  // Handle inline state selection from # menu (removes #text, changes session state)
-  const handleInlineStateSelect = React.useCallback((stateId: string) => {
-    const newValue = inlineLabel.handleSelect('')
-    setInput(newValue)
-    syncToParent(newValue)
-    if (sessionId) {
-      onSessionStatusChange?.(sessionId, stateId)
-    }
-    richInputRef.current?.focus()
-  }, [inlineLabel, syncToParent, sessionId, onSessionStatusChange])
 
   const followUpLayoutKey = React.useMemo(
     () => followUpItems.map(item => [
@@ -1742,44 +1456,6 @@ export function FreeFormInput({
           maxWidth={280}
           isSearching={inlineMention.isSearching}
         />
-
-        {/* Inline Label & State Autocomplete (#labels / #states) */}
-        <InlineLabelMenu
-          open={inlineLabel.isOpen}
-          onOpenChange={(open) => !open && inlineLabel.close()}
-          items={inlineLabel.items}
-          onSelect={handleInlineLabelSelect}
-          onAddLabel={handleAddLabel}
-          filter={inlineLabel.filter}
-          position={inlineLabel.position}
-          states={inlineLabel.states}
-          activeStateId={inlineLabel.activeStateId}
-          onSelectState={handleInlineStateSelect}
-        />
-
-        {/* Controlled EditPopover for "Add New Label" — opens when user selects
-            the option from the # menu with no matches.
-            Spread the full config so optional fields like `inlineExecution`,
-            `displayLabel`, and `displayLabelKey` reach the popover. The previous
-            cherry-pick dropped `inlineExecution: true`, which made the popover
-            fall back to the same-window deep-link path; that worked inside
-            Electron but launched the desktop app from the WebUI via `craftagents://`.
-            Match the AppShell pattern (which already uses spread). */}
-        {addLabelEditConfig && (
-          <EditPopover
-            trigger={<span className="absolute top-0 left-0 w-0 h-0 overflow-hidden" />}
-            open={addLabelPopoverOpen}
-            onOpenChange={setAddLabelPopoverOpen}
-            {...addLabelEditConfig}
-            defaultValue={addLabelPrefill}
-            secondaryAction={workspaceRootPath ? {
-              label: 'Edit File',
-              filePath: `${workspaceRootPath}/labels/config.json`,
-            } : undefined}
-            side="top"
-            align="start"
-          />
-        )}
 
         {/* Pre-flight image-support warning — only for pi_compat connections
             where the renderer can both detect text-only models and offer to
@@ -2846,7 +2522,3 @@ function WorkingDirectoryBadge({
     </>
   )
 }
-
-
-
-

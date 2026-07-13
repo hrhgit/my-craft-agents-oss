@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Clock } from 'lucide-react'
+import { Check, Clock, Copy } from 'lucide-react'
 import type { StoredAttachment, ContentBadge } from '@craft-agent/core'
 import { normalizePath } from '@craft-agent/shared/utils/path-strings'
 import { cn } from '../../lib/utils'
@@ -20,6 +20,7 @@ import { Markdown } from '../markdown'
 import { FileTypeIcon, getFileTypeLabel } from './attachment-helpers'
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '../tooltip'
 import { useTranslation } from 'react-i18next'
+import { formatCompletionClock } from './turn-utils'
 
 // Fallback text icons for badges without iconDataUrl
 // Using simple characters since SVG rendering may not work in all contexts
@@ -323,6 +324,8 @@ export interface UserMessageBubbleProps {
   isPending?: boolean
   /** Whether the message is queued (badge shown) */
   isQueued?: boolean
+  /** Wall-clock time when the message was sent. */
+  timestamp?: number
   /** Compact mode - reduces padding for popover embedding */
   compactMode?: boolean
 }
@@ -341,10 +344,16 @@ export function UserMessageBubble({
   attachments,
   badges,
   isQueued,
+  timestamp,
   compactMode,
 }: UserMessageBubbleProps) {
   const { t } = useTranslation()
   const hasAttachments = attachments && attachments.length > 0
+  const hasValidTimestamp = timestamp !== undefined
+    && Number.isFinite(timestamp)
+    && timestamp >= 1_000_000_000_000
+  const [copied, setCopied] = useState(false)
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Show the queued chip while `isQueued` is true AND for at least
   // QUEUED_MIN_VISIBLE_MS after it first became true — even if the backend
@@ -357,8 +366,23 @@ export function UserMessageBubble({
   useEffect(() => {
     return () => {
       if (clearTimerRef.current) clearTimeout(clearTimerRef.current)
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
     }
   }, [])
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = setTimeout(() => {
+        setCopied(false)
+        copiedTimerRef.current = null
+      }, 2000)
+    } catch (error) {
+      console.error('Failed to copy user message:', error)
+    }
+  }
 
   useEffect(() => {
     if (clearTimerRef.current) {
@@ -414,7 +438,7 @@ export function UserMessageBubble({
   }
 
   return (
-    <div className={cn("flex flex-col items-end gap-3 w-full", className)}>
+    <div className={cn("group/user-message flex flex-col items-end gap-3 w-full", className)}>
       {/* Attachment preview row - stored attachments with thumbnails */}
       {hasAttachments && (
         <div className="flex gap-2 justify-end max-w-[80%] flex-wrap">
@@ -488,35 +512,78 @@ export function UserMessageBubble({
           separate pill below — keeps the chat to one bubble per message
           while the chip and pulsing icon make the waiting state obvious
           (#616 follow-up). */}
-      <div
-        className={cn(
-          "max-w-[80%] bg-user-message-bubble rounded-[16px] break-words min-w-0 select-text [&_p]:m-0",
-          compactMode ? "px-4 py-2" : "px-5 py-3.5"
-        )}
-      >
-        {showQueued && (
+      <div className="flex max-w-[80%] min-w-0 flex-col items-end gap-1">
+        <div
+          className={cn(
+            "w-fit max-w-full bg-user-message-bubble rounded-[16px] break-words min-w-0 select-text [&_p]:m-0",
+            compactMode ? "px-4 py-2" : "px-5 py-3.5"
+          )}
+        >
+          {showQueued && (
+            <div
+              className="flex items-center gap-1.5 text-foreground/55 mb-1.5"
+              role="status"
+              aria-live="polite"
+            >
+              <Clock className="h-3 w-3 animate-pulse" aria-hidden="true" />
+              <span className="text-[11px] italic">{t('chat.queuedBadge')}</span>
+            </div>
+          )}
+          {hasInlineBadges
+            ? renderContentWithBadges(displayContent, inlineBadges, onUrlClick, onFileClick)
+            : (
+              <Markdown
+                mode="minimal"
+                onUrlClick={onUrlClick}
+                onFileClick={onFileClick}
+                className="text-sm [&_a]:underline [&_code]:bg-foreground/10 [&_p]:whitespace-pre-wrap"
+              >
+                {displayContent}
+              </Markdown>
+            )
+          }
+        </div>
+
+        {!compactMode && (
           <div
-            className="flex items-center gap-1.5 text-foreground/55 mb-1.5"
-            role="status"
-            aria-live="polite"
+            className={cn(
+              "flex h-[18px] min-h-[18px] items-center justify-end gap-3 pl-1 pr-3 text-xs leading-none text-muted-foreground/65",
+              "pointer-events-none opacity-0 transition-opacity duration-150",
+              "group-hover/user-message:pointer-events-auto group-hover/user-message:opacity-100",
+              "group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:opacity-100"
+            )}
+            data-user-message-actions
           >
-            <Clock className="h-3 w-3 animate-pulse" aria-hidden="true" />
-            <span className="text-[11px] italic">{t('chat.queuedBadge')}</span>
+            {hasValidTimestamp && (
+              <time className="tabular-nums" dateTime={new Date(timestamp).toISOString()}>
+                {formatCompletionClock(timestamp)}
+              </time>
+            )}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleCopy}
+                    className={cn(
+                      "flex h-[18px] w-[18px] shrink-0 items-center justify-center text-muted-foreground/75 transition-colors",
+                      "hover:text-foreground focus:outline-none focus-visible:text-foreground",
+                      copied && "text-success hover:text-success"
+                    )}
+                    aria-label={copied ? t('common.copied') : t('common.copy')}
+                  >
+                    {copied
+                      ? <Check className="h-4 w-4" aria-hidden="true" />
+                      : <Copy className="h-4 w-4" aria-hidden="true" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {copied ? t('common.copied') : t('common.copy')}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         )}
-        {hasInlineBadges
-          ? renderContentWithBadges(displayContent, inlineBadges, onUrlClick, onFileClick)
-          : (
-            <Markdown
-              mode="minimal"
-              onUrlClick={onUrlClick}
-              onFileClick={onFileClick}
-              className="text-sm [&_a]:underline [&_code]:bg-foreground/10 [&_p]:whitespace-pre-wrap"
-            >
-              {displayContent}
-            </Markdown>
-          )
-        }
       </div>
     </div>
   )

@@ -366,8 +366,14 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     )
   })
 
-  server.handle(RPC_CHANNELS.piExtensions.RELOAD, async (_ctx, payload?: { interruptRunning?: boolean }) => {
-    return await deps.sessionManager.requestExtensionReload(payload?.interruptRunning === true)
+  server.handle(RPC_CHANNELS.piExtensions.RELOAD, async (
+    _ctx,
+    payload?: boolean | { interruptRunning?: boolean },
+  ) => {
+    const interruptRunning = typeof payload === 'boolean'
+      ? payload
+      : payload?.interruptRunning === true
+    return await deps.sessionManager.requestExtensionReload(interruptRunning)
   })
 
   // 逐扩展启停：读写 Pi settings.json 的 extensionConfig.<name>.enabled

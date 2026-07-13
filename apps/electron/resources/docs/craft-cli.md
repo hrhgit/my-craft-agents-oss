@@ -203,14 +203,13 @@ Manage workspace automations stored in `automations.json`.
 
 | Flag | Description |
 |------|-------------|
-| `--event <EventName>` | **(required for create)** Event trigger (e.g., `UserPromptSubmit`, `SchedulerTick`, `LabelAdd`) |
+| `--event <EventName>` | **(required for create)** Event trigger (e.g., `UserPromptSubmit`, `SchedulerTick`, `PreToolUse`) |
 | `--name "<name>"` | Display name for the automation |
 | `--matcher "<regex>"` | Regex pattern for event matching |
 | `--cron "<expression>"` | Cron expression (for `SchedulerTick` events) |
 | `--timezone "<tz>"` | IANA timezone (e.g., `Europe/Budapest`) |
 | `--permission-mode safe\|ask\|allow-all` | Permission level for created sessions |
 | `--enabled true\|false` | Enable/disable the automation |
-| `--labels "label1,label2"` | Comma-separated labels for created sessions |
 | `--prompt "..."` | Prompt text (creates a prompt action automatically) |
 | `--provider "<key>"` | Provider key for the created session |
 | `--model "<model-id>"` | Model ID for the created session |

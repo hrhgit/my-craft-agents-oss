@@ -23,7 +23,6 @@ import type {
   CredentialInputMode as SharedCredentialInputMode,
   CredentialAuthRequest as SharedCredentialAuthRequest,
 } from '../agent/index'
-import type { SessionStatus, BuiltInStatusId } from '../sessions/types'
 
 // Re-export generateMessageId for handler convenience
 export { generateMessageId } from '@craft-agent/core/types'
@@ -31,9 +30,6 @@ export { generateMessageId } from '@craft-agent/core/types'
 // ---------------------------------------------------------------------------
 // Session types
 // ---------------------------------------------------------------------------
-
-// Re-export SessionStatus and BuiltInStatusId from sessions/types (canonical source)
-export type { SessionStatus, BuiltInStatusId }
 
 /**
  * Electron-specific Session type (includes runtime state).
@@ -54,9 +50,6 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
   readOnly?: boolean
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
-  sessionStatus?: SessionStatus
-  /** Labels (additive tags, many-per-session — bare IDs or "id::value" entries) */
-  labels?: string[]
   /**
    * Explicit unread flag - single source of truth for NEW badge.
    * Set to true when assistant message completes while user is NOT viewing.
@@ -94,7 +87,6 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
   }
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean
-  archivedAt?: number
   supportsBranching?: boolean
   /** Session-authoritative state emitted by the Pi Plan Mode extension. */
   planModeState?: PlanModeStateV1
@@ -121,9 +113,6 @@ export interface CreateSessionOptions {
   provider?: string
   systemPromptPreset?: 'default' | 'mini' | string
   hidden?: boolean
-  sessionStatus?: SessionStatus
-  labels?: string[]
-  isFlagged?: boolean
   enabledSourceSlugs?: string[]
   /**
    * Message ID to branch from. This is a hard context cutoff:
@@ -137,8 +126,6 @@ export interface CreateSessionOptions {
 export interface RemoteSessionTransferPayload {
   sourceSessionId: string
   name?: string
-  sessionStatus?: SessionStatus
-  labels?: string[]
   permissionMode?: PermissionMode
   summary: string
 }
@@ -182,7 +169,6 @@ export type SessionEvent =
   | { type: 'plan_artifact_changed'; sessionId: string; message: Message; supersededArtifactIds?: string[] }
   | { type: 'plan_mode_state_changed'; sessionId: string; state: PlanModeStateV1 }
   | { type: 'sources_changed'; sessionId: string; enabledSourceSlugs: string[] }
-  | { type: 'labels_changed'; sessionId: string; labels: string[] }
   | { type: 'provider_changed'; sessionId: string; provider?: string; supportsBranching?: boolean }
   | { type: 'task_backgrounded'; sessionId: string; toolUseId: string; taskId: string; intent?: string; turnId?: string }
   | { type: 'shell_backgrounded'; sessionId: string; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
@@ -190,13 +176,8 @@ export type SessionEvent =
   | { type: 'task_completed'; sessionId: string; taskId: string; status: 'completed' | 'failed' | 'stopped'; outputFile?: string; summary?: string; turnId?: string }
   | { type: 'shell_killed'; sessionId: string; shellId: string }
   | { type: 'user_message'; sessionId: string; message: Message; status: 'accepted' | 'queued' | 'processing'; optimisticMessageId?: string }
-  | { type: 'session_flagged'; sessionId: string }
-  | { type: 'session_unflagged'; sessionId: string }
-  | { type: 'session_archived'; sessionId: string }
-  | { type: 'session_unarchived'; sessionId: string }
   | { type: 'name_changed'; sessionId: string; name?: string }
   | { type: 'session_model_changed'; sessionId: string; model: string | null }
-  | { type: 'session_status_changed'; sessionId: string; sessionStatus: SessionStatus }
   | { type: 'session_deleted'; sessionId: string }
   | { type: 'session_created'; sessionId: string }
   | { type: 'session_shared'; sessionId: string; sharedUrl: string }
@@ -223,12 +204,7 @@ export interface SendMessageOptions {
 // ---------------------------------------------------------------------------
 
 export type SessionCommand =
-  | { type: 'flag' }
-  | { type: 'unflag' }
-  | { type: 'archive' }
-  | { type: 'unarchive' }
   | { type: 'rename'; name: string }
-  | { type: 'setSessionStatus'; state: SessionStatus }
   | { type: 'markRead' }
   | { type: 'markUnread' }
   | { type: 'setActiveViewing'; workspaceId: string }
@@ -236,7 +212,6 @@ export type SessionCommand =
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   | { type: 'updateWorkingDirectory'; dir: string }
   | { type: 'setSources'; sourceSlugs: string[] }
-  | { type: 'setLabels'; labels: string[] }
   | { type: 'showInFinder' }
   | { type: 'copyPath' }
   | { type: 'shareToViewer' }
@@ -404,6 +379,8 @@ export interface UnreadSummary {
   totalUnreadSessions: number
   byWorkspace: Record<string, number>
   hasUnreadByWorkspace: Record<string, boolean>
+  /** Runtime activity across every workspace, including inactive workspaces. */
+  hasProcessingByWorkspace: Record<string, boolean>
 }
 
 export interface ShareResult {
@@ -486,7 +463,6 @@ export interface TestAutomationPayload {
   automationName?: string
   actions: TestAutomationAction[]
   permissionMode?: PermissionMode
-  labels?: string[]
   /** Forwarded from the matcher; routes test-run sessions into a Telegram topic when paired. */
   telegramTopic?: string
 }

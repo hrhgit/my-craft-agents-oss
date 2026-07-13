@@ -5,41 +5,25 @@ import {
 } from '../session-list-collapse'
 
 describe('serializeSessionFilterForScope', () => {
-  it('serializes simple filter kinds', () => {
+  it('serializes the unified session filter', () => {
     expect(serializeSessionFilterForScope({ kind: 'allSessions' })).toBe('allSessions')
-    expect(serializeSessionFilterForScope({ kind: 'flagged' })).toBe('flagged')
-    expect(serializeSessionFilterForScope({ kind: 'archived' })).toBe('archived')
-  })
-
-  it('serializes id-based filters with stable prefixes', () => {
-    expect(serializeSessionFilterForScope({ kind: 'state', stateId: 'in-progress' })).toBe('state:in-progress')
-    expect(serializeSessionFilterForScope({ kind: 'label', labelId: 'priority/high' })).toBe('label:priority%2Fhigh')
-    expect(serializeSessionFilterForScope({ kind: 'view', viewId: 'mine+active' })).toBe('view:mine%2Bactive')
   })
 })
 
 describe('buildCollapsedGroupsScopeSuffix', () => {
-  it('creates different keys for different filters and grouping modes', () => {
-    const inProgressDate = buildCollapsedGroupsScopeSuffix({
+  it('creates different keys for grouping modes', () => {
+    const date = buildCollapsedGroupsScopeSuffix({
       workspaceId: 'ws-1',
-      currentFilter: { kind: 'state', stateId: 'in-progress' },
+      currentFilter: { kind: 'allSessions' },
       groupingMode: 'date',
     })
 
-    const inProgressStatus = buildCollapsedGroupsScopeSuffix({
+    const unread = buildCollapsedGroupsScopeSuffix({
       workspaceId: 'ws-1',
-      currentFilter: { kind: 'state', stateId: 'in-progress' },
-      groupingMode: 'status',
+      currentFilter: { kind: 'allSessions' },
+      groupingMode: 'unread',
     })
-
-    const doneDate = buildCollapsedGroupsScopeSuffix({
-      workspaceId: 'ws-1',
-      currentFilter: { kind: 'state', stateId: 'done' },
-      groupingMode: 'date',
-    })
-
-    expect(inProgressDate).not.toBe(inProgressStatus)
-    expect(inProgressDate).not.toBe(doneDate)
+    expect(date).not.toBe(unread)
   })
 
   it('creates different keys across workspaces', () => {

@@ -58,4 +58,30 @@ describe('Pi extension contribution bridge', () => {
       delta: { operation: 'remove', contributionId: 'legacy-widget:legacy', revision: 2 },
     })
   })
+
+  it('overrides temporary interaction routing with the trusted host session', () => {
+    const payloads: unknown[] = []
+    const sink = ((...args: Parameters<EventSink>) => { payloads.push(args[2]) }) as EventSink
+    const forward = createExtensionEventForwarder(sink, 'workspace', 'trusted-session')
+    forward({
+      type: 'extension_interaction_request',
+      ...route,
+      sessionId: 'untrusted-session',
+      requestId: 'interaction-1',
+      request: { schemaVersion: 1, fields: [{ id: 'confirm', kind: 'confirm', label: 'Continue?' }] },
+    })
+    forward({
+      type: 'extension_interaction_cancel',
+      ...route,
+      sessionId: 'untrusted-session',
+      requestId: 'interaction-1',
+      schemaVersion: 1,
+      reason: 'aborted',
+    })
+
+    expect(payloads).toEqual([
+      expect.objectContaining({ type: 'extension_interaction_request', sessionId: 'trusted-session' }),
+      expect.objectContaining({ type: 'extension_interaction_cancel', sessionId: 'trusted-session' }),
+    ])
+  })
 })

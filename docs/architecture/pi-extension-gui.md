@@ -116,14 +116,14 @@ Compact hotspots accept only shallow rows of text, icons, badges, and buttons. T
 
 The extension-specific legacy GUI gate and Craft ID switches have been removed. Generic RemoteUI dialogs, notifications, title/editor bridges and the widget-to-contribution adapter remain protocol compatibility features.
 
-Migration order:
+Completed migration inventory:
 
 1. background agent badges
 2. prompt automation widget
 3. subagent panel
-4. plan composer
-5. plan artifact transcript renderer
+4. plan composer: phase controls and artifact actions are declared by `plan-mode`
+5. plan artifact transcript: extension-authored content is rendered by the generic projection Markdown path
 
-Each migration is complete only when its extension package owns the contribution declaration and command handlers, Craft contains no extension-ID or widget-key branch for it, and focused tests cover upsert/remove/reset plus overflow behavior.
+Each migration remains complete only while its extension package owns contribution declarations and command handlers, Craft contains no extension-ID, widget-key, or extension-specific transcript renderer branch, and focused tests cover the generic upsert/remove/reset and overflow behavior. A source guard prevents the removed Plan and `ask_user` host branches from returning.
 
 Extension settings are declared statically in `pi.extensions[].ui.settings`, validated by Pi at the manifest boundary, and stored under `extensionConfig.<id>`. Craft renders the schema generically and validates every patch before writing it. No active chat session and no extension-ID switch are required.

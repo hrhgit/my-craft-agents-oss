@@ -15,8 +15,6 @@ export interface ShareTransferSessionRecord {
   sharedId?: string
   sharedUrl?: string
   name?: string
-  sessionStatus?: string
-  labels?: string[]
   permissionMode?: PermissionMode
 }
 
@@ -121,8 +119,8 @@ export class SessionShareTransferService {
     const summary = await this.options.store.summarize(sessionId)
     if (!summary) return null
     return {
-      sourceSessionId: session.id, name: session.name, sessionStatus: session.sessionStatus,
-      labels: session.labels, permissionMode: session.permissionMode, summary,
+      sourceSessionId: session.id, name: session.name,
+      permissionMode: session.permissionMode, summary,
     }
   }
 

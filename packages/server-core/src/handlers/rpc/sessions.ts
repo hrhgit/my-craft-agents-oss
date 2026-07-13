@@ -1,5 +1,5 @@
 import { existsSync } from 'fs'
-import { readFile, writeFile, stat } from 'fs/promises'
+import { stat } from 'fs/promises'
 import { join } from 'path'
 import { RPC_CHANNELS, type FileAttachment, type SendMessageOptions, type SessionEvent, type Session } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
@@ -200,8 +200,6 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS,
   RPC_CHANNELS.sessions.SEARCH_CONTENT,
   RPC_CHANNELS.sessions.GET_FILES,
-  RPC_CHANNELS.sessions.GET_NOTES,
-  RPC_CHANNELS.sessions.SET_NOTES,
   RPC_CHANNELS.sessions.WATCH_FILES,
   RPC_CHANNELS.sessions.UNWATCH_FILES,
   RPC_CHANNELS.sessions.EXPORT,
@@ -494,18 +492,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   ) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     switch (command.type) {
-      case 'flag':
-        return sessionManager.flagSession(sessionId)
-      case 'unflag':
-        return sessionManager.unflagSession(sessionId)
-      case 'archive':
-        return sessionManager.archiveSession(sessionId)
-      case 'unarchive':
-        return sessionManager.unarchiveSession(sessionId)
       case 'rename':
         return sessionManager.renameSession(sessionId, command.name)
-      case 'setSessionStatus':
-        return sessionManager.setSessionStatus(sessionId, command.state)
       case 'markRead':
         return sessionManager.markSessionRead(sessionId)
       case 'markUnread':
@@ -525,8 +513,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         return sessionManager.updateWorkingDirectory(sessionId, command.dir)
       case 'setSources':
         return sessionManager.setSessionSources(sessionId, command.sourceSlugs)
-      case 'setLabels':
-        return sessionManager.setSessionLabels(sessionId, command.labels)
       case 'showInFinder': {
         const sessionPath = resolveSessionDisplayPath(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
         if (sessionPath) {
@@ -695,40 +681,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Stop watching session files for the calling client
   server.handle(RPC_CHANNELS.sessions.UNWATCH_FILES, async (ctx) => {
     cleanupSessionFileWatchForClient(ctx.clientId)
-  })
-
-  // Get session notes (reads notes.md from session directory)
-  server.handle(RPC_CHANNELS.sessions.GET_NOTES, async (ctx, sessionId: string) => {
-    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
-    const sessionPath = resolveSessionDirectory(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
-    if (!sessionPath) return ''
-
-    try {
-      const notesPath = join(sessionPath, 'notes.md')
-      const content = await readFile(notesPath, 'utf-8')
-      return content
-    } catch {
-      // File doesn't exist yet - return empty string
-      return ''
-    }
-  })
-
-  // Set session notes (writes to notes.md in session directory)
-  server.handle(RPC_CHANNELS.sessions.SET_NOTES, async (ctx, sessionId: string, content: string) => {
-    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
-
-    const sessionPath = resolveSessionDirectory(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
-    if (!sessionPath) {
-      throw new Error(`Session not found: ${sessionId}`)
-    }
-
-    try {
-      const notesPath = join(sessionPath, 'notes.md')
-      await writeFile(notesPath, content, 'utf-8')
-    } catch (error) {
-      log.error('Failed to save session notes:', error)
-      throw error
-    }
   })
 
   // ============================================

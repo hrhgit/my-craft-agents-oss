@@ -241,8 +241,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.GET_MODEL,
   RPC_CHANNELS.sessions.SET_MODEL,
   RPC_CHANNELS.sessions.GET_FILES,
-  RPC_CHANNELS.sessions.GET_NOTES,
-  RPC_CHANNELS.sessions.SET_NOTES,
   RPC_CHANNELS.sessions.WATCH_FILES,
   RPC_CHANNELS.sessions.UNWATCH_FILES,
   RPC_CHANNELS.sessions.FILES_CHANGED,
@@ -345,21 +343,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.skills.GET_FILES,
   RPC_CHANNELS.skills.DELETE,
   RPC_CHANNELS.skills.CHANGED,
-
-  // statuses — workspace metadata
-  RPC_CHANNELS.statuses.LIST,
-  RPC_CHANNELS.statuses.REORDER,
-  RPC_CHANNELS.statuses.CHANGED,
-
-  // labels — workspace metadata
-  RPC_CHANNELS.labels.LIST,
-  RPC_CHANNELS.labels.CREATE,
-  RPC_CHANNELS.labels.DELETE,
-  RPC_CHANNELS.labels.CHANGED,
-
-  // views — workspace UI views
-  RPC_CHANNELS.views.LIST,
-  RPC_CHANNELS.views.SAVE,
 
   // toolIcons — workspace config
   RPC_CHANNELS.toolIcons.GET_MAPPINGS,

@@ -11,9 +11,7 @@ export type DocFeature =
   | 'sources-mcp'
   | 'sources-local'
   | 'skills'
-  | 'statuses'
   | 'permissions'
-  | 'labels'
   | 'workspaces'
   | 'themes'
   | 'app-settings'
@@ -61,29 +59,17 @@ export const DOCS: Record<DocFeature, DocInfo> = {
     summary:
       'Reusable instruction sets that teach your agent specialized behaviors. Create a SKILL.md file and invoke it with @mention in your messages.',
   },
-  statuses: {
-    path: '/statuses/overview',
-    title: 'Statuses',
-    summary:
-      'Organize conversations into workflow states like Todo, In Progress, and Done. Open statuses appear in your inbox; closed ones move to the archive.',
-  },
   permissions: {
     path: '/core-concepts/permissions',
     title: 'Permissions',
     summary:
       'Control how much autonomy your agent has. Explore mode is read-only, Ask to Edit prompts before changes, and Execute mode runs without prompts.',
   },
-  labels: {
-    path: '/labels/overview',
-    title: 'Labels',
-    summary:
-      'Tag sessions with colored labels for organization and filtering. Labels support hierarchical nesting, typed values, and auto-apply rules that extract data from messages using regex patterns.',
-  },
   workspaces: {
     path: '/go-further/workspaces',
     title: 'Workspaces',
     summary:
-      'Separate configurations for different contexts like personal projects or work. Each workspace has its own sources, skills, statuses, and session history.',
+      'Separate configurations for different contexts like personal projects or work. Each workspace has its own sources, skills, and session history.',
   },
   themes: {
     path: '/go-further/themes',
@@ -107,7 +93,7 @@ export const DOCS: Record<DocFeature, DocInfo> = {
     path: '/automations/overview',
     title: 'Automations',
     summary:
-      'Automate actions when events occur — run commands on schedules, react to label changes, or trigger prompts. Configured in automations.json.',
+      'Automate actions when events occur — run commands on schedules, react to runtime events, or trigger prompts. Configured in automations.json.',
   },
   messaging: {
     path: '/messaging/overview',

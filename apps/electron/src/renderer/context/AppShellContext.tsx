@@ -18,7 +18,6 @@ import type {
   CredentialRequest,
   CredentialResponse,
   PermissionMode,
-  SessionStatus,
   LoadedSource,
   LoadedSkill,
   NewChatActionParams,
@@ -26,20 +25,15 @@ import type {
   PiGlobalSettings,
   TestAutomationResult,
 } from '../../shared/types'
-import type { SessionStatus as SessionStatusConfig } from '@/config/session-status-config'
 import type { SessionOptions, SessionOptionUpdates } from '../hooks/useSessionOptions'
 import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
 import { defaultSessionOptions } from '../hooks/useSessionOptions'
 import { sessionAtomFamily } from '../atoms/sessions'
 import type {
   RemoteUICancelReason,
-  RemoteUIRequest,
-  RemoteUIResult,
 } from '@/components/extensions/RemoteUIModal'
-import type {
-  RemoteUIBatch,
-  RemoteUIBatchSubmission,
-} from '@/components/extensions/remote-ui-batch'
+import type { ExtensionUIRequest, ExtensionUIResponse } from '@/hooks/useRemoteUIRequests'
+import type { WorkspaceSelectHandler } from '@/components/workspace/useWorkspaceNavigation'
 
 export interface AppShellContextType {
   // Data
@@ -68,21 +62,12 @@ export interface AppShellContextType {
   skills?: LoadedSkill[]
   /** Working directory of the active session — needed for project-level skill resolution */
   activeSessionWorkingDirectory?: string
-  /** All label configs (tree) for label menu and badge display */
-  labels?: import('@craft-agent/shared/labels').LabelConfig[]
-  /** Callback when session labels change */
-  onSessionLabelsChange?: (sessionId: string, labels: string[]) => void
   /** Enabled permission modes for Shift+Tab cycling */
   enabledModes?: PermissionMode[]
-  /** Dynamic todo states from workspace config (provided by AppShell, defaults to empty) */
-  sessionStatuses?: SessionStatusConfig[]
 
   /** Pi extension input currently replacing the composer for its owning session. */
-  remoteUIRequest?: RemoteUIRequest | null
-  /** Full ask_user batch recovered from the active tool call when available. */
-  remoteUIBatch?: RemoteUIBatch | null
-  respondRemoteUI?: (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => void
-  respondRemoteUIBatch?: (submission: RemoteUIBatchSubmission) => void
+  remoteUIRequest?: ExtensionUIRequest | null
+  respondRemoteUI?: (payload: ExtensionUIResponse, reason?: RemoteUICancelReason) => void
 
   // Unified session options map
   /** All session-scoped options in one map. Use useSessionOptionsFor() hook for easy access. */
@@ -92,15 +77,10 @@ export interface AppShellContextType {
   onCreateSession: (workspaceId: string, options?: import('../../shared/types').CreateSessionOptions) => Promise<Session>
   onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@craft-agent/core').ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => void
   onRenameSession: (sessionId: string, name: string) => void
-  onFlagSession: (sessionId: string) => void
-  onUnflagSession: (sessionId: string) => void
-  onArchiveSession: (sessionId: string) => void
-  onUnarchiveSession: (sessionId: string) => void
   onMarkSessionRead: (sessionId: string) => void
   onMarkSessionUnread: (sessionId: string) => void
   /** Track which session user is viewing (for unread state machine) */
   onSetActiveViewingSession: (sessionId: string) => void
-  onSessionStatusChange: (sessionId: string, state: SessionStatus) => void
   onDeleteSession: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
 
   // Permission handling
@@ -124,7 +104,7 @@ export interface AppShellContextType {
   onOpenUrl: (url: string) => void
 
   // Workspace
-  onSelectWorkspace: (id: string, openInNewWindow?: boolean) => void | Promise<void>
+  onSelectWorkspace: WorkspaceSelectHandler
   onRefreshWorkspaces?: () => void
 
   // App actions

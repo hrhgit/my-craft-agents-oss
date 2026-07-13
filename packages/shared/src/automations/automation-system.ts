@@ -15,7 +15,7 @@
  * - SessionManager uses ~30 lines instead of ~300
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveAutomationsConfigPath, generateShortId } from './resolve-config-path.ts';
 import { compactAutomationHistorySync } from './history-store.ts';
@@ -28,6 +28,66 @@ import { matcherMatchesAgentEvent } from './utils.ts';
 import { SchedulerService, type SchedulerTickPayload } from '../scheduler/scheduler-service.ts';
 
 const log = createLogger('automation-system');
+
+const RETIRED_ORGANIZATION_EVENTS = new Set([
+  'LabelAdd',
+  'LabelRemove',
+  'LabelConfigChange',
+  'FlagChange',
+  'SessionStatusChange',
+  'TodoStateChange',
+]);
+const RETIRED_ORGANIZATION_FIELDS = new Set([
+  'labels',
+  'sessionStatus',
+  'isFlagged',
+  'isArchived',
+  'archivedAt',
+]);
+
+function conditionReferencesRetiredField(condition: unknown): boolean {
+  if (!condition || typeof condition !== 'object') return false;
+  const value = condition as Record<string, unknown>;
+  if (value.condition === 'state' && typeof value.field === 'string') {
+    return RETIRED_ORGANIZATION_FIELDS.has(value.field);
+  }
+  return Array.isArray(value.conditions) && value.conditions.some(conditionReferencesRetiredField);
+}
+
+/** Remove legacy organization automations without broadening their trigger conditions. */
+export function cleanRetiredOrganizationAutomations(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const root = raw as Record<string, unknown>;
+  const eventMap = (root.automations ?? root.tasks ?? root.hooks) as Record<string, unknown> | undefined;
+  if (!eventMap || typeof eventMap !== 'object') return false;
+
+  let changed = false;
+  for (const event of Object.keys(eventMap)) {
+    if (RETIRED_ORGANIZATION_EVENTS.has(event)) {
+      delete eventMap[event];
+      changed = true;
+      continue;
+    }
+
+    const matchers = eventMap[event];
+    if (!Array.isArray(matchers)) continue;
+    const retained = matchers.filter(matcher => {
+      if (!matcher || typeof matcher !== 'object') return true;
+      const value = matcher as Record<string, unknown>;
+      const hasRetiredProperty = [...RETIRED_ORGANIZATION_FIELDS].some(field =>
+        Object.prototype.hasOwnProperty.call(value, field)
+      );
+      const hasRetiredCondition = Array.isArray(value.conditions)
+        && value.conditions.some(conditionReferencesRetiredField);
+      return !hasRetiredProperty && !hasRetiredCondition;
+    });
+    if (retained.length !== matchers.length) {
+      eventMap[event] = retained;
+      changed = true;
+    }
+  }
+  return changed;
+}
 
 // Re-export SessionMetadataSnapshot from types (single source of truth)
 export type { SessionMetadataSnapshot } from './types.ts';
@@ -115,6 +175,12 @@ export class AutomationSystem implements AutomationsConfigProvider {
    */
   private readAndValidateConfig(configPath: string): { raw: unknown; validation: import('./types.ts').AutomationsValidationResult } {
     const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
+    if (cleanRetiredOrganizationAutomations(raw)) {
+      const temporaryPath = `${configPath}.tmp`;
+      writeFileSync(temporaryPath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+      renameSync(temporaryPath, configPath);
+      log.debug('[AutomationSystem] Removed retired organization automations');
+    }
     const validation = validateAutomationsConfig(raw);
     return { raw, validation };
   }
@@ -350,8 +416,6 @@ export class AutomationSystem implements AutomationsConfigProvider {
 
     // Common fields for all events
     const sessionName = next.sessionName;
-    const labels = next.labels ?? [];
-
     // Permission mode change
     if (prev.permissionMode !== next.permissionMode) {
       await this.eventBus.emit('PermissionModeChange', {
@@ -359,72 +423,10 @@ export class AutomationSystem implements AutomationsConfigProvider {
         sessionName,
         workspaceId: this.options.workspaceId,
         timestamp,
-        labels,
         oldMode: prev.permissionMode ?? '',
         newMode: next.permissionMode ?? '',
       });
       emittedEvents.push('PermissionModeChange');
-    }
-
-    // Labels (array diff)
-    const prevLabels = new Set(prev.labels ?? []);
-    const nextLabels = new Set(next.labels ?? []);
-
-    for (const label of nextLabels) {
-      if (!prevLabels.has(label)) {
-        await this.eventBus.emit('LabelAdd', {
-          sessionId,
-          sessionName,
-          workspaceId: this.options.workspaceId,
-          timestamp,
-          labels: [...nextLabels],
-          label,
-        });
-        emittedEvents.push('LabelAdd');
-      }
-    }
-
-    for (const label of prevLabels) {
-      if (!nextLabels.has(label)) {
-        await this.eventBus.emit('LabelRemove', {
-          sessionId,
-          sessionName,
-          workspaceId: this.options.workspaceId,
-          timestamp,
-          labels: [...nextLabels],
-          label,
-        });
-        emittedEvents.push('LabelRemove');
-      }
-    }
-
-    // Flag change
-    const wasFlagged = prev.isFlagged ?? false;
-    const isFlagged = next.isFlagged ?? false;
-    if (wasFlagged !== isFlagged) {
-      await this.eventBus.emit('FlagChange', {
-        sessionId,
-        sessionName,
-        workspaceId: this.options.workspaceId,
-        timestamp,
-        labels,
-        isFlagged,
-      });
-      emittedEvents.push('FlagChange');
-    }
-
-    // Session status change
-    if (prev.sessionStatus !== next.sessionStatus) {
-      await this.eventBus.emit('SessionStatusChange', {
-        sessionId,
-        sessionName,
-        workspaceId: this.options.workspaceId,
-        timestamp,
-        labels,
-        oldState: prev.sessionStatus ?? '',
-        newState: next.sessionStatus ?? '',
-      });
-      emittedEvents.push('SessionStatusChange');
     }
 
     // Update stored metadata
@@ -464,17 +466,6 @@ export class AutomationSystem implements AutomationsConfigProvider {
   // ============================================================================
   // Direct Event Emission
   // ============================================================================
-
-  /**
-   * Emit a LabelConfigChange event.
-   * Call this when labels/config.json changes.
-   */
-  async emitLabelConfigChange(): Promise<void> {
-    await this.eventBus.emit('LabelConfigChange', {
-      workspaceId: this.options.workspaceId,
-      timestamp: Date.now(),
-    });
-  }
 
   /**
    * Emit an event directly (for edge cases).

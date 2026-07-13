@@ -18,7 +18,7 @@
  * - `subagent.reviewEnabled` / `subagent.reviewModel`：craft 专属 review 流
  * - `traceAudit.reviewSubagentEnabled` / `traceAudit.showStatusBadge`：craft GUI 状态展示
  * - `yourself.showStatusBadge` / `repoMemory.showStatusBadge`：craft GUI 状态展示
- * - `promptAutomation.*` / `planMode.*`：craft GUI 控件可见性
+ * - `promptAutomation.*`：craft GUI 控件可见性
  */
 
 export type PiExtensionCategory =
@@ -157,11 +157,6 @@ export interface PiExtensionSettings {
     widgetVisible: boolean;
     defaultJobScope: 'session' | 'workdir';
   };
-  planMode: {
-    showDiscussionButton: boolean;
-    showPlanButton: boolean;
-    renderPlanMarkdown: boolean;
-  };
 }
 
 /**
@@ -176,7 +171,6 @@ export type StoredPiExtensionSettings = {
   yourself?: Partial<PiExtensionSettings['yourself']>;
   repoMemory?: Partial<PiExtensionSettings['repoMemory']>;
   promptAutomation?: Partial<PiExtensionSettings['promptAutomation']>;
-  planMode?: Partial<PiExtensionSettings['planMode']>;
 };
 
 export const DEFAULT_PI_EXTENSION_SETTINGS: PiExtensionSettings = {
@@ -200,11 +194,6 @@ export const DEFAULT_PI_EXTENSION_SETTINGS: PiExtensionSettings = {
     widgetVisible: true,
     defaultJobScope: 'session',
   },
-  planMode: {
-    showDiscussionButton: true,
-    showPlanButton: true,
-    renderPlanMarkdown: true,
-  },
 };
 
 function cloneSettings(settings: PiExtensionSettings): PiExtensionSettings {
@@ -215,7 +204,6 @@ function cloneSettings(settings: PiExtensionSettings): PiExtensionSettings {
     yourself: { ...settings.yourself },
     repoMemory: { ...settings.repoMemory },
     promptAutomation: { ...settings.promptAutomation },
-    planMode: { ...settings.planMode },
   };
 }
 
@@ -268,11 +256,6 @@ export function normalizePiExtensionSettings(
         ? promptAutomationScope
         : defaults.promptAutomation.defaultJobScope,
     },
-    planMode: {
-      showDiscussionButton: bool(raw.planMode?.showDiscussionButton, defaults.planMode.showDiscussionButton),
-      showPlanButton: bool(raw.planMode?.showPlanButton, defaults.planMode.showPlanButton),
-      renderPlanMarkdown: bool(raw.planMode?.renderPlanMarkdown, defaults.planMode.renderPlanMarkdown),
-    },
   };
 }
 
@@ -288,7 +271,6 @@ export function mergePiExtensionSettings(
     yourself: { ...current.yourself, ...(patch.yourself ?? {}) },
     repoMemory: { ...current.repoMemory, ...(patch.repoMemory ?? {}) },
     promptAutomation: { ...current.promptAutomation, ...(patch.promptAutomation ?? {}) },
-    planMode: { ...current.planMode, ...(patch.planMode ?? {}) },
   };
   return normalizePiExtensionSettings(merged, current);
 }

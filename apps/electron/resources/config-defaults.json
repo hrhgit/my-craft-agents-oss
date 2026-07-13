@@ -10,7 +10,7 @@
     "keepAwakeWhileRunning": false,
     "richToolDescriptions": true,
     "browserToolEnabled": true,
-    "dataSourcesEnabled": true,
+    "dataSourcesEnabled": false,
     "allowRemoteEvaluate": true,
     "piExtensions": {
       "enabled": true,
@@ -32,11 +32,6 @@
       "promptAutomation": {
         "widgetVisible": true,
         "defaultJobScope": "session"
-      },
-      "planMode": {
-        "showDiscussionButton": true,
-        "showPlanButton": true,
-        "renderPlanMarkdown": true
       }
     },
     "piShell": {

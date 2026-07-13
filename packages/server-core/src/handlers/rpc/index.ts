@@ -4,7 +4,6 @@ import type { HandlerDeps } from '../handler-deps'
 import { registerAuthHandlers } from './auth'
 import { registerAutomationsHandlers } from './automations'
 import { registerFilesHandlers } from './files'
-import { registerLabelsHandlers } from './labels'
 import { registerPiProviderHandlers } from './pi-providers'
 import { registerOAuthHandlers } from './oauth'
 import { registerResourcesHandlers } from './resources'
@@ -18,7 +17,6 @@ export { getHealthCheck } from './server'
 import { registerSettingsHandlers } from './settings'
 import { registerSkillsHandlers } from './skills'
 import { registerSourcesHandlers } from './sources'
-import { registerStatusesHandlers } from './statuses'
 import { registerSystemCoreHandlers } from './system'
 import { registerTransferHandlers } from './transfer'
 import { registerWorkspaceCoreHandlers } from './workspace'
@@ -32,7 +30,6 @@ export function registerCoreRpcHandlers(
   registerAuthHandlers(server, deps)
   registerAutomationsHandlers(server, deps)
   registerFilesHandlers(server, deps)
-  registerLabelsHandlers(server, deps)
   registerPiProviderHandlers(server, deps)
   registerOAuthHandlers(server, deps)
   registerOnboardingHandlers(server, deps)
@@ -42,7 +39,6 @@ export function registerCoreRpcHandlers(
   registerSettingsHandlers(server, deps)
   registerSkillsHandlers(server, deps)
   registerSourcesHandlers(server, deps)
-  registerStatusesHandlers(server, deps)
   registerSystemCoreHandlers(server, deps)
   registerTransferHandlers(server)
   registerWorkspaceCoreHandlers(server, deps)

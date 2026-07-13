@@ -51,7 +51,7 @@ describe('parseAutomationsConfig', () => {
           { cron: '0 9 * * *', actions: [{ type: 'prompt', prompt: 'Run backup' }] },
           { cron: '0 18 * * *', actions: [{ type: 'prompt', prompt: 'Run cleanup' }] },
         ],
-        LabelAdd: [
+        PermissionModeChange: [
           { matcher: 'urgent', actions: [{ type: 'prompt', prompt: 'Handle urgent' }] },
         ],
       },
@@ -62,7 +62,7 @@ describe('parseAutomationsConfig', () => {
     expect(items[0].matcherIndex).toBe(0)
     expect(items[1].event).toBe('SchedulerTick')
     expect(items[1].matcherIndex).toBe(1)
-    expect(items[2].event).toBe('LabelAdd')
+    expect(items[2].event).toBe('PermissionModeChange')
     expect(items[2].matcherIndex).toBe(0)
   })
 
@@ -184,7 +184,7 @@ describe('parseAutomationsConfig', () => {
       version: 2,
       automations: {
         SchedulerTick: [{ actions: [{ type: 'prompt', prompt: 'a' }] }],
-        LabelAdd: [{ actions: [{ type: 'prompt', prompt: 'b' }] }],
+        PermissionModeChange: [{ actions: [{ type: 'prompt', prompt: 'b' }] }],
         SessionStart: [{ actions: [{ type: 'prompt', prompt: 'c' }] }],
       },
     }
@@ -193,14 +193,13 @@ describe('parseAutomationsConfig', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('preserves optional fields (matcher, cron, timezone, permissionMode, labels)', () => {
+  it('preserves optional fields (matcher and permissionMode)', () => {
     const config = {
       version: 2,
       automations: {
-        LabelAdd: [{
+        PermissionModeChange: [{
           matcher: 'urgent',
           permissionMode: 'ask',
-          labels: ['important'],
           actions: [{ type: 'prompt', prompt: 'Handle it' }],
         }],
       },
@@ -208,6 +207,5 @@ describe('parseAutomationsConfig', () => {
     const items = parseAutomationsConfig(config)
     expect(items[0].matcher).toBe('urgent')
     expect(items[0].permissionMode).toBe('ask')
-    expect(items[0].labels).toEqual(['important'])
   })
 })

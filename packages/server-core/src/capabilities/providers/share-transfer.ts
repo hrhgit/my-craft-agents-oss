@@ -7,8 +7,6 @@ import type { CapabilityProvider } from '../types.ts'
 
 export const TRANSFER_SUMMARY_MAX_LENGTH = 200_000
 export const TRANSFER_NAME_MAX_LENGTH = 500
-export const TRANSFER_LABEL_LIMIT = 100
-export const TRANSFER_LABEL_MAX_LENGTH = 200
 
 export interface SessionShareStatus {
   published: boolean
@@ -67,20 +65,12 @@ function optionalString(value: unknown, field: string, maxLength: number): strin
 function parseTransferPayload(input: unknown): RemoteSessionTransferPayload {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('input must be a transfer summary object')
   const value = input as Record<string, unknown>
+  // Retired organization fields remain accepted as legacy input, then discarded.
   const allowed = new Set(['sourceSessionId', 'name', 'sessionStatus', 'labels', 'permissionMode', 'summary'])
   if (Object.keys(value).some(key => !allowed.has(key))) throw new Error('input contains unsupported transfer fields')
   const sourceSessionId = optionalString(value.sourceSessionId, 'sourceSessionId', 200)
   const summary = optionalString(value.summary, 'summary', TRANSFER_SUMMARY_MAX_LENGTH)
   if (!sourceSessionId || !summary) throw new Error('sourceSessionId and summary are required')
-  let labels: string[] | undefined
-  if (value.labels !== undefined) {
-    if (!Array.isArray(value.labels) || value.labels.length > TRANSFER_LABEL_LIMIT
-      || value.labels.some(label => typeof label !== 'string' || !label.trim() || label.length > TRANSFER_LABEL_MAX_LENGTH)) {
-      throw new Error('labels are invalid or exceed the transfer limit')
-    }
-    labels = value.labels as string[]
-  }
-  const sessionStatus = optionalString(value.sessionStatus, 'sessionStatus', 200)
   if (value.permissionMode !== undefined && !['safe', 'ask', 'allow-all'].includes(String(value.permissionMode))) {
     throw new Error('permissionMode is invalid')
   }
@@ -88,8 +78,6 @@ function parseTransferPayload(input: unknown): RemoteSessionTransferPayload {
     sourceSessionId,
     summary,
     ...(optionalString(value.name, 'name', TRANSFER_NAME_MAX_LENGTH) ? { name: value.name as string } : {}),
-    ...(labels ? { labels } : {}),
-    ...(sessionStatus ? { sessionStatus } : {}),
     ...(value.permissionMode ? { permissionMode: value.permissionMode as RemoteSessionTransferPayload['permissionMode'] } : {}),
   }
 }

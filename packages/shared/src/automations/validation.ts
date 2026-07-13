@@ -10,8 +10,6 @@ import { join } from 'node:path';
 import { resolveAutomationsConfigPath } from './resolve-config-path.ts';
 import { AUTOMATIONS_CONFIG_FILE } from './constants.ts';
 import { AutomationsConfigSchema, zodErrorToIssues, DEPRECATED_EVENT_ALIASES } from './schemas.ts';
-import { isValidLabelId } from '../labels/storage.ts';
-import { extractLabelId } from '../labels/values.ts';
 import { readPiGlobalProviders } from '../config/pi-global-config.ts';
 import { Cron } from 'croner';
 import type { ValidationResult, ValidationIssue } from '../config/validators.ts';
@@ -225,7 +223,7 @@ export function validateAutomationsContent(jsonString: string, fileName?: string
       path: 'automations',
       message: 'No automations configured',
       severity: 'warning',
-      suggestion: 'Add automation definitions under event names like SessionStatusChange, LabelAdd, etc.',
+      suggestion: 'Add automation definitions under a supported event name.',
     });
   }
 
@@ -325,31 +323,16 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
   const errors: ValidationIssue[] = [];
   const warnings = [...contentResult.warnings];
 
-  // Validate labels, provider keys, and model compatibility
+  // Validate provider keys and model compatibility
   try {
-    const config = content as { automations?: Record<string, Array<{ labels?: string[]; actions?: Array<{ type: string; provider?: string; model?: string }> }>> };
+    const config = content as { automations?: Record<string, Array<{ actions?: Array<{ type: string; provider?: string; model?: string }> }>> };
     const providers = readPiGlobalProviders();
-    const labelEntries = config.automations;
-    if (labelEntries) {
-      for (const [event, matchers] of Object.entries(labelEntries)) {
+    const automationEntries = config.automations;
+    if (automationEntries) {
+      for (const [event, matchers] of Object.entries(automationEntries)) {
         if (!matchers) continue;
         for (let i = 0; i < matchers.length; i++) {
           const matcher = matchers[i];
-          if (matcher?.labels) {
-            for (const label of matcher.labels) {
-              // Extract label ID (handles "priority::3" -> "priority")
-              const labelId = extractLabelId(label);
-              if (!isValidLabelId(workspaceRoot, labelId)) {
-                warnings.push({
-                  file,
-                  path: `automations.${event}[${i}].labels`,
-                  message: `Label "${labelId}" does not exist in workspace`,
-                  severity: 'warning',
-                  suggestion: `Create this label in labels/config.json or use an existing label ID`,
-                });
-              }
-            }
-          }
           // Validate provider keys and model compatibility in prompt actions
           const actions = matcher?.actions;
           if (actions) {
@@ -411,7 +394,7 @@ const VALID_WEEKDAYS = new Set(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 const HH_MM_RE = /^\d{2}:\d{2}$/;
 
 /** Events that have transition fields (from/to) */
-const TRANSITION_EVENTS = new Set(['PermissionModeChange', 'SessionStatusChange']);
+const TRANSITION_EVENTS = new Set(['PermissionModeChange']);
 
 function validateConditionsArray(
   conditions: unknown[],
@@ -534,7 +517,7 @@ function validateStateCondition(
     warnings.push({
       file,
       path,
-      message: `from/to transition checks are typically used with PermissionModeChange or SessionStatusChange events, not ${event}`,
+      message: `from/to transition checks are typically used with PermissionModeChange events, not ${event}`,
       severity: 'warning',
     });
   }

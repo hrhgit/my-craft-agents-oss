@@ -3,7 +3,7 @@
  *
  */
 
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, utimesSync } from 'fs';
 import { dirname, join } from 'path';
 import {
   SessionManager as PiSessionManager,
@@ -213,9 +213,6 @@ export function getCraftIdFromTreeHeader(
 function getCraftHeaderMetadataSignature(craft: Partial<CraftMetadataOnDisk>): string {
   return JSON.stringify({
     name: craft.name,
-    labels: craft.labels,
-    isFlagged: craft.isFlagged,
-    sessionStatus: craft.sessionStatus,
     permissionMode: craft.permissionMode,
     hasUnread: craft.hasUnread,
     lastReadMessageId: craft.lastReadMessageId,
@@ -252,9 +249,6 @@ function buildCraftMetadataOnDisk(
   if (hasExternalMetadataChange(previousCraft, options)) {
     for (const field of [
       'name',
-      'labels',
-      'isFlagged',
-      'sessionStatus',
       'permissionMode',
       'hasUnread',
       'lastReadMessageId',
@@ -272,6 +266,11 @@ function buildCraftMetadataOnDisk(
   // the old connection flag and its short-lived migration alias on rewrite.
   delete (craftMetadata as Record<string, unknown>).connectionLocked;
   delete (craftMetadata as Record<string, unknown>).providerLocked;
+  delete (craftMetadata as Record<string, unknown>).sessionStatus;
+  delete (craftMetadata as Record<string, unknown>).labels;
+  delete (craftMetadata as Record<string, unknown>).isFlagged;
+  delete (craftMetadata as Record<string, unknown>).isArchived;
+  delete (craftMetadata as Record<string, unknown>).archivedAt;
   return craftMetadata;
 }
 
@@ -447,28 +446,88 @@ export function isTreeSessionHeader(value: unknown): value is TreeSessionHeader 
 /**
  * Read only the header (first line) from a tree session JSONL file.
  *
- * Unlike {@link readTreeSessionJsonl}, this reads at most 8KB and avoids
- * parsing the (potentially huge) message body. It is intended for sessionId
+ * Unlike {@link readTreeSessionJsonl}, this reads only through the first
+ * newline and avoids parsing the (potentially huge) message body. It is intended for sessionId
  * lookup scenarios (e.g. findSharedPiSessionFileInDir) that only need the
  * header's `id` / `craft.id` fields.
  */
+const RETIRED_CRAFT_METADATA_FIELDS = [
+  'sessionStatus',
+  'labels',
+  'isFlagged',
+  'isArchived',
+  'archivedAt',
+] as const;
+
+function stripRetiredCraftMetadata(
+  header: TreeSessionHeader,
+): { header: TreeSessionHeader; changed: boolean } {
+  if (!isRecord(header.craft)) return { header, changed: false };
+
+  let changed = false;
+  for (const field of RETIRED_CRAFT_METADATA_FIELDS) {
+    if (field in header.craft) {
+      delete (header.craft as Record<string, unknown>)[field];
+      changed = true;
+    }
+  }
+  return { header, changed };
+}
+
+function persistCleanedTreeHeader(sessionFile: string, header: TreeSessionHeader): void {
+  const originalStat = statSync(sessionFile);
+  const content = readFileSync(sessionFile);
+  const firstNewline = content.indexOf(0x0a);
+  const remainder = firstNewline >= 0 ? content.subarray(firstNewline) : Buffer.alloc(0);
+  atomicWriteFileSync(sessionFile, JSON.stringify(header) + remainder.toString('utf8'));
+  try {
+    utimesSync(sessionFile, originalStat.atime, originalStat.mtime);
+  } catch (error) {
+    debug('[tree-jsonl] Failed to restore session timestamps after metadata cleanup:', sessionFile, error);
+  }
+}
+
 export function readTreeSessionHeader(sessionFile: string): TreeSessionHeader | null {
   try {
+    let parsedHeader: TreeSessionHeader;
     const fd = openSync(sessionFile, 'r');
     try {
-      const buffer = Buffer.alloc(8192); // 8KB is plenty for the tree session header
-      const bytesRead = readSync(fd, buffer, 0, 8192, 0);
-      if (bytesRead <= 0) return null;
-      const content = buffer.toString('utf-8', 0, bytesRead);
-      const firstNewline = content.indexOf('\n');
-      const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
+      const chunks: Buffer[] = [];
+      let position = 0;
+      let newlineOffset = -1;
+      while (newlineOffset < 0) {
+        const buffer = Buffer.alloc(8192);
+        const bytesRead = readSync(fd, buffer, 0, buffer.length, position);
+        if (bytesRead <= 0) break;
+        const chunk = buffer.subarray(0, bytesRead);
+        const chunkNewline = chunk.indexOf(0x0a);
+        if (chunkNewline >= 0) {
+          chunks.push(chunk.subarray(0, chunkNewline));
+          newlineOffset = position + chunkNewline;
+        } else {
+          chunks.push(chunk);
+          position += bytesRead;
+        }
+      }
+      if (chunks.length === 0) return null;
+      const firstLine = Buffer.concat(chunks).toString('utf8');
       if (!firstLine.trim()) return null;
       const parsed = JSON.parse(firstLine) as unknown;
       if (!isTreeSessionHeader(parsed)) return null;
-      return parsed;
+      parsedHeader = parsed;
     } finally {
       closeSync(fd);
     }
+
+    const cleaned = stripRetiredCraftMetadata(parsedHeader);
+    if (cleaned.changed) {
+      try {
+        persistCleanedTreeHeader(sessionFile, cleaned.header);
+      } catch (error) {
+        debug('[tree-jsonl] Failed to persist retired Craft metadata cleanup:', sessionFile, error);
+      }
+    }
+    return cleaned.header;
   } catch {
     return null;
   }

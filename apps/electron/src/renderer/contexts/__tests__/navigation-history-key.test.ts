@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { buildSemanticHistoryKey, canRunInitialRestore } from '../navigation-history'
+import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch } from '../navigation-history'
 
 describe('buildSemanticHistoryKey', () => {
   it('changes when focused panel index changes even if routes are identical', () => {
@@ -61,5 +61,31 @@ describe('canRunInitialRestore', () => {
       workspaceId: 'ws-1',
       initialRouteRestored: true,
     })).toBe(false)
+  })
+})
+
+describe('resolveWorkspaceSwitchSearch', () => {
+  it('opens all sessions for an explicit workspace-list switch', () => {
+    expect(resolveWorkspaceSwitchSearch({
+      destination: 'allSessions',
+      savedSearch: '?ws=target&route=sources',
+      workspaceSlug: 'target',
+    })).toBe('?ws=target&route=allSessions')
+  })
+
+  it('preserves saved navigation for history-driven workspace restoration', () => {
+    expect(resolveWorkspaceSwitchSearch({
+      destination: 'restore',
+      savedSearch: '?ws=target&route=sources%2Fsource%2Fgithub',
+      workspaceSlug: 'target',
+    })).toBe('?ws=target&route=sources%2Fsource%2Fgithub')
+  })
+
+  it('defaults to all sessions when no saved navigation exists', () => {
+    expect(resolveWorkspaceSwitchSearch({
+      destination: null,
+      savedSearch: '',
+      workspaceSlug: 'fresh',
+    })).toBe('?ws=fresh&route=allSessions')
   })
 })

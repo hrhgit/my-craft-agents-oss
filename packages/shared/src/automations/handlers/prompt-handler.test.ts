@@ -37,10 +37,10 @@ describe('PromptHandler', () => {
   });
 
   describe('matcher matching for app events', () => {
-    it('should process prompt actions for matching LabelAdd event', async () => {
+    it('should process prompt actions for matching PermissionModeChange event', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           matcher: 'bug',
           actions: [{ type: 'prompt', prompt: 'A bug label was added' }],
         }],
@@ -49,10 +49,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'bug',
+        oldMode: 'ask', newMode: 'bug',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -91,7 +91,7 @@ describe('PromptHandler', () => {
     it('should not call onPromptsReady for non-matching events', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           matcher: 'bug',
           actions: [{ type: 'prompt', prompt: 'Bug detected' }],
         }],
@@ -100,10 +100,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'feature',
+        oldMode: 'ask', newMode: 'feature',
       });
 
       expect(onPromptsReady).not.toHaveBeenCalled();
@@ -114,7 +114,7 @@ describe('PromptHandler', () => {
     it('should propagate thinkingLevel from PromptAction to PendingPrompt', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           matcher: 'review',
           actions: [{
             type: 'prompt',
@@ -129,10 +129,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'review',
+        oldMode: 'ask', newMode: 'review',
       });
 
       const prompts: PendingPrompt[] = onPromptsReady.mock.calls[0]![0];
@@ -149,7 +149,7 @@ describe('PromptHandler', () => {
     it('should leave thinkingLevel undefined when omitted (global default applies downstream)', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           matcher: 'bug',
           actions: [{ type: 'prompt', prompt: 'Triage' }],
         }],
@@ -158,10 +158,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'bug',
+        oldMode: 'ask', newMode: 'bug',
       });
 
       const prompts: PendingPrompt[] = onPromptsReady.mock.calls[0]![0];
@@ -243,18 +243,18 @@ describe('PromptHandler', () => {
     it('should expand $VAR syntax in prompt text', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
-          actions: [{ type: 'prompt', prompt: 'Label $CRAFT_LABEL was added' }],
+        PermissionModeChange: [{
+          actions: [{ type: 'prompt', prompt: 'Mode $CRAFT_NEW_MODE was selected' }],
         }],
       });
 
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'urgent',
+        oldMode: 'ask', newMode: 'urgent',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -267,18 +267,18 @@ describe('PromptHandler', () => {
     it('should expand ${VAR} syntax in prompt text', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
-          actions: [{ type: 'prompt', prompt: 'Label ${CRAFT_LABEL} was added to ${CRAFT_WORKSPACE_ID}' }],
+        PermissionModeChange: [{
+          actions: [{ type: 'prompt', prompt: 'Mode ${CRAFT_NEW_MODE} was selected in ${CRAFT_WORKSPACE_ID}' }],
         }],
       });
 
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'priority',
+        oldMode: 'ask', newMode: 'priority',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -294,7 +294,7 @@ describe('PromptHandler', () => {
     it('should parse @mentions from prompt text', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{ type: 'prompt', prompt: 'Please @linear check for issues and @github create a PR' }],
         }],
       });
@@ -302,10 +302,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -319,7 +319,7 @@ describe('PromptHandler', () => {
     it('should deduplicate @mentions', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{ type: 'prompt', prompt: '@linear do X then @linear do Y' }],
         }],
       });
@@ -327,10 +327,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -346,7 +346,7 @@ describe('PromptHandler', () => {
     it('should deliver multiple prompts from a single event', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [
+        PermissionModeChange: [
           {
             actions: [{ type: 'prompt', prompt: 'First prompt' }],
           },
@@ -359,10 +359,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -377,7 +377,7 @@ describe('PromptHandler', () => {
     it('should not call onPromptsReady if no prompt actions match', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{ type: 'command', command: 'echo hello' }],
         }],
       });
@@ -385,10 +385,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).not.toHaveBeenCalled();
@@ -396,37 +396,13 @@ describe('PromptHandler', () => {
       handler.dispose();
     });
 
-    it('should pass labels from matcher to pending prompts', async () => {
-      const onPromptsReady = jest.fn();
-      const configProvider = createMockConfigProvider({
-        LabelAdd: [{
-          labels: ['auto-created', 'from-automation'],
-          actions: [{ type: 'prompt', prompt: 'Do something' }],
-        }],
-      });
-
-      const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
-      handler.subscribe(bus);
-
-      await bus.emit('LabelAdd', {
-        workspaceId: 'test-workspace',
-        timestamp: Date.now(),
-        label: 'test',
-      });
-
-      expect(onPromptsReady).toHaveBeenCalledTimes(1);
-      const prompts: PendingPrompt[] = onPromptsReady.mock.calls[0]![0];
-      expect(prompts[0]!.labels).toEqual(['auto-created', 'from-automation']);
-
-      handler.dispose();
-    });
   });
 
   describe('provider passthrough', () => {
     it('should pass provider from prompt action to pending prompt', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{
             type: 'prompt',
             prompt: 'Create a source',
@@ -438,10 +414,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -454,7 +430,7 @@ describe('PromptHandler', () => {
     it('should leave provider undefined when not specified', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{
             type: 'prompt',
             prompt: 'Create a source',
@@ -465,10 +441,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -483,7 +459,7 @@ describe('PromptHandler', () => {
     it('should pass model from prompt action to pending prompt', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{
             type: 'prompt',
             prompt: 'Quick review',
@@ -495,10 +471,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -511,7 +487,7 @@ describe('PromptHandler', () => {
     it('should leave model undefined when not specified', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{
             type: 'prompt',
             prompt: 'Quick review',
@@ -522,10 +498,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -540,7 +516,7 @@ describe('PromptHandler', () => {
     it('should set automationName from matcher.name when provided', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           name: 'Daily Triage',
           actions: [{ type: 'prompt', prompt: 'Review issues' }],
         }],
@@ -549,10 +525,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -565,7 +541,7 @@ describe('PromptHandler', () => {
     it('should derive automationName from @mention when matcher has no name', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{ type: 'prompt', prompt: '@linear check for issues' }],
         }],
       });
@@ -573,10 +549,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -589,7 +565,7 @@ describe('PromptHandler', () => {
     it('should derive automationName from prompt text when no name or @mention', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{ type: 'prompt', prompt: 'Review the code' }],
         }],
       });
@@ -597,10 +573,10 @@ describe('PromptHandler', () => {
       const handler = new PromptHandler(createOptions({ onPromptsReady }), configProvider);
       handler.subscribe(bus);
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
@@ -626,7 +602,7 @@ describe('PromptHandler', () => {
     it('should not process events after disposal', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
-        LabelAdd: [{
+        PermissionModeChange: [{
           actions: [{ type: 'prompt', prompt: 'Should not fire' }],
         }],
       });
@@ -635,10 +611,10 @@ describe('PromptHandler', () => {
       handler.subscribe(bus);
       handler.dispose();
 
-      await bus.emit('LabelAdd', {
+      await bus.emit('PermissionModeChange', {
         workspaceId: 'test-workspace',
         timestamp: Date.now(),
-        label: 'test',
+        oldMode: 'ask', newMode: 'test',
       });
 
       expect(onPromptsReady).not.toHaveBeenCalled();

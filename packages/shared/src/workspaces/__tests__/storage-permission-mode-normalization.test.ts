@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadWorkspaceConfig } from '../storage.ts';
@@ -89,6 +89,32 @@ describe('workspace storage: config normalization', () => {
     expect(loaded).not.toBeNull();
     expect(loaded?.defaults?.permissionMode).toBe('allow-all');
     expect(loaded?.defaults?.cyclablePermissionModes).toEqual(['safe', 'ask', 'allow-all']);
+  });
+
+  it('removes retired labels, statuses, and custom views when loading a workspace', () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-retired-organization-'));
+    tempDirs.push(workspaceRoot);
+
+    writeFileSync(join(workspaceRoot, 'config.json'), JSON.stringify({
+      id: 'ws_retired_organization',
+      name: 'Legacy Organization',
+      slug: 'legacy-organization',
+      defaults: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }), 'utf-8');
+    mkdirSync(join(workspaceRoot, 'labels'), { recursive: true });
+    mkdirSync(join(workspaceRoot, 'statuses'), { recursive: true });
+    writeFileSync(join(workspaceRoot, 'labels', 'config.json'), '{"labels":[]}', 'utf-8');
+    writeFileSync(join(workspaceRoot, 'statuses', 'config.json'), '{"statuses":[]}', 'utf-8');
+    writeFileSync(join(workspaceRoot, 'views.json'), '{"views":[]}', 'utf-8');
+
+    expect(loadWorkspaceConfig(workspaceRoot)).not.toBeNull();
+    expect(existsSync(join(workspaceRoot, 'labels'))).toBe(false);
+    expect(existsSync(join(workspaceRoot, 'statuses'))).toBe(false);
+    expect(existsSync(join(workspaceRoot, 'views.json'))).toBe(false);
+
+    expect(loadWorkspaceConfig(workspaceRoot)).not.toBeNull();
   });
 
 });

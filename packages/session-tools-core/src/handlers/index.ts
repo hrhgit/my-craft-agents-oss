@@ -59,8 +59,6 @@ export type { RenderTemplateArgs } from './render-template.ts';
 export { handleSendDeveloperFeedback } from './send-developer-feedback.ts';
 export type { SendDeveloperFeedbackArgs } from './send-developer-feedback.ts';
 
-// Session Self-Management
-export type { SetSessionLabelsArgs } from './set-session-labels.ts';
-export type { SetSessionStatusArgs } from './set-session-status.ts';
+// Session Queries
 export type { GetSessionInfoArgs } from './get-session-info.ts';
 export type { ListSessionsArgs } from './list-sessions.ts';

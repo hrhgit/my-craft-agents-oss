@@ -4,13 +4,10 @@ import { useSetAtom } from "jotai"
 import { isToday, isYesterday, format, startOfDay } from "date-fns"
 import { getDateLocale } from "@craft-agent/shared/i18n"
 import { useAction } from "@/actions"
-import { Inbox, Archive } from "lucide-react"
+import { Inbox } from "lucide-react"
 
-import { getSessionStatus } from "@/utils/session"
 import * as storage from "@/lib/local-storage"
 import { KEYS } from "@/lib/local-storage"
-import type { LabelConfig } from "@craft-agent/shared/labels"
-import { flattenLabels } from "@craft-agent/shared/labels"
 import * as MultiSelect from "@/hooks/useMultiSelect"
 import { Spinner } from "@craft-agent/ui"
 import { EntityListEmptyScreen } from "@/components/ui/entity-list-empty"
@@ -20,16 +17,13 @@ import { SessionSearchHeader } from "./SessionSearchHeader"
 import { SessionItem } from "./SessionItem"
 import { SessionListProvider, type SessionListContextValue } from "@/context/SessionListContext"
 import { useSessionSelection, useSessionSelectionStore } from "@/hooks/useSession"
-import { useSessionSearch, type FilterMode } from "@/hooks/useSessionSearch"
-import { useSessionActions } from "@/hooks/useSessionActions"
+import { useSessionSearch } from "@/hooks/useSessionSearch"
 import { useEntityListInteractions } from "@/hooks/useEntityListInteractions"
 import { useFocusZone } from "@/hooks/keyboard"
 import { useEscapeInterrupt } from "@/context/EscapeInterruptContext"
-import { useNavigation, useNavigationState, routes, isSessionsNavigation } from "@/contexts/NavigationContext"
+import { useNavigation, routes } from "@/contexts/NavigationContext"
 import { useFocusContext } from "@/context/FocusContext"
 import { sendToWorkspaceAtom, type SessionMeta } from "@/atoms/sessions"
-import type { ViewConfig } from "@craft-agent/shared/views"
-import type { SessionStatusId, SessionStatus } from "@/config/session-status-config"
 import { buildCollapsedGroupsScopeSuffix } from "@/utils/session-list-collapse"
 
 export interface SessionListRow {
@@ -37,17 +31,12 @@ export interface SessionListRow {
 }
 
 /** Grouping mode for chat list */
-export type ChatGroupingMode = 'date' | 'status' | 'unread'
+export type ChatGroupingMode = 'date' | 'unread'
 
 interface SessionListProps {
   items: SessionMeta[]
   onDelete: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
-  onFlag?: (sessionId: string) => void
-  onUnflag?: (sessionId: string) => void
-  onArchive?: (sessionId: string) => void
-  onUnarchive?: (sessionId: string) => void
   onMarkUnread: (sessionId: string) => void
-  onSessionStatusChange: (sessionId: string, state: SessionStatusId) => void
   onRename: (sessionId: string, name: string) => void
   /** Called when Enter is pressed to focus chat input for a specific session */
   onFocusChatInput?: (sessionId?: string) => void
@@ -55,8 +44,6 @@ interface SessionListProps {
   onSessionSelect?: (session: SessionMeta) => void
   /** Called when user wants to open a session in a new window */
   onOpenInNewWindow?: (session: SessionMeta) => void
-  /** Called to navigate to a specific view (e.g., 'allSessions', 'flagged') */
-  onNavigateToView?: (view: 'allSessions' | 'flagged') => void
   /** Unified session options per session (real-time state) */
   sessionOptions?: Map<string, import('../../hooks/useSessionOptions').SessionOptions>
   /** Whether search mode is active */
@@ -67,22 +54,10 @@ interface SessionListProps {
   onSearchChange?: (query: string) => void
   /** Called when search is closed */
   onSearchClose?: () => void
-  /** Dynamic todo states from workspace config */
-  sessionStatuses?: SessionStatus[]
-  /** View evaluator — evaluates a session and returns matching view configs */
-  evaluateViews?: (meta: SessionMeta) => ViewConfig[]
-  /** Label configs for resolving session label IDs to display info */
-  labels?: LabelConfig[]
-  /** Callback when session labels are toggled (for labels submenu in SessionMenu) */
-  onLabelsChange?: (sessionId: string, labels: string[]) => void
   /** How to group sessions: 'date' (default) or 'status' */
   groupingMode?: ChatGroupingMode
   /** Workspace ID for content search (optional - if not provided, content search is disabled) */
   workspaceId?: string
-  /** Secondary status filter (status chips in "All Sessions" view) - for search result grouping */
-  statusFilter?: Map<string, FilterMode>
-  /** Secondary label filter (label chips) - for search result grouping */
-  labelFilterMap?: Map<string, FilterMode>
   /** Override which session is highlighted (for multi-panel focused panel tracking) */
   focusedSessionId?: string | null
   /** Override navigation target (for multi-panel: focuses existing panel or navigates focused panel) */
@@ -92,9 +67,6 @@ interface SessionListProps {
   /** DOM-verified match info for the active session (from ChatDisplay) */
   activeChatMatchInfo?: { sessionId: string | null; count: number; isHighlighting?: boolean }
 }
-
-// Re-export SessionStatusId for use by parent components
-export type { SessionStatusId }
 
 // Note: uses date-fns format for non-today/yesterday dates; Today/Yesterday translated at render time
 function formatDateGroupLabel(date: Date, t: (key: string) => string, lang: string): string {
@@ -115,12 +87,7 @@ function formatDateGroupLabel(date: Date, t: (key: string) => string, lang: stri
 export function SessionList({
   items,
   onDelete,
-  onFlag,
-  onUnflag,
-  onArchive,
-  onUnarchive,
   onMarkUnread,
-  onSessionStatusChange,
   onRename,
   onFocusChatInput,
   onOpenInNewWindow,
@@ -129,14 +96,8 @@ export function SessionList({
   searchQuery = '',
   onSearchChange,
   onSearchClose,
-  sessionStatuses = [],
-  evaluateViews,
-  labels = [],
-  onLabelsChange,
   groupingMode = 'date',
   workspaceId,
-  statusFilter,
-  labelFilterMap,
   focusedSessionId,
   onNavigateToSession,
   hasPendingPrompt,
@@ -156,14 +117,7 @@ export function SessionList({
 
   const { navigate, navigateToSession: navigateToSessionPrimary } = useNavigation()
   const navigateToSession = onNavigateToSession ?? navigateToSessionPrimary
-  const navState = useNavigationState()
   const { showEscapeOverlay } = useEscapeInterrupt()
-
-  // Pre-flatten label tree once for efficient ID lookups in each SessionItem
-  const flatLabels = useMemo(() => flattenLabels(labels), [labels])
-
-  // Get current filter from navigation state (for preserving context in tab routes)
-  const currentFilter = isSessionsNavigation(navState) ? navState.filter : undefined
 
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null)
@@ -175,16 +129,11 @@ export function SessionList({
   const collapseScopeSuffix = useMemo(() => {
     return buildCollapsedGroupsScopeSuffix({
       workspaceId,
-      currentFilter,
       groupingMode,
     })
   }, [
     workspaceId,
     groupingMode,
-    currentFilter?.kind,
-    currentFilter && 'stateId' in currentFilter ? currentFilter.stateId : undefined,
-    currentFilter && 'labelId' in currentFilter ? currentFilter.labelId : undefined,
-    currentFilter && 'viewId' in currentFilter ? currentFilter.viewId : undefined,
   ])
 
   const readCollapsedGroupsForScope = useCallback((scopeSuffix: string): Set<string> => {
@@ -238,7 +187,6 @@ export function SessionList({
     isSearchUnavailable,
     contentSearchResults,
     matchingFilterItems,
-    otherResultItems,
     exceededSearchLimit,
     flatItems,
     hasMore,
@@ -249,10 +197,6 @@ export function SessionList({
     searchActive: searchActive ?? false,
     searchQuery,
     workspaceId,
-    currentFilter,
-    evaluateViews,
-    statusFilter,
-    labelFilterMap,
     collapsedGroups,
     groupingMode,
     scrollViewportRef,
@@ -261,19 +205,9 @@ export function SessionList({
   const rowData = useMemo(() => {
     if (isSearchMode) {
       const matchingRows: SessionListRow[] = matchingFilterItems.map(item => ({ item }))
-      const otherRows: SessionListRow[] = otherResultItems.map(item => ({ item }))
-
-      const groups: EntityListGroup<SessionListRow>[] = []
-      if (matchingRows.length > 0) {
-        groups.push({ key: 'matching', label: t("session.inCurrentView"), items: matchingRows })
-      }
-      if (otherRows.length > 0) {
-        groups.push({ key: 'other', label: t("session.otherConversations"), items: otherRows })
-      }
-
       return {
-        rows: [...matchingRows, ...otherRows],
-        groups,
+        rows: matchingRows,
+        groups: [],
       }
     }
 
@@ -322,58 +256,6 @@ export function SessionList({
           ...(collapsedRead ? { collapsedCount: collapsedRead.count } : {}),
         },
       ]
-
-      return {
-        rows: orderedGroups.flatMap(g => g.items),
-        groups: orderedGroups,
-      }
-    }
-
-    if (groupingMode === 'status') {
-      const statusOrder = new Map<string, number>()
-      sessionStatuses.forEach((state, index) => statusOrder.set(state.id, index))
-
-      // Build groups from visible items
-      const groupsByKey = new Map<string, { rows: SessionListRow[], statusId: string }>()
-      for (const row of rows) {
-        const statusId = getSessionStatus(row.item)
-        const key = `status-${statusId}`
-        if (!groupsByKey.has(key)) groupsByKey.set(key, { rows: [], statusId })
-        groupsByKey.get(key)!.rows.push(row)
-      }
-
-      // Insert collapsed placeholder groups
-      for (const meta of collapsedGroupsMeta) {
-        if (!groupsByKey.has(meta.key)) {
-          const statusId = meta.key.replace('status-', '')
-          groupsByKey.set(meta.key, { rows: [], statusId })
-        }
-      }
-
-      const orderedGroups: EntityListGroup<SessionListRow>[] = []
-      for (const [key, { rows: groupRows, statusId }] of groupsByKey) {
-        const state = sessionStatuses.find(s => s.id === statusId)
-        if (!state) continue
-        groupRows.sort((a, b) => (b.item.lastMessageAt || 0) - (a.item.lastMessageAt || 0))
-        const collapsedMeta = collapsedGroupsMeta.find(m => m.key === key)
-        orderedGroups.push({
-          key,
-          label: t(`status.${state.id}`, state.label),
-          items: groupRows,
-          collapsible: true,
-          ...(collapsedMeta ? { collapsedCount: collapsedMeta.count } : {}),
-        })
-      }
-      orderedGroups.sort((a, b) => {
-        const aOrder = statusOrder.get(a.key.replace('status-', '')) ?? 999
-        const bOrder = statusOrder.get(b.key.replace('status-', '')) ?? 999
-        return aOrder - bOrder
-      })
-
-      // If only one group exists, disable collapsing — there's nothing to collapse into
-      if (orderedGroups.length === 1) {
-        orderedGroups[0].collapsible = false
-      }
 
       return {
         rows: orderedGroups.flatMap(g => g.items),
@@ -432,15 +314,12 @@ export function SessionList({
       rows,
       groups: orderedGroups,
     }
-  }, [isSearchMode, matchingFilterItems, otherResultItems, flatItems, groupingMode, sessionStatuses, collapsedGroupsMeta, t])
+  }, [isSearchMode, matchingFilterItems, flatItems, groupingMode, collapsedGroupsMeta, t, i18n.resolvedLanguage])
 
   const flatRows = rowData.rows
 
   const collapseAllGroups = useCallback(() => {
-    if (groupingMode === 'status') {
-      const allKeys = new Set(items.map(item => `status-${getSessionStatus(item)}`))
-      setCollapsedGroups(allKeys)
-    } else if (groupingMode === 'unread') {
+    if (groupingMode === 'unread') {
       const allKeys = new Set(items.map(item => item.hasUnread ? 'unread-yes' : 'unread-no'))
       setCollapsedGroups(allKeys)
     } else {
@@ -463,13 +342,6 @@ export function SessionList({
   }, [flatRows])
 
   // --- Action handlers with toast feedback ---
-  const {
-    handleFlagWithToast,
-    handleUnflagWithToast,
-    handleArchiveWithToast,
-    handleUnarchiveWithToast,
-    handleDeleteWithToast,
-  } = useSessionActions({ onFlag, onUnflag, onArchive, onUnarchive, onDelete })
 
   // --- Focus zone ---
   const { focusZone } = useFocusContext()
@@ -615,22 +487,13 @@ export function SessionList({
 
   const listContext = useMemo((): SessionListContextValue => ({
     onRenameClick: handleRenameClick,
-    onSessionStatusChange,
-    onFlag: onFlag ? handleFlagWithToast : undefined,
-    onUnflag: onUnflag ? handleUnflagWithToast : undefined,
-    onArchive: onArchive ? handleArchiveWithToast : undefined,
-    onUnarchive: onUnarchive ? handleUnarchiveWithToast : undefined,
     onMarkUnread,
-    onDelete: handleDeleteWithToast,
-    onLabelsChange,
+    onDelete,
     onSelectSessionById: handleSelectSessionById,
     onOpenInNewWindow: handleOpenInNewWindow,
     onSendToWorkspace: (ids: string[]) => setSendToWorkspace(ids),
     onFocusZone: handleFocusZone,
     onKeyDown: handleKeyDown,
-    sessionStatuses,
-    flatLabels,
-    labels,
     searchQuery: resolvedSearchQuery,
     selectedSessionId: focusedSessionId !== undefined ? focusedSessionId : selectionStore.state.selected,
     isMultiSelectActive,
@@ -639,12 +502,8 @@ export function SessionList({
     activeChatMatchInfo,
     hasPendingPrompt,
   }), [
-    handleRenameClick, onSessionStatusChange,
-    onFlag, handleFlagWithToast, onUnflag, handleUnflagWithToast,
-    onArchive, handleArchiveWithToast, onUnarchive, handleUnarchiveWithToast,
-    onMarkUnread, handleDeleteWithToast, onLabelsChange,
+    handleRenameClick, onMarkUnread, onDelete,
     handleSelectSessionById, handleOpenInNewWindow, setSendToWorkspace, handleFocusZone, handleKeyDown,
-    sessionStatuses, flatLabels, labels, resolvedSearchQuery,
     focusedSessionId, selectionStore.state.selected, isMultiSelectActive,
     sessionOptions, contentSearchResults, activeChatMatchInfo, hasPendingPrompt,
   ])
@@ -652,17 +511,6 @@ export function SessionList({
   // --- Empty state (non-search) — render before EntityList ---
   // Don't show empty state when there are collapsed groups with content
   if (flatRows.length === 0 && rowData.groups.length === 0 && !searchActive) {
-    if (currentFilter?.kind === 'archived') {
-      return (
-        <EntityListEmptyScreen
-          icon={<Archive />}
-          title={t("session.noArchivedSessions")}
-          description={t("session.noArchivedSessionsDesc")}
-          className="h-full"
-        />
-      )
-    }
-
     return (
       <EntityListEmptyScreen
         icon={<Inbox />}
@@ -672,10 +520,7 @@ export function SessionList({
       >
         <button
           onClick={() => {
-            const params: { status?: string; label?: string } = {}
-            if (currentFilter?.kind === 'state') params.status = currentFilter.stateId
-            else if (currentFilter?.kind === 'label') params.label = currentFilter.labelId
-            navigate(routes.action.newSession(Object.keys(params).length > 0 ? params : undefined))
+            navigate(routes.action.newSession())
           }}
           className="inline-flex items-center h-7 px-3 text-xs font-medium rounded-[8px] bg-background shadow-minimal hover:bg-foreground/[0.03] transition-colors"
         >
@@ -721,15 +566,10 @@ export function SessionList({
                 onBlur={() => setIsSearchInputFocused(false)}
                 isSearching={isSearchingContent}
                 isUnavailable={isSearchUnavailable}
-                resultCount={matchingFilterItems.length + otherResultItems.length}
+                resultCount={matchingFilterItems.length}
                 exceededLimit={exceededSearchLimit}
                 inputRef={searchInputRef}
               />
-            )}
-            {isSearchMode && matchingFilterItems.length === 0 && otherResultItems.length > 0 && (
-              <div className="px-4 py-3 text-sm text-muted-foreground">
-                {t("session.noResultsInFilter")}
-              </div>
             )}
           </>
         }

@@ -87,7 +87,7 @@ bun run electron:start
 
 ## Features
 
-- **Multi-Session Inbox**: Desktop app with session management, status workflow, and flagging
+- **Multi-Session History**: Desktop app with session management, unread tracking, search, and deletion
 - **Claude Code Experience**: Streaming responses, tool visualization, real-time updates
 - **Multiple LLM Connections**: Add multiple AI providers and set per-workspace defaults
 - **Multi-Provider Support**: Run sessions with Google AI Studio, ChatGPT Plus, GitHub Copilot, or OpenAI API keys alongside Anthropic
@@ -386,7 +386,7 @@ bun run typecheck:all
 
 On Windows, you can also double-click [`start-quick-test.cmd`](./start-quick-test.cmd) from the repo root to launch the portmux-managed Electron hot-reload development build. To switch modes from a terminal, run `start-quick-test.cmd start`, `start-quick-test.cmd server-dev`, or `start-quick-test.cmd webui-dev`.
 
-To launch the complete browser UI development environment on Windows, double-click [`start-webui.cmd`](./start-webui.cmd) or run `portmux start`. It starts the authenticated headless server and Vite WebUI, automatically signs the local browser in, and opens the URL assigned by portmux. The RPC server uses the following port (`WebUI + 1`) and the shared `~/.craft-agent` configuration. Double-click `start-webui.cmd` again to open another browser client connected to the same running WebUI; it does not start another backend or create an isolated configuration directory.
+To launch the complete browser UI development environment on Windows, double-click [`start-webui.cmd`](./start-webui.cmd) or run `portmux start`. It starts the authenticated headless server and Vite WebUI, automatically signs the local browser in, and opens the URL assigned by portmux. The RPC server uses the following port (`WebUI + 1`) and the shared `~/.craft-agent` configuration. Double-click `start-webui.cmd` again to open another browser client connected to the same running WebUI; it does not start another backend or create an isolated configuration directory. Double-click [`stop-webui.cmd`](./stop-webui.cmd) to stop every portmux-managed WebUI project for this repository and clean up legacy untracked WebUI process trees.
 
 Electron, standalone WebUI, RPC development server, and the component playground have separate portmux identities. Start them with `bun run electron:dev`, `bun run webui:dev`, `bun run server:dev`, and `bun run playground:dev`; each listens directly on its own assigned port. Electron, the WebUI headless server, and standalone server modes all use `~/.craft-agent` by default. Set `CRAFT_CONFIG_DIR` when an isolated profile is needed.
 
@@ -535,17 +535,8 @@ Or configure manually in `~/.craft-agent/workspaces/{id}/automations.json`:
       {
         "cron": "0 9 * * 1-5",
         "timezone": "America/New_York",
-        "labels": ["Scheduled"],
         "actions": [
           { "type": "prompt", "prompt": "Check @github for new issues assigned to me" }
-        ]
-      }
-    ],
-    "LabelAdd": [
-      {
-        "matcher": "^urgent$",
-        "actions": [
-          { "type": "prompt", "prompt": "An urgent label was added. Triage the session and summarise what needs attention." }
         ]
       }
     ]
@@ -553,9 +544,9 @@ Or configure manually in `~/.craft-agent/workspaces/{id}/automations.json`:
 }
 ```
 
-**Prompt actions** create a new agent session with a prompt. They support `@mentions` for sources and skills, and environment variables like `$CRAFT_LABEL` and `$CRAFT_SESSION_ID` are expanded automatically.
+**Prompt actions** create a new agent session with a prompt. They support `@mentions` for sources and skills, and environment variables like `$CRAFT_EVENT` and `$CRAFT_SESSION_ID` are expanded automatically.
 
-**Supported events:** `LabelAdd`, `LabelRemove`, `PermissionModeChange`, `FlagChange`, `SessionStatusChange`, `SchedulerTick`, `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, and more.
+**Supported events:** `PermissionModeChange`, `SchedulerTick`, `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, and more.
 
 See the [Automations documentation](https://agents.craft.do/docs/automations/overview) for the full reference.
 

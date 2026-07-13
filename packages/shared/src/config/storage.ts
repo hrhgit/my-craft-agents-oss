@@ -194,7 +194,7 @@ export interface StoredConfig {
   // Deprecated local mirrors retained for config compatibility; Pi settings are authoritative.
   // Tools
   browserToolEnabled?: boolean;  // Enable built-in browser tool (default: true). Disable for Playwright/Puppeteer.
-  dataSourcesEnabled?: boolean;  // Show data sources and expose their tools to sessions (default: true).
+  dataSourcesEnabled?: boolean;  // Show data sources and expose their tools to sessions (default: false).
   allowRemoteEvaluate?: boolean;  // Allow remote agents to call `browser_tool evaluate` on local browser (default: true).
   // Pi 扩展集成开关：控制全局 pi 扩展加载与 prompt 自动化委托
   piExtensions?: StoredPiExtensionSettings;
@@ -238,7 +238,7 @@ const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
     keepAwakeWhileRunning: false,
     richToolDescriptions: true,
     browserToolEnabled: true,
-    dataSourcesEnabled: true,
+    dataSourcesEnabled: false,
     allowRemoteEvaluate: true,
     piExtensions: createDefaultPiExtensionSettings(),
     piShell: {
@@ -696,10 +696,14 @@ export async function setBrowserToolEnabled(enabled: boolean): Promise<void> {
 
 /**
  * Get whether Craft data sources are available in the UI and agent runtime.
- * Existing configs default to enabled for backwards compatibility.
+ * Uses the bundled default when the user has not explicitly chosen a value.
  */
 export function getDataSourcesEnabled(): boolean {
-  return loadStoredConfig()?.dataSourcesEnabled !== false;
+  const config = loadStoredConfig();
+  if (config?.dataSourcesEnabled !== undefined) {
+    return config.dataSourcesEnabled;
+  }
+  return loadConfigDefaults().defaults.dataSourcesEnabled;
 }
 
 /** Persist the global data-source feature toggle. */

@@ -27,12 +27,6 @@ export interface BaseEventPayload {
   sessionName?: string;
   workspaceId: string;
   timestamp: number;
-  labels?: string[];
-}
-
-/** Label events payload */
-export interface LabelEventPayload extends BaseEventPayload {
-  label: string;
 }
 
 /** Permission mode change payload */
@@ -41,26 +35,10 @@ export interface PermissionModeChangePayload extends BaseEventPayload {
   newMode: string;
 }
 
-/** Flag change payload */
-export interface FlagChangePayload extends BaseEventPayload {
-  isFlagged: boolean;
-}
-
-/** Session status change payload */
-export interface SessionStatusChangePayload extends BaseEventPayload {
-  oldState: string;
-  newState: string;
-}
-
 /** Scheduler tick payload */
 export interface SchedulerTickPayload extends BaseEventPayload {
   localTime: string;
   utcTime: string;
-}
-
-/** Label config change payload */
-export interface LabelConfigChangePayload extends BaseEventPayload {
-  // No additional fields - just signals that config changed
 }
 
 /** Generic event payload for agent events */
@@ -77,12 +55,7 @@ export interface GenericEventPayload extends BaseEventPayload {
  */
 export interface EventPayloadMap {
   // App events
-  LabelAdd: LabelEventPayload;
-  LabelRemove: LabelEventPayload;
-  LabelConfigChange: LabelConfigChangePayload;
   PermissionModeChange: PermissionModeChangePayload;
-  FlagChange: FlagChangePayload;
-  SessionStatusChange: SessionStatusChangePayload;
   SchedulerTick: SchedulerTickPayload;
 
   // Agent events (generic payload)

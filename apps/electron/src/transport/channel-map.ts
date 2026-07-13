@@ -9,6 +9,7 @@ import { RPC_CHANNELS } from '../shared/types'
 import type { ChannelMap } from './build-api'
 
 const SEND_MESSAGE_RPC_TIMEOUT_MS = 300_000
+const EXTENSION_RELOAD_RPC_TIMEOUT_MS = 120_000
 
 function invoke(
   channel: string,
@@ -208,8 +209,6 @@ export const CHANNEL_MAP = {
 
   // Session Info Panel
   getSessionFiles: invoke(RPC_CHANNELS.sessions.GET_FILES),
-  getSessionNotes: invoke(RPC_CHANNELS.sessions.GET_NOTES),
-  setSessionNotes: invoke(RPC_CHANNELS.sessions.SET_NOTES),
   watchSessionFiles: invoke(RPC_CHANNELS.sessions.WATCH_FILES),
   unwatchSessionFiles: invoke(RPC_CHANNELS.sessions.UNWATCH_FILES),
   onSessionFilesChanged: listener(RPC_CHANNELS.sessions.FILES_CHANGED),
@@ -242,22 +241,6 @@ export const CHANNEL_MAP = {
   openSkillInEditor: invoke(RPC_CHANNELS.skills.OPEN_EDITOR),
   openSkillInFinder: invoke(RPC_CHANNELS.skills.OPEN_FINDER),
   onSkillsChanged: listener(RPC_CHANNELS.skills.CHANGED),
-
-  // Statuses
-  listStatuses: invoke(RPC_CHANNELS.statuses.LIST),
-  reorderStatuses: invoke(RPC_CHANNELS.statuses.REORDER),
-  onStatusesChanged: listener(RPC_CHANNELS.statuses.CHANGED),
-
-  // Labels
-  listLabels: invoke(RPC_CHANNELS.labels.LIST),
-  createLabel: invoke(RPC_CHANNELS.labels.CREATE),
-  deleteLabel: invoke(RPC_CHANNELS.labels.DELETE),
-  onLabelsChanged: listener(RPC_CHANNELS.labels.CHANGED),
-
-
-  // Views
-  listViews: invoke(RPC_CHANNELS.views.LIST),
-  saveViews: invoke(RPC_CHANNELS.views.SAVE),
 
   // Tool icon mappings
   getToolIconMappings: invoke(RPC_CHANNELS.toolIcons.GET_MAPPINGS),
@@ -317,7 +300,7 @@ export const CHANNEL_MAP = {
   updatePiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS),
   getPiExtensionCatalog: invoke(RPC_CHANNELS.piExtensions.GET_CATALOG),
   patchPiExtensionConfig: invoke(RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG),
-  reloadPiExtensions: invoke(RPC_CHANNELS.piExtensions.RELOAD),
+  reloadPiExtensions: invoke(RPC_CHANNELS.piExtensions.RELOAD, undefined, undefined, EXTENSION_RELOAD_RPC_TIMEOUT_MS),
   getPiExtensionStates: invoke(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES),
   setPiExtensionEnabled: invoke(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED),
 

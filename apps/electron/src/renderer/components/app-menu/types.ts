@@ -1,4 +1,5 @@
 import type { SettingsMenuItem } from '../../../shared/menu-schema'
+import type { WorkspaceNavigationModel } from '@/components/workspace/useWorkspaceNavigation'
 
 /**
  * Props shared by `AppMenu` (router) and the desktop/mobile shapes underneath.
@@ -16,4 +17,5 @@ export interface AppMenuProps {
   onOpenStoredUserPreferences: () => void
   onToggleSidebar?: () => void
   onToggleFocusMode?: () => void
+  workspaceNavigation: WorkspaceNavigationModel
 }

@@ -110,7 +110,7 @@ export const EntityColorSchema = z.any().superRefine((val, ctx) => {
           + `System colors: ${SYSTEM_COLOR_NAMES.join(', ')} (with optional /opacity 0-100). `
           + `Examples: "accent", "foreground/50". `
           + `For custom hex colors use an object: { "light": "#RRGGBB" }. `
-          + `See statuses.md for full color format reference.`,
+          + `See themes.md for the color format reference.`,
       })
     }
     return
@@ -158,6 +158,6 @@ export const EntityColorSchema = z.any().superRefine((val, ctx) => {
     message: `Invalid color value (got ${typeof val}). `
       + `Must be a system color string ("accent", "foreground/50") `
       + `or a custom color object ({ "light": "#hex", "dark?": "#hex" }). `
-      + `See statuses.md for full color format reference.`,
+      + `See themes.md for the color format reference.`,
   })
 })

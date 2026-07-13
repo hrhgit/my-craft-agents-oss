@@ -218,15 +218,6 @@ export function AutomationInfoPage({
                 {automation.enabled ? t('automations.statusActive') : t('automations.statusDisabled')}
               </Info_Badge>
             </Info_Table.Row>
-            {automation.labels && automation.labels.length > 0 && (
-              <Info_Table.Row label={t('automations.labelLabels')}>
-                <div className="flex gap-1.5 flex-wrap">
-                  {automation.labels.map((l) => (
-                    <Info_Badge key={l} color="muted">{l}</Info_Badge>
-                  ))}
-                </div>
-              </Info_Table.Row>
-            )}
             {automation.telegramTopic && (
               <Info_Table.Row label={t('automations.labelTelegramTopic')}>
                 <div className="flex flex-col gap-1">
@@ -264,7 +255,6 @@ export function AutomationInfoPage({
                 cron: automation.cron,
                 timezone: automation.timezone,
                 permissionMode: automation.permissionMode,
-                labels: automation.labels,
                 telegramTopic: automation.telegramTopic,
                 enabled: automation.enabled,
                 actions: automation.actions,

@@ -71,7 +71,6 @@ import {
   type DispatchMode,
   type StoredSession,
   type StoredMessage,
-  type SessionStatus,
   type SessionHeader,
   pickCraftSessionMetadata,
   parsePlanCustomMessage,
@@ -98,11 +97,6 @@ import { getToolIconsDir } from '@craft-agent/shared/config'
 import { getDefaultSummarizationModel } from '@craft-agent/shared/config/models'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
-import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
-import { listLabels, loadLabelConfig } from '@craft-agent/shared/labels/storage'
-import { extractLabelId, resolveSessionLabels } from '@craft-agent/shared/labels'
-import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
-import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot, type PendingPrompt } from '@craft-agent/shared/automations'
 import { FEATURE_FLAGS } from '@craft-agent/shared/feature-flags'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput, normalizeProviderRuntimeBaseUrl } from './runtime-config'
@@ -186,10 +180,9 @@ const MAX_ANNOTATION_JSON_BYTES = 32 * 1024
 const METADATA_WRITE_GUARD_MS = 5000
 
 /**
- * Text sent to the session when a plan is approved from outside the desktop
- * UI (e.g. Telegram button). Mirrors the English `plan.approved` i18n key
- * used by the desktop flow at `plan-approval-message.ts`. Not localized —
- * the agent reads this, not the end user.
+ * Text sent to the session when a plan is approved outside the desktop UI
+ * (for example, from a messaging integration). The agent reads this text,
+ * so it intentionally remains stable and is not localized.
  */
 const PLAN_APPROVAL_MESSAGE = 'Plan approved, please execute.'
 
@@ -708,11 +701,6 @@ interface ManagedSession {
   // See: packages/shared/src/agent/tool-matching.ts
   // Session name (user-defined or AI-generated)
   name?: string
-  isFlagged: boolean
-  /** Whether this session is archived */
-  isArchived?: boolean
-  /** Timestamp when session was archived (for retention policy) */
-  archivedAt?: number
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
   /** Previous permission mode (preserved across restarts for session_state modeTransition context) */
@@ -737,9 +725,6 @@ interface ManagedSession {
     /** Model's context window size in tokens (from SDK modelUsage) */
     contextWindow?: number
   }
-  // Session status (user-controlled) - determines open vs closed
-  // Dynamic status ID referencing workspace status config
-  sessionStatus?: string
   // Read/unread tracking - ID of last message user has read
   lastReadMessageId?: string
   /**
@@ -750,8 +735,6 @@ interface ManagedSession {
   hasUnread?: boolean
   // Per-session source selection (slugs of enabled sources)
   enabledSourceSlugs?: string[]
-  // Labels applied to this session (additive tags, many-per-session)
-  labels?: string[]
   // Compatibility DTO field. Under complete-unification semantics this always
   // equals workspace.rootPath; callers must not use it for ownership/bucket routing.
   workingDirectory?: string
@@ -778,7 +761,7 @@ interface ManagedSession {
   turnStartFinalMessageId?: string
   // External session metadata updates seen while processing (applied after turn stop)
   pendingExternalMetadata?: SessionHeader
-  // Guard: suppress external metadata revert after programmatic writes (setSessionStatus/setSessionLabels).
+  // Guard: suppress external metadata revert after programmatic writes.
   // fs.watch fires during atomic write (unlink+rename) and can read stale data, reverting in-memory state.
   _metadataWriteGuardUntil?: number
   // Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration)
@@ -938,7 +921,7 @@ export function createManagedSession(
   }
 
   const managed = {
-    // Spread all session-like fields from source (name, permissionMode, labels, model, etc.)
+    // Spread all session-like fields from source (name, permissionMode, model, etc.)
     // This ensures new persistent fields automatically flow through without manual copying.
     ...sourceFields,
     // Map craftId → id (ManagedSession 内部用 id 字段，值等于 SessionHeader.craftId)
@@ -951,7 +934,6 @@ export function createManagedSession(
     lastMessageAt: (s.lastMessageAt ?? s.lastUsedAt ?? Date.now()) as number,
     streamingText: '',
     processingGeneration: 0,
-    isFlagged: (s.isFlagged ?? false) as boolean,
     messageQueue: [],
     backgroundShellCommands: new Map(),
     backgroundTaskOutputs: new Map(),
@@ -1124,6 +1106,16 @@ function resolveSupportsBranching(managed: ManagedSession): boolean {
   return true // default: branching enabled for all backends
 }
 
+function needsPiProjectionWallClockBackfill(snapshot: PiProjectionSnapshotV1): boolean {
+  return snapshot.entities.some((entity) => {
+    if (entity.kind !== 'user_text' || entity.createdAt !== undefined) return false
+    if (!entity.payload || typeof entity.payload !== 'object') return true
+    const payload = entity.payload as Record<string, unknown>
+    if (payload.queueStatus === 'queued') return false
+    return typeof payload.timestamp !== 'number'
+  })
+}
+
 /** Return true only for an explicitly configured Pi provider key. */
 function hasConfiguredPiProvider(provider?: string): boolean {
   return !!provider && Object.hasOwn(readPiGlobalProviders(), provider)
@@ -1139,7 +1131,12 @@ const DEFAULT_TOKEN_USAGE = {
  * Uses pickCraftSessionMetadata() for Craft-owned persistent fields so new
  * fields propagate automatically.
  */
-function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Session {
+function managedToSession(
+  m: ManagedSession,
+  overrides?: Partial<Session>,
+  options: { includeSessionFolderPath?: boolean } = {},
+): Session {
+  const includeSessionFolderPath = options.includeSessionFolderPath ?? true
   return {
     ...pickCraftSessionMetadata(m),
     // Craft metadata uses craftId, while ManagedSession runtime state uses id.
@@ -1156,7 +1153,9 @@ function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Sess
     workspaceName: m.workspace.name,
     messages: [],
     isProcessing: m.isProcessing,
-    sessionFolderPath: getSessionStoragePath(m.workspace.rootPath, m.id),
+    ...(includeSessionFolderPath
+      ? { sessionFolderPath: getSessionStoragePath(m.workspace.rootPath, m.id) }
+      : {}),
     supportsBranching: resolveSupportsBranching(m),
     ...overrides,
   } as Session
@@ -1193,8 +1192,6 @@ export class SessionManager implements ISessionManager {
           sharedId: managed.sharedId,
           sharedUrl: managed.sharedUrl,
           name: managed.name,
-          sessionStatus: managed.sessionStatus,
-          labels: managed.labels,
           permissionMode: managed.permissionMode,
         }
       },
@@ -1227,8 +1224,6 @@ export class SessionManager implements ISessionManager {
         const session = await this.createSession(workspaceId, {
           name: payload.name,
           permissionMode: payload.permissionMode,
-          sessionStatus: payload.sessionStatus,
-          labels: payload.labels,
         })
         const managed = this.sessions.get(session.id)
         if (!managed) throw new Error(`Transferred session ${session.id} was not created`)
@@ -1310,6 +1305,9 @@ export class SessionManager implements ISessionManager {
       sessionRuntimeHooks.onSessionStarted()
     } else if (was && !processing) {
       sessionRuntimeHooks.onSessionStopped()
+    }
+    if (was !== processing) {
+      this.emitUnreadSummaryChanged()
     }
   }
 
@@ -1527,32 +1525,6 @@ export class SessionManager implements ISessionManager {
     const sessionId = managed.id
     let changed = false
 
-    // Labels
-    const oldLabels = JSON.stringify(managed.labels ?? [])
-    const newLabels = JSON.stringify(header.labels ?? [])
-    if (oldLabels !== newLabels) {
-      managed.labels = header.labels
-      this.sendEvent({ type: 'labels_changed', sessionId, labels: header.labels ?? [] }, managed.workspace.id)
-      changed = true
-    }
-
-    // Flagged
-    if ((managed.isFlagged ?? false) !== (header.isFlagged ?? false)) {
-      managed.isFlagged = header.isFlagged ?? false
-      this.sendEvent(
-        { type: header.isFlagged ? 'session_flagged' : 'session_unflagged', sessionId },
-        managed.workspace.id
-      )
-      changed = true
-    }
-
-    // Session status
-    if (managed.sessionStatus !== header.sessionStatus) {
-      managed.sessionStatus = header.sessionStatus
-      this.sendEvent({ type: 'session_status_changed', sessionId, sessionStatus: header.sessionStatus ?? '' }, managed.workspace.id)
-      changed = true
-    }
-
     // Name
     if (managed.name !== header.name) {
       managed.name = header.name
@@ -1605,25 +1577,6 @@ export class SessionManager implements ISessionManager {
         // Note: Guide changes don't require session source reload (no server changes)
         const sources = loadRuntimeWorkspaceSources(workspaceRootPath)
         this.broadcastSourcesChanged(workspaceId, sources)
-      },
-      onStatusConfigChange: () => {
-        sessionLog.info(`Status config changed in ${workspaceId}`)
-        this.broadcastStatusesChanged(workspaceId)
-      },
-      onStatusIconChange: (_workspaceId: string, iconFilename: string) => {
-        sessionLog.info(`Status icon changed: ${iconFilename} in ${workspaceId}`)
-        this.broadcastStatusesChanged(workspaceId)
-      },
-      onLabelConfigChange: () => {
-        sessionLog.info(`Label config changed in ${workspaceId}`)
-        this.broadcastLabelsChanged(workspaceId)
-        // Emit LabelConfigChange event via AutomationSystem
-        const automationSystem = this.automationSystems.get(workspaceRootPath)
-        if (automationSystem) {
-          automationSystem.emitLabelConfigChange().catch((error) => {
-            sessionLog.error(`[Automations] Failed to emit LabelConfigChange:`, error)
-          })
-        }
       },
       onAutomationsConfigChange: () => {
         sessionLog.info(`Automations config changed in ${workspaceId}`)
@@ -1684,8 +1637,7 @@ export class SessionManager implements ISessionManager {
         if (!isSelfWrite) {
           // Defer external metadata application when:
           // 1. Session is actively processing (agent running), OR
-          // 2. Session was just written programmatically (set_session_status/labels tool)
-          //    — fs.watch fires during atomic write (unlink+rename) and can read stale data
+          // 2. Session was just written programmatically.
           const hasWriteGuard = managed._metadataWriteGuardUntil && Date.now() < managed._metadataWriteGuardUntil
           if (managed.isProcessing || hasWriteGuard) {
             managed.pendingExternalMetadata = header
@@ -1707,9 +1659,6 @@ export class SessionManager implements ISessionManager {
         if (automationSystem) {
           automationSystem.updateSessionMetadata(sessionId, {
             permissionMode: header.permissionMode,
-            labels: header.labels,
-            isFlagged: header.isFlagged,
-            sessionStatus: header.sessionStatus,
             sessionName: header.name,
           }).catch((error) => {
             sessionLog.error(`[Automations] Failed to update session metadata:`, error)
@@ -1761,7 +1710,6 @@ export class SessionManager implements ISessionManager {
                 workspaceId,
                 workspaceRootPath,
                 prompt: pending.prompt,
-                labels: pending.labels,
                 permissionMode: pending.permissionMode,
                 mentions: pending.mentions,
                 provider: pending.provider,
@@ -1831,18 +1779,6 @@ export class SessionManager implements ISessionManager {
   private broadcastSourcesChanged(workspaceId: string, sources: LoadedSource[]): void {
     if (!this.eventSink) return
     this.eventSink(RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId }, workspaceId, sources)
-  }
-
-  private broadcastStatusesChanged(workspaceId: string): void {
-    if (!this.eventSink) return
-    sessionLog.info(`Broadcasting statuses changed for ${workspaceId}`)
-    this.eventSink(RPC_CHANNELS.statuses.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
-  }
-
-  private broadcastLabelsChanged(workspaceId: string): void {
-    if (!this.eventSink) return
-    sessionLog.info(`Broadcasting labels changed for ${workspaceId}`)
-    this.eventSink(RPC_CHANNELS.labels.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
   }
 
   private broadcastAutomationsChanged(workspaceId: string): void {
@@ -1969,11 +1905,14 @@ export class SessionManager implements ISessionManager {
       const raw = await readFile(this.getPiProjectionSnapshotPath(managed), 'utf8')
       const snapshot = JSON.parse(raw) as PiProjectionSnapshotV1
       const projector = new ConversationProjector(sessionId, snapshot.runtimeId, snapshot)
-      this.piProjectionBySession.set(sessionId, projector)
-      const restored = projector.createSnapshot()
-      syncPiProjectionComputedMetadata(managed, restored)
-      this.recoverQueuedProjectionMessages(managed, restored)
-      return restored
+      if (!needsPiProjectionWallClockBackfill(snapshot)) {
+        this.piProjectionBySession.set(sessionId, projector)
+        const restored = projector.createSnapshot()
+        syncPiProjectionComputedMetadata(managed, restored)
+        this.recoverQueuedProjectionMessages(managed, restored)
+        return restored
+      }
+      sessionLog.info(`Rebuilding legacy Pi projection timestamps for ${sessionId}`)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         sessionLog.warn(`Failed to load Pi projection snapshot for ${sessionId}: ${error instanceof Error ? error.message : error}`)
@@ -2275,9 +2214,6 @@ export class SessionManager implements ISessionManager {
           if (automationSystem) {
             automationSystem.setInitialSessionMetadata(meta.craftId, {
               permissionMode: meta.permissionMode,
-              labels: meta.labels,
-              isFlagged: meta.isFlagged,
-              sessionStatus: meta.sessionStatus,
               sessionName: managed.name,
             })
           }
@@ -2304,8 +2240,8 @@ export class SessionManager implements ISessionManager {
    * Cold-session path: if messages haven't been lazy-loaded yet, hydrate them
    * synchronously from the JSONL first — otherwise the snapshot we enqueue
    * would write `messages: []` over the real messages on disk. Hydration
-   * deliberately does NOT touch persistent metadata fields (name, labels,
-   * sessionStatus, provider, ...) because the caller may have just
+   * deliberately does NOT touch persistent metadata fields (name, provider,
+   * etc.) because the caller may have just
    * mutated them; the in-memory mutation must win over what's on disk.
    * `loadStoredSession` is synchronous (sync fs reads), so the entire path
    * stays sync — no microtask race window between the load and the enqueue.
@@ -2668,28 +2604,32 @@ export class SessionManager implements ISessionManager {
     }
 
     return sessions
-      .map(m => managedToSession(m))
+      .map(m => managedToSession(m, undefined, { includeSessionFolderPath: false }))
       .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
   }
 
   /**
-   * Aggregate unread state across all workspaces.
-   * Excludes hidden and archived sessions from counts/indicators.
+   * Aggregate unread and processing state across all workspaces.
+   * Excludes hidden sessions from counts/indicators.
    */
   getUnreadSummary(): UnreadSummary {
     const byWorkspace: Record<string, number> = {}
     const hasUnreadByWorkspace: Record<string, boolean> = {}
+    const hasProcessingByWorkspace: Record<string, boolean> = {}
 
     for (const workspace of getWorkspaces()) {
       byWorkspace[workspace.id] = 0
       hasUnreadByWorkspace[workspace.id] = false
+      hasProcessingByWorkspace[workspace.id] = false
     }
 
     for (const session of this.sessions.values()) {
-      if (session.hidden || session.isArchived) continue
-      if (!session.hasUnread) continue
+      if (session.hidden) continue
 
       const workspaceId = session.workspace.id
+      if (session.isProcessing) hasProcessingByWorkspace[workspaceId] = true
+      if (!session.hasUnread) continue
+
       byWorkspace[workspaceId] = (byWorkspace[workspaceId] ?? 0) + 1
       hasUnreadByWorkspace[workspaceId] = true
     }
@@ -2700,6 +2640,7 @@ export class SessionManager implements ISessionManager {
       totalUnreadSessions,
       byWorkspace,
       hasUnreadByWorkspace,
+      hasProcessingByWorkspace,
     }
   }
 
@@ -2713,9 +2654,7 @@ export class SessionManager implements ISessionManager {
     sessionRuntimeHooks.updateBadgeCount(summary.totalUnreadSessions)
   }
 
-  /**
-   * Broadcast global unread summary to all workspace windows.
-   */
+  /** Broadcast global unread and processing summary to all workspace windows. */
   private emitUnreadSummaryChanged(): void {
     const summary = this.getUnreadSummary()
 
@@ -2994,9 +2933,6 @@ export class SessionManager implements ISessionManager {
       permissionMode: defaultPermissionMode,
       workingDirectory: resolvedWorkingDir,
       hidden: options?.hidden,
-      sessionStatus: options?.sessionStatus,
-      labels: options?.labels,
-      isFlagged: options?.isFlagged,
     })
 
     // Branch: project the active Pi path up to the selected entry, then append
@@ -3147,9 +3083,6 @@ export class SessionManager implements ISessionManager {
     if (automationSystem) {
       automationSystem.setInitialSessionMetadata(storedSession.craftId, {
         permissionMode: storedSession.permissionMode,
-        labels: storedSession.labels,
-        isFlagged: storedSession.isFlagged,
-        sessionStatus: storedSession.sessionStatus,
         sessionName: managed.name,
       })
     }
@@ -3953,7 +3886,6 @@ export class SessionManager implements ISessionManager {
           enabledSources: getDataSourcesEnabled() ? request.enabledSourceSlugs : [],
           permissionMode: request.permissionMode,
           thinkingLevel: request.thinkingLevel,
-          labels: request.labels,
           name: request.name,
           workingDirectory: managed.workspace.rootPath,
           attachments: request.attachments,
@@ -3972,14 +3904,8 @@ export class SessionManager implements ISessionManager {
         }
       }
 
-      // Wire up session self-management tools (set_session_labels, set_session_status, etc.)
+      // Wire up session query and messaging tools.
       mergeSessionScopedToolCallbacks(managed.id, {
-        setSessionLabelsFn: async (sessionId: string | undefined, labels: string[]) => {
-          await this.setSessionLabels(sessionId ?? managed.id, labels)
-        },
-        setSessionStatusFn: async (sessionId: string | undefined, status: string) => {
-          await this.setSessionStatus(sessionId ?? managed.id, status as SessionStatus)
-        },
         getSessionInfoFn: (sessionId?: string) => {
           const targetId = sessionId ?? managed.id
           const session = this.sessions.get(targetId)
@@ -3987,8 +3913,6 @@ export class SessionManager implements ISessionManager {
           return {
             id: session.id,
             name: session.name ?? session.id,
-            labels: session.labels ?? [],
-            status: session.sessionStatus ?? 'todo',
             permissionMode: session.permissionMode ?? 'ask',
             createdAt: session.createdAt ?? 0,
             workingDirectory: session.workingDirectory,
@@ -4006,12 +3930,6 @@ export class SessionManager implements ISessionManager {
           let sessions = this.getSessions(managed.workspace.id)
 
           // Filter
-          if (options?.status) {
-            sessions = sessions.filter(s => s.sessionStatus === options.status)
-          }
-          if (options?.label) {
-            sessions = sessions.filter(s => s.labels?.includes(options.label!))
-          }
           if (options?.search) {
             const needle = options.search.toLowerCase()
             sessions = sessions.filter(s => s.name?.toLowerCase().includes(needle))
@@ -4023,8 +3941,6 @@ export class SessionManager implements ISessionManager {
             sessions.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
           } else if (sortBy === 'name') {
             sessions.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
-          } else if (sortBy === 'status') {
-            sessions.sort((a, b) => (a.sessionStatus ?? '').localeCompare(b.sessionStatus ?? ''))
           }
 
           const total = sessions.length
@@ -4038,29 +3954,9 @@ export class SessionManager implements ISessionManager {
             sessions: page.map(s => ({
               id: s.id,
               name: s.name ?? s.id,
-              labels: s.labels ?? [],
-              status: s.sessionStatus ?? 'todo',
               createdAt: s.createdAt ?? 0,
             })),
           }
-        },
-        resolveLabelsFn: (labels: string[]) => {
-          const labelConfig = loadLabelConfig(managed.workspace.rootPath)
-          return resolveSessionLabels(labels, labelConfig.labels)
-        },
-        resolveStatusFn: (status: string) => {
-          const statusConfig = loadStatusConfig(managed.workspace.rootPath)
-          const allStatuses = statusConfig.statuses
-          const available = allStatuses.map(s => s.id)
-
-          // Exact ID match
-          const byId = allStatuses.find(s => s.id === status)
-          if (byId) return { resolved: byId.id, available }
-          // Case-insensitive label → ID
-          const byLabel = allStatuses.find(s => s.label.toLowerCase() === status.toLowerCase())
-          if (byLabel) return { resolved: byLabel.id, available }
-
-          return { resolved: null, available }
         },
         sendAgentMessageFn: async (sessionId: string, message: string, attachments?: Array<{ path: string; name?: string }>) => {
           // Build FileAttachment[] from paths (same pattern as spawn_session)
@@ -4225,71 +4121,6 @@ export class SessionManager implements ISessionManager {
       end()
     }
     return managed.agent
-  }
-
-  async flagSession(sessionId: string): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      managed.isFlagged = true
-      // Persist in-memory state directly to avoid race with pending queue writes
-      this.persistSession(managed)
-      await this.flushSession(managed.id)
-      // Notify all windows for this workspace
-      this.sendEvent({ type: 'session_flagged', sessionId }, managed.workspace.id)
-    }
-  }
-
-  async unflagSession(sessionId: string): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      managed.isFlagged = false
-      // Persist in-memory state directly to avoid race with pending queue writes
-      this.persistSession(managed)
-      await this.flushSession(managed.id)
-      // Notify all windows for this workspace
-      this.sendEvent({ type: 'session_unflagged', sessionId }, managed.workspace.id)
-    }
-  }
-
-  async archiveSession(sessionId: string): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      managed.isArchived = true
-      managed.archivedAt = Date.now()
-      // Persist in-memory state directly to avoid race with pending queue writes
-      this.persistSession(managed)
-      await this.flushSession(managed.id)
-      // Notify all windows for this workspace
-      this.sendEvent({ type: 'session_archived', sessionId }, managed.workspace.id)
-      this.emitUnreadSummaryChanged()
-    }
-  }
-
-  async unarchiveSession(sessionId: string): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      managed.isArchived = false
-      managed.archivedAt = undefined
-      // Persist in-memory state directly to avoid race with pending queue writes
-      this.persistSession(managed)
-      await this.flushSession(managed.id)
-      // Notify all windows for this workspace
-      this.sendEvent({ type: 'session_unarchived', sessionId }, managed.workspace.id)
-      this.emitUnreadSummaryChanged()
-    }
-  }
-
-  async setSessionStatus(sessionId: string, sessionStatus: SessionStatus): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      managed.sessionStatus = sessionStatus
-      this.setMetadataWriteGuard(managed)
-      // Persist in-memory state directly to avoid race with pending queue writes
-      this.persistSession(managed)
-      await this.flushSession(managed.id)
-      // Notify all windows for this workspace
-      this.sendEvent({ type: 'session_status_changed', sessionId, sessionStatus }, managed.workspace.id)
-    }
   }
 
   /**
@@ -4685,14 +4516,14 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Mark all non-hidden, non-archived sessions in a workspace as read.
+   * Mark all non-hidden sessions in a workspace as read.
    * Called from "Mark All Read" context menu on "All Sessions".
    */
   async markAllSessionsRead(workspaceId: string): Promise<void> {
     const updates: Promise<void>[] = []
     for (const managed of this.sessions.values()) {
       if (managed.workspace.id !== workspaceId) continue
-      if (managed.hidden || managed.isArchived) continue
+      if (managed.hidden) continue
       if (managed.isProcessing) continue
       if (!managed.hasUnread) continue
       managed.hasUnread = false
@@ -5395,33 +5226,6 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Evaluate auto-label rules against the user message (common path for both
-    // fresh and queued messages). Scans regex patterns configured on labels,
-    // then merges any new matches into the session's label array.
-    try {
-      const labelTree = listLabels(managed.workspace.rootPath)
-      const autoMatches = evaluateAutoLabels(message, labelTree)
-
-      if (autoMatches.length > 0) {
-        const existingLabels = managed.labels ?? []
-        const newEntries = autoMatches
-          .map(m => `${m.labelId}::${m.value}`)
-          .filter(entry => !existingLabels.includes(entry))
-
-        if (newEntries.length > 0) {
-          managed.labels = [...existingLabels, ...newEntries]
-          this.persistSession(managed)
-          this.sendEvent({
-            type: 'labels_changed',
-            sessionId,
-            labels: managed.labels,
-          }, managed.workspace.id)
-        }
-      }
-    } catch (e) {
-      sessionLog.warn(`Auto-label evaluation failed for session ${sessionId}:`, e)
-    }
-
     managed.lastMessageAt = Date.now()
     this.setProcessing(managed, true)
     managed.streamingText = ''
@@ -6001,15 +5805,7 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // 3. Auto-complete mini agent sessions to avoid session list clutter
-    //    Mini agents are spawned from EditPopovers for quick config edits
-    //    and should automatically move to 'done' when finished
-    if (reason === 'complete' && managed.systemPromptPreset === 'mini' && managed.sessionStatus !== 'done') {
-      sessionLog.info(`Auto-completing mini agent session ${sessionId}`)
-      await this.setSessionStatus(sessionId, 'done')
-    }
-
-    // 4. Apply deferred external metadata updates captured while processing.
+    // 3. Apply deferred external metadata updates captured while processing.
     if (managed.pendingExternalMetadata) {
       const pendingHeader = managed.pendingExternalMetadata
       managed.pendingExternalMetadata = undefined
@@ -6017,7 +5813,7 @@ export class SessionManager implements ISessionManager {
       await this.applyExternalSessionMetadata(managed, pendingHeader)
     }
 
-    // 5. Check queue and process or complete
+    // 4. Check queue and process or complete
     if (managed.messageQueue.length > 0) {
       // Has queued messages - process next
       this.processNextQueuedMessage(sessionId)
@@ -6266,8 +6062,7 @@ export class SessionManager implements ISessionManager {
         return false
       }
       sessionLog.info(`RemoteUI response for ${requestId}: cancelled=${payload === null}`)
-      managed.agent.sendRemoteUIResponse(requestId, payload, reason)
-      return true
+      return managed.agent.sendRemoteUIResponse(requestId, payload, reason)
     } else {
       sessionLog.warn(`Cannot respond to remoteui - no agent for session ${sessionId}`)
       return false
@@ -6520,7 +6315,6 @@ export class SessionManager implements ISessionManager {
           workspaceId,
           workspaceRootPath,
           prompt: pending.prompt,
-          labels: pending.labels,
           permissionMode: pending.permissionMode,
           mentions: pending.mentions,
           provider: pending.provider,
@@ -6678,27 +6472,6 @@ export class SessionManager implements ISessionManager {
       modeVersion: diagnostics.modeVersion,
       changedAt: diagnostics.lastChangedAt,
       changedBy: diagnostics.lastChangedBy,
-    }
-  }
-
-  /**
-   * Set labels for a session (additive tags, many-per-session).
-   * Labels are IDs referencing workspace labels/config.json.
-   */
-  async setSessionLabels(sessionId: string, labels: string[]): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      managed.labels = labels
-      this.setMetadataWriteGuard(managed)
-
-      this.sendEvent({
-        type: 'labels_changed',
-        sessionId: managed.id,
-        labels: managed.labels,
-      }, managed.workspace.id)
-      // Persist in-memory state directly to avoid race with pending queue writes
-      this.persistSession(managed)
-      await this.flushSession(managed.id)
     }
   }
 
@@ -7229,7 +7002,6 @@ export class SessionManager implements ISessionManager {
       workspaceId,
       workspaceRootPath,
       prompt,
-      labels,
       permissionMode,
       mentions,
       provider,
@@ -7247,11 +7019,6 @@ export class SessionManager implements ISessionManager {
     // Resolve @mentions to source/skill slugs
     const resolved = mentions ? this.resolveAutomationMentions(workspaceRootPath, mentions) : undefined
 
-    // Ensure labels exist in workspace config before assigning to session
-    const resolvedLabels = labels?.length
-      ? ensureLabelsExist(workspaceRootPath, labels)
-      : labels
-
     // Use automation name if provided, otherwise fall back to prompt snippet
     const fallback = `Automation: ${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`
     const sessionName = automationName || fallback
@@ -7259,7 +7026,6 @@ export class SessionManager implements ISessionManager {
     // Create a new session for this automation
     const session = await this.createSession(workspaceId, {
       name: sessionName,
-      labels: resolvedLabels,
       permissionMode: permissionMode || 'safe',
       enabledSourceSlugs: resolved?.sourceSlugs,
       provider: automationProvider,
@@ -7476,7 +7242,7 @@ export class SessionManager implements ISessionManager {
 
     // Build the stored session from bundle data.
     // 用 pickCraftSessionMetadata(header) 作为基底，让 Craft metadata 字段自动透传
-    //（避免新增字段时手工同步遗漏，如 isArchived/hasUnread/pendingPlanExecution）。
+    //（避免新增字段时手工同步遗漏，如 hasUnread/pendingPlanExecution）。
     // 然后显式覆盖需要重写的字段。
     const storedSession = {
       ...(pickCraftSessionMetadata(header) as Partial<SessionHeader>),
@@ -7613,9 +7379,6 @@ export class SessionManager implements ISessionManager {
     if (automationSystem) {
       automationSystem.setInitialSessionMetadata(sessionId, {
         permissionMode: storedSession.permissionMode,
-        labels: storedSession.labels,
-        isFlagged: storedSession.isFlagged,
-        sessionStatus: storedSession.sessionStatus,
         sessionName: managed.name,
       })
     }

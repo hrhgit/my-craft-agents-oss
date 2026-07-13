@@ -12,6 +12,14 @@ interface InitialRestoreGateInput {
   initialRouteRestored: boolean
 }
 
+export type WorkspaceSwitchDestination = 'restore' | 'allSessions'
+
+interface WorkspaceSwitchSearchInput {
+  destination: WorkspaceSwitchDestination | null | undefined
+  savedSearch: string
+  workspaceSlug: string
+}
+
 /**
  * Builds a semantic history key used to dedupe pushState entries.
  *
@@ -42,4 +50,14 @@ export function canRunInitialRestore({
   initialRouteRestored,
 }: InitialRestoreGateInput): boolean {
   return isReady && isSessionsReady && !!workspaceId && !initialRouteRestored
+}
+
+export function resolveWorkspaceSwitchSearch({
+  destination,
+  savedSearch,
+  workspaceSlug,
+}: WorkspaceSwitchSearchInput): string {
+  if (destination !== 'allSessions' && savedSearch) return savedSearch
+  const params = new URLSearchParams({ ws: workspaceSlug, route: 'allSessions' })
+  return `?${params.toString()}`
 }

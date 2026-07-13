@@ -1,7 +1,7 @@
 /**
  * Session Self-Management Bindings
  *
- * Attaches 6 session management properties to a SessionToolContext using
+ * Attaches session query properties to a SessionToolContext using
  * Object.defineProperty with non-memoized lazy getters. Each access resolves
  * the callback from the session-scoped tool callback registry at call time,
  * so late merges and callback replacements are immediately visible without
@@ -24,8 +24,7 @@ import { getSessionScopedToolCallbacks } from './session-scoped-tool-callback-re
 /**
  * Attach session self-management bindings to a SessionToolContext.
  *
- * Defines lazy getters for: setSessionLabels, setSessionStatus,
- * getSessionInfo, listSessions, resolveLabels, resolveStatus.
+ * Defines lazy getters for getSessionInfo and listSessions.
  *
  * @param context - The SessionToolContext to augment (mutated in place)
  * @param sessionId - The session ID for registry lookup and getSessionInfo defaulting
@@ -37,41 +36,9 @@ export function attachSessionSelfManagementBindings(
   // Direct pass-through bindings — signatures match, no wrapping needed.
   // Each getter resolves fresh from the registry on every access.
 
-  Object.defineProperty(context, 'setSessionLabels', {
-    get() {
-      return getSessionScopedToolCallbacks(sessionId)?.setSessionLabelsFn;
-    },
-    configurable: true,
-    enumerable: true,
-  });
-
-  Object.defineProperty(context, 'setSessionStatus', {
-    get() {
-      return getSessionScopedToolCallbacks(sessionId)?.setSessionStatusFn;
-    },
-    configurable: true,
-    enumerable: true,
-  });
-
   Object.defineProperty(context, 'listSessions', {
     get() {
       return getSessionScopedToolCallbacks(sessionId)?.listSessionsFn;
-    },
-    configurable: true,
-    enumerable: true,
-  });
-
-  Object.defineProperty(context, 'resolveLabels', {
-    get() {
-      return getSessionScopedToolCallbacks(sessionId)?.resolveLabelsFn;
-    },
-    configurable: true,
-    enumerable: true,
-  });
-
-  Object.defineProperty(context, 'resolveStatus', {
-    get() {
-      return getSessionScopedToolCallbacks(sessionId)?.resolveStatusFn;
     },
     configurable: true,
     enumerable: true,

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
-import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, SessionStatus, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
+import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@craft-agent/shared/config'
 import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
@@ -37,6 +37,7 @@ import { coerceInputText } from './lib/input-text'
 import { getPiAgentEndHandoff } from './lib/pi-projection-handoff'
 import { getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
 import { formatSessionLoadFailure, shouldTreatSessionLoadFailureAsTransportFallback } from './lib/session-load'
+import { assertWorkspaceSessionBatch, LatestTaskQueue } from './lib/workspace-transition'
 import {
   removePiUserOverlayCarrier,
   settlePiUserOverlayCarrier,
@@ -70,6 +71,7 @@ import {
   removeOptimisticPiUser,
 } from '@/atoms/pi-projection'
 import { skillsAtom } from '@/atoms/skills'
+import { focusedPanelIdAtom, panelStackAtom } from '@/atoms/panel-stack'
 import { extractBadges } from '@/lib/mentions'
 import { getDefaultStore } from 'jotai'
 import {
@@ -86,6 +88,7 @@ import { useTransportConnectionState } from '@/hooks/useTransportConnectionState
 import { useStaleSessionRecovery } from '@/hooks/useStaleSessionRecovery'
 import { usePiProjectionSync, type PiProjectionEventApplied } from '@/hooks/usePiProjectionSync'
 import { TransportConnectionBanner, shouldShowTransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
+import type { WorkspaceSwitchDestination } from '@/components/workspace/useWorkspaceNavigation'
 import { getFileManagerName } from '@/lib/platform'
 import { rendererLog } from '@/lib/logger'
 import { ActionRegistryProvider } from '@/actions'
@@ -281,6 +284,19 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   // Window's workspace ID — shared atom so Root/ThemeProvider stays in sync on switch
   const [windowWorkspaceId, setWindowWorkspaceId] = useAtom(windowWorkspaceIdAtom)
+  const [workspaceSwitchDestination, setWorkspaceSwitchDestination] = useState<WorkspaceSwitchDestination | null>(null)
+  const windowWorkspaceIdRef = useRef(windowWorkspaceId)
+  const transportWorkspaceIdRef = useRef(windowWorkspaceId)
+  const workspacesRef = useRef(workspaces)
+  const workspaceTransitionQueueRef = useRef<LatestTaskQueue | null>(null)
+  const workspaceTransitionRollbackRef = useRef<(() => void) | null>(null)
+  const workspaceTransitionBaselineIdRef = useRef<string | null>(null)
+  workspaceTransitionQueueRef.current ??= new LatestTaskQueue()
+  windowWorkspaceIdRef.current = windowWorkspaceId
+  if (!workspaceTransitionQueueRef.current.isRunning) {
+    transportWorkspaceIdRef.current = windowWorkspaceId
+  }
+  workspacesRef.current = workspaces
 
   // Derive workspace slug for SDK skill qualification
   const windowWorkspaceSlug = useMemo(() => {
@@ -333,6 +349,8 @@ export default function App() {
   // Splash screen state - tracks when app is fully ready (all data loaded)
   const [sessionsLoaded, setSessionsLoaded] = useState(false)
   const [sessionLoadError, setSessionLoadError] = useState<string | null>(null)
+  const sessionLoadGenerationRef = useRef(0)
+  const sessionLoadFlightRef = useRef<{ workspaceId: string; promise: Promise<void> } | null>(null)
   const [splashExiting, setSplashExiting] = useState(false)
   const [splashHidden, setSplashHidden] = useState(false)
 
@@ -471,53 +489,94 @@ export default function App() {
     }
   }, [clearStreamingState, replaceLoadedSession, syncSessionOptionsFromSession, reconcilePermissionModeState, store])
 
-  const loadSessionsFromServer = useCallback(async () => {
+  const loadSessionsFromServer = useCallback((expectedWorkspaceId = windowWorkspaceIdRef.current): Promise<void> => {
+    if (!expectedWorkspaceId) return Promise.resolve()
+    const existingFlight = sessionLoadFlightRef.current
+    if (existingFlight?.workspaceId === expectedWorkspaceId) return existingFlight.promise
+
+    const generation = ++sessionLoadGenerationRef.current
+    setSessionsLoaded(false)
     setSessionLoadError(null)
 
-    try {
-      const loadedSessions = await window.electronAPI.getSessions()
-
-      // Initialize per-session atoms and metadata map
-      // NOTE: No sessionsAtom used - sessions are only in per-session atoms
-      initializeSessions(loadedSessions)
-
-      // Initialize unified sessionOptions from session data
-      const optionsMap = new Map<string, SessionOptions>()
-      for (const s of loadedSessions) {
-        const hasNonDefaultMode = s.permissionMode && s.permissionMode !== 'ask'
-        const hasNonDefaultThinking = s.thinkingLevel && s.thinkingLevel !== DEFAULT_THINKING_LEVEL
-        if (hasNonDefaultMode || hasNonDefaultThinking) {
-          optionsMap.set(s.id, {
-            permissionMode: s.permissionMode ?? 'ask',
-            thinkingLevel: s.thinkingLevel ?? DEFAULT_THINKING_LEVEL,
+    let loadPromise!: Promise<void>
+    loadPromise = (async () => {
+      try {
+        const loadedSessions = await window.electronAPI.getSessions()
+        if (
+          generation !== sessionLoadGenerationRef.current
+          || windowWorkspaceIdRef.current !== expectedWorkspaceId
+        ) {
+          rendererLog.info('[App] Ignoring stale session list response', {
+            expectedWorkspaceId,
+            currentWorkspaceId: windowWorkspaceIdRef.current,
+            generation,
+            currentGeneration: sessionLoadGenerationRef.current,
           })
+          return
         }
-      }
-      setSessionOptions(optionsMap)
 
-      setSessionsLoaded(true)
+        const expectedWorkspace = workspacesRef.current.find(workspace => workspace.id === expectedWorkspaceId)
+        assertWorkspaceSessionBatch(loadedSessions, [
+          expectedWorkspaceId,
+          expectedWorkspace?.remoteServer?.remoteWorkspaceId,
+        ])
 
-      if (initialSessionId && windowWorkspaceId) {
-        const session = loadedSessions.find(s => s.id === initialSessionId)
-        if (session) {
-          navigate(routes.view.allSessions(session.id))
+        // Initialize per-session atoms and metadata map only after ownership validation.
+        initializeSessions(loadedSessions)
+
+        const optionsMap = new Map<string, SessionOptions>()
+        for (const s of loadedSessions) {
+          const hasNonDefaultMode = s.permissionMode && s.permissionMode !== 'ask'
+          const hasNonDefaultThinking = s.thinkingLevel && s.thinkingLevel !== DEFAULT_THINKING_LEVEL
+          if (hasNonDefaultMode || hasNonDefaultThinking) {
+            optionsMap.set(s.id, {
+              permissionMode: s.permissionMode ?? 'ask',
+              thinkingLevel: s.thinkingLevel ?? DEFAULT_THINKING_LEVEL,
+            })
+          }
         }
-      }
-    } catch (err) {
-      console.error('[App] Failed to load sessions:', err)
-      const transportState = await window.electronAPI.getTransportConnectionState().catch(() => null)
+        setSessionOptions(optionsMap)
 
-      if (shouldTreatSessionLoadFailureAsTransportFallback(transportState)) {
-        console.error('[App] Treating session load failure as transport fallback:', transportState)
         setSessionsLoaded(true)
-        setSessionLoadError(null)
-        return
-      }
 
-      setSessionLoadError(formatSessionLoadFailure(err))
-      setSessionsLoaded(true)
-    }
-  }, [initializeSessions, initialSessionId, windowWorkspaceId])
+        if (initialSessionId) {
+          const session = loadedSessions.find(s => s.id === initialSessionId)
+          if (session) {
+            navigate(routes.view.allSessions(session.id))
+          }
+        }
+      } catch (err) {
+        if (
+          generation !== sessionLoadGenerationRef.current
+          || windowWorkspaceIdRef.current !== expectedWorkspaceId
+        ) return
+
+        console.error('[App] Failed to load sessions:', err)
+        const transportState = await window.electronAPI.getTransportConnectionState().catch(() => null)
+
+        if (shouldTreatSessionLoadFailureAsTransportFallback(transportState)) {
+          console.error('[App] Treating session load failure as transport fallback:', transportState)
+          setSessionsLoaded(true)
+          setSessionLoadError(null)
+          return
+        }
+
+        rendererLog.error('[App] Rejected session list for workspace', {
+          expectedWorkspaceId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        setSessionLoadError(formatSessionLoadFailure(err))
+        setSessionsLoaded(true)
+      } finally {
+        if (sessionLoadFlightRef.current?.promise === loadPromise) {
+          sessionLoadFlightRef.current = null
+        }
+      }
+    })()
+
+    sessionLoadFlightRef.current = { workspaceId: expectedWorkspaceId, promise: loadPromise }
+    return loadPromise
+  }, [initializeSessions, initialSessionId])
 
   const refreshSessionListMetadataFromServer = useCallback(async (options: SessionListRefreshOptions = {}): Promise<Map<string, SessionMeta> | null> => {
     const {
@@ -667,6 +726,8 @@ export default function App() {
 
   // Session selection state
   const { state: sessionSelection, setState: setSession } = useSessionSelectionStore()
+  const sessionSelectionRef = useRef(sessionSelection)
+  sessionSelectionRef.current = sessionSelection
 
   // Notification system - shows native OS notifications and badge count
   const handleNavigateToSession = useCallback((sessionId: string) => {
@@ -762,7 +823,7 @@ export default function App() {
         })
       }
     }).catch(() => { /* non-fatal startup check */ })
-    void loadSessionsFromServer()
+    if (windowWorkspaceId) void loadSessionsFromServer(windowWorkspaceId)
     // Load persisted input drafts into ref (no re-render needed).
     // Attachment files are not read here — hydration happens lazily when the session
     // is opened so app startup isn't delayed by reading potentially large files.
@@ -773,7 +834,7 @@ export default function App() {
     })
     // Load app-level theme
     window.electronAPI.getAppTheme().then(setAppTheme)
-  }, [appState, loadSessionsFromServer])
+  }, [appState, loadSessionsFromServer, windowWorkspaceId])
 
   // Subscribe to theme change events (live updates when theme.json changes)
   useEffect(() => {
@@ -798,9 +859,8 @@ export default function App() {
   // "is this session currently streaming?" and route accordingly.
   useEffect(() => {
     // Handoff events signal end of streaming - need to sync back to React state
-    // Also includes todo_state_changed so status updates immediately reflect in sidebar
     // async_operation included so shimmer effect on session titles updates in real-time
-    const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error', 'session_status_changed', 'session_flagged', 'session_unflagged', 'name_changed', 'labels_changed', 'title_generated', 'async_operation'])
+    const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error', 'name_changed', 'title_generated', 'async_operation'])
 
     // Helper to handle side effects (same logic for both paths)
     const handleEffects = (effects: Effect[], sessionId: string, eventType: string) => {
@@ -1156,26 +1216,6 @@ export default function App() {
     removeSession(sessionId)
   }, [removeSession])
 
-  const handleFlagSession = useCallback((sessionId: string) => {
-    updateSessionById(sessionId, { isFlagged: true })
-    window.electronAPI.sessionCommand(sessionId, { type: 'flag' })
-  }, [updateSessionById])
-
-  const handleUnflagSession = useCallback((sessionId: string) => {
-    updateSessionById(sessionId, { isFlagged: false })
-    window.electronAPI.sessionCommand(sessionId, { type: 'unflag' })
-  }, [updateSessionById])
-
-  const handleArchiveSession = useCallback((sessionId: string) => {
-    updateSessionById(sessionId, { isArchived: true, archivedAt: Date.now() })
-    window.electronAPI.sessionCommand(sessionId, { type: 'archive' })
-  }, [updateSessionById])
-
-  const handleUnarchiveSession = useCallback((sessionId: string) => {
-    updateSessionById(sessionId, { isArchived: false, archivedAt: undefined })
-    window.electronAPI.sessionCommand(sessionId, { type: 'unarchive' })
-  }, [updateSessionById])
-
   /**
    * Set which session user is actively viewing (for unread state machine).
    * Called when user navigates to a session. Main process uses this to determine
@@ -1207,11 +1247,6 @@ export default function App() {
     // Set hasUnread flag (primary source of truth for NEW badge)
     updateSessionById(sessionId, { hasUnread: true, lastReadMessageId: undefined })
     window.electronAPI.sessionCommand(sessionId, { type: 'markUnread' })
-  }, [updateSessionById])
-
-  const handleSessionStatusChange = useCallback((sessionId: string, state: SessionStatus) => {
-    updateSessionById(sessionId, { sessionStatus: state })
-    window.electronAPI.sessionCommand(sessionId, { type: 'setSessionStatus', state })
   }, [updateSessionById])
 
   const handleRenameSession = useCallback((sessionId: string, name: string) => {
@@ -1739,55 +1774,127 @@ export default function App() {
   // Handle workspace selection
   // - Default: switch workspace in same window (in-window switching)
   // - With openInNewWindow=true: open in new window (or focus existing)
-  const handleSelectWorkspace = useCallback(async (workspaceId: string, openInNewWindow = false) => {
-    // If selecting current workspace, do nothing
-    if (workspaceId === windowWorkspaceId) return
+  const handleSelectWorkspace = useCallback(async (
+    workspaceId: string,
+    openInNewWindow = false,
+    destination: WorkspaceSwitchDestination = 'restore',
+  ) => {
+    const transitionQueue = workspaceTransitionQueueRef.current!
+    const currentWorkspaceId = windowWorkspaceIdRef.current
+    const currentTransportWorkspaceId = transportWorkspaceIdRef.current ?? currentWorkspaceId
+
+    // Selecting the stable current workspace is navigation, not a transport switch.
+    if (
+      workspaceId === currentWorkspaceId
+      && workspaceId === currentTransportWorkspaceId
+      && !transitionQueue.isRunning
+    ) {
+      if (!openInNewWindow && destination === 'allSessions') {
+        navigate(routes.view.allSessions())
+      }
+      return
+    }
 
     if (openInNewWindow) {
       // Open (or focus) the window for the selected workspace
       window.electronAPI.openWorkspace(workspaceId)
-    } else {
-      // Switch workspace in current window
-      // 1. Update the main process's window-workspace mapping
-      await window.electronAPI.switchWorkspace(workspaceId)
+      return
+    }
 
-      // 2. Update React state to trigger re-renders
+    return transitionQueue.enqueue(async () => {
+      const activeWorkspaceId = windowWorkspaceIdRef.current
+      const activeTransportWorkspaceId = transportWorkspaceIdRef.current ?? activeWorkspaceId
+      if (workspaceId === activeWorkspaceId && workspaceId === activeTransportWorkspaceId) {
+        if (destination === 'allSessions') navigate(routes.view.allSessions())
+        return
+      }
+
+      // Capture one stable baseline for the entire coalesced transition series.
+      // Intermediate transport targets never become renderer workspace state.
+      if (!workspaceTransitionRollbackRef.current) {
+        const previousPanelStack = store.get(panelStackAtom)
+        const previousFocusedPanelId = store.get(focusedPanelIdAtom)
+        const previousSessionMetaMap = store.get(sessionMetaMapAtom)
+        const previousSessionIds = store.get(sessionIdsAtom)
+        const previousSessionSelection = sessionSelectionRef.current
+        workspaceTransitionBaselineIdRef.current = activeWorkspaceId
+        workspaceTransitionRollbackRef.current = () => {
+          store.set(panelStackAtom, previousPanelStack)
+          store.set(focusedPanelIdAtom, previousFocusedPanelId)
+          store.set(sessionMetaMapAtom, previousSessionMetaMap)
+          store.set(sessionIdsAtom, previousSessionIds)
+          setSession(previousSessionSelection)
+          setSessionsLoaded(true)
+          setWorkspaceSwitchDestination(null)
+        }
+
+        // Unmount old session panels before the transport changes workspace.
+        setSession(createInitialState())
+        store.set(panelStackAtom, [])
+        store.set(focusedPanelIdAtom, null)
+        store.set(sessionMetaMapAtom, new Map())
+        store.set(sessionIdsAtom, [])
+        setSessionsLoaded(false)
+        setSessionLoadError(null)
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      }
+
+      try {
+        if (workspaceId !== (transportWorkspaceIdRef.current ?? windowWorkspaceIdRef.current)) {
+          await window.electronAPI.switchWorkspace(workspaceId)
+          transportWorkspaceIdRef.current = workspaceId
+        }
+      } catch (error) {
+        const baselineWorkspaceId = workspaceTransitionBaselineIdRef.current
+        if (baselineWorkspaceId && transportWorkspaceIdRef.current !== baselineWorkspaceId) {
+          try {
+            await window.electronAPI.switchWorkspace(baselineWorkspaceId)
+            transportWorkspaceIdRef.current = baselineWorkspaceId
+          } catch (rollbackError) {
+            rendererLog.error('[App] Failed to roll back workspace transport', {
+              baselineWorkspaceId,
+              error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            })
+          }
+        }
+        workspaceTransitionRollbackRef.current?.()
+        workspaceTransitionRollbackRef.current = null
+        workspaceTransitionBaselineIdRef.current = null
+        throw error
+      }
+
+      // A newer request will continue from the updated transport. Do not expose
+      // this intermediate target to React, where it would trigger stale effects.
+      if (transitionQueue.hasPending) return
+
+      // Commit renderer state only for the final target.
+      const rendererWorkspaceChanged = workspaceId !== windowWorkspaceIdRef.current
+      setWorkspaceSwitchDestination(destination)
+      windowWorkspaceIdRef.current = workspaceId
       setWindowWorkspaceId(workspaceId)
 
-      // 3. Clear selected session - the old session belongs to the previous workspace
-      // and should not remain selected when switching to a new workspace.
-      // This prevents showing stale session data from the wrong workspace.
-      setSession(createInitialState())
-
-      // 4. Clear pending permissions/credentials (not relevant to new workspace)
+      // Clear workspace-scoped transient state.
       setPendingPermissions(new Map())
       setPendingCredentials(new Map())
-
-      // 5. Clear session options from previous workspace
-      // (session IDs are unique UUIDs, but clearing prevents unbounded memory growth
-      // and ensures no stale state from old workspace persists)
       setSessionOptions(new Map())
-
-      // 6. Clear message drafts from previous workspace
-      // (prevents memory growth on repeated workspace switches)
       sessionDraftsRef.current.clear()
-
-      // 7. Reset sources and skills atoms to empty
-      // (prevents stale data flash during workspace switch - AppShell will reload)
       store.set(sourcesAtom, [])
       store.set(skillsAtom, [])
 
-      // 8. Clear session atoms BEFORE workspace switch
-      // This prevents stale session data from the previous workspace being visible.
-      store.set(sessionMetaMapAtom, new Map())
-      store.set(sessionIdsAtom, [])
+      // Complete the transition only after the target workspace's session
+      // response has passed the ownership check and committed atomically.
+      await loadSessionsFromServer(workspaceId)
+      if (!rendererWorkspaceChanged && destination === 'allSessions') {
+        navigate(routes.view.allSessions())
+        setWorkspaceSwitchDestination(null)
+      }
+      workspaceTransitionRollbackRef.current = null
+      workspaceTransitionBaselineIdRef.current = null
 
       // Note: NavigationContext detects the workspaceId change and handles
       // panel restoration from the stored workspace URL (or defaults to allSessions).
-      // Sessions and theme will reload automatically due to windowWorkspaceId dependency
-      // in useEffect hooks.
-    }
-  }, [windowWorkspaceId, setSession, store])
+    })
+  }, [loadSessionsFromServer, setWindowWorkspaceId, setSession, store])
 
   // Handle workspace switch by slug (called by NavigationContext on popstate when ?ws= changes)
   const handleSwitchWorkspaceBySlug = useCallback((slug: string) => {
@@ -1830,14 +1937,9 @@ export default function App() {
     onCreateSession: handleCreateSession,
     onSendMessage: handleSendMessage,
     onRenameSession: handleRenameSession,
-    onFlagSession: handleFlagSession,
-    onUnflagSession: handleUnflagSession,
-    onArchiveSession: handleArchiveSession,
-    onUnarchiveSession: handleUnarchiveSession,
     onMarkSessionRead: handleMarkSessionRead,
     onMarkSessionUnread: handleMarkSessionUnread,
     onSetActiveViewingSession: handleSetActiveViewingSession,
-    onSessionStatusChange: handleSessionStatusChange,
     onDeleteSession: handleDeleteSession,
     onRespondToPermission: handleRespondToPermission,
     onRespondToCredential: handleRespondToCredential,
@@ -1874,14 +1976,9 @@ export default function App() {
     handleCreateSession,
     handleSendMessage,
     handleRenameSession,
-    handleFlagSession,
-    handleUnflagSession,
-    handleArchiveSession,
-    handleUnarchiveSession,
     handleMarkSessionRead,
     handleMarkSessionUnread,
     handleSetActiveViewingSession,
-    handleSessionStatusChange,
     handleDeleteSession,
     handleRespondToPermission,
     handleRespondToCredential,
@@ -2014,6 +2111,8 @@ export default function App() {
           isReady={appState === 'ready'}
           isSessionsReady={sessionsLoaded}
           remoteWorkspaceId={windowRemoteWorkspaceId}
+          workspaceSwitchDestination={workspaceSwitchDestination}
+          onWorkspaceSwitchDestinationConsumed={() => setWorkspaceSwitchDestination(null)}
         >
           {/* Handle window close requests (X button, Cmd+W) - close modal first if open */}
           <WindowCloseHandler />

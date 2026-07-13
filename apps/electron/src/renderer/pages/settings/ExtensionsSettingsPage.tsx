@@ -146,6 +146,7 @@ export default function ExtensionsSettingsPage() {
 
   const handleReload = useCallback(async (interruptRunning: boolean) => {
     setReloadPending(true)
+    if (interruptRunning) setReloadConfirmation(null)
     try {
       const result = await window.electronAPI.reloadPiExtensions(interruptRunning)
       if (result.status === 'confirmation_required') {

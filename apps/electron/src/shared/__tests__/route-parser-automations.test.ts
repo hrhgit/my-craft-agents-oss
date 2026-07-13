@@ -1,6 +1,34 @@
 import { describe, it, expect } from 'bun:test'
 import { parseCompoundRoute, buildCompoundRoute } from '../route-parser'
 
+describe('route-parser: retired session organization routes', () => {
+  const routes = [
+    'flagged',
+    'archived',
+    'state/todo',
+    'label/important',
+    'view/my-view',
+  ]
+
+  for (const route of routes) {
+    it(`falls back ${route} to All Sessions`, () => {
+      expect(parseCompoundRoute(route)).toEqual({
+        navigator: 'sessions',
+        sessionFilter: { kind: 'allSessions' },
+        details: null,
+      })
+    })
+  }
+
+  it('preserves a selected session while removing the retired filter', () => {
+    expect(parseCompoundRoute('label/important/session/session-1')).toEqual({
+      navigator: 'sessions',
+      sessionFilter: { kind: 'allSessions' },
+      details: { type: 'session', id: 'session-1' },
+    })
+  })
+})
+
 describe('route-parser: automations routes', () => {
   it('parses "automations" as automations navigator with no filter or details', () => {
     const result = parseCompoundRoute('automations')

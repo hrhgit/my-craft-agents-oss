@@ -34,18 +34,20 @@ craft-cli run <message> [options]
 | `--output-format` | `text` or `stream-json` (default: `text`) |
 | `--no-cleanup` | Keep session after completion |
 | `--server-entry` | Path to server/index.ts |
-| `--interactive` | Render pi extension `remoteui:request` dialogs in the terminal |
+| `--interactive` | Render versioned extension interactions and legacy RemoteUI dialogs in the terminal |
 
-## Pi extension interaction (`remoteui:request`)
+## Pi extension interaction
 
 The `run` command subscribes to the `extensions:EVENT` channel and forwards
-`remoteui:request` events from pi extensions to a terminal interaction handler.
+versioned `extension_interaction_request` events and legacy `remoteui:request`
+events from pi extensions to a terminal interaction handler.
 Two modes are supported:
 
 ### Non-interactive mode (default)
 
-When a pi extension emits a `remoteui:request`, the CLI **automatically
-responds with a cancellation**: `payload=null`, `reason="non-interactive"`.
+When a pi extension requests interaction, the CLI **automatically responds
+with a cancellation**. Versioned interactions receive a structured
+`host-disconnected` response; legacy RemoteUI receives `payload=null`.
 The extension is expected to degrade gracefully (e.g. skip the question, use
 a default, or abort the operation). A one-line notice is written to stderr so
 the user can see that an extension request was auto-cancelled (useful for
@@ -57,7 +59,9 @@ for terminal input that will never come.
 ### Interactive mode (`--interactive`)
 
 When `--interactive` is passed, the CLI renders a terminal dialog for each
-`remoteui:request` and waits for the user to respond via stdin:
+interaction request and waits for the user to respond via stdin. Versioned
+interactions support choice, text, multiline editor, and confirmation fields;
+legacy requests retain the following adapters:
 
 - **`select`** — Lists the options with numeric indices. The user enters a
   number (or comma-separated numbers when `allowMultiple` is set). If the
@@ -87,7 +91,7 @@ renderer / Chromium window infrastructure. The following tools are therefore
 | `browser_tool` | Strongly depends on the Electron app's built-in Chromium windows (`browser-pane:*` channels). The CLI cannot create, navigate, or snapshot browser panes. See [`docs/browser-tools.md`](../../apps/electron/resources/docs/browser-tools.md). |
 | Other renderer-only tools | Any tool that relies on the Electron renderer process (e.g. rich previews, in-app notification surfaces) is not functional over the CLI. |
 
-Pi extensions that only need `remoteui:request` interaction work fine in
+Pi extensions that use versioned interaction V1 or legacy RemoteUI work in
 `--interactive` mode, and degrade gracefully in the default non-interactive
 mode.
 

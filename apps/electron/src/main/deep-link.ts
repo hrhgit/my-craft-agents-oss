@@ -7,8 +7,7 @@
  *
  * Compound format (hierarchical navigation):
  *   craftagents://allSessions[/session/{sessionId}]            - Session list (all sessions)
- *   craftagents://flagged[/session/{sessionId}]             - Session list (flagged filter)
- *   craftagents://state/{stateId}[/session/{sessionId}]     - Session list (state filter)
+ *   Retired organization routes (flagged, archived, state, label, view) fall back to All Sessions.
  *   craftagents://sources[/source/{sourceSlug}]          - Sources list
  *   craftagents://settings[/{subpage}]                   - Settings (general, shortcuts, preferences)
  *
@@ -21,8 +20,6 @@
  *                               If send=true is provided with input, immediately sends the message
  *   resume-sdk-session/{id}   - Resume Claude Code session by SDK session ID
  *   delete-session/{id}       - Delete session
- *   flag-session/{id}         - Flag session
- *   unflag-session/{id}       - Unflag session
  *
  * Examples:
  *   craftagents://allSessions                               (all sessions view)
@@ -115,7 +112,8 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
 
     // Compound route prefixes
     const COMPOUND_ROUTE_PREFIXES = [
-      'allSessions', 'flagged', 'state', 'sources', 'settings', 'skills'
+      'allSessions', 'flagged', 'archived', 'state', 'label', 'view',
+      'sources', 'settings', 'skills'
     ]
 
     // craftagents://allSessions/..., craftagents://settings/..., etc. (compound routes)

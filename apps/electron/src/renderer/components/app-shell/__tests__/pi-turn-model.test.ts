@@ -83,6 +83,24 @@ describe('buildPiTurns', () => {
     expect(turns[0]).toMatchObject({ type: 'user', timestamp, message: { timestamp } })
   })
 
+  it('uses the projection entity wall-clock time when the payload omits a timestamp', () => {
+    const createdAt = 1_783_861_200_000
+    const turns = buildPiTurns([entity({
+      entityId: 'content:user:runtime-user-created-at',
+      createdSeq: 42,
+      createdAt,
+      kind: 'user_text',
+      payload: {
+        role: 'user', messageId: 'runtime-user-created-at', text: 'hello', streaming: false,
+      },
+    })])
+
+    expect(turns[0]).toMatchObject({
+      type: 'user',
+      message: { id: 'runtime-user-created-at', content: 'hello', timestamp: createdAt },
+    })
+  })
+
   it('derives stable request timing from the user message and final turn lifecycle', () => {
     const startedAt = 1_783_861_200_000
     const completedAt = startedAt + 65_432

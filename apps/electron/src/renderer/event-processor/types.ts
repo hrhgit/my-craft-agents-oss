@@ -5,7 +5,7 @@
  * All agent events flow through a single pure function for consistent state transitions.
  */
 
-import type { Session, Message, PermissionRequest, CredentialRequest, TypedError, PermissionMode, SessionStatus, AuthRequest, ToolDisplayMeta } from '../../shared/types'
+import type { Session, Message, PermissionRequest, CredentialRequest, TypedError, PermissionMode, AuthRequest, ToolDisplayMeta } from '../../shared/types'
 import type { PlanModeStateV1 } from '@craft-agent/core/types'
 
 /**
@@ -135,47 +135,6 @@ export interface SourcesChangedEvent {
 /**
  * Labels changed event
  */
-export interface LabelsChangedEvent {
-  type: 'labels_changed'
-  sessionId: string
-  labels: string[]
-}
-
-/**
- * Todo state changed event (external metadata change or agent tool)
- */
-export interface SessionStatusChangedEvent {
-  type: 'session_status_changed'
-  sessionId: string
-  sessionStatus?: string
-}
-
-/**
- * Session flagged/unflagged events (external metadata change)
- */
-export interface SessionFlaggedEvent {
-  type: 'session_flagged'
-  sessionId: string
-}
-
-export interface SessionUnflaggedEvent {
-  type: 'session_unflagged'
-  sessionId: string
-}
-
-/**
- * Session archived/unarchived events (external metadata change)
- */
-export interface SessionArchivedEvent {
-  type: 'session_archived'
-  sessionId: string
-}
-
-export interface SessionUnarchivedEvent {
-  type: 'session_unarchived'
-  sessionId: string
-}
-
 /**
  * Session name changed event (external metadata change)
  */
@@ -486,12 +445,6 @@ export type AgentEvent =
   | PermissionRequestEvent
   | CredentialRequestEvent
   | SourcesChangedEvent
-  | LabelsChangedEvent
-  | SessionStatusChangedEvent
-  | SessionFlaggedEvent
-  | SessionUnflaggedEvent
-  | SessionArchivedEvent
-  | SessionUnarchivedEvent
   | NameChangedEvent
   | PlanSubmittedEvent
   | PlanArtifactChangedEvent

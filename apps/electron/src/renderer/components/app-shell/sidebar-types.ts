@@ -50,9 +50,7 @@ export const getSidebarModeKey = (mode: SidebarMode): string => {
   if (mode.type === 'settings') {
     return mode.subpage === null ? 'settings' : `settings:${mode.subpage}`
   }
-  const f = mode.filter
-  if (f.kind === 'state') return `state:${f.stateId}`
-  return f.kind
+  return 'allSessions'
 }
 
 /**
@@ -62,14 +60,9 @@ export const getSidebarModeKey = (mode: SidebarMode): string => {
 export const parseSidebarModeKey = (key: string): SidebarMode | null => {
   if (key === 'sources') return { type: 'sources' }
   if (key === 'allSessions') return { type: 'sessions', filter: { kind: 'allSessions' } }
-  if (key === 'flagged') return { type: 'sessions', filter: { kind: 'flagged' } }
-  if (key.startsWith('state:')) {
-    const stateId = key.slice(6)
-    if (stateId) return { type: 'sessions', filter: { kind: 'state', stateId } }
-  }
   if (key.startsWith('settings:')) {
     const subpage = key.slice(9) as SettingsSubpage
-    if (['app', 'appearance', 'workspace', 'permissions', 'labels', 'shortcuts', 'preferences'].includes(subpage)) {
+    if (['app', 'appearance', 'workspace', 'permissions', 'shortcuts', 'preferences'].includes(subpage)) {
       return { type: 'settings', subpage }
     }
   }

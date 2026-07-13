@@ -69,7 +69,7 @@ describe('session transfer capability', () => {
     }))).toMatchObject({ status: 'success', output: { sessionId: 'created-session' } })
     expect(exportSummary).toHaveBeenCalledWith('session-1')
     expect(importSummary).toHaveBeenCalledWith('session-1', {
-      sourceSessionId: 'remote-session', summary: 'Safe summary', labels: ['imported'],
+      sourceSessionId: 'remote-session', summary: 'Safe summary',
     })
     expect(progress).toContainEqual({ phase: 'summarizing' })
     expect(progress).toContainEqual({ phase: 'importing' })

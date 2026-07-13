@@ -308,7 +308,7 @@ export type SystemPromptPreset = 'default' | 'mini';
  */
 export function getMiniAgentSystemPrompt(workspaceRootPath?: string): string {
   const workspaceContext = workspaceRootPath
-    ? `\n## Workspace\nConfig files are in: \`${workspaceRootPath}\`\n- Statuses: \`statuses/config.json\`\n- Labels: \`labels/config.json\`\n- Permissions: \`permissions.json\`\n`
+    ? `\n## Workspace\nConfig files are in: \`${workspaceRootPath}\`\n- Permissions: \`permissions.json\`\n`
     : '';
 
   return `You are a focused assistant for quick configuration edits in Craft Agent.
@@ -574,8 +574,6 @@ Read relevant context files using the Read tool - they contain architecture info
 | Skills | \`${DOC_REFS.skills}\` | BEFORE creating custom skills |
 | Automations | \`${DOC_REFS.hooks}\` | BEFORE creating/modifying automations |
 | Themes | \`${DOC_REFS.themes}\` | BEFORE customizing colors |
-| Statuses | \`${DOC_REFS.statuses}\` | When user mentions statuses or workflow states |
-| Labels | \`${DOC_REFS.labels}\` | BEFORE creating/modifying labels |
 | Tool Icons | \`${DOC_REFS.toolIcons}\` | BEFORE modifying tool icon mappings |
 | Mermaid | \`${DOC_REFS.mermaid}\` | When creating diagrams |
 | Data Tables | \`${DOC_REFS.dataTables}\` | When working with datasets of 20+ rows |
@@ -584,15 +582,14 @@ Read relevant context files using the Read tool - they contain architecture info
 | Image Preview | \`${DOC_REFS.imagePreview}\` | When displaying local image files inline |
 | Markdown Preview | \`${DOC_REFS.markdownPreview}\` | When displaying rendered .md files inline |
 | Browser Tools | \`${DOC_REFS.browserTools}\` | When using in-app browser tools (\`browser_tool\`) |${FEATURE_FLAGS.craftAgentsCli ? `
-| Craft CLI | \`${DOC_REFS.craftCli}\` | When managing labels/sources/skills/automations via \`craft-agent\` |` : ''}
+| Craft CLI | \`${DOC_REFS.craftCli}\` | When managing sources/skills/automations via \`craft-agent\` |` : ''}
 
 **IMPORTANT:** Always read the relevant doc file BEFORE making changes. Do NOT guess schemas - these have specific patterns that differ from standard approaches.${FEATURE_FLAGS.craftAgentsCli ? `
 
 ## Craft Agent CLI
 
-Prefer \`craft-agent\` CLI over direct file edits for labels, sources, skills, and automations.
+Prefer \`craft-agent\` CLI over direct file edits for sources, skills, and automations.
 
-- Labels help: \`craft-agent label --help\`
 - Sources help: \`craft-agent source --help\`
 - Skills help: \`craft-agent skill --help\`
 - Automations help: \`craft-agent automation --help\`
@@ -823,33 +820,15 @@ transform_data({
 ${browserToolsSection}
 ## Session Self-Management
 
-You can manage your own session's metadata and query other sessions in the workspace.
+You can inspect your session and query other sessions in the workspace.
 
 **Introspecting your session:**
-\`get_session_info\` — returns your current labels, status, permission mode, and other metadata. Pass a \`sessionId\` to query a different session.
-
-**Setting labels:**
-\`set_session_labels\` — replaces all labels on the current session. Use it to tag your work or to trigger label-based automations (\`LabelAdd\` events).
-
-Labels come in two shapes:
-- **Boolean** (presence-only): a plain ID, e.g. \`"bug"\`, \`"urgent"\`.
-- **Valued** (\`id::value\` form): only for labels configured with a \`valueType\`. The value must match the declared type — \`number\` accepts decimals only (no scientific notation), \`date\` requires \`YYYY-MM-DD\` (or \`YYYY-MM-DDTHH:mm\`), \`link\` is a URL (opens in the browser when clicked), \`string\` accepts anything. Examples: \`"priority::3"\`, \`"due::2026-01-30"\`, \`"parent-task::TASK-123"\`, \`"docs::https://example.com"\`.
-
-If you get a "Labels rejected" error, the reason is per-entry — common causes are an unknown base ID, a value supplied to a boolean label, or a value that doesn't match the declared \`valueType\`.
-
-**Setting status:**
-\`set_session_status\` — changes the session status (e.g., "done", "in_progress"). Use it to signal completion or trigger status-based automations (\`SessionStatusChange\` events).
+\`get_session_info\` — returns the current name, permission mode, model, and other metadata. Pass a \`sessionId\` to query a different session.
 
 **Querying sessions:**
-\`list_sessions\` — returns \`{ total, returned, sessions }\` with pagination. Always use filters (status, label, search) to narrow results. Default limit is 20 sessions.
+\`list_sessions\` — returns \`{ total, returned, sessions }\` with pagination. Use the search filter to narrow results. Default limit is 20 sessions.
 - Use \`get_session_info\` for full details on a specific session (list-then-detail pattern).
-- Do NOT call \`list_sessions\` with a high limit just to scan all sessions — filter first.
-
-**Automation integration:**
-Setting labels or status triggers the corresponding automation events (\`LabelAdd\`/\`LabelRemove\`, \`SessionStatusChange\`). This enables self-closing workflows:
-1. Scheduled automation creates a session
-2. Agent completes work
-3. Agent calls \`set_session_status\` with "done" → triggers downstream webhook/notification
+- Do NOT call \`list_sessions\` with a high limit just to scan all sessions — search first.
 
 ## Diagrams and Visualization
 

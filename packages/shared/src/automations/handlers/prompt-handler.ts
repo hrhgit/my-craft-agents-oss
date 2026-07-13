@@ -57,16 +57,16 @@ export class PromptHandler implements AutomationHandler {
       matcherId: string | undefined;
       automationName: string;
       telegramTopic: string | undefined;
-      prompts: Array<{ prompt: PromptAction; labels?: string[]; permissionMode?: PermissionMode }>;
+      prompts: Array<{ prompt: PromptAction; permissionMode?: PermissionMode }>;
     }> = [];
 
     for (const matcher of matchers) {
       if (!matcherMatches(matcher, event, payload as unknown as Record<string, unknown>)) continue;
 
-      const prompts: Array<{ prompt: PromptAction; labels?: string[]; permissionMode?: PermissionMode }> = [];
+      const prompts: Array<{ prompt: PromptAction; permissionMode?: PermissionMode }> = [];
       for (const action of matcher.actions) {
         if (action.type === 'prompt') {
-          prompts.push({ prompt: action, labels: matcher.labels, permissionMode: matcher.permissionMode });
+          prompts.push({ prompt: action, permissionMode: matcher.permissionMode });
         }
       }
       if (prompts.length > 0) {
@@ -97,15 +97,12 @@ export class PromptHandler implements AutomationHandler {
       const expandedTopic = telegramTopic ? expandEnvVars(telegramTopic, env).trim() : undefined;
       const finalTopic = expandedTopic && expandedTopic.length > 0 ? expandedTopic : undefined;
 
-      for (const { prompt, labels, permissionMode } of prompts) {
+      for (const { prompt, permissionMode } of prompts) {
         // Expand environment variables in the prompt
         const expandedPrompt = expandEnvVars(prompt.prompt, env);
 
         // Parse references
         const references = parsePromptReferences(expandedPrompt);
-
-        // Expand labels
-        const expandedLabels = labels?.map(label => expandEnvVars(label, env));
 
         pendingPrompts.push({
           sessionId: this.options.sessionId,
@@ -113,7 +110,6 @@ export class PromptHandler implements AutomationHandler {
           automationName,
           prompt: expandedPrompt,
           mentions: references.mentions,
-          labels: expandedLabels,
           permissionMode,
           provider: prompt.provider,
           model: prompt.model,

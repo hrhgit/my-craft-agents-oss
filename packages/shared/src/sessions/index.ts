@@ -9,7 +9,6 @@
 
 // Types
 export type {
-  SessionStatus,
   SessionTokenUsage,
   StoredMessage,
   StoredSession,

@@ -16,7 +16,7 @@ function writeDefaultPermissions(configDir: string) {
       {
         version: '2026-03-07',
         allowedBashPatterns: [
-          { pattern: '^craft-agent\\s+label\\s+list\\b', comment: 'craft-agent label read-only operations' },
+          { pattern: '^craft-agent\\s+automation\\s+list\\b', comment: 'craft-agent automation read-only operations' },
           { pattern: '^rg\\b', comment: 'Ripgrep search' },
         ],
         allowedMcpPatterns: [],
@@ -78,7 +78,7 @@ describe('permissions config craft-agents-cli feature flag', () => {
       })
 
       const sources = merged.readOnlyBashPatterns.map(p => p.source)
-      expect(sources).toContain('^craft-agent\\s+label\\s+list\\b')
+      expect(sources).toContain('^craft-agent\\s+automation\\s+list\\b')
       expect(sources).toContain('^rg\\b')
     } finally {
       rmSync(tempConfigDir, { recursive: true, force: true })

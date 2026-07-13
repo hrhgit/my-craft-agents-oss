@@ -16,27 +16,32 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  validateExtensionInteractionBridgeCancelV1,
+  validateExtensionInteractionBridgeRequestV1,
+  validateExtensionInteractionResponseV1,
+  type ExtensionInteractionBridgeCancelV1,
+  type ExtensionInteractionBridgeRequestV1,
+  type ExtensionInteractionResponseV1,
+} from '@craft-agent/shared/protocol'
 import type {
   RemoteUIRequest,
   RemoteUIResult,
   RemoteUICancelReason,
 } from '../components/extensions/RemoteUIModal'
-import {
-  consumeRemoteUIBatchRequest,
-  isRemoteUIBatchReplayScope,
-  isRemoteUIBatchReplayStage,
-  startRemoteUIBatchReplay,
-  type RemoteUIBatchReplayState,
-  type RemoteUIBatchSubmission,
-} from '../components/extensions/remote-ui-batch'
 
 export interface UseRemoteUIRequestsResult {
   /** 当前需要展示的 remoteui:request（无则为 null） */
-  currentRequest: RemoteUIRequest | null
+  currentRequest: ExtensionUIRequest | null
   /** 用户确认/取消时调用：payload 为结果或 null + reason */
-  respond: (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => void
-  /** 提交已在 renderer 中完整作答的 ask_user 题组。 */
-  respondBatch: (submission: RemoteUIBatchSubmission) => void
+  respond: (payload: ExtensionUIResponse, reason?: RemoteUICancelReason) => void
+}
+
+export type ExtensionUIRequest = RemoteUIRequest | ExtensionInteractionBridgeRequestV1
+export type ExtensionUIResponse = RemoteUIResult | ExtensionInteractionResponseV1 | null
+
+export function extensionUIRequestKey(request: Pick<ExtensionUIRequest, 'requestId' | 'sessionId' | 'runtimeId' | 'extensionId'>): string {
+  return `${request.sessionId}\0${request.runtimeId}\0${request.extensionId}\0${request.requestId}`
 }
 
 /**
@@ -56,10 +61,22 @@ export function asRemoteUIRequest(event: unknown): RemoteUIRequest | null {
   return event as RemoteUIRequest
 }
 
+export function asExtensionInteractionRequest(event: unknown): ExtensionInteractionBridgeRequestV1 | null {
+  return validateExtensionInteractionBridgeRequestV1(event) === null
+    ? event as ExtensionInteractionBridgeRequestV1
+    : null
+}
+
+export function asExtensionInteractionCancel(event: unknown): ExtensionInteractionBridgeCancelV1 | null {
+  return validateExtensionInteractionBridgeCancelV1(event) === null
+    ? event as ExtensionInteractionBridgeCancelV1
+    : null
+}
+
 export function takeNextRemoteUIRequestForSession(
-  queue: RemoteUIRequest[],
+  queue: ExtensionUIRequest[],
   sessionId?: string | null,
-): RemoteUIRequest | null {
+): ExtensionUIRequest | null {
   if (!sessionId) return null
   const index = queue.findIndex(request => request.sessionId === sessionId)
   if (index < 0) return null
@@ -67,16 +84,15 @@ export function takeNextRemoteUIRequestForSession(
 }
 
 export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteUIRequestsResult {
-  const [currentRequest, setCurrentRequest] = useState<RemoteUIRequest | null>(null)
-  const currentRequestRef = useRef<RemoteUIRequest | null>(null)
+  const [currentRequest, setCurrentRequest] = useState<ExtensionUIRequest | null>(null)
+  const currentRequestRef = useRef<ExtensionUIRequest | null>(null)
   const activeSessionIdRef = useRef(activeSessionId)
   // 等待队列：当前已有活跃请求时，新请求入队
-  const queueRef = useRef<RemoteUIRequest[]>([])
+  const queueRef = useRef<ExtensionUIRequest[]>([])
   // 正在响应的 requestId，避免 onOpenChange 在 React 卸载时重复触发
   const respondingRef = useRef<Set<string>>(new Set())
+  const externallySettledRef = useRef<Set<string>>(new Set())
   const timeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
-  const batchReplayRef = useRef<RemoteUIBatchReplayState | null>(null)
-  const batchReplayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   activeSessionIdRef.current = activeSessionId
 
@@ -84,43 +100,29 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
     currentRequestRef.current = currentRequest
   }, [currentRequest])
 
-  const sendResponse = useCallback((
-    request: RemoteUIRequest,
-    payload: RemoteUIResult | null,
+  const sendResponse = useCallback(async (
+    request: ExtensionUIRequest,
+    payload: ExtensionUIResponse,
     reason?: RemoteUICancelReason | 'disconnected',
-    onError?: () => void,
-  ): boolean => {
+  ): Promise<boolean> => {
+    if (request.type === 'extension_interaction_request' && validateExtensionInteractionResponseV1(payload) !== null) {
+      console.error('[ExtensionInteraction] Refusing to send an invalid response')
+      return false
+    }
     if (typeof window.electronAPI?.sendRemoteUIResponse !== 'function') {
       console.warn('[RemoteUI] sendRemoteUIResponse not available on this server build')
       return false
     }
-    void window.electronAPI.sendRemoteUIResponse(
-      request.sessionId || '',
-      request.requestId,
-      payload,
-      reason,
-    ).catch((err) => {
+    try {
+      return await window.electronAPI.sendRemoteUIResponse(
+        request.sessionId || '',
+        request.requestId,
+        payload,
+        reason,
+      )
+    } catch (err) {
       console.error('[RemoteUI] Failed to send response:', err)
-      onError?.()
-    })
-    return true
-  }, [])
-
-  const clearBatchReplay = useCallback(() => {
-    batchReplayRef.current = null
-    if (batchReplayTimeoutRef.current) clearTimeout(batchReplayTimeoutRef.current)
-    batchReplayTimeoutRef.current = null
-  }, [])
-
-  const setBatchReplay = useCallback((state: RemoteUIBatchReplayState | null, timeout?: number) => {
-    if (batchReplayTimeoutRef.current) clearTimeout(batchReplayTimeoutRef.current)
-    batchReplayTimeoutRef.current = null
-    batchReplayRef.current = state
-    if (state && timeout && timeout > 0) {
-      batchReplayTimeoutRef.current = setTimeout(() => {
-        batchReplayRef.current = null
-        batchReplayTimeoutRef.current = null
-      }, timeout)
+      return false
     }
   }, [])
 
@@ -130,11 +132,36 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
     timeoutRef.current.delete(requestId)
   }, [])
 
+  const rememberResponding = useCallback((requestKey: string) => {
+    respondingRef.current.add(requestKey)
+    if (respondingRef.current.size > 512) {
+      const oldest = respondingRef.current.values().next().value
+      if (oldest) {
+        respondingRef.current.delete(oldest)
+        externallySettledRef.current.delete(oldest)
+      }
+    }
+  }, [])
+
+  const finishRequest = useCallback((request: ExtensionUIRequest) => {
+    const requestKey = extensionUIRequestKey(request)
+    queueRef.current = queueRef.current.filter(queued => extensionUIRequestKey(queued) !== requestKey)
+    setCurrentRequest((current) => {
+      const next = current && extensionUIRequestKey(current) === requestKey
+        ? takeNextRemoteUIRequestForSession(queueRef.current, activeSessionIdRef.current)
+        : current
+      currentRequestRef.current = next
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     setCurrentRequest((current) => {
       if (current?.sessionId === activeSessionId) return current
       if (current) queueRef.current.push(current)
-      return takeNextRemoteUIRequestForSession(queueRef.current, activeSessionId)
+      const next = takeNextRemoteUIRequestForSession(queueRef.current, activeSessionId)
+      currentRequestRef.current = next
+      return next
     })
   }, [activeSessionId])
 
@@ -142,150 +169,114 @@ export function useRemoteUIRequests(activeSessionId?: string | null): UseRemoteU
     if (typeof window.electronAPI?.onExtensionEvent !== 'function') return
 
     const cleanup = window.electronAPI.onExtensionEvent((event) => {
-      const request = asRemoteUIRequest(event)
-      if (!request) return // 忽略非 remoteui_request 事件
+      const cancellation = asExtensionInteractionCancel(event)
+      if (cancellation) {
+        const cancelledKey = extensionUIRequestKey(cancellation)
+        rememberResponding(cancelledKey)
+        externallySettledRef.current.add(cancelledKey)
+        clearRequestTimeout(cancelledKey)
+        queueRef.current = queueRef.current.filter(request => extensionUIRequestKey(request) !== cancelledKey)
+        setCurrentRequest(current => {
+          if (!current || extensionUIRequestKey(current) !== cancelledKey) return current
+          const next = takeNextRemoteUIRequestForSession(queueRef.current, activeSessionIdRef.current)
+          currentRequestRef.current = next
+          return next
+        })
+        return
+      }
+
+      const request = asExtensionInteractionRequest(event) ?? asRemoteUIRequest(event)
+      if (!request) return
+      const requestKey = extensionUIRequestKey(request)
 
       // 防止重复入队同一 requestId
-      if (respondingRef.current.has(request.requestId)) return
+      if (respondingRef.current.has(requestKey)) return
       if (
-        currentRequestRef.current?.requestId === request.requestId ||
-        queueRef.current.some(queued => queued.requestId === request.requestId)
+        (currentRequestRef.current && extensionUIRequestKey(currentRequestRef.current) === requestKey) ||
+        queueRef.current.some(queued => extensionUIRequestKey(queued) === requestKey)
       ) return
-
-      const replay = batchReplayRef.current
-      if (replay && isRemoteUIBatchReplayScope(replay, request)) {
-        const step = consumeRemoteUIBatchRequest(replay, request)
-        if (step) {
-          respondingRef.current.add(request.requestId)
-          setBatchReplay(step.nextState, request.timeout)
-          const sent = sendResponse(request, step.payload, undefined, () => {
-            clearBatchReplay()
-            setCurrentRequest(current => current ?? request)
-          })
-          if (!sent) {
-            clearBatchReplay()
-            respondingRef.current.delete(request.requestId)
-            setCurrentRequest(current => current ?? request)
-            return
-          }
-          setTimeout(() => respondingRef.current.delete(request.requestId), 0)
-          if (!step.nextState) {
-            setCurrentRequest(current => current ?? takeNextRemoteUIRequestForSession(
-              queueRef.current,
-              activeSessionIdRef.current,
-            ))
-          }
-          return
-        }
-        // A mismatched request at the expected stage means the original flow
-        // changed and must fail closed. A different stage can be a concurrent
-        // ask_user call in the same runtime, so leave the replay intact.
-        if (isRemoteUIBatchReplayStage(replay, request)) clearBatchReplay()
-      }
 
       if (request.timeout && request.timeout > 0) {
         const timer = setTimeout(() => {
-          respondingRef.current.add(request.requestId)
-          timeoutRef.current.delete(request.requestId)
-          queueRef.current = queueRef.current.filter(queued => queued.requestId !== request.requestId)
-          sendResponse(request, null, 'cancelled')
-          setTimeout(() => respondingRef.current.delete(request.requestId), 0)
-          setCurrentRequest(current => {
-            if (current?.requestId !== request.requestId) return current
-            return takeNextRemoteUIRequestForSession(queueRef.current, activeSessionIdRef.current)
-          })
+          if (respondingRef.current.has(requestKey)) return
+          rememberResponding(requestKey)
+          timeoutRef.current.delete(requestKey)
+          void sendResponse(
+            request,
+            request.type === 'extension_interaction_request'
+              ? { schemaVersion: 1, status: 'cancelled', reason: 'timeout' }
+              : null,
+            request.type === 'remoteui_request' ? 'cancelled' : undefined,
+          )
+          // The request deadline has elapsed. Delivery is best-effort; keeping
+          // an expired card visible would leave it retryable without a timer.
+          finishRequest(request)
         }, request.timeout)
-        timeoutRef.current.set(request.requestId, timer)
+        timeoutRef.current.set(requestKey, timer)
       }
 
       setCurrentRequest((prev) => {
-        if (request.sessionId !== activeSessionId) {
+        if (request.sessionId !== activeSessionIdRef.current) {
           queueRef.current.push(request)
           return prev
         }
-        if (prev && prev.requestId !== request.requestId) {
+        if (prev && extensionUIRequestKey(prev) !== requestKey) {
           // 已有活跃请求 → 入队等待
           queueRef.current.push(request)
           return prev
         }
-        if (prev && prev.requestId === request.requestId) {
+        if (prev && extensionUIRequestKey(prev) === requestKey) {
           return prev // 同一请求重复到达，忽略
         }
+        currentRequestRef.current = request
         return request
       })
     })
 
     return cleanup
-  }, [activeSessionId, clearBatchReplay, sendResponse, setBatchReplay])
+  }, [clearRequestTimeout, finishRequest, rememberResponding, sendResponse])
 
   useEffect(() => () => {
     const pending = [currentRequestRef.current, ...queueRef.current].filter(
-      (request): request is RemoteUIRequest => request !== null,
+      (request): request is ExtensionUIRequest => request !== null,
     )
     for (const request of pending) {
-      clearRequestTimeout(request.requestId)
-      if (!respondingRef.current.has(request.requestId)) {
-        sendResponse(request, null, 'disconnected')
-      }
+      const requestKey = extensionUIRequestKey(request)
+      clearRequestTimeout(requestKey)
+      void sendResponse(
+        request,
+        request.type === 'extension_interaction_request'
+          ? { schemaVersion: 1, status: 'cancelled', reason: 'host-disconnected' }
+          : null,
+        request.type === 'remoteui_request' ? 'disconnected' : undefined,
+      )
     }
     queueRef.current = []
-    clearBatchReplay()
-  }, [clearBatchReplay, clearRequestTimeout, sendResponse])
+  }, [clearRequestTimeout, sendResponse])
 
   const respond = useCallback(
-    (payload: RemoteUIResult | null, reason?: RemoteUICancelReason) => {
-      setCurrentRequest((current) => {
-        if (!current) return null
+    (payload: ExtensionUIResponse, reason?: RemoteUICancelReason) => {
+      const current = currentRequestRef.current
+      if (!current) return
+      const requestKey = extensionUIRequestKey(current)
+      if (respondingRef.current.has(requestKey)) return
 
-        const replay = batchReplayRef.current
-        if (!replay || isRemoteUIBatchReplayStage(replay, current)) clearBatchReplay()
-
-        const { requestId } = current
-        respondingRef.current.add(requestId)
-        clearRequestTimeout(requestId)
-
-        // 回传到主进程 → 子进程。sessionId 用于定位发起请求的会话。
-        // TODO: 若运行在旧版本服务器（无 sendRemoteUIResponse 频道），请求将无法回传，
-        //       pi 扩展会一直等待 remoteui:response（Promise.race 会在 TUI 侧超时/取消）。
-        sendResponse(current, payload, reason)
-
-        // 出队下一个待处理请求（若有）
-        const next = takeNextRemoteUIRequestForSession(queueRef.current, activeSessionIdRef.current)
-        // 短延迟后清理 respondingRef，避免同一 requestId 的残留事件误判
-        setTimeout(() => respondingRef.current.delete(requestId), 0)
-        return next
+      rememberResponding(requestKey)
+      clearRequestTimeout(requestKey)
+      void sendResponse(current, payload, reason).then((sent) => {
+        if (sent) {
+          finishRequest(current)
+        } else if (!externallySettledRef.current.has(requestKey)) {
+          // Keep the same request visible and retryable when delivery fails.
+          respondingRef.current.delete(requestKey)
+        }
       })
     },
-    [clearBatchReplay, clearRequestTimeout, sendResponse],
+    [clearRequestTimeout, finishRequest, rememberResponding, sendResponse],
   )
-
-  const respondBatch = useCallback((submission: RemoteUIBatchSubmission) => {
-    setCurrentRequest((current) => {
-      if (!current) return null
-      const step = startRemoteUIBatchReplay(submission, current)
-      if (!step) return current
-
-      const { requestId } = current
-      respondingRef.current.add(requestId)
-      clearRequestTimeout(requestId)
-      setBatchReplay(step.nextState, current.timeout)
-      const sent = sendResponse(current, step.payload, undefined, () => {
-        clearBatchReplay()
-        setCurrentRequest(visible => visible ?? current)
-      })
-      if (!sent) {
-        clearBatchReplay()
-        respondingRef.current.delete(requestId)
-        return current
-      }
-      setTimeout(() => respondingRef.current.delete(requestId), 0)
-      return null
-    })
-  }, [clearBatchReplay, clearRequestTimeout, sendResponse, setBatchReplay])
 
   return {
     currentRequest,
     respond,
-    respondBatch,
   }
 }
