@@ -262,6 +262,7 @@ describe("PiRuntimeHandle", () => {
 				answers: [{ fieldId: "topic", kind: "text", value: "RPC" }],
 			},
 			runtimeId: "runtime-a",
+			sessionId: "session-a",
 		});
 	});
 

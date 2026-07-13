@@ -588,29 +588,49 @@ export async function runRpcMode(
 			}
 		}
 	};
-	const pendingHostCapabilityRequests = new Map<
-		string,
-		{
-			runtimeId: string;
-			clientId?: string;
-			resolve: (value: RpcExtensionHostCapabilityResponse) => void;
-			onProgress?: (progress: unknown, sequence: number) => void;
-		}
-	>();
-	const cancelRuntimeHostCapabilityRequests = (runtimeId: string): void => {
+	type PendingHostCapabilityRequest = {
+		runtimeId: string;
+		sessionId: string;
+		clientId?: string;
+		extensionId: string;
+		resolve: (value: RpcExtensionHostCapabilityResponse) => void;
+		onProgress?: (progress: unknown, sequence: number) => void;
+	};
+	const pendingHostCapabilityRequests = new Map<string, PendingHostCapabilityRequest>();
+	const cancelHostCapabilityRequests = (
+		predicate: (pending: PendingHostCapabilityRequest) => boolean,
+		code: "runtime_closed" | "session_rebound" | "host_shutdown",
+		message: string,
+	): void => {
 		for (const [id, pending] of pendingHostCapabilityRequests) {
-			if (pending.runtimeId !== runtimeId) continue;
+			if (!predicate(pending)) continue;
 			pendingHostCapabilityRequests.delete(id);
+			output(
+				{
+					type: "extension_host_capability_cancel",
+					version: 1,
+					id,
+					extensionId: pending.extensionId,
+				} satisfies RpcExtensionHostCapabilityCancel,
+				{ runtimeId: pending.runtimeId, sessionId: pending.sessionId, clientId: pending.clientId },
+			);
 			pending.resolve({
 				type: "extension_host_capability_response",
 				version: 1,
 				id,
-				runtimeId,
+				runtimeId: pending.runtimeId,
+				sessionId: pending.sessionId,
 				status: "cancelled",
-				error: { code: "runtime_closed", message: "Runtime closed before the host capability completed" },
+				error: { code, message },
 			});
 		}
 	};
+	const cancelRuntimeHostCapabilityRequests = (runtimeId: string): void =>
+		cancelHostCapabilityRequests(
+			(pending) => pending.runtimeId === runtimeId,
+			"runtime_closed",
+			"Runtime closed before the host capability completed",
+		);
 
 	// Pending tool permission requests waiting for host response
 	const pendingToolPermissionRequests = new Map<
@@ -787,8 +807,8 @@ export async function runRpcMode(
 					!isOptionalBoundedString(field.commentLabel, 128) ||
 					(field.allowOther !== true && field.otherLabel !== undefined) ||
 					(field.allowComment !== true && field.commentLabel !== undefined) ||
-					!isOptionalBoundedInteger(field.minSelections, 0, field.options.length) ||
-					!isOptionalBoundedInteger(field.maxSelections, 1, field.options.length)
+					!isOptionalBoundedInteger(field.minSelections, 0, field.options.length + (field.allowOther ? 1 : 0)) ||
+					!isOptionalBoundedInteger(field.maxSelections, 1, field.options.length + (field.allowOther ? 1 : 0))
 				)
 					throw new Error(`Choice field ${field.id} is invalid`);
 				const optionIds = new Set<string>();
@@ -1409,7 +1429,26 @@ export async function runRpcMode(
 					cleanup();
 					resolve({ status: "cancelled" });
 				};
+				pendingHostCapabilityRequests.set(id, {
+					runtimeId: binding.runtimeId,
+					sessionId: binding.session.sessionId,
+					clientId: binding.clientId,
+					extensionId,
+					onProgress: options?.onProgress,
+					resolve: (response) => {
+						cleanup();
+						resolve(
+							response.status === "success"
+								? { status: "success", output: response.output as TOutput }
+								: { status: response.status, error: response.error },
+						);
+					},
+				});
 				options?.signal?.addEventListener("abort", onAbort, { once: true });
+				if (options?.signal?.aborted) {
+					onAbort();
+					return;
+				}
 				if (options?.timeoutMs) {
 					timer = setTimeout(() => {
 						output(
@@ -1432,19 +1471,6 @@ export async function runRpcMode(
 						});
 					}, options.timeoutMs);
 				}
-				pendingHostCapabilityRequests.set(id, {
-					runtimeId: binding.runtimeId,
-					clientId: binding.clientId,
-					onProgress: options?.onProgress,
-					resolve: (response) => {
-						cleanup();
-						resolve(
-							response.status === "success"
-								? { status: "success", output: response.output as TOutput }
-								: { status: response.status, error: response.error },
-						);
-					},
-				});
 				output(
 					{
 						type: "extension_host_capability_request",
@@ -1564,7 +1590,13 @@ export async function runRpcMode(
 
 	const registerRuntime = async (binding: RuntimeBinding): Promise<void> => {
 		binding.runtime.setRebindSession(async () => {
+			const previousSessionId = binding.session.sessionId;
 			cancelExtensionRequests((pending) => pending.runtimeId === binding.runtimeId, "runtime-disposed");
+			cancelHostCapabilityRequests(
+				(pending) => pending.runtimeId === binding.runtimeId && pending.sessionId === previousSessionId,
+				"session_rebound",
+				"Session changed before the host capability completed",
+			);
 			resetRuntimeContributions(binding);
 			await bindRuntime(binding);
 		});
@@ -2280,6 +2312,11 @@ export async function runRpcMode(
 		}
 		pendingToolExecuteRequests.clear();
 		cancelExtensionRequests(() => true, "runtime-disposed");
+		cancelHostCapabilityRequests(
+			() => true,
+			"host_shutdown",
+			"RPC host shut down before the host capability completed",
+		);
 		const bindings = Array.from(runtimeBindings.values());
 		for (const binding of bindings) resetRuntimeContributions(binding);
 		runtimeBindings.clear();
@@ -2359,10 +2396,13 @@ export async function runRpcMode(
 		) {
 			const progress = parsed as RpcExtensionHostCapabilityProgress;
 			const pending = pendingHostCapabilityRequests.get(progress.id);
+			const actualClientId = forcedClientId ?? progress.clientId;
 			if (
 				pending &&
-				(!progress.runtimeId || progress.runtimeId === pending.runtimeId) &&
-				(!progress.clientId || progress.clientId === pending.clientId)
+				progress.runtimeId === pending.runtimeId &&
+				progress.sessionId === pending.sessionId &&
+				actualClientId === pending.clientId &&
+				(forcedClientId === undefined || progress.clientId === undefined || progress.clientId === forcedClientId)
 			)
 				pending.onProgress?.(progress.progress, progress.sequence);
 			return;
@@ -2432,10 +2472,13 @@ export async function runRpcMode(
 		) {
 			const response = parsed as RpcExtensionHostCapabilityResponse;
 			const pending = pendingHostCapabilityRequests.get(response.id);
+			const actualClientId = forcedClientId ?? response.clientId;
 			if (
 				pending &&
-				(!response.runtimeId || response.runtimeId === pending.runtimeId) &&
-				(!response.clientId || response.clientId === pending.clientId)
+				response.runtimeId === pending.runtimeId &&
+				response.sessionId === pending.sessionId &&
+				actualClientId === pending.clientId &&
+				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId)
 			)
 				pending.resolve(response);
 			return;
