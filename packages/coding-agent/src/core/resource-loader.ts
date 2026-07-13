@@ -924,6 +924,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				id: resource.metadata.extensionId,
 				target: this.extensionTarget,
 				agentDir: this.agentDir,
+				manifestUI: resource.metadata.extensionUI,
 			};
 			const resolvedPath = this.resolveResourcePath(resource.path);
 			result.set(resource.path, metadata);

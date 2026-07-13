@@ -33,6 +33,7 @@ import type {
 	ExtensionAPI,
 	ExtensionFactory,
 	ExtensionFactoryV2,
+	ExtensionManifestUIV1,
 	ExtensionRuntime,
 	ExtensionTarget,
 	LoadExtensionsResult,
@@ -46,6 +47,7 @@ export interface ExtensionLoadMetadata {
 	id: string;
 	target: ExtensionTarget;
 	agentDir: string;
+	manifestUI?: ExtensionManifestUIV1;
 }
 
 const require = createRequire(import.meta.url);
@@ -412,7 +414,7 @@ async function loadExtensionModule(extensionPath: string) {
 function createExtension(
 	extensionPath: string,
 	resolvedPath: string,
-	identity: Pick<ExtensionLoadMetadata, "id" | "target">,
+	identity: Pick<ExtensionLoadMetadata, "id" | "target" | "manifestUI">,
 	activation: ExtensionActivation = "beforeFirstRequest",
 ): Extension {
 	const source =
@@ -428,6 +430,7 @@ function createExtension(
 		resolvedPath,
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
 		activation,
+		manifestUI: identity.manifestUI,
 		hostCapabilities: [],
 		handlers: new Map(),
 		tools: new Map(),

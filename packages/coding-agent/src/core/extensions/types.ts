@@ -103,6 +103,70 @@ export interface ExtensionUIDialogOptions {
 	maxVisible?: number;
 }
 
+export type ExtensionInteractionCancelReasonV1 =
+	| "user"
+	| "timeout"
+	| "aborted"
+	| "host-disconnected"
+	| "runtime-disposed";
+
+interface ExtensionInteractionFieldBaseV1 {
+	id: string;
+	label: string;
+	description?: string;
+	required?: boolean;
+}
+
+export type ExtensionInteractionFieldV1 =
+	| (ExtensionInteractionFieldBaseV1 & {
+			kind: "confirm";
+			defaultValue?: boolean;
+	  })
+	| (ExtensionInteractionFieldBaseV1 & {
+			kind: "choice";
+			options: Array<{ id: string; label: string; description?: string }>;
+			multiple?: boolean;
+			minSelections?: number;
+			maxSelections?: number;
+			allowOther?: boolean;
+			otherLabel?: string;
+			allowComment?: boolean;
+			commentLabel?: string;
+	  })
+	| (ExtensionInteractionFieldBaseV1 & {
+			kind: "text";
+			placeholder?: string;
+			defaultValue?: string;
+			multiline?: boolean;
+			sensitive?: boolean;
+			minLength?: number;
+			maxLength?: number;
+	  });
+
+export interface ExtensionInteractionRequestV1 {
+	schemaVersion: 1;
+	title?: string;
+	description?: string;
+	fields: ExtensionInteractionFieldV1[];
+	submitLabel?: string;
+	cancelLabel?: string;
+}
+
+export type ExtensionInteractionAnswerV1 =
+	| { fieldId: string; kind: "confirm"; value: boolean }
+	| {
+			fieldId: string;
+			kind: "choice";
+			selectedOptionIds: string[];
+			otherText?: string;
+			comment?: string;
+	  }
+	| { fieldId: string; kind: "text"; value: string };
+
+export type ExtensionInteractionResponseV1 =
+	| { schemaVersion: 1; status: "submitted"; answers: ExtensionInteractionAnswerV1[] }
+	| { schemaVersion: 1; status: "cancelled"; reason?: ExtensionInteractionCancelReasonV1 };
+
 /** Placement for extension widgets. */
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
@@ -110,6 +174,89 @@ export type WidgetPlacement = "aboveEditor" | "belowEditor";
 export interface ExtensionWidgetOptions {
 	/** Where the widget is rendered. Defaults to "aboveEditor". */
 	placement?: WidgetPlacement;
+}
+
+/** Craft host surfaces available to serializable extension UI contributions. */
+export type ExtensionUISurface =
+	| "conversation.timeline.before"
+	| "conversation.timeline.after"
+	| "conversation.turn.before"
+	| "conversation.turn.after"
+	| "conversation.turn.replace"
+	| "conversation.message.before"
+	| "conversation.message.after"
+	| "conversation.message.replace"
+	| "conversation.tool.before"
+	| "conversation.tool.after"
+	| "conversation.tool.replace"
+	| "conversation.inline"
+	| "conversation.overlay"
+	| "composer.above"
+	| "composer.below"
+	| "composer.toolbar"
+	| "composer.status"
+	| "composer.replace"
+	| "sidebar.header"
+	| "sidebar.section"
+	| "sidebar.footer"
+	| "navigation.item"
+	| "session.badge"
+	| "window.topLeft"
+	| "window.topRight";
+
+export type ExtensionUIIconName =
+	| "activity"
+	| "alert-circle"
+	| "check"
+	| "chevron-right"
+	| "circle"
+	| "clock"
+	| "info"
+	| "loader"
+	| "settings"
+	| "sparkles"
+	| "x";
+
+export type ExtensionUIAction = {
+	kind: "command";
+	command: string;
+	args?: string;
+};
+
+export type ExtensionUINode =
+	| { type: "text"; text: string; tone?: "default" | "muted" | "success" | "warning" | "danger" }
+	| { type: "markdown"; markdown: string }
+	| { type: "icon"; name: ExtensionUIIconName; label: string }
+	| { type: "badge"; label: string; tone?: "default" | "info" | "success" | "warning" | "danger" }
+	| { type: "divider" }
+	| { type: "button"; label: string; icon?: ExtensionUIIconName; action: ExtensionUIAction; disabled?: boolean }
+	| {
+			type: "sandbox-app";
+			appId: string;
+			title: string;
+			html: string;
+			css?: string;
+			script?: string;
+			initialState?: unknown;
+			minHeight?: number;
+			maxHeight?: number;
+			preferredHeight?: number;
+			permissions?: Array<"commands" | "theme" | "storage" | "resize">;
+	  }
+	| { type: "row" | "stack"; children: ExtensionUINode[]; gap?: "none" | "small" | "medium" };
+
+export interface ExtensionUIContribution {
+	schemaVersion: 1;
+	id: string;
+	surface: ExtensionUISurface;
+	content: ExtensionUINode;
+	priority?: number;
+	order?: number;
+	group?: string;
+	collapse?: "never" | "auto" | "always";
+	overflow?: "menu" | "collapse" | "hide";
+	exclusive?: boolean;
+	target?: { turnId?: string; messageId?: string; toolCallId?: string };
 }
 
 /** Raw terminal input listener for extensions. */
@@ -134,6 +281,17 @@ export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: Keybindi
 export interface ExtensionUIContext {
 	/** Explicit host UI surface; extensions must not infer this from hasUI. */
 	readonly capabilities: ExtensionUICapabilities;
+	/** Create or replace a host-rendered GUI contribution with the same stable id. */
+	upsertContribution(contribution: ExtensionUIContribution): void;
+	/** Remove one host-rendered GUI contribution. */
+	removeContribution(id: string): void;
+	/** Remove every host-rendered GUI contribution owned by this extension runtime. */
+	clearContributions(): void;
+	/** Request a versioned, host-rendered interaction containing one or more fields. */
+	interact(
+		request: ExtensionInteractionRequestV1,
+		options?: ExtensionUIDialogOptions,
+	): Promise<ExtensionInteractionResponseV1>;
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
@@ -293,6 +451,9 @@ export interface ExtensionUICapabilities {
 	customComponents: boolean;
 	terminalInput: boolean;
 	editorControl: boolean;
+	contributions: boolean;
+	/** Structured interaction schema versions supported by this host. */
+	interactionSchemas: readonly number[];
 }
 
 export interface HostCapabilityInvokeOptions {
@@ -1523,6 +1684,56 @@ export function defineExtensionV2(definition: ExtensionV2Definition): ExtensionF
 export type ExtensionActivation = "startup" | "beforeFirstRequest" | "lazy";
 export type ExtensionTarget = "pi" | "craft";
 
+export type ExtensionUICategory =
+	| "ui"
+	| "automation"
+	| "agent"
+	| "shell"
+	| "diagnostics"
+	| "memory"
+	| "search"
+	| "other";
+export type ExtensionSettingScalar = string | number | boolean;
+export interface ExtensionSettingConditionV1 {
+	key: string;
+	equals: ExtensionSettingScalar;
+}
+export interface ExtensionSettingFieldCommonV1 {
+	key: string;
+	label: string;
+	description?: string;
+	group?: string;
+	requiresReload?: boolean;
+	visibleWhen?: ExtensionSettingConditionV1;
+}
+export type ExtensionSettingFieldV1 =
+	| (ExtensionSettingFieldCommonV1 & { type: "boolean"; default: boolean })
+	| (ExtensionSettingFieldCommonV1 & {
+			type: "string" | "textarea";
+			default?: string;
+			minLength?: number;
+			maxLength?: number;
+	  })
+	| (ExtensionSettingFieldCommonV1 & { type: "number"; default?: number; min?: number; max?: number; step?: number })
+	| (ExtensionSettingFieldCommonV1 & {
+			type: "select";
+			default?: string;
+			options: Array<{ value: string; label: string; description?: string }>;
+	  })
+	| (ExtensionSettingFieldCommonV1 & { type: "model"; default?: string });
+export interface ExtensionSettingsSchemaV1 {
+	schemaVersion: 1;
+	groups?: Array<{ id: string; title: string; description?: string }>;
+	fields: ExtensionSettingFieldV1[];
+}
+export interface ExtensionManifestUIV1 {
+	schemaVersion: 1;
+	title?: string;
+	description?: string;
+	category?: ExtensionUICategory;
+	settings?: ExtensionSettingsSchemaV1;
+}
+
 export interface RegisteredTool {
 	definition: ToolDefinition;
 	sourceInfo: SourceInfo;
@@ -1685,6 +1896,7 @@ export interface Extension {
 	resolvedPath: string;
 	sourceInfo: SourceInfo;
 	activation: ExtensionActivation;
+	manifestUI?: ExtensionManifestUIV1;
 	hostCapabilities?: HostCapabilityDeclaration[];
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;

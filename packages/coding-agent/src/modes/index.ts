@@ -20,12 +20,13 @@ export {
 	type RpcToolExecutor,
 	type RpcToolPermissionHandler,
 } from "./rpc/rpc-client.ts";
-export { runRpcMode } from "./rpc/rpc-mode.ts";
+export { parseRpcHostUICapabilities, type RpcModeOptions, runRpcMode } from "./rpc/rpc-mode.ts";
 export {
 	PI_HOST_HOOKS_MODULE_ENV,
 	PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV,
 	PI_RPC_COMMANDS,
 	PI_RPC_PROTOCOL_VERSION,
+	PI_RPC_UI_CAPABILITIES_ENV,
 	type RpcBackgroundTaskEvent,
 	type RpcCapabilities,
 	type RpcChildSessionInfo,
@@ -39,6 +40,7 @@ export {
 	type RpcExtensionHostCapabilityResponse,
 	type RpcHostToolDefinition,
 	type RpcHostToolResult,
+	type RpcHostUICapabilities,
 	type RpcLLMQueryRequest,
 	type RpcLLMQueryResult,
 	type RpcResponse,

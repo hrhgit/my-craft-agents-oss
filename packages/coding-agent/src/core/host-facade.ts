@@ -28,8 +28,14 @@ import { stripJsonComments } from "../utils/json.ts";
 import type { AuthCredential, AuthStatus } from "./auth-storage.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
-import type { Extension, ExtensionActivation } from "./extensions/types.ts";
+import type {
+	Extension,
+	ExtensionActivation,
+	ExtensionManifestUIV1,
+	ExtensionSettingScalar,
+} from "./extensions/types.ts";
 import { ModelRegistry } from "./model-registry.ts";
+import { DefaultPackageManager } from "./package-manager.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import {
@@ -47,7 +53,7 @@ import {
 	type ShellGuiNamespaceSettings,
 } from "./settings-manager.ts";
 import { loadSkills, type Skill } from "./skills.ts";
-import type { SourceInfo } from "./source-info.ts";
+import { createSourceInfo, type SourceInfo } from "./source-info.ts";
 
 export { SessionManager };
 
@@ -242,11 +248,12 @@ export type HostExtensionCategory =
 export interface HostExtensionSummary {
 	id: string;
 	target: "pi" | "craft";
-	loaded: true;
+	loaded: boolean;
 	title: string;
 	description: string;
 	category: HostExtensionCategory;
 	configurable: boolean;
+	ui?: ExtensionManifestUIV1;
 	path: string;
 	resolvedPath: string;
 	activation: ExtensionActivation;
@@ -290,80 +297,6 @@ const PROVIDER_PLACEHOLDERS: Record<string, string> = {
 	"amazon-bedrock": "AKIA...",
 	huggingface: "hf_...",
 	"kimi-coding": "sk-kimi-...",
-};
-
-const HOST_EXTENSION_METADATA: Record<
-	string,
-	{ title?: string; description: string; category: HostExtensionCategory; configurable?: boolean }
-> = {
-	"ask-user": {
-		title: "Ask user",
-		description: "Frontend question dialogs for extension-driven user input.",
-		category: "ui",
-	},
-	"pi-remote": {
-		title: "Pi remote",
-		description: "Process-level remote service with runtime and session routing.",
-		category: "agent",
-	},
-	"plan-mode": {
-		description: "Discussion and plan mode commands, widgets, and plan rendering.",
-		category: "ui",
-		configurable: true,
-	},
-	"prompt-automation": {
-		description: "Scheduled prompt jobs and automation widgets.",
-		category: "automation",
-		configurable: true,
-	},
-	"provider-payload-capture": {
-		description: "Provider request capture diagnostics.",
-		category: "diagnostics",
-	},
-	"pwsh-preflight": {
-		description: "PowerShell command preflight checks.",
-		category: "shell",
-	},
-	"pwsh-utf8": {
-		description: "PowerShell UTF-8 compatibility helpers.",
-		category: "shell",
-	},
-	"repo-memory": {
-		description: "Background repository memory generation and status.",
-		category: "memory",
-		configurable: true,
-	},
-	subagent: {
-		description: "Subagent supervisor and command surface.",
-		category: "agent",
-		configurable: true,
-	},
-	"trace-audit": {
-		description: "Background trace audit subagent and review flow.",
-		category: "agent",
-		configurable: true,
-	},
-	yourself: {
-		description: "Background self-summary agent and status.",
-		category: "agent",
-		configurable: true,
-	},
-	"ambiguity-dictionary": {
-		description: "User-editable ambiguity dictionary for prompt clarification.",
-		category: "ui",
-	},
-	"auto-continue-openai-errors": {
-		description: "Automatic continuation for transient OpenAI-style provider errors.",
-		category: "automation",
-	},
-	notify: {
-		description: "Extension notifications routed into Craft UI.",
-		category: "ui",
-	},
-	"web-search-footer": {
-		description: "Search footer/status integration with native-first search fallback.",
-		category: "search",
-	},
 };
 
 function clone<T>(value: T): T {
@@ -887,6 +820,22 @@ export async function setExtensionConfig(name: string, config: Record<string, un
 	}
 }
 
+export interface HostExtensionConfigPatchV1 {
+	schemaVersion: 1;
+	extensionId: string;
+	set?: Record<string, ExtensionSettingScalar>;
+	unset?: string[];
+}
+
+export async function patchExtensionConfig(patch: HostExtensionConfigPatchV1): Promise<Record<string, unknown>> {
+	const current = { ...(readExtensionConfig(patch.extensionId) as Record<string, unknown>) };
+	for (const [key, value] of Object.entries(patch.set ?? {})) current[key] = value;
+	for (const key of patch.unset ?? []) delete current[key];
+	const settings = createSettingsManager();
+	settings.replaceExtensionConfig(patch.extensionId, current as ExtensionNamespaceSettings);
+	return current;
+}
+
 export function readShellGuiNamespace(): Record<string, ShellGuiNamespaceSettings> {
 	const settings = readGlobalSettings();
 	const shellGui = settings.shellGui;
@@ -1216,17 +1165,18 @@ export async function resolveSkill(args: {
 
 function summarizeExtension(extension: Extension): HostExtensionSummary {
 	const id = extension.id;
-	const metadata = HOST_EXTENSION_METADATA[id];
+	const manifestUI = extension.manifestUI;
 	const config = readExtensionConfig(id);
 	const enabled = config?.enabled === undefined ? true : config.enabled !== false;
 	return {
 		id,
 		target: extension.target,
 		loaded: true,
-		title: metadata?.title ?? id,
-		description: metadata?.description ?? "",
-		category: metadata?.category ?? "other",
-		configurable: metadata?.configurable === true,
+		title: manifestUI?.title ?? id,
+		description: manifestUI?.description ?? "",
+		category: manifestUI?.category ?? "other",
+		configurable: (manifestUI?.settings?.fields.length ?? 0) > 0,
+		ui: manifestUI,
 		path: extension.path,
 		resolvedPath: extension.resolvedPath,
 		activation: extension.activation,
@@ -1260,6 +1210,58 @@ export async function getExtensions(
 					target: args.extensionTarget ?? "craft",
 				},
 			],
+		};
+	}
+}
+
+export async function getExtensionCatalog(
+	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "craft" } = {},
+): Promise<HostExtensionsResult> {
+	const cwd = args.cwd ?? process.cwd();
+	const agentDir = args.agentDir ?? getAgentDir();
+	const target = args.extensionTarget ?? "craft";
+	try {
+		const packageManager = new DefaultPackageManager({
+			cwd,
+			agentDir,
+			settingsManager: SettingsManager.create(cwd, agentDir),
+			extensionTarget: target,
+		});
+		const resolved = await packageManager.resolve();
+		return {
+			extensions: resolved.extensions
+				.filter((resource) => resource.enabled && resource.metadata.extensionId)
+				.map((resource) => {
+					const id = resource.metadata.extensionId!;
+					const manifestUI = resource.metadata.extensionUI;
+					const config = readExtensionConfig(id);
+					return {
+						id,
+						target,
+						loaded: false,
+						title: manifestUI?.title ?? id,
+						description: manifestUI?.description ?? "",
+						category: manifestUI?.category ?? "other",
+						configurable: (manifestUI?.settings?.fields.length ?? 0) > 0,
+						ui: manifestUI,
+						path: resource.path,
+						resolvedPath: resource.path,
+						activation: resource.metadata.activation ?? "beforeFirstRequest",
+						sourceInfo: createSourceInfo(resource.path, resource.metadata),
+						commands: [],
+						tools: [],
+						flags: [],
+						shortcuts: [],
+						config,
+						enabled: config?.enabled === undefined ? true : config.enabled !== false,
+					};
+				}),
+			errors: [],
+		};
+	} catch (error) {
+		return {
+			extensions: [],
+			errors: [{ path: "", error: error instanceof Error ? error.message : String(error), target }],
 		};
 	}
 }

@@ -28,7 +28,11 @@ import { formatNoApiKeyFoundMessage } from "../../core/auth-guidance.ts";
 import type {
 	ExtensionCapabilitiesContext,
 	ExtensionError,
+	ExtensionInteractionCancelReasonV1,
+	ExtensionInteractionRequestV1,
+	ExtensionInteractionResponseV1,
 	ExtensionUIContext,
+	ExtensionUIContribution,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 	HostCapabilityInvokeOptions,
@@ -72,9 +76,11 @@ import type {
 	RpcExtensionHostCapabilityProgress,
 	RpcExtensionHostCapabilityRequest,
 	RpcExtensionHostCapabilityResponse,
+	RpcExtensionUICancel,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcHostToolDefinition,
+	RpcHostUICapabilities,
 	RpcLLMQueryRequest,
 	RpcLLMQueryResult,
 	RpcResponse,
@@ -99,9 +105,11 @@ export type {
 	RpcCapabilities,
 	RpcChildSessionInfo,
 	RpcCommand,
+	RpcExtensionUICancel,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcHostToolDefinition,
+	RpcHostUICapabilities,
 	RpcLLMQueryRequest,
 	RpcLLMQueryResult,
 	RpcResponse,
@@ -305,10 +313,82 @@ export interface RpcGlobalHostRuntimeFactory {
 		extensionTarget: "pi" | "craft";
 		deferResourceLoad?: boolean;
 		persistInitialState?: boolean;
+		uiCapabilities?: RpcHostUICapabilities;
 	};
 }
 
-export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalHostRuntimeFactory): Promise<never> {
+const NO_RPC_HOST_UI: RpcHostUICapabilities = {
+	kind: "none",
+	dialogs: false,
+	widgets: false,
+	editorControl: false,
+	contributions: false,
+	interactionSchemas: [],
+};
+
+function normalizeRpcHostUICapabilities(value: unknown): RpcHostUICapabilities {
+	if (value === undefined) return { ...NO_RPC_HOST_UI, interactionSchemas: [] };
+	if (typeof value !== "object" || value === null) {
+		throw new Error("Invalid RPC host UI capability declaration");
+	}
+	const candidate = value as Record<string, unknown>;
+	const interactionSchemas = candidate.interactionSchemas;
+	if (
+		Object.keys(candidate).some(
+			(key) => !["kind", "dialogs", "widgets", "editorControl", "contributions", "interactionSchemas"].includes(key),
+		) ||
+		(candidate.kind !== "craft" && candidate.kind !== "none") ||
+		typeof candidate.dialogs !== "boolean" ||
+		typeof candidate.widgets !== "boolean" ||
+		typeof candidate.editorControl !== "boolean" ||
+		typeof candidate.contributions !== "boolean" ||
+		!Array.isArray(interactionSchemas) ||
+		interactionSchemas.some((schema) => !Number.isInteger(schema) || schema < 1)
+	) {
+		throw new Error("Invalid RPC host UI capability declaration");
+	}
+	const schemas = interactionSchemas as number[];
+	if (
+		candidate.kind === "none" &&
+		(candidate.dialogs ||
+			candidate.widgets ||
+			candidate.editorControl ||
+			candidate.contributions ||
+			schemas.length > 0)
+	) {
+		throw new Error('RPC host UI kind "none" cannot declare UI features');
+	}
+	return {
+		kind: candidate.kind as RpcHostUICapabilities["kind"],
+		dialogs: candidate.dialogs as boolean,
+		widgets: candidate.widgets as boolean,
+		editorControl: candidate.editorControl as boolean,
+		contributions: candidate.contributions as boolean,
+		interactionSchemas: Array.from(new Set(schemas)).filter((schema) => schema === 1),
+	};
+}
+
+export function parseRpcHostUICapabilities(value: string | undefined): RpcHostUICapabilities | undefined {
+	if (value === undefined) return undefined;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(value);
+	} catch (error) {
+		throw new Error(
+			`Invalid RPC host UI capabilities JSON: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	return normalizeRpcHostUICapabilities(parsed);
+}
+
+export interface RpcModeOptions {
+	uiCapabilities?: RpcHostUICapabilities;
+}
+
+export async function runRpcMode(
+	runtimeSource: AgentSessionRuntime | RpcGlobalHostRuntimeFactory,
+	options: RpcModeOptions = {},
+): Promise<never> {
 	takeOverStdout();
 	const defaultRuntimeId = "default";
 	const globalHostFactory =
@@ -325,6 +405,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 		runtime: AgentSessionRuntime;
 		session: AgentSession;
 		extensionTarget: "pi" | "craft";
+		uiCapabilities: RpcHostUICapabilities;
 		toolPermissionsEnabled: boolean;
 		pendingExtensionReload: boolean;
 		unsubscribe?: () => void;
@@ -345,6 +426,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 				runtime: runtimeHost,
 				session: runtimeHost.session,
 				extensionTarget: runtimeHost.extensionTarget,
+				uiCapabilities: normalizeRpcHostUICapabilities(options.uiCapabilities),
 				toolPermissionsEnabled: false,
 				pendingExtensionReload: false,
 			}
@@ -352,19 +434,74 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 	if (defaultBinding) runtimeBindings.set(defaultRuntimeId, defaultBinding);
 
 	const output = (
-		obj: RpcResponse | RpcExtensionUIRequest | object,
-		envelope?: { clientId?: string; runtimeId?: string },
+		obj: RpcResponse | RpcExtensionUIRequest | RpcExtensionUICancel | object,
+		envelope?: { clientId?: string; runtimeId?: string; sessionId?: string; session?: AgentSession },
 	) => {
+		const sessionId = envelope?.session?.sessionId ?? envelope?.sessionId;
 		const value = {
 			...obj,
 			...(envelope?.clientId ? { clientId: envelope.clientId } : {}),
 			...(envelope?.runtimeId ? { runtimeId: envelope.runtimeId } : {}),
+			...(sessionId ? { sessionId } : {}),
 		};
 		const line = serializeJsonLine(value);
 		const clientId = "clientId" in value && typeof value.clientId === "string" ? value.clientId : undefined;
-		const socket = clientId ? socketClients.get(clientId) : undefined;
-		if (socket?.writable) socket.write(line);
-		else if (stdioConnected) writeRawStdout(line);
+		if (clientId) {
+			const socket = socketClients.get(clientId);
+			if (socket?.writable) socket.write(line);
+			else if (stdioConnected && stdioClientIds.has(clientId)) writeRawStdout(line);
+			return;
+		}
+		if (stdioConnected) writeRawStdout(line);
+	};
+	const contributionRevisions = new Map<string, number>();
+	const activeContributions = new Map<string, Map<string, ExtensionUIContribution>>();
+	const nextContributionRevision = (binding: RuntimeBinding, extensionId: string): number => {
+		const key = `${binding.runtimeId}\0${extensionId}`;
+		const revision = (contributionRevisions.get(key) ?? 0) + 1;
+		contributionRevisions.set(key, revision);
+		return revision;
+	};
+	const emitContributionReset = (binding: RuntimeBinding, extensionId: string): void => {
+		output(
+			{
+				type: "extension_ui_request",
+				id: crypto.randomUUID(),
+				extensionId,
+				method: "contribution",
+				operation: "reset",
+				revision: nextContributionRevision(binding, extensionId),
+			} satisfies RpcExtensionUIRequest,
+			binding,
+		);
+	};
+	const emitContributionSnapshots = (binding: RuntimeBinding): void => {
+		const prefix = `${binding.runtimeId}\0`;
+		for (const [key, contributions] of activeContributions) {
+			if (!key.startsWith(prefix)) continue;
+			const extensionId = key.slice(prefix.length);
+			output(
+				{
+					type: "extension_ui_request",
+					id: crypto.randomUUID(),
+					extensionId,
+					method: "contribution",
+					operation: "snapshot",
+					revision: nextContributionRevision(binding, extensionId),
+					contributions: Array.from(contributions.values()),
+				} satisfies RpcExtensionUIRequest,
+				binding,
+			);
+		}
+	};
+	const resetRuntimeContributions = (binding: RuntimeBinding): void => {
+		const prefix = `${binding.runtimeId}\0`;
+		for (const key of contributionRevisions.keys()) {
+			if (!key.startsWith(prefix)) continue;
+			const extensionId = key.slice(prefix.length);
+			emitContributionReset(binding, extensionId);
+			activeContributions.delete(key);
+		}
 	};
 	const broadcast = (obj: object): void => {
 		const line = serializeJsonLine(obj);
@@ -410,10 +547,47 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 	};
 
 	// Pending extension UI requests waiting for response
-	const pendingExtensionRequests = new Map<
-		string,
-		{ resolve: (value: any) => void; reject: (error: Error) => void }
-	>();
+	type PendingExtensionRequest = {
+		runtimeId: string;
+		sessionId: string;
+		clientId?: string;
+		extensionId: string;
+		method: "interact" | "select" | "confirm" | "input" | "editor";
+		interactionRequest?: ExtensionInteractionRequestV1;
+		resolve: (value: RpcExtensionUIResponse) => void;
+		reject: (error: Error) => void;
+	};
+	const pendingExtensionRequests = new Map<string, PendingExtensionRequest>();
+	const cancelExtensionRequests = (
+		predicate: (pending: PendingExtensionRequest) => boolean,
+		reason: Exclude<ExtensionInteractionCancelReasonV1, "user">,
+	): void => {
+		for (const [id, pending] of pendingExtensionRequests) {
+			if (!predicate(pending)) continue;
+			pendingExtensionRequests.delete(id);
+			output(
+				{
+					type: "extension_ui_cancel",
+					id,
+					extensionId: pending.extensionId,
+					schemaVersion: 1,
+					reason,
+					method: pending.method,
+				} satisfies RpcExtensionUICancel,
+				{ runtimeId: pending.runtimeId, sessionId: pending.sessionId, clientId: pending.clientId },
+			);
+			if (pending.interactionRequest) {
+				pending.resolve({
+					type: "extension_ui_response",
+					id,
+					extensionId: pending.extensionId,
+					interaction: { schemaVersion: 1, status: "cancelled", reason },
+				});
+			} else {
+				pending.resolve({ type: "extension_ui_response", id, cancelled: true });
+			}
+		}
+	};
 	const pendingHostCapabilityRequests = new Map<
 		string,
 		{
@@ -531,6 +705,253 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 	let shuttingDown = false;
 	const signalCleanupHandlers: Array<() => void> = [];
 
+	const hasOnlyKeys = (value: object, keys: readonly string[]): boolean =>
+		Object.keys(value).every((key) => keys.includes(key));
+	const interactionIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+	const isBoundedString = (value: unknown, maxLength: number, allowEmpty = false): value is string =>
+		typeof value === "string" && value.length <= maxLength && (allowEmpty || value.trim().length > 0);
+	const isOptionalBoundedString = (value: unknown, maxLength: number): boolean =>
+		value === undefined || isBoundedString(value, maxLength);
+	const isStableInteractionId = (value: unknown): value is string =>
+		isBoundedString(value, 128) && interactionIdentifierPattern.test(value);
+	const isOptionalBoolean = (value: unknown): boolean => value === undefined || typeof value === "boolean";
+	const isOptionalBoundedInteger = (value: unknown, min: number, max: number): boolean =>
+		value === undefined || (Number.isInteger(value) && Number(value) >= min && Number(value) <= max);
+
+	function assertValidInteractionRequest(request: ExtensionInteractionRequestV1): void {
+		if (
+			typeof request !== "object" ||
+			request === null ||
+			!hasOnlyKeys(request, ["schemaVersion", "title", "description", "fields", "submitLabel", "cancelLabel"]) ||
+			request.schemaVersion !== 1 ||
+			!isOptionalBoundedString(request.title, 256) ||
+			!isOptionalBoundedString(request.description, 4_000) ||
+			!isOptionalBoundedString(request.submitLabel, 64) ||
+			!isOptionalBoundedString(request.cancelLabel, 64) ||
+			!Array.isArray(request.fields) ||
+			request.fields.length < 1 ||
+			request.fields.length > 32
+		) {
+			throw new Error("Interaction v1 requires at least one field");
+		}
+		const fieldIds = new Set<string>();
+		for (const field of request.fields) {
+			if (
+				typeof field !== "object" ||
+				field === null ||
+				!isStableInteractionId(field.id) ||
+				fieldIds.has(field.id)
+			) {
+				const invalidId = typeof field === "object" && field !== null && "id" in field ? field.id : undefined;
+				throw new Error(`Invalid or duplicate interaction field id: ${String(invalidId ?? "")}`);
+			}
+			fieldIds.add(field.id);
+			if (
+				!isBoundedString(field.label, 256) ||
+				!isOptionalBoundedString(field.description, 2_000) ||
+				!isOptionalBoolean(field.required)
+			)
+				throw new Error(`Interaction field ${field.id} requires valid metadata`);
+			if (field.kind === "confirm") {
+				if (
+					!hasOnlyKeys(field, ["id", "kind", "label", "description", "required", "defaultValue"]) ||
+					!isOptionalBoolean(field.defaultValue)
+				)
+					throw new Error(`Confirm field ${field.id} is invalid`);
+				continue;
+			}
+			if (field.kind === "choice") {
+				if (
+					!hasOnlyKeys(field, [
+						"id",
+						"kind",
+						"label",
+						"description",
+						"required",
+						"options",
+						"multiple",
+						"minSelections",
+						"maxSelections",
+						"allowOther",
+						"otherLabel",
+						"allowComment",
+						"commentLabel",
+					]) ||
+					!Array.isArray(field.options) ||
+					field.options.length < 1 ||
+					field.options.length > 128 ||
+					!isOptionalBoolean(field.multiple) ||
+					!isOptionalBoolean(field.allowOther) ||
+					!isOptionalBoundedString(field.otherLabel, 128) ||
+					!isOptionalBoolean(field.allowComment) ||
+					!isOptionalBoundedString(field.commentLabel, 128) ||
+					(field.allowOther !== true && field.otherLabel !== undefined) ||
+					(field.allowComment !== true && field.commentLabel !== undefined) ||
+					!isOptionalBoundedInteger(field.minSelections, 0, field.options.length) ||
+					!isOptionalBoundedInteger(field.maxSelections, 1, field.options.length)
+				)
+					throw new Error(`Choice field ${field.id} is invalid`);
+				const optionIds = new Set<string>();
+				for (const option of field.options) {
+					if (
+						typeof option !== "object" ||
+						option === null ||
+						!hasOnlyKeys(option, ["id", "label", "description"]) ||
+						!isStableInteractionId(option.id) ||
+						optionIds.has(option.id) ||
+						!isBoundedString(option.label, 256) ||
+						!isOptionalBoundedString(option.description, 2_000)
+					) {
+						const invalidId =
+							typeof option === "object" && option !== null && "id" in option ? option.id : undefined;
+						throw new Error(
+							`Invalid or duplicate option id in interaction field ${field.id}: ${String(invalidId ?? "")}`,
+						);
+					}
+					optionIds.add(option.id);
+				}
+				if (
+					field.minSelections !== undefined &&
+					field.maxSelections !== undefined &&
+					field.minSelections > field.maxSelections
+				) {
+					throw new Error(`Choice field ${field.id} has minSelections greater than maxSelections`);
+				}
+				if (field.multiple !== true && ((field.minSelections ?? 0) > 1 || (field.maxSelections ?? 1) > 1)) {
+					throw new Error(`Single-choice field ${field.id} cannot require multiple selections`);
+				}
+				continue;
+			}
+			if (field.kind !== "text") throw new Error("Interaction field has an invalid kind");
+			if (
+				!hasOnlyKeys(field, [
+					"id",
+					"kind",
+					"label",
+					"description",
+					"required",
+					"placeholder",
+					"defaultValue",
+					"multiline",
+					"sensitive",
+					"minLength",
+					"maxLength",
+				]) ||
+				!isOptionalBoundedString(field.placeholder, 512) ||
+				(field.defaultValue !== undefined && !isBoundedString(field.defaultValue, 20_000, true)) ||
+				!isOptionalBoolean(field.multiline) ||
+				!isOptionalBoolean(field.sensitive) ||
+				!isOptionalBoundedInteger(field.minLength, 0, 20_000) ||
+				!isOptionalBoundedInteger(field.maxLength, 1, 20_000) ||
+				(field.multiline === true && field.sensitive === true) ||
+				(field.minLength !== undefined && field.maxLength !== undefined && field.minLength > field.maxLength)
+			)
+				throw new Error(`Text field ${field.id} is invalid`);
+		}
+	}
+
+	function isValidInteractionResponse(request: ExtensionInteractionRequestV1, value: unknown): boolean {
+		if (typeof value !== "object" || value === null) return false;
+		const response = value as ExtensionInteractionResponseV1;
+		if (response.schemaVersion !== 1) return false;
+		if (response.status === "cancelled") {
+			return (
+				hasOnlyKeys(response, ["schemaVersion", "status", "reason"]) &&
+				(response.reason === undefined ||
+					["user", "timeout", "aborted", "host-disconnected", "runtime-disposed"].includes(response.reason))
+			);
+		}
+		if (
+			response.status !== "submitted" ||
+			!hasOnlyKeys(response, ["schemaVersion", "status", "answers"]) ||
+			!Array.isArray(response.answers)
+		)
+			return false;
+		if (
+			response.answers.some(
+				(answer) => typeof answer !== "object" || answer === null || !isStableInteractionId(answer.fieldId),
+			)
+		)
+			return false;
+		if (response.answers.length !== request.fields.length) return false;
+		const answers = new Map(response.answers.map((answer) => [answer.fieldId, answer]));
+		if (answers.size !== request.fields.length) return false;
+		for (const field of request.fields) {
+			const answer = answers.get(field.id);
+			if (!answer || answer.kind !== field.kind) return false;
+			if (field.kind === "confirm") {
+				if (
+					answer.kind !== "confirm" ||
+					!hasOnlyKeys(answer, ["fieldId", "kind", "value"]) ||
+					typeof answer.value !== "boolean"
+				)
+					return false;
+				continue;
+			}
+			if (field.kind === "text") {
+				if (
+					answer.kind !== "text" ||
+					!hasOnlyKeys(answer, ["fieldId", "kind", "value"]) ||
+					!isBoundedString(answer.value, 20_000, true)
+				)
+					return false;
+				if (field.required && answer.value.trim().length === 0) return false;
+				if (field.minLength !== undefined && answer.value.length < field.minLength) return false;
+				if (field.maxLength !== undefined && answer.value.length > field.maxLength) return false;
+				continue;
+			}
+			if (
+				answer.kind !== "choice" ||
+				!hasOnlyKeys(answer, ["fieldId", "kind", "selectedOptionIds", "otherText", "comment"]) ||
+				!Array.isArray(answer.selectedOptionIds) ||
+				answer.selectedOptionIds.length > 128 ||
+				answer.selectedOptionIds.some((id) => !isStableInteractionId(id))
+			)
+				return false;
+			const selected = new Set(answer.selectedOptionIds);
+			if (selected.size !== answer.selectedOptionIds.length) return false;
+			const optionIds = new Set(field.options.map((option) => option.id));
+			if (answer.selectedOptionIds.some((id) => !optionIds.has(id))) return false;
+			if (answer.otherText !== undefined && (!field.allowOther || !isBoundedString(answer.otherText, 20_000, true)))
+				return false;
+			if (answer.comment !== undefined && (!field.allowComment || !isBoundedString(answer.comment, 20_000, true)))
+				return false;
+			const selectionCount = answer.selectedOptionIds.length + (answer.otherText?.trim() ? 1 : 0);
+			if (!field.multiple && selectionCount > 1) return false;
+			if (field.minSelections !== undefined && selectionCount < field.minSelections) return false;
+			if (field.maxSelections !== undefined && selectionCount > field.maxSelections) return false;
+			if (field.required && selectionCount === 0) return false;
+		}
+		return true;
+	}
+
+	function isValidLegacyUIResponse(pending: PendingExtensionRequest, response: RpcExtensionUIResponse): boolean {
+		if ("interaction" in response) return false;
+		const commonKeys = ["type", "id", "clientId", "runtimeId", "sessionId", "extensionId"];
+		if ("cancelled" in response) {
+			return response.cancelled === true && hasOnlyKeys(response, [...commonKeys, "cancelled"]);
+		}
+		if (pending.method === "confirm") {
+			return (
+				"confirmed" in response &&
+				typeof response.confirmed === "boolean" &&
+				hasOnlyKeys(response, [...commonKeys, "confirmed"])
+			);
+		}
+		return (
+			"value" in response && typeof response.value === "string" && hasOnlyKeys(response, [...commonKeys, "value"])
+		);
+	}
+
+	function assertValidDialogOptions(options: ExtensionUIDialogOptions | undefined): void {
+		if (
+			options?.timeout !== undefined &&
+			(!Number.isSafeInteger(options.timeout) || options.timeout <= 0 || options.timeout > 86_400_000)
+		) {
+			throw new Error("Extension UI timeout must be between 1 and 86400000 milliseconds");
+		}
+	}
+
 	/** Helper for dialog methods with signal/timeout support */
 	function createDialogPromise<T>(
 		binding: RuntimeBinding,
@@ -540,11 +961,14 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 		request: Record<string, unknown>,
 		parseResponse: (response: RpcExtensionUIResponse) => T,
 	): Promise<T> {
+		assertValidDialogOptions(opts);
 		if (opts?.signal?.aborted) return Promise.resolve(defaultValue);
+		const method = request.method as PendingExtensionRequest["method"];
 
 		const id = crypto.randomUUID();
 		return new Promise((resolve, reject) => {
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
+			let emitted = false;
 
 			const cleanup = () => {
 				if (timeoutId) clearTimeout(timeoutId);
@@ -553,25 +977,49 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 			};
 
 			const onAbort = () => {
+				if (emitted) {
+					output(
+						{ type: "extension_ui_cancel", id, extensionId, schemaVersion: 1, reason: "aborted", method },
+						binding,
+					);
+				}
 				cleanup();
 				resolve(defaultValue);
 			};
-			opts?.signal?.addEventListener("abort", onAbort, { once: true });
-
-			if (opts?.timeout) {
-				timeoutId = setTimeout(() => {
-					cleanup();
-					resolve(defaultValue);
-				}, opts.timeout);
-			}
 
 			pendingExtensionRequests.set(id, {
+				runtimeId: binding.runtimeId,
+				sessionId: binding.session.sessionId,
+				clientId: binding.clientId,
+				extensionId,
+				method,
 				resolve: (response: RpcExtensionUIResponse) => {
 					cleanup();
 					resolve(parseResponse(response));
 				},
-				reject,
+				reject: (error) => {
+					cleanup();
+					reject(error);
+				},
 			});
+			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+			if (opts?.signal?.aborted) {
+				onAbort();
+				return;
+			}
+			if (opts?.timeout) {
+				timeoutId = setTimeout(() => {
+					if (emitted) {
+						output(
+							{ type: "extension_ui_cancel", id, extensionId, schemaVersion: 1, reason: "timeout", method },
+							binding,
+						);
+					}
+					cleanup();
+					resolve(defaultValue);
+				}, opts.timeout);
+			}
+			emitted = true;
 			output({ type: "extension_ui_request", id, extensionId, ...request } as RpcExtensionUIRequest, binding);
 		});
 	}
@@ -581,42 +1029,159 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 	 */
 	const createExtensionUIContext = (binding: RuntimeBinding, extensionId: string): ExtensionUIContext => ({
 		capabilities: {
-			kind: "craft",
-			dialogs: true,
-			widgets: true,
+			kind: binding.uiCapabilities.kind,
+			dialogs: binding.uiCapabilities.dialogs,
+			widgets: binding.uiCapabilities.widgets,
 			customComponents: false,
 			terminalInput: false,
-			editorControl: true,
+			editorControl: binding.uiCapabilities.editorControl,
+			contributions: binding.uiCapabilities.contributions,
+			interactionSchemas: binding.uiCapabilities.interactionSchemas,
+		},
+		upsertContribution(contribution): void {
+			if (!binding.uiCapabilities.contributions) return;
+			const ownerKey = `${binding.runtimeId}\0${extensionId}`;
+			const contributions = activeContributions.get(ownerKey) ?? new Map();
+			contributions.set(contribution.id, contribution);
+			activeContributions.set(ownerKey, contributions);
+			output(
+				{
+					type: "extension_ui_request",
+					id: crypto.randomUUID(),
+					extensionId,
+					method: "contribution",
+					operation: "upsert",
+					revision: nextContributionRevision(binding, extensionId),
+					contribution,
+				} satisfies RpcExtensionUIRequest,
+				binding,
+			);
+		},
+		removeContribution(contributionId): void {
+			if (!binding.uiCapabilities.contributions) return;
+			activeContributions.get(`${binding.runtimeId}\0${extensionId}`)?.delete(contributionId);
+			output(
+				{
+					type: "extension_ui_request",
+					id: crypto.randomUUID(),
+					extensionId,
+					method: "contribution",
+					operation: "remove",
+					revision: nextContributionRevision(binding, extensionId),
+					contributionId,
+				} satisfies RpcExtensionUIRequest,
+				binding,
+			);
+		},
+		clearContributions(): void {
+			if (!binding.uiCapabilities.contributions) return;
+			activeContributions.delete(`${binding.runtimeId}\0${extensionId}`);
+			emitContributionReset(binding, extensionId);
+		},
+		interact: (request, opts) => {
+			assertValidInteractionRequest(request);
+			assertValidDialogOptions(opts);
+			if (!binding.uiCapabilities.interactionSchemas.includes(1)) {
+				return Promise.resolve({ schemaVersion: 1, status: "cancelled", reason: "host-disconnected" });
+			}
+			if (opts?.signal?.aborted) {
+				return Promise.resolve({ schemaVersion: 1, status: "cancelled", reason: "aborted" });
+			}
+			const id = crypto.randomUUID();
+			return new Promise<ExtensionInteractionResponseV1>((resolve, reject) => {
+				let timeoutId: ReturnType<typeof setTimeout> | undefined;
+				let emitted = false;
+				const cleanup = () => {
+					if (timeoutId) clearTimeout(timeoutId);
+					opts?.signal?.removeEventListener("abort", onAbort);
+					pendingExtensionRequests.delete(id);
+				};
+				const cancel = (reason: "aborted" | "timeout") => {
+					if (emitted) {
+						output(
+							{
+								type: "extension_ui_cancel",
+								id,
+								extensionId,
+								schemaVersion: 1,
+								reason,
+								method: "interact",
+							} satisfies RpcExtensionUICancel,
+							binding,
+						);
+					}
+					cleanup();
+					resolve({ schemaVersion: 1, status: "cancelled", reason });
+				};
+				const onAbort = () => cancel("aborted");
+				pendingExtensionRequests.set(id, {
+					runtimeId: binding.runtimeId,
+					sessionId: binding.session.sessionId,
+					clientId: binding.clientId,
+					extensionId,
+					method: "interact",
+					interactionRequest: request,
+					resolve: (response) => {
+						cleanup();
+						if (!("interaction" in response)) {
+							reject(new Error("Host returned a legacy response for an interaction v1 request"));
+							return;
+						}
+						resolve(response.interaction);
+					},
+					reject: (error) => {
+						cleanup();
+						reject(error);
+					},
+				});
+				opts?.signal?.addEventListener("abort", onAbort, { once: true });
+				if (opts?.signal?.aborted) {
+					onAbort();
+					return;
+				}
+				if (opts?.timeout) timeoutId = setTimeout(() => cancel("timeout"), opts.timeout);
+				emitted = true;
+				output(
+					{ type: "extension_ui_request", id, extensionId, method: "interact", request, timeout: opts?.timeout },
+					binding,
+				);
+			});
 		},
 		select: (title, options, opts) =>
-			createDialogPromise(
-				binding,
-				extensionId,
-				opts,
-				undefined,
-				{ method: "select", title, options, timeout: opts?.timeout },
-				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
-			),
+			binding.uiCapabilities.dialogs
+				? createDialogPromise(
+						binding,
+						extensionId,
+						opts,
+						undefined,
+						{ method: "select", title, options, timeout: opts?.timeout },
+						(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
+					)
+				: Promise.resolve(undefined),
 
 		confirm: (title, message, opts) =>
-			createDialogPromise(
-				binding,
-				extensionId,
-				opts,
-				false,
-				{ method: "confirm", title, message, timeout: opts?.timeout },
-				(r) => ("cancelled" in r && r.cancelled ? false : "confirmed" in r ? r.confirmed : false),
-			),
+			binding.uiCapabilities.dialogs
+				? createDialogPromise(
+						binding,
+						extensionId,
+						opts,
+						false,
+						{ method: "confirm", title, message, timeout: opts?.timeout },
+						(r) => ("cancelled" in r && r.cancelled ? false : "confirmed" in r ? r.confirmed : false),
+					)
+				: Promise.resolve(false),
 
 		input: (title, placeholder, opts) =>
-			createDialogPromise(
-				binding,
-				extensionId,
-				opts,
-				undefined,
-				{ method: "input", title, placeholder, timeout: opts?.timeout },
-				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
-			),
+			binding.uiCapabilities.dialogs
+				? createDialogPromise(
+						binding,
+						extensionId,
+						opts,
+						undefined,
+						{ method: "input", title, placeholder, timeout: opts?.timeout },
+						(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
+					)
+				: Promise.resolve(undefined),
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {
 			// Fire and forget - no response needed
@@ -670,6 +1235,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 		},
 
 		setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
+			if (!binding.uiCapabilities.widgets) return;
 			// Only support string arrays in RPC mode - factory functions are ignored
 			if (content === undefined || Array.isArray(content)) {
 				output(
@@ -697,6 +1263,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 		},
 
 		setTitle(title: string): void {
+			if (!binding.uiCapabilities.editorControl) return;
 			// Fire and forget - host can implement terminal title control
 			output(
 				{
@@ -721,6 +1288,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 		},
 
 		setEditorText(text: string): void {
+			if (!binding.uiCapabilities.editorControl) return;
 			// Fire and forget - host can implement editor control
 			output(
 				{
@@ -740,34 +1308,17 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 			return "";
 		},
 
-		async editor(title: string, prefill?: string): Promise<string | undefined> {
-			const id = crypto.randomUUID();
-			return new Promise((resolve, reject) => {
-				pendingExtensionRequests.set(id, {
-					resolve: (response: RpcExtensionUIResponse) => {
-						if ("cancelled" in response && response.cancelled) {
-							resolve(undefined);
-						} else if ("value" in response) {
-							resolve(response.value);
-						} else {
-							resolve(undefined);
-						}
-					},
-					reject,
-				});
-				output(
-					{
-						type: "extension_ui_request",
-						id,
+		editor: (title: string, prefill?: string): Promise<string | undefined> =>
+			binding.uiCapabilities.dialogs
+				? createDialogPromise(
+						binding,
 						extensionId,
-						method: "editor",
-						title,
-						prefill,
-					} as RpcExtensionUIRequest,
-					binding,
-				);
-			});
-		},
+						undefined,
+						undefined,
+						{ method: "editor", title, prefill },
+						(response) => ("value" in response ? response.value : undefined),
+					)
+				: Promise.resolve(undefined),
 
 		addAutocompleteProvider(): void {
 			// Autocomplete provider composition is not supported in RPC mode
@@ -991,6 +1542,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 			output(event, binding);
 			if (event.type === "agent_settled" && binding.pendingExtensionReload) {
 				binding.pendingExtensionReload = false;
+				resetRuntimeContributions(binding);
 				void session.reload().catch((reloadError: unknown) => {
 					output(
 						{
@@ -1012,6 +1564,8 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 
 	const registerRuntime = async (binding: RuntimeBinding): Promise<void> => {
 		binding.runtime.setRebindSession(async () => {
+			cancelExtensionRequests((pending) => pending.runtimeId === binding.runtimeId, "runtime-disposed");
+			resetRuntimeContributions(binding);
 			await bindRuntime(binding);
 		});
 		await bindRuntime(binding);
@@ -1036,7 +1590,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 	if (defaultBinding) await registerRuntime(defaultBinding);
 	registerSignalHandlers();
 	let defaultBindingPromise: Promise<RuntimeBinding> | undefined;
-	const ensureDefaultBinding = async (): Promise<RuntimeBinding> => {
+	const ensureDefaultBinding = async (clientId?: string): Promise<RuntimeBinding> => {
 		const existing = runtimeBindings.get(defaultRuntimeId);
 		if (existing) return existing;
 		if (!globalHostFactory) throw new Error("Default RPC runtime is unavailable");
@@ -1048,9 +1602,11 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 			});
 			const binding: RuntimeBinding = {
 				runtimeId: defaultRuntimeId,
+				clientId,
 				runtime,
 				session: runtime.session,
 				extensionTarget: globalHostFactory.defaultRuntime.extensionTarget,
+				uiCapabilities: normalizeRpcHostUICapabilities(globalHostFactory.defaultRuntime.uiCapabilities),
 				toolPermissionsEnabled: false,
 				pendingExtensionReload: false,
 			};
@@ -1092,6 +1648,8 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 		messageCount: session.messages.length,
 		pendingMessageCount: session.pendingMessageCount,
 	});
+	const isRuntimeOwner = (binding: RuntimeBinding, clientId: string | undefined): boolean =>
+		(binding.runtimeId === defaultRuntimeId && binding.clientId === undefined) || binding.clientId === clientId;
 
 	// Handle a single command
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
@@ -1104,6 +1662,9 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 
 		if (command.type === "open_runtime") {
 			if (binding) {
+				if (!isRuntimeOwner(binding, command.clientId)) {
+					return error(id, "open_runtime", `Runtime not found: ${runtimeId}`);
+				}
 				return success(id, "open_runtime", runtimeSummary(binding));
 			}
 			let sessionManager: SessionManager;
@@ -1168,6 +1729,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 				runtime,
 				session: runtime.session,
 				extensionTarget: command.extensionTarget,
+				uiCapabilities: normalizeRpcHostUICapabilities(command.uiCapabilities),
 				toolPermissionsEnabled: false,
 				pendingExtensionReload: false,
 			};
@@ -1184,15 +1746,20 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 
 		if (command.type === "list_runtimes") {
 			return success(id, "list_runtimes", {
-				runtimes: Array.from(runtimeBindings.values(), runtimeSummary),
+				runtimes: Array.from(runtimeBindings.values())
+					.filter((candidate) => isRuntimeOwner(candidate, command.clientId))
+					.map(runtimeSummary),
 			});
 		}
 
 		if (!binding && runtimeId === defaultRuntimeId && command.runtimeId === undefined) {
-			binding = await ensureDefaultBinding();
+			binding = await ensureDefaultBinding(command.clientId);
 		}
 
 		if (!binding) {
+			return error(id, command.type, `Runtime not found: ${runtimeId}`);
+		}
+		if (!isRuntimeOwner(binding, command.clientId)) {
 			return error(id, command.type, `Runtime not found: ${runtimeId}`);
 		}
 
@@ -1200,7 +1767,9 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 			if (runtimeId === defaultRuntimeId) {
 				return error(id, "close_runtime", "The v2 compatibility runtime cannot be closed");
 			}
+			resetRuntimeContributions(binding);
 			runtimeBindings.delete(runtimeId);
+			cancelExtensionRequests((pending) => pending.runtimeId === runtimeId, "runtime-disposed");
 			cancelRuntimeHostCapabilityRequests(runtimeId);
 			binding.unsubscribe?.();
 			binding.unsubscribeBackpressure?.();
@@ -1210,6 +1779,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 		}
 
 		if (command.type === "get_runtime_state") {
+			emitContributionSnapshots(binding);
 			return success(id, "get_runtime_state", {
 				runtime: runtimeSummary(binding),
 				state: sessionState(binding.session),
@@ -1268,9 +1838,6 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 			case "new_session": {
 				const options = command.parentSession ? { parentSession: command.parentSession } : undefined;
 				const result = await binding.runtime.newSession(options);
-				if (!result.cancelled) {
-					await bindRuntime(binding);
-				}
 				return success(id, "new_session", result);
 			}
 
@@ -1413,17 +1980,11 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 
 			case "switch_session": {
 				const result = await binding.runtime.switchSession(command.sessionPath);
-				if (!result.cancelled) {
-					await bindRuntime(binding);
-				}
 				return success(id, "switch_session", result);
 			}
 
 			case "fork": {
 				const result = await binding.runtime.fork(command.entryId);
-				if (!result.cancelled) {
-					await bindRuntime(binding);
-				}
 				return success(id, "fork", { text: result.selectedText, cancelled: result.cancelled });
 			}
 
@@ -1433,9 +1994,6 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 					return error(id, "clone", "Cannot clone session: no current entry selected");
 				}
 				const result = await binding.runtime.fork(leafId, { position: "at" });
-				if (!result.cancelled) {
-					await bindRuntime(binding);
-				}
 				return success(id, "clone", { cancelled: result.cancelled });
 			}
 
@@ -1484,6 +2042,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 						description: command.description,
 						source: "extension",
 						sourceInfo: command.sourceInfo,
+						extensionId: command.extensionId,
 					});
 				}
 
@@ -1516,6 +2075,12 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 						error: `Extension command not found: ${command.commandId}`,
 					});
 				}
+				if (command.ownerExtensionId !== undefined && extensionCommand.extensionId !== command.ownerExtensionId) {
+					return success(id, "invoke_extension_command", {
+						invoked: false,
+						error: `Extension command owner mismatch for ${command.commandId}`,
+					});
+				}
 
 				try {
 					const messageCountBeforeCommand = session.messages.length;
@@ -1540,6 +2105,7 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 
 			case "reload_extensions": {
 				if (!session.isStreaming) {
+					resetRuntimeContributions(binding);
 					await session.reload();
 					return success(id, "reload_extensions", { reloaded: true, deferred: false });
 				}
@@ -1713,7 +2279,9 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 			pending.resolve({ type: "tool_execute_response", id: "", content: "Server shutting down", isError: true });
 		}
 		pendingToolExecuteRequests.clear();
+		cancelExtensionRequests(() => true, "runtime-disposed");
 		const bindings = Array.from(runtimeBindings.values());
+		for (const binding of bindings) resetRuntimeContributions(binding);
 		runtimeBindings.clear();
 		unsubscribeBackgroundTasks();
 		for (const binding of bindings) {
@@ -1743,7 +2311,9 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 			(binding) => binding.runtimeId !== defaultRuntimeId && binding.clientId === clientId,
 		);
 		for (const binding of bindings) {
+			resetRuntimeContributions(binding);
 			runtimeBindings.delete(binding.runtimeId);
+			cancelExtensionRequests((pending) => pending.runtimeId === binding.runtimeId, "host-disconnected");
 			cancelRuntimeHostCapabilityRequests(binding.runtimeId);
 			binding.unsubscribe?.();
 			binding.unsubscribeBackpressure?.();
@@ -1806,10 +2376,51 @@ export async function runRpcMode(runtimeSource: AgentSessionRuntime | RpcGlobalH
 		) {
 			const response = parsed as RpcExtensionUIResponse;
 			const pending = pendingExtensionRequests.get(response.id);
-			if (pending) {
+			if (!pending) return;
+			const actualClientId = forcedClientId ?? response.clientId;
+			if (pending.clientId !== undefined && actualClientId !== pending.clientId) return;
+			const rejectMalformedResponse = () => {
 				pendingExtensionRequests.delete(response.id);
-				pending.resolve(response);
+				pending.reject(new Error(`Host returned an invalid ${pending.method} response`));
+			};
+			if (
+				(forcedClientId !== undefined && response.clientId !== undefined && response.clientId !== forcedClientId) ||
+				("extensionId" in response && response.extensionId !== pending.extensionId)
+			) {
+				rejectMalformedResponse();
+				return;
 			}
+			if (response.runtimeId !== pending.runtimeId || response.sessionId !== pending.sessionId) {
+				rejectMalformedResponse();
+				return;
+			}
+			if (pending.interactionRequest) {
+				if (
+					!("interaction" in response) ||
+					!hasOnlyKeys(response, [
+						"type",
+						"id",
+						"clientId",
+						"runtimeId",
+						"sessionId",
+						"extensionId",
+						"interaction",
+					]) ||
+					response.extensionId !== pending.extensionId
+				) {
+					rejectMalformedResponse();
+					return;
+				}
+				if (!isValidInteractionResponse(pending.interactionRequest, response.interaction)) {
+					rejectMalformedResponse();
+					return;
+				}
+			} else if (!isValidLegacyUIResponse(pending, response)) {
+				rejectMalformedResponse();
+				return;
+			}
+			pendingExtensionRequests.delete(response.id);
+			pending.resolve(response);
 			return;
 		}
 

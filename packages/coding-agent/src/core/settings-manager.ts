@@ -1000,6 +1000,13 @@ export class SettingsManager {
 		this.save();
 	}
 
+	replaceExtensionConfig(name: string, config: ExtensionNamespaceSettings): void {
+		if (!this.globalSettings.extensionConfig) this.globalSettings.extensionConfig = {};
+		this.globalSettings.extensionConfig[name] = { ...config };
+		this.markModified("extensionConfig", name);
+		this.save();
+	}
+
 	/**
 	 * Check whether an extension is enabled. Returns `fallback` (default `true`)
 	 * when the `enabled` flag is absent, so all extensions default to enabled.

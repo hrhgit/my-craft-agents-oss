@@ -10,6 +10,12 @@ import type { ImageContent, Model, StopReason, Usage, UserAttachmentMetadata } f
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type {
+	ExtensionInteractionCancelReasonV1,
+	ExtensionInteractionRequestV1,
+	ExtensionInteractionResponseV1,
+	ExtensionUIContribution,
+} from "../../core/extensions/types.ts";
 import type { GlobalBackgroundTaskSnapshot } from "../../core/global-background-tasks.ts";
 import type {
 	HostExtensionsResult,
@@ -26,6 +32,7 @@ import type { SourceInfo } from "../../core/source-info.ts";
 export const PI_RPC_PROTOCOL_VERSION = 3;
 export const PI_HOST_HOOKS_MODULE_ENV = "PI_HOST_HOOKS_MODULE";
 export const PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV = "PI_FETCH_INTERCEPTOR_MODULE";
+export const PI_RPC_UI_CAPABILITIES_ENV = "PI_RPC_UI_CAPABILITIES";
 
 export const PI_RPC_COMMANDS = [
 	"prompt",
@@ -91,6 +98,18 @@ export const PI_RPC_COMMANDS = [
 export interface RpcEnvelope {
 	clientId?: string;
 	runtimeId?: string;
+	/** Trusted active session owner injected by Pi on events and echoed by hosts in responses. */
+	sessionId?: string;
+}
+
+/** Host-renderable UI features explicitly offered to one RPC runtime. */
+export interface RpcHostUICapabilities {
+	kind: "craft" | "none";
+	dialogs: boolean;
+	widgets: boolean;
+	editorControl: boolean;
+	contributions: boolean;
+	interactionSchemas: number[];
 }
 
 export interface RpcRuntimeOpenOptions {
@@ -106,6 +125,8 @@ export interface RpcRuntimeOpenOptions {
 	parentSession?: string;
 	deferResourceLoad?: boolean;
 	persistInitialState?: boolean;
+	/** Omit to expose no host UI. Extension target selection does not imply UI support. */
+	uiCapabilities?: RpcHostUICapabilities;
 }
 
 export interface RpcRuntimeSummary {
@@ -195,7 +216,7 @@ export type RpcCommand = RpcEnvelope &
 
 		// Commands (available for invocation via prompt)
 		| { id?: string; type: "get_commands" }
-		| { id?: string; type: "invoke_extension_command"; commandId: string; args?: string }
+		| { id?: string; type: "invoke_extension_command"; commandId: string; args?: string; ownerExtensionId?: string }
 		| { id?: string; type: "reload_extensions" }
 
 		// Host facade (config/credentials/session/resources)
@@ -345,6 +366,8 @@ export interface RpcSlashCommand {
 	source: "extension" | "prompt" | "skill";
 	/** Source metadata for the owning resource */
 	sourceInfo: SourceInfo;
+	/** Stable extension owner for host-side action authorization. */
+	extensionId?: string;
 }
 
 // ============================================================================
@@ -561,6 +584,13 @@ export type RpcExtensionUIRequest = RpcEnvelope & { extensionId: string } & (
 		| {
 				type: "extension_ui_request";
 				id: string;
+				method: "interact";
+				request: ExtensionInteractionRequestV1;
+				timeout?: number;
+		  }
+		| {
+				type: "extension_ui_request";
+				id: string;
 				method: "select";
 				title: string;
 				options: string[];
@@ -605,6 +635,37 @@ export type RpcExtensionUIRequest = RpcEnvelope & { extensionId: string } & (
 				widgetLines: string[] | undefined;
 				widgetPlacement?: "aboveEditor" | "belowEditor";
 		  }
+		| {
+				type: "extension_ui_request";
+				id: string;
+				method: "contribution";
+				operation: "upsert";
+				revision: number;
+				contribution: ExtensionUIContribution;
+		  }
+		| {
+				type: "extension_ui_request";
+				id: string;
+				method: "contribution";
+				operation: "remove";
+				revision: number;
+				contributionId: string;
+		  }
+		| {
+				type: "extension_ui_request";
+				id: string;
+				method: "contribution";
+				operation: "reset";
+				revision: number;
+		  }
+		| {
+				type: "extension_ui_request";
+				id: string;
+				method: "contribution";
+				operation: "snapshot";
+				revision: number;
+				contributions: ExtensionUIContribution[];
+		  }
 		| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
 		| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
 	);
@@ -616,10 +677,27 @@ export type RpcExtensionUIRequest = RpcEnvelope & { extensionId: string } & (
 /** Response to an extension UI request */
 export type RpcExtensionUIResponse = RpcEnvelope &
 	(
+		| {
+				type: "extension_ui_response";
+				id: string;
+				extensionId: string;
+				interaction: ExtensionInteractionResponseV1;
+		  }
 		| { type: "extension_ui_response"; id: string; value: string }
 		| { type: "extension_ui_response"; id: string; confirmed: boolean }
 		| { type: "extension_ui_response"; id: string; cancelled: true }
 	);
+
+/** Emitted when Pi settles an interaction before the host responds. */
+export interface RpcExtensionUICancel extends RpcEnvelope {
+	type: "extension_ui_cancel";
+	id: string;
+	extensionId: string;
+	schemaVersion: 1;
+	reason: Exclude<ExtensionInteractionCancelReasonV1, "user">;
+	/** Dialog method being dismissed. Omitted by older interaction-v1 producers. */
+	method?: "interact" | "select" | "confirm" | "input" | "editor";
+}
 
 // ============================================================================
 // Extension Host Capabilities (stdout request / stdin response)

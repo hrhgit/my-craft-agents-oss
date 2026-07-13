@@ -43,10 +43,14 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
-import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
+import { InteractiveMode, parseRpcHostUICapabilities, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
-import { PI_HOST_HOOKS_MODULE_ENV, PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV } from "./modes/rpc/rpc-types.ts";
+import {
+	PI_HOST_HOOKS_MODULE_ENV,
+	PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV,
+	PI_RPC_UI_CAPABILITIES_ENV,
+} from "./modes/rpc/rpc-types.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -589,6 +593,8 @@ export async function main(args: string[], options?: MainOptions) {
 	time("parseArgs");
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY);
 	const rpcExtensionTarget = process.env.PI_EXTENSION_TARGET === "craft" ? "craft" : "pi";
+	const rpcUiCapabilities =
+		appMode === "rpc" ? parseRpcHostUICapabilities(process.env[PI_RPC_UI_CAPABILITIES_ENV]) : undefined;
 	const shouldTakeOverStdout = appMode !== "interactive";
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
@@ -818,6 +824,7 @@ export async function main(args: string[], options?: MainOptions) {
 				extensionTarget: rpcExtensionTarget,
 				deferResourceLoad: false,
 				persistInitialState: true,
+				uiCapabilities: rpcUiCapabilities,
 			},
 		});
 	}
@@ -896,7 +903,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (appMode === "rpc") {
 		printTimings();
-		await runRpcMode(runtime);
+		await runRpcMode(runtime, { uiCapabilities: rpcUiCapabilities });
 	} else if (appMode === "interactive") {
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,

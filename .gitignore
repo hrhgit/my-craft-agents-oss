@@ -41,3 +41,12 @@ plans/
 .pi/schedule-prompts.json
 tmp/
 collect.sh
+
+# Local tool state
+.pi/settings.json
+.claude-plugin/
+config.json
+events.jsonl
+labels/
+statuses/
+views.json

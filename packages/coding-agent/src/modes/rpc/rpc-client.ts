@@ -36,6 +36,7 @@ import type {
 	RpcExtensionHostCapabilityProgress,
 	RpcExtensionHostCapabilityRequest,
 	RpcExtensionHostCapabilityResponse,
+	RpcExtensionUICancel,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcHostToolDefinition,
@@ -139,6 +140,7 @@ export type RpcClientEvent =
 	| (AgentEvent & RpcEnvelope)
 	| RpcBackgroundTaskEvent
 	| RpcExtensionUIRequest
+	| RpcExtensionUICancel
 	| RpcExtensionHostCapabilityDeclaration
 	| RpcExtensionHostCapabilityRequest
 	| RpcExtensionHostCapabilityCancel
@@ -187,6 +189,10 @@ export class RpcClient {
 	private toolExecutor: RpcToolExecutor | null = null;
 	private runtimeToolPermissionHandlers = new Map<string, RpcToolPermissionHandler>();
 	private runtimeToolExecutors = new Map<string, RpcToolExecutor>();
+	private extensionUIOwners = new Map<
+		string,
+		{ clientId?: string; runtimeId?: string; sessionId?: string; extensionId: string }
+	>();
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
@@ -485,7 +491,9 @@ export class RpcClient {
 		if (!stdin || stdin.destroyed || !stdin.writable) {
 			throw new Error("Client not started");
 		}
-		stdin.write(serializeJsonLine(response));
+		const owner = this.extensionUIOwners.get(response.id);
+		stdin.write(serializeJsonLine(owner ? { ...response, ...owner } : response));
+		if (owner) this.extensionUIOwners.delete(response.id);
 	}
 
 	/** Respond to a host capability request emitted by an extension. */
@@ -758,16 +766,25 @@ export class RpcClient {
 	/**
 	 * Invoke a Pi extension command directly, without encoding it as a slash prompt.
 	 */
-	async invokeExtensionCommandResult(commandId: string, args?: string): Promise<RpcExtensionCommandResult> {
-		const response = await this.send({ type: "invoke_extension_command", commandId, args });
+	async invokeExtensionCommandResult(
+		commandId: string,
+		args?: string,
+		ownerExtensionId?: string,
+	): Promise<RpcExtensionCommandResult> {
+		const response = await this.send({
+			type: "invoke_extension_command",
+			commandId,
+			args,
+			...(ownerExtensionId !== undefined ? { ownerExtensionId } : {}),
+		});
 		return this.getData<RpcExtensionCommandResult>(response);
 	}
 
 	/**
 	 * Invoke a Pi extension command and return only the legacy boolean ack.
 	 */
-	async invokeExtensionCommand(commandId: string, args?: string): Promise<boolean> {
-		return (await this.invokeExtensionCommandResult(commandId, args)).invoked;
+	async invokeExtensionCommand(commandId: string, args?: string, ownerExtensionId?: string): Promise<boolean> {
+		return (await this.invokeExtensionCommandResult(commandId, args, ownerExtensionId)).invoked;
 	}
 
 	/**
@@ -922,8 +939,8 @@ export class RpcClient {
 	}
 
 	/** @internal Send an extension UI response to one runtime. */
-	respondToRuntimeExtensionUI(runtimeId: string, response: RpcExtensionUIResponse): void {
-		this.respondToExtensionUI({ ...response, runtimeId });
+	respondToRuntimeExtensionUI(runtimeId: string, sessionId: string, response: RpcExtensionUIResponse): void {
+		this.respondToExtensionUI({ ...response, runtimeId, sessionId });
 	}
 
 	/** @internal Send an extension host capability response to one runtime. */
@@ -1087,6 +1104,19 @@ export class RpcClient {
 
 			// Otherwise it's an event
 			const event = data as RpcClientEvent;
+			if (
+				event.type === "extension_ui_request" &&
+				["interact", "select", "confirm", "input", "editor"].includes(event.method)
+			) {
+				this.extensionUIOwners.set(event.id, {
+					clientId: event.clientId,
+					runtimeId: event.runtimeId,
+					sessionId: event.sessionId,
+					extensionId: event.extensionId,
+				});
+			} else if (event.type === "extension_ui_cancel") {
+				this.extensionUIOwners.delete(event.id);
+			}
 			this.emitClientEvent(event);
 			if (event.type === "tool_permission_request") {
 				this.handleToolPermissionRequest(event);
@@ -1096,7 +1126,11 @@ export class RpcClient {
 				this.handleToolExecuteRequest(event);
 				return;
 			}
-			if (event.type === "extension_ui_request" || event.type === "extension_error") {
+			if (
+				event.type === "extension_ui_request" ||
+				event.type === "extension_ui_cancel" ||
+				event.type === "extension_error"
+			) {
 				return;
 			}
 			if (event.type === "process_exit" || event.type === "process_error" || event.type === "stdin_error") {
@@ -1207,6 +1241,7 @@ export class RpcClient {
 			pending.reject(error);
 		}
 		this.pendingRequests.clear();
+		this.extensionUIOwners.clear();
 	}
 
 	private async send(command: RpcCommandBody, timeoutMs = 30000): Promise<RpcResponse> {
@@ -1299,12 +1334,23 @@ export async function connectPiGlobalHost(options: ConnectPiGlobalHostOptions = 
 export class PiRuntimeHandle {
 	readonly runtimeId: string;
 	private readonly client: RpcClient;
+	private readonly unsubscribeSummaryEvents: () => void;
 	private summary: RpcRuntimeSummary;
 
 	constructor(client: RpcClient, summary: RpcRuntimeSummary) {
 		this.client = client;
 		this.runtimeId = summary.runtimeId;
 		this.summary = summary;
+		this.unsubscribeSummaryEvents = client.onClientEvent((event) => {
+			if (
+				"runtimeId" in event &&
+				event.runtimeId === this.runtimeId &&
+				"sessionId" in event &&
+				typeof event.sessionId === "string"
+			) {
+				this.summary = { ...this.summary, sessionId: event.sessionId };
+			}
+		});
 	}
 
 	get runtimeSummary(): RpcRuntimeSummary {
@@ -1396,12 +1442,28 @@ export class PiRuntimeHandle {
 		return this.requestVoid({ type: "set_session_name", name });
 	}
 
-	newSession(parentSession?: string): Promise<{ cancelled: boolean }> {
-		return this.requestData({ type: "new_session", parentSession });
+	async newSession(parentSession?: string): Promise<{ cancelled: boolean }> {
+		const result = await this.requestData<{ cancelled: boolean }>({ type: "new_session", parentSession });
+		if (!result.cancelled) await this.refreshState();
+		return result;
 	}
 
-	switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
-		return this.requestData({ type: "switch_session", sessionPath });
+	async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
+		const result = await this.requestData<{ cancelled: boolean }>({ type: "switch_session", sessionPath });
+		if (!result.cancelled) await this.refreshState();
+		return result;
+	}
+
+	async fork(entryId: string): Promise<{ text: string; cancelled: boolean }> {
+		const result = await this.requestData<{ text: string; cancelled: boolean }>({ type: "fork", entryId });
+		if (!result.cancelled) await this.refreshState();
+		return result;
+	}
+
+	async clone(): Promise<{ cancelled: boolean }> {
+		const result = await this.requestData<{ cancelled: boolean }>({ type: "clone" });
+		if (!result.cancelled) await this.refreshState();
+		return result;
 	}
 
 	runMiniCompletion(prompt: string): Promise<string | null> {
@@ -1428,8 +1490,17 @@ export class PiRuntimeHandle {
 		);
 	}
 
-	invokeExtensionCommandResult(commandId: string, args?: string): Promise<RpcExtensionCommandResult> {
-		return this.requestData({ type: "invoke_extension_command", commandId, args });
+	invokeExtensionCommandResult(
+		commandId: string,
+		args?: string,
+		ownerExtensionId?: string,
+	): Promise<RpcExtensionCommandResult> {
+		return this.requestData({
+			type: "invoke_extension_command",
+			commandId,
+			args,
+			...(ownerExtensionId !== undefined ? { ownerExtensionId } : {}),
+		});
 	}
 
 	reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
@@ -1445,7 +1516,7 @@ export class PiRuntimeHandle {
 	}
 
 	respondToExtensionUI(response: RpcExtensionUIResponse): void {
-		this.client.respondToRuntimeExtensionUI(this.runtimeId, response);
+		this.client.respondToRuntimeExtensionUI(this.runtimeId, this.summary.sessionId, response);
 	}
 
 	respondToExtensionHostCapability(response: RpcExtensionHostCapabilityResponse): void {
@@ -1475,7 +1546,11 @@ export class PiRuntimeHandle {
 	}
 
 	async close(): Promise<void> {
-		await this.client.closeRuntime(this.runtimeId);
+		try {
+			await this.client.closeRuntime(this.runtimeId);
+		} finally {
+			this.unsubscribeSummaryEvents();
+		}
 	}
 
 	private async requestVoid(command: RpcRuntimeCommandBody, timeoutMs?: number): Promise<void> {

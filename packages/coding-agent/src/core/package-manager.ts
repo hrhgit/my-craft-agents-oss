@@ -39,7 +39,7 @@ import { CONFIG_DIR_NAME } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
-import type { ExtensionActivation, ExtensionTarget } from "./extensions/types.ts";
+import type { ExtensionActivation, ExtensionManifestUIV1, ExtensionTarget } from "./extensions/types.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 
@@ -61,6 +61,7 @@ export interface PathMetadata {
 	activation?: ExtensionActivation;
 	targets?: ExtensionTarget[];
 	extensionId?: string;
+	extensionUI?: ExtensionManifestUIV1;
 }
 
 export interface ResolvedResource {
@@ -162,6 +163,7 @@ export interface ExtensionManifestEntry {
 	path: string;
 	activation?: ExtensionActivation;
 	targets: ExtensionTarget[];
+	ui?: ExtensionManifestUIV1;
 }
 
 type ManifestResourceEntry = ExtensionManifestEntry;
@@ -222,18 +224,26 @@ type IgnoreMatcher = ReturnType<typeof ignore>;
 
 export type ResourcePathEntry =
 	| string
-	| { id?: string; path: string; activation?: ExtensionActivation; targets?: ExtensionTarget[] };
+	| {
+			id?: string;
+			path: string;
+			activation?: ExtensionActivation;
+			targets?: ExtensionTarget[];
+			ui?: ExtensionManifestUIV1;
+	  };
 
 interface ResolvedResourcePathEntry {
 	id?: string;
 	path: string;
 	activation?: ExtensionActivation;
 	targets?: ExtensionTarget[];
+	ui?: ExtensionManifestUIV1;
 }
 
 interface ExtensionDiscoveryEntry extends ResolvedResourcePathEntry {
 	id: string;
 	targets: ExtensionTarget[];
+	ui?: ExtensionManifestUIV1;
 }
 
 const EXTENSION_ACTIVATIONS: ExtensionActivation[] = ["startup", "beforeFirstRequest", "lazy"];
@@ -275,6 +285,133 @@ function getResourceEntryTargets(entry: ResourcePathEntry): ExtensionTarget[] | 
 	return typeof entry === "string" ? undefined : parseExtensionTargets(entry.targets);
 }
 
+function getResourceEntryUI(entry: ResourcePathEntry): ExtensionManifestUIV1 | undefined {
+	return typeof entry === "string" ? undefined : entry.ui;
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+	return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function assertValidExtensionUI(value: unknown, context: string): asserts value is ExtensionManifestUIV1 {
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		throw new Error(`${context}: extension ui must be an object`);
+	const ui = value as Record<string, unknown>;
+	if (!hasOnlyKeys(ui, ["schemaVersion", "title", "description", "category", "settings"]))
+		throw new Error(`${context}: extension ui contains unknown fields`);
+	if (ui.schemaVersion !== 1) throw new Error(`${context}: extension ui schemaVersion must be 1`);
+	if (ui.title !== undefined && (typeof ui.title !== "string" || ui.title.length > 256))
+		throw new Error(`${context}: extension ui title is invalid`);
+	if (ui.description !== undefined && (typeof ui.description !== "string" || ui.description.length > 2000))
+		throw new Error(`${context}: extension ui description is invalid`);
+	if (
+		ui.category !== undefined &&
+		!["ui", "automation", "agent", "shell", "diagnostics", "memory", "search", "other"].includes(String(ui.category))
+	)
+		throw new Error(`${context}: extension ui category is invalid`);
+	if (ui.settings === undefined) return;
+	if (!ui.settings || typeof ui.settings !== "object" || Array.isArray(ui.settings))
+		throw new Error(`${context}: extension settings must be an object`);
+	const settings = ui.settings as Record<string, unknown>;
+	if (!hasOnlyKeys(settings, ["schemaVersion", "groups", "fields"]))
+		throw new Error(`${context}: extension settings contains unknown fields`);
+	if (settings.schemaVersion !== 1 || !Array.isArray(settings.fields) || settings.fields.length > 128)
+		throw new Error(`${context}: extension settings schema is invalid`);
+	const groups = new Set<string>();
+	if (settings.groups !== undefined) {
+		if (!Array.isArray(settings.groups) || settings.groups.length > 32)
+			throw new Error(`${context}: extension setting groups are invalid`);
+		for (const candidate of settings.groups) {
+			if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+				throw new Error(`${context}: extension setting group is invalid`);
+			const group = candidate as Record<string, unknown>;
+			if (
+				!hasOnlyKeys(group, ["id", "title", "description"]) ||
+				typeof group.id !== "string" ||
+				typeof group.title !== "string" ||
+				groups.has(group.id)
+			)
+				throw new Error(`${context}: extension setting groups require unique ids and titles`);
+			groups.add(group.id);
+		}
+	}
+	const keys = new Set<string>();
+	for (const candidate of settings.fields) {
+		if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+			throw new Error(`${context}: extension setting field is invalid`);
+		const field = candidate as Record<string, unknown>;
+		const commonKeys = ["key", "type", "label", "description", "group", "requiresReload", "visibleWhen", "default"];
+		const typeKeys =
+			field.type === "number"
+				? ["min", "max", "step"]
+				: field.type === "string" || field.type === "textarea"
+					? ["minLength", "maxLength"]
+					: field.type === "select"
+						? ["options"]
+						: [];
+		if (!hasOnlyKeys(field, [...commonKeys, ...typeKeys]))
+			throw new Error(`${context}: extension setting field contains unknown fields`);
+		if (typeof field.key !== "string" || !/^[A-Za-z][A-Za-z0-9._-]{0,127}$/.test(field.key) || keys.has(field.key))
+			throw new Error(`${context}: extension setting keys must be unique stable identifiers`);
+		keys.add(field.key);
+		if (typeof field.label !== "string" || field.label.length === 0 || field.label.length > 256)
+			throw new Error(`${context}: extension setting label is invalid`);
+		if (!["boolean", "string", "textarea", "number", "select", "model"].includes(String(field.type)))
+			throw new Error(`${context}: extension setting type is invalid`);
+		if (field.type === "boolean" && typeof field.default !== "boolean")
+			throw new Error(`${context}: boolean settings require a default`);
+		if (
+			field.type === "select" &&
+			(!Array.isArray(field.options) || field.options.length === 0 || field.options.length > 128)
+		)
+			throw new Error(`${context}: select settings require options`);
+		if (field.group !== undefined && (typeof field.group !== "string" || !groups.has(field.group)))
+			throw new Error(`${context}: extension setting references an unknown group`);
+		if (field.requiresReload !== undefined && typeof field.requiresReload !== "boolean")
+			throw new Error(`${context}: requiresReload must be boolean`);
+		if (field.type === "number") {
+			for (const key of ["default", "min", "max", "step"] as const) {
+				if (field[key] !== undefined && (typeof field[key] !== "number" || !Number.isFinite(field[key])))
+					throw new Error(`${context}: numeric setting bounds are invalid`);
+			}
+			if (typeof field.min === "number" && typeof field.max === "number" && field.min > field.max)
+				throw new Error(`${context}: numeric setting bounds are inconsistent`);
+		}
+		if (field.type === "select") {
+			const optionValues = new Set<string>();
+			for (const option of field.options as Array<Record<string, unknown>>) {
+				if (
+					!option ||
+					typeof option !== "object" ||
+					!hasOnlyKeys(option, ["value", "label", "description"]) ||
+					typeof option.value !== "string" ||
+					typeof option.label !== "string" ||
+					optionValues.has(option.value)
+				)
+					throw new Error(`${context}: select options are invalid`);
+				optionValues.add(option.value);
+			}
+			if (field.default !== undefined && (typeof field.default !== "string" || !optionValues.has(field.default)))
+				throw new Error(`${context}: select default must use a declared option`);
+		}
+		if (field.visibleWhen !== undefined) {
+			const condition = field.visibleWhen as Record<string, unknown>;
+			if (
+				!condition ||
+				typeof condition !== "object" ||
+				typeof condition.key !== "string" ||
+				!["string", "number", "boolean"].includes(typeof condition.equals)
+			)
+				throw new Error(`${context}: setting visibility condition is invalid`);
+		}
+	}
+	for (const candidate of settings.fields) {
+		const condition = (candidate as Record<string, unknown>).visibleWhen as Record<string, unknown> | undefined;
+		if (condition && !keys.has(String(condition.key)))
+			throw new Error(`${context}: visibility condition references an unknown setting`);
+	}
+}
+
 function getResourceEntryId(entry: ResourcePathEntry): string | undefined {
 	if (typeof entry === "string") return undefined;
 	const id = entry.id?.trim();
@@ -295,6 +432,7 @@ function assertStrictExtensionEntry(
 	if (!targets || targets.length === 0 || targets.length !== entry.targets?.length) {
 		throw new Error(`${context}: extension targets must explicitly contain pi, craft, or both`);
 	}
+	if (entry.ui !== undefined) assertValidExtensionUI(entry.ui, context);
 }
 
 function getResourceEntryPaths(entries: readonly ResourcePathEntry[]): string[] {
@@ -322,6 +460,7 @@ function withExtensionMetadata(
 	activation: ExtensionActivation | undefined,
 	targets: ExtensionTarget[] | undefined,
 	extensionId?: string,
+	extensionUI?: ExtensionManifestUIV1,
 ): PathMetadata {
 	const next: PathMetadata = { ...metadata };
 	if (activation) {
@@ -333,6 +472,7 @@ function withExtensionMetadata(
 	if (extensionId) {
 		next.extensionId = extensionId;
 	}
+	if (extensionUI) next.extensionUI = extensionUI;
 	return next;
 }
 
@@ -696,6 +836,7 @@ function resolveExtensionEntries(dir: string): ExtensionDiscoveryEntry[] | null 
 						path: resolvedExtPath,
 						activation: getResourceEntryActivation(entry),
 						targets: getResourceEntryTargets(entry)!,
+						ui: getResourceEntryUI(entry),
 					});
 				}
 			}
@@ -2291,7 +2432,7 @@ export class DefaultPackageManager implements PackageManager {
 				this.addResource(
 					target,
 					entry.path,
-					withExtensionMetadata(metadata, entry.activation, entry.targets, entry.id),
+					withExtensionMetadata(metadata, entry.activation, entry.targets, entry.id, entry.ui),
 					true,
 				);
 			}
@@ -2420,7 +2561,13 @@ export class DefaultPackageManager implements PackageManager {
 				const activation = resourceType === "extensions" ? this.findActivationForPath(f, entries, root) : undefined;
 				const targets = resourceType === "extensions" ? this.findTargetsForPath(f, entries, root) : undefined;
 				const extensionId = resourceType === "extensions" ? this.findIdForPath(f, entries, root) : undefined;
-				this.addResource(target, f, withExtensionMetadata(metadata, activation, targets, extensionId), true);
+				const extensionUI = resourceType === "extensions" ? this.findUIForPath(f, entries, root) : undefined;
+				this.addResource(
+					target,
+					f,
+					withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI),
+					true,
+				);
 			}
 		}
 	}
@@ -2484,6 +2631,17 @@ export class DefaultPackageManager implements PackageManager {
 		return undefined;
 	}
 
+	private findUIForPath(
+		filePath: string,
+		entries: ResourcePathEntry[],
+		baseDir: string,
+	): ExtensionManifestUIV1 | undefined {
+		for (const entry of entries) {
+			if (typeof entry !== "string" && entry.ui && entryMatchesPath(filePath, entry.path, baseDir)) return entry.ui;
+		}
+		return undefined;
+	}
+
 	private resolveLocalEntries(
 		entries: ResourcePathEntry[],
 		resourceType: ResourceType,
@@ -2505,6 +2663,7 @@ export class DefaultPackageManager implements PackageManager {
 				path: this.resolvePathFromBase(entryPath, baseDir),
 				activation: getResourceEntryActivation(entry),
 				targets: resourceType === "extensions" ? getResourceEntryTargets(entry)! : [],
+				ui: resourceType === "extensions" ? getResourceEntryUI(entry) : undefined,
 			};
 		});
 		const extensionEntries =
@@ -2525,10 +2684,12 @@ export class DefaultPackageManager implements PackageManager {
 				resourceType === "extensions" ? this.findTargetsForResolvedPath(f, extensionEntries) : undefined;
 			const extensionId =
 				resourceType === "extensions" ? this.findIdForResolvedPath(f, extensionEntries) : undefined;
+			const extensionUI =
+				resourceType === "extensions" ? this.findUIForResolvedPath(f, extensionEntries) : undefined;
 			this.addResource(
 				target,
 				f,
-				withExtensionMetadata(metadata, activation, targets, extensionId),
+				withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI),
 				enabledPaths.has(f),
 			);
 		}
@@ -2567,6 +2728,7 @@ export class DefaultPackageManager implements PackageManager {
 					path: extensionEntry.path,
 					activation: entry.activation ?? extensionEntry.activation,
 					targets: entry.targets ?? extensionEntry.targets,
+					ui: entry.ui ?? extensionEntry.ui,
 				});
 			}
 		}
@@ -2622,6 +2784,23 @@ export class DefaultPackageManager implements PackageManager {
 			if (normalizedFilePath === normalizedEntryPath) return entry.id;
 			const prefix = normalizedEntryPath.endsWith(sep) ? normalizedEntryPath : `${normalizedEntryPath}${sep}`;
 			if (normalizedFilePath.startsWith(prefix)) return entry.id;
+		}
+		return undefined;
+	}
+
+	private findUIForResolvedPath(
+		filePath: string,
+		entries: ResolvedResourcePathEntry[],
+	): ExtensionManifestUIV1 | undefined {
+		const normalizedFilePath = resolve(filePath);
+		for (const entry of entries) {
+			if (!entry.ui) continue;
+			const normalizedEntryPath = resolve(entry.path);
+			if (
+				normalizedFilePath === normalizedEntryPath ||
+				normalizedFilePath.startsWith(`${normalizedEntryPath}${sep}`)
+			)
+				return entry.ui;
 		}
 		return undefined;
 	}
@@ -2710,10 +2889,11 @@ export class DefaultPackageManager implements PackageManager {
 				const activation = this.findActivationForPath(entry.path, activationEntries, baseDir) ?? entry.activation;
 				const targets = this.findTargetsForPath(entry.path, activationEntries, baseDir) ?? entry.targets;
 				const extensionId = this.findIdForPath(entry.path, activationEntries, baseDir) ?? entry.id;
+				const extensionUI = this.findUIForPath(entry.path, activationEntries, baseDir) ?? entry.ui;
 				this.addResource(
 					target,
 					entry.path,
-					withExtensionMetadata(metadata, activation, targets, extensionId),
+					withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI),
 					enabled,
 				);
 			}

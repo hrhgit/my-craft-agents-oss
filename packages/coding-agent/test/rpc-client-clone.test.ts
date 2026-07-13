@@ -169,6 +169,25 @@ describe("RpcClient Pi shell API methods", () => {
 		});
 	});
 
+	it("routes contribution actions with an expected extension owner", async () => {
+		const { client, send } = mockClient({
+			type: "response",
+			command: "invoke_extension_command",
+			success: true,
+			data: { invoked: true },
+		});
+
+		await expect(client.invokeExtensionCommandResult("status-open", undefined, "status-extension")).resolves.toEqual({
+			invoked: true,
+		});
+		expect(send).toHaveBeenCalledWith({
+			type: "invoke_extension_command",
+			commandId: "status-open",
+			args: undefined,
+			ownerExtensionId: "status-extension",
+		});
+	});
+
 	it("forwards structured host tool results to the RPC subprocess", async () => {
 		const client = new RpcClient();
 		const internals = client as unknown as RpcClientInternals;
@@ -210,6 +229,69 @@ describe("RpcClient Pi shell API methods", () => {
 });
 
 describe("PiRuntimeHandle", () => {
+	it("sends structured interaction responses through the runtime envelope", () => {
+		const client = new RpcClient();
+		const internals = client as unknown as RpcClientInternals;
+		const write = vi.fn();
+		internals.process = { stdin: { destroyed: false, writable: true, write } };
+		const handle = new PiRuntimeHandle(client, {
+			runtimeId: "runtime-a",
+			cwd: "E:/project",
+			sessionId: "session-a",
+			isStreaming: false,
+		});
+
+		handle.respondToExtensionUI({
+			type: "extension_ui_response",
+			id: "interaction-1",
+			extensionId: "ask-user",
+			interaction: {
+				schemaVersion: 1,
+				status: "submitted",
+				answers: [{ fieldId: "topic", kind: "text", value: "RPC" }],
+			},
+		});
+
+		expect(JSON.parse(write.mock.calls[0][0])).toEqual({
+			type: "extension_ui_response",
+			id: "interaction-1",
+			extensionId: "ask-user",
+			interaction: {
+				schemaVersion: 1,
+				status: "submitted",
+				answers: [{ fieldId: "topic", kind: "text", value: "RPC" }],
+			},
+			runtimeId: "runtime-a",
+		});
+	});
+
+	it("routes interaction cancellation as a client event", () => {
+		const client = new RpcClient();
+		const internals = client as unknown as RpcClientInternals;
+		const listener = vi.fn();
+		client.onClientEvent(listener);
+
+		internals.handleLine(
+			JSON.stringify({
+				type: "extension_ui_cancel",
+				id: "interaction-1",
+				extensionId: "ask-user",
+				schemaVersion: 1,
+				reason: "runtime-disposed",
+				runtimeId: "runtime-a",
+			}),
+		);
+
+		expect(listener).toHaveBeenCalledWith({
+			type: "extension_ui_cancel",
+			id: "interaction-1",
+			extensionId: "ask-user",
+			schemaVersion: 1,
+			reason: "runtime-disposed",
+			runtimeId: "runtime-a",
+		});
+	});
+
 	it("sends host capability responses through the runtime envelope", () => {
 		const client = new RpcClient();
 		const internals = client as unknown as RpcClientInternals;

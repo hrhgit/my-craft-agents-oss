@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtensionTarget } from "../src/core/extensions/index.ts";
+import { getExtensionCatalog } from "../src/core/host-facade.ts";
 import { DefaultPackageManager, type ResolvedResource } from "../src/core/package-manager.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
@@ -111,6 +112,31 @@ describe("extension targets", () => {
 		expect(result.extensions).toEqual([]);
 	});
 
+	it("reads the host extension catalog without executing extension factories", async () => {
+		const extensionsDir = join(agentDir, "extensions");
+		mkdirSync(extensionsDir, { recursive: true });
+		writeFileSync(join(extensionsDir, "static.js"), "throw new Error('factory executed')");
+		writeFileSync(
+			join(extensionsDir, "package.json"),
+			JSON.stringify({
+				pi: {
+					extensions: [
+						{
+							id: "static-catalog",
+							path: "./static.js",
+							targets: ["craft"],
+							ui: { schemaVersion: 1, title: "Static catalog", category: "ui" },
+						},
+					],
+				},
+			}),
+		);
+		const result = await getExtensionCatalog({ cwd, agentDir, extensionTarget: "craft" });
+		expect(result.errors).toEqual([]);
+		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0]).toMatchObject({ id: "static-catalog", title: "Static catalog", loaded: false });
+	});
+
 	it("filters package manifest extension entries by target", async () => {
 		const packageDir = join(tempDir, "target-package");
 		mkdirSync(join(packageDir, "extensions"), { recursive: true });
@@ -124,7 +150,20 @@ describe("extension targets", () => {
 				pi: {
 					extensions: [
 						{ id: "pi-only", path: "extensions/pi-only.js", targets: ["pi"] },
-						{ id: "craft-only", path: "extensions/craft-only.js", targets: ["craft"] },
+						{
+							id: "craft-only",
+							path: "extensions/craft-only.js",
+							targets: ["craft"],
+							ui: {
+								schemaVersion: 1,
+								title: "Craft only",
+								category: "ui",
+								settings: {
+									schemaVersion: 1,
+									fields: [{ key: "visible", type: "boolean", label: "Visible", default: true }],
+								},
+							},
+						},
 						{ id: "both", path: "extensions/both.js", targets: ["pi", "craft"] },
 					],
 				},
@@ -137,6 +176,35 @@ describe("extension targets", () => {
 
 		expect(extensionNames(piResult.extensions)).toEqual(["both.js", "pi-only.js"]);
 		expect(extensionNames(craftResult.extensions)).toEqual(["both.js", "craft-only.js"]);
+		expect(
+			craftResult.extensions.find((resource) => basename(resource.path) === "craft-only.js")?.metadata.extensionUI
+				?.title,
+		).toBe("Craft only");
+	});
+
+	it("rejects invalid extension UI schemas at the manifest boundary", async () => {
+		const packageDir = join(tempDir, "invalid-ui-package");
+		mkdirSync(packageDir, { recursive: true });
+		writeFileSync(join(packageDir, "extension.js"), "export default function() {}");
+		writeFileSync(
+			join(packageDir, "package.json"),
+			JSON.stringify({
+				pi: {
+					extensions: [
+						{
+							id: "invalid-ui",
+							path: "extension.js",
+							targets: ["craft"],
+							ui: { schemaVersion: 2, settings: { schemaVersion: 1, fields: [] } },
+						},
+					],
+				},
+			}),
+		);
+		const result = await createPackageManager(SettingsManager.inMemory(), "craft").resolveExtensionSources([
+			packageDir,
+		]);
+		expect(result.extensions).toEqual([]);
 	});
 
 	it("preserves ids and targets from convention extension package manifests", async () => {
