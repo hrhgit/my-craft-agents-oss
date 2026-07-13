@@ -12,9 +12,7 @@ import { AUTOMATIONS_CONFIG_FILE } from './constants.ts';
 import { AutomationsConfigSchema, zodErrorToIssues, DEPRECATED_EVENT_ALIASES } from './schemas.ts';
 import { isValidLabelId } from '../labels/storage.ts';
 import { extractLabelId } from '../labels/values.ts';
-import { getLlmConnection } from '../config/storage.ts';
-import { getDefaultModelsForConnection } from '../config/llm-connections.ts';
-import type { ModelDefinition } from '../config/models.ts';
+import { readPiGlobalProviders } from '../config/pi-global-config.ts';
 import { Cron } from 'croner';
 import type { ValidationResult, ValidationIssue } from '../config/validators.ts';
 import type { AutomationsConfig, AutomationsValidationResult } from './types.ts';
@@ -327,9 +325,10 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
   const errors: ValidationIssue[] = [];
   const warnings = [...contentResult.warnings];
 
-  // Validate labels, llmConnection slugs, and model compatibility
+  // Validate labels, provider keys, and model compatibility
   try {
-    const config = content as { automations?: Record<string, Array<{ labels?: string[]; actions?: Array<{ type: string; llmConnection?: string; model?: string }> }>> };
+    const config = content as { automations?: Record<string, Array<{ labels?: string[]; actions?: Array<{ type: string; provider?: string; model?: string }> }>> };
+    const providers = readPiGlobalProviders();
     const labelEntries = config.automations;
     if (labelEntries) {
       for (const [event, matchers] of Object.entries(labelEntries)) {
@@ -351,28 +350,24 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
               }
             }
           }
-          // Validate llmConnection slugs and model compatibility in prompt actions
+          // Validate provider keys and model compatibility in prompt actions
           const actions = matcher?.actions;
           if (actions) {
             for (const action of actions) {
               if (action.type !== 'prompt') continue;
 
-              if (action.llmConnection) {
-                const connection = getLlmConnection(action.llmConnection);
-                if (!connection) {
-                  // Missing connection is an error — the automation will fail at runtime
-                  // (falls back to default connection, which likely doesn't support the model)
+              if (action.provider) {
+                const provider = providers[action.provider];
+                if (!provider) {
                   errors.push({
                     file,
                     path: `automations.${event}[${i}].actions`,
-                    message: `LLM connection "${action.llmConnection}" not found in config`,
+                    message: `Pi provider "${action.provider}" not found in config`,
                     severity: 'error',
-                    suggestion: 'Check the connection slug in AI Settings or config.json',
+                    suggestion: 'Check the provider key in AI Settings or Pi models.json',
                   });
                 } else if (action.model) {
-                  // Validate model is available for this connection
-                  const availableModels = connection.models ?? getDefaultModelsForConnection(connection.providerType, connection.piAuthProvider);
-                  const modelIds = availableModels.map(m => typeof m === 'string' ? m : (m as ModelDefinition).id);
+                  const modelIds = (provider.models ?? []).map(model => model.id);
                   // Check exact match or suffix match (e.g. "haiku" matches "claude-haiku-4-5-20251001")
                   const modelValue = action.model;
                   const isAvailable = modelIds.some(id =>
@@ -384,7 +379,7 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
                     warnings.push({
                       file,
                       path: `automations.${event}[${i}].actions`,
-                      message: `Model "${modelValue}" may not be available on connection "${action.llmConnection}" (${connection.providerType})`,
+                      message: `Model "${modelValue}" may not be available on provider "${action.provider}"`,
                       severity: 'warning',
                       suggestion: `Available models: ${modelIds.slice(0, 5).join(', ')}${modelIds.length > 5 ? `, ... (${modelIds.length} total)` : ''}`,
                     });

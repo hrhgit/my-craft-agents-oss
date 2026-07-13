@@ -18,8 +18,8 @@ import type {
 import type { ProviderChoice } from '@/components/onboarding/ProviderSelectStep'
 import type { LocalModelSubmitData } from '@/components/onboarding/LocalModelStep'
 import type { ApiKeySubmitData } from '@/components/apisetup'
-import type { CustomEndpointConfig } from '@config/llm-connections'
-import type { SetupNeeds, LlmConnectionSetup } from '../../shared/types'
+import type { CustomEndpointConfig } from '@/components/apisetup/submit-helpers'
+import type { SetupNeeds, PiGlobalProvider } from '../../shared/types'
 
 interface UseOnboardingOptions {
   /** Called when onboarding is complete */
@@ -107,7 +107,6 @@ export function resolveSlugForMethod(
   return `${base}-${i}`
 }
 
-// Map ApiSetupMethod to LlmConnectionSetup for the new unified connection system
 function isLoopbackEndpoint(baseUrl?: string): boolean {
   if (!baseUrl?.trim()) return false
   try {
@@ -118,37 +117,6 @@ function isLoopbackEndpoint(baseUrl?: string): boolean {
     return normalizedHostname === 'localhost' || normalizedHostname === '127.0.0.1' || normalizedHostname === '::1'
   } catch {
     return false
-  }
-}
-
-export function apiSetupMethodToConnectionSetup(
-  method: ApiSetupMethod,
-  options: {
-    credential?: string
-    baseUrl?: string
-    connectionDefaultModel?: string
-    models?: string[]
-    piAuthProvider?: string
-    modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
-    customEndpoint?: CustomEndpointConfig
-  },
-  editingSlug: string | null,
-  existingSlugs: Set<string>,
-): LlmConnectionSetup {
-  const slug = resolveSlugForMethod(method, editingSlug, existingSlugs)
-
-  switch (method) {
-    case 'pi_api_key':
-      return {
-        slug,
-        credential: options.credential,
-        baseUrl: options.baseUrl,
-        defaultModel: options.connectionDefaultModel,
-        models: options.models,
-        piAuthProvider: options.piAuthProvider,
-        modelSelectionMode: options.modelSelectionMode,
-        customEndpoint: options.customEndpoint,
-      }
   }
 }
 
@@ -197,7 +165,7 @@ export function useOnboarding({
     checkGitBash()
   }, [])
 
-  // Save configuration using the new unified LLM connection API
+  // Save provider metadata and credentials directly to Pi's global config.
   // Returns true on success, false on failure (sets errorMessage on failure)
   // `methodOverride` lets callers pass the method explicitly to avoid stale-closure issues
   // (e.g. when called from an async OAuth flow whose closure predates the state update).
@@ -205,14 +173,14 @@ export function useOnboarding({
     credential?: string,
     options?: {
       baseUrl?: string
-      connectionDefaultModel?: string
+      providerDefaultModel?: string
       models?: string[]
       piAuthProvider?: string
       modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
       customEndpoint?: CustomEndpointConfig
     },
     methodOverride?: ApiSetupMethod,
-    connectionSlugOverride?: string,
+    providerKeyOverride?: string,
     updateOnly?: boolean,
   ): Promise<boolean> => {
     const method = methodOverride ?? state.apiSetupMethod
@@ -223,20 +191,14 @@ export function useOnboarding({
     setState(s => ({ ...s, completionStatus: 'saving' }))
 
     try {
-      // Build connection setup from UI state
-      const setup = apiSetupMethodToConnectionSetup(method, {
-        credential,
-        baseUrl: options?.baseUrl,
-        connectionDefaultModel: options?.connectionDefaultModel,
-        models: options?.models,
-        piAuthProvider: options?.piAuthProvider,
-        modelSelectionMode: options?.modelSelectionMode,
-        customEndpoint: options?.customEndpoint,
-      }, connectionSlugOverride ?? editingSlug, existingSlugs)
-      // Use new unified API
-      const result = await window.electronAPI.setupLlmConnection(
-        updateOnly ? { ...setup, updateOnly: true } : setup
-      )
+      const key = options?.piAuthProvider || providerKeyOverride || editingSlug || resolveSlugForMethod(method, null, existingSlugs)
+      const models = options?.models?.map(id => ({ id, name: id })) ?? []
+      const provider: PiGlobalProvider = {
+        ...(options?.baseUrl ? { baseUrl: options.baseUrl } : {}),
+        ...(options?.customEndpoint?.api ? { api: options.customEndpoint.api } : {}),
+        models,
+      }
+      const result = await window.electronAPI.savePiGlobalProvider({ key, provider, apiKey: credential })
 
       if (result.success) {
         setState(s => ({ ...s, completionStatus: 'complete' }))
@@ -342,7 +304,7 @@ export function useOnboarding({
       if (!data.apiKey.trim() && editingSlug) {
         const saved = await handleSaveConfig(undefined, {
           baseUrl: data.baseUrl,
-          connectionDefaultModel: data.connectionDefaultModel,
+          providerDefaultModel: data.providerDefaultModel,
           models: data.models,
           piAuthProvider: data.piAuthProvider,
           modelSelectionMode: data.modelSelectionMode,
@@ -380,30 +342,9 @@ export function useOnboarding({
         }
       }
 
-      // Validate connection by spawning a lightweight subprocess test.
-      // Custom endpoint protocol routes through PiAgent at runtime, so test with Pi too.
-      const setupTestProvider = 'pi'
-      const testResult = await window.electronAPI.testLlmConnectionSetup({
-        provider: setupTestProvider,
-        apiKey: data.apiKey,
-        baseUrl: data.baseUrl,
-        model: data.models?.[0],
-        piAuthProvider: data.piAuthProvider,
-        customEndpoint: data.customEndpoint,
-      })
-
-      if (!testResult.success) {
-        setState(s => ({
-          ...s,
-          credentialStatus: 'error',
-          errorMessage: testResult.error || 'Connection test failed',
-        }))
-        return
-      }
-
       const saved = await handleSaveConfig(data.apiKey, {
         baseUrl: data.baseUrl,
-        connectionDefaultModel: data.connectionDefaultModel,
+        providerDefaultModel: data.providerDefaultModel,
         models: data.models,
         piAuthProvider: data.piAuthProvider,
         modelSelectionMode: data.modelSelectionMode,
@@ -453,7 +394,7 @@ export function useOnboarding({
     try {
       const saved = await handleSaveConfig(undefined, {
         baseUrl: data.baseUrl,
-        connectionDefaultModel: data.model,
+        providerDefaultModel: data.model,
         models: data.models,
         customEndpoint: { api: 'openai-completions' },
       })
@@ -579,3 +520,4 @@ export function useOnboarding({
     reset,
   }
 }
+

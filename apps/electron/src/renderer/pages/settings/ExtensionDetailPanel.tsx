@@ -14,46 +14,23 @@ import {
   SettingsSelectRow,
   SettingsToggle,
 } from '@/components/settings'
-import { getModelShortName, type ModelDefinition } from '@config/models'
-import { getModelsForProviderType } from '@config/llm-connections'
-import type { LlmConnectionWithStatus, PiExtensionSettings, StoredPiExtensionSettings } from '../../../shared/types'
+import type { PiExtensionSettings, PiGlobalProviderForDisplay, StoredPiExtensionSettings } from '../../../shared/types'
+import { getModelShortName } from '@config/models'
 
 // ---------------------------------------------------------------------------
-// 模型选项工具（从旧 PiExtensionsSettingsPanel 迁移）
+// 模型选项工具
 // ---------------------------------------------------------------------------
 
-function getModelOptionsForConnection(
-  connection: LlmConnectionWithStatus | undefined,
-): Array<{ value: string; label: string; description?: string }> {
-  if (!connection) return []
-
-  if (connection.models && connection.models.length > 0) {
-    return connection.models.map((m) => {
-      if (typeof m === 'string') {
-        return { value: m, label: getModelShortName(m), description: connection.name }
-      }
-      const def = m as ModelDefinition
-      return { value: def.id, label: def.name, description: connection.name }
-    })
-  }
-
-  return getModelsForProviderType(connection.providerType, connection.piAuthProvider).map((m) => ({
-    value: m.id,
-    label: m.name,
-    description: connection.name,
-  }))
-}
-
-function modelOptionsFromConnections(
-  llmConnections: LlmConnectionWithStatus[],
+function modelOptionsFromProviders(
+  providers: PiGlobalProviderForDisplay[],
 ): Array<{ value: string; label: string; description?: string }> {
   const seen = new Set<string>()
   const options: Array<{ value: string; label: string; description?: string }> = []
-  for (const connection of llmConnections) {
-    for (const option of getModelOptionsForConnection(connection)) {
-      if (seen.has(option.value)) continue
-      seen.add(option.value)
-      options.push(option)
+  for (const entry of providers) {
+    for (const model of entry.provider.models ?? []) {
+      if (seen.has(model.id)) continue
+      seen.add(model.id)
+      options.push({ value: model.id, label: model.name ?? model.id, description: entry.key })
     }
   }
   return options
@@ -66,7 +43,7 @@ function modelOptionsFromConnections(
 interface ExtensionDetailPanelProps {
   extensionId: string
   settings: PiExtensionSettings
-  llmConnections: LlmConnectionWithStatus[]
+  providers: PiGlobalProviderForDisplay[]
   onPatch: (patch: StoredPiExtensionSettings) => Promise<void>
   onBack: () => void
 }
@@ -74,12 +51,12 @@ interface ExtensionDetailPanelProps {
 export function ExtensionDetailPanel({
   extensionId,
   settings,
-  llmConnections,
+  providers,
   onPatch,
   onBack,
 }: ExtensionDetailPanelProps) {
   const { t } = useTranslation()
-  const modelOptions = useMemo(() => modelOptionsFromConnections(llmConnections), [llmConnections])
+  const modelOptions = useMemo(() => modelOptionsFromProviders(providers), [providers])
 
   const descriptionKey = `settings.extensions.ext.${extensionId}.description`
   const description = t(descriptionKey)

@@ -18,7 +18,7 @@ import { buildRestartRequiredSignature } from './runtime-config.ts'
 //      send path. The new gate uses only `agent.isProcessing()`.
 //   2. Saving a connection had no notification path to active sessions, so
 //      capability changes only propagated lazily after the next send.
-//      `refreshConnectionRuntime` now pushes updates from the SAVE handler.
+//      `refreshProviderRuntime` now pushes updates from the SAVE handler.
 
 interface AgentStub {
   isProcessing: () => boolean
@@ -48,7 +48,7 @@ function injectSession(
   sm: SessionManager,
   id: string,
   workspaceRoot: string,
-  llmConnection: string,
+  provider: string,
   agent: AgentStub | null,
   opts: { backendRuntimeSignature?: string; backendRestartSignature?: string; isProcessing?: boolean } = {},
 ) {
@@ -59,10 +59,10 @@ function injectSession(
     createdAt: Date.now(),
   }
   const managed = createManagedSession(
-    { craftId: id, name: id, llmConnection },
+    { craftId: id, name: id, provider },
     workspace as never,
     { messagesLoaded: true },
-  ) as unknown as { agent: AgentStub | null; backendRuntimeSignature?: string; backendRestartSignature?: string; isProcessing: boolean; llmConnection?: string }
+  ) as unknown as { agent: AgentStub | null; backendRuntimeSignature?: string; backendRestartSignature?: string; isProcessing: boolean; provider?: string }
   managed.agent = agent
   // Force a stale runtime signature so the helper's comparison always reaches
   // the refresh branch — the signature it computes from real disk config will
@@ -76,23 +76,24 @@ function injectSession(
   } else {
     const workspaceConfig = loadWorkspaceConfig(workspaceRoot)
     const ctx = resolveBackendContext({
-      sessionConnectionSlug: llmConnection,
-      workspaceDefaultConnectionSlug: workspaceConfig?.defaults?.defaultLlmConnection,
+      sessionProvider: provider,
+      workspaceDefaultProvider: workspaceConfig?.defaults?.provider,
     })
     managed.backendRestartSignature = buildRestartRequiredSignature({
-      connection: ctx.connection,
+      providerKey: ctx.providerKey,
+      providerConfig: ctx.providerConfig,
       provider: ctx.provider,
       authType: ctx.authType,
       resolvedModel: ctx.resolvedModel,
     })
   }
   managed.isProcessing = opts.isProcessing ?? false
-  managed.llmConnection = llmConnection
+  managed.provider = provider
   ;(sm as unknown as { sessions: Map<string, unknown> }).sessions.set(id, managed)
   return managed
 }
 
-describe('refreshConnectionRuntime', () => {
+describe('refreshProviderRuntime', () => {
   let tmpRoot: string
   let sm: SessionManager
 
@@ -105,13 +106,13 @@ describe('refreshConnectionRuntime', () => {
     rmSync(tmpRoot, { recursive: true, force: true })
   })
 
-  it('pushes updateRuntimeConfig to sessions on the matching connection slug', async () => {
+  it('pushes updateRuntimeConfig to sessions on the matching provider key', async () => {
     const matchingAgent = createAgentStub()
     const otherAgent = createAgentStub()
     injectSession(sm, 'matching', tmpRoot, 'slug-A', matchingAgent)
     injectSession(sm, 'other', tmpRoot, 'slug-B', otherAgent)
 
-    await sm.refreshConnectionRuntime('slug-A')
+    await sm.refreshProviderRuntime('slug-A')
 
     expect(matchingAgent.updateRuntimeConfig).toHaveBeenCalledTimes(1)
     expect(otherAgent.updateRuntimeConfig).not.toHaveBeenCalled()
@@ -121,7 +122,7 @@ describe('refreshConnectionRuntime', () => {
     const busyAgent = createAgentStub({ isProcessing: true })
     injectSession(sm, 'busy', tmpRoot, 'slug-A', busyAgent)
 
-    await sm.refreshConnectionRuntime('slug-A')
+    await sm.refreshProviderRuntime('slug-A')
 
     expect(busyAgent.updateRuntimeConfig).not.toHaveBeenCalled()
   })
@@ -136,7 +137,7 @@ describe('refreshConnectionRuntime', () => {
     const idleAgent = createAgentStub({ isProcessing: false })
     injectSession(sm, 'sending', tmpRoot, 'slug-A', idleAgent, { isProcessing: true })
 
-    await sm.refreshConnectionRuntime('slug-A')
+    await sm.refreshProviderRuntime('slug-A')
 
     expect(idleAgent.updateRuntimeConfig).toHaveBeenCalledTimes(1)
   })
@@ -144,14 +145,14 @@ describe('refreshConnectionRuntime', () => {
   it('is a no-op when there is no agent yet (cold session)', async () => {
     injectSession(sm, 'cold', tmpRoot, 'slug-A', null)
 
-    await expect(sm.refreshConnectionRuntime('slug-A')).resolves.toBeUndefined()
+    await expect(sm.refreshProviderRuntime('slug-A')).resolves.toBeUndefined()
   })
 
   it('disposes the runtime when in-place refresh fails so the next send rebuilds it', async () => {
     const failingAgent = createAgentStub({ refreshSucceeds: false })
     const managed = injectSession(sm, 'failing', tmpRoot, 'slug-A', failingAgent)
 
-    await sm.refreshConnectionRuntime('slug-A')
+    await sm.refreshProviderRuntime('slug-A')
 
     expect(failingAgent.updateRuntimeConfig).toHaveBeenCalledTimes(1)
     expect(managed.agent).toBeNull()
@@ -167,7 +168,7 @@ describe('refreshConnectionRuntime', () => {
       backendRestartSignature: '__stale_restart_signature__',
     })
 
-    await sm.refreshConnectionRuntime('slug-A')
+    await sm.refreshProviderRuntime('slug-A')
 
     expect(agent.updateRuntimeConfig).not.toHaveBeenCalled()
     expect(managed.agent).toBeNull()
@@ -186,8 +187,8 @@ describe('refreshConnectionRuntime', () => {
     injectSession(sm, 'concurrent', tmpRoot, 'slug-A', agent)
 
     const [first, second] = await Promise.all([
-      sm.refreshConnectionRuntime('slug-A'),
-      sm.refreshConnectionRuntime('slug-A'),
+      sm.refreshProviderRuntime('slug-A'),
+      sm.refreshProviderRuntime('slug-A'),
     ])
 
     expect(first).toBeUndefined()
@@ -205,7 +206,7 @@ describe('refreshConnectionRuntime', () => {
     const agent = createAgentStub()
     injectSession(sm, 'shape-check', tmpRoot, 'slug-A', agent)
 
-    await sm.refreshConnectionRuntime('slug-A')
+    await sm.refreshProviderRuntime('slug-A')
 
     expect(agent.updateRuntimeConfig).toHaveBeenCalledTimes(1)
     const payload = agent.updateRuntimeConfig.mock.calls[0]?.[0]

@@ -58,6 +58,7 @@ interface AssistantTextBlock {
   contentIndex: number
   text: string
   streaming: boolean
+  timestamp?: number
   disposition: MessageDisposition
 }
 
@@ -346,8 +347,14 @@ function buildAssistantTurn(
     || activities.some(activity => activity.status === 'running' || activity.status === 'pending' || activity.status === 'backgrounded')
     || recordValue.turnEntity?.kind === 'turn_start'
   )
+  const responseCompletedAt = responseMessage?.blocks.reduce<number | undefined>((latest, block) => {
+    if (block.timestamp === undefined) return latest
+    return latest === undefined || block.timestamp > latest ? block.timestamp : latest
+  }, undefined)
   const completedAt = turnComplete
-    ? wallClockTimestamp(recordValue.turnEntity?.updatedAt) ?? completedAtOverride
+    ? wallClockTimestamp(recordValue.turnEntity?.updatedAt)
+      ?? completedAtOverride
+      ?? (responseCompletedAt !== undefined && Number.isFinite(responseCompletedAt) ? responseCompletedAt : undefined)
     : undefined
   const durationMs = startedAt !== undefined && completedAt !== undefined && completedAt >= startedAt
     ? completedAt - startedAt
@@ -565,6 +572,7 @@ export function buildPiTurns(
         contentIndex: numberValue(payload.contentIndex) ?? message.blocks.length,
         text: typeof payload.text === 'string' ? payload.text : '',
         streaming: payload.streaming === true,
+        timestamp: wallClockTimestamp(payload.timestamp),
         disposition: assistantDisposition(payload),
       })
       assistant.messages.set(messageId, message)

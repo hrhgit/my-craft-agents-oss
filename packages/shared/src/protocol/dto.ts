@@ -18,7 +18,6 @@ import type {
 } from '@craft-agent/core/types'
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
-import type { CustomEndpointConfig } from '../config/llm-connections'
 import type {
   AuthRequest as SharedAuthRequest,
   CredentialInputMode as SharedCredentialInputMode,
@@ -70,7 +69,7 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
   sharedUrl?: string
   sharedId?: string
   model?: string
-  llmConnection?: string
+  provider?: string
   thinkingLevel?: ThinkingLevel
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
   lastFinalMessageId?: string
@@ -119,7 +118,7 @@ export interface CreateSessionOptions {
    */
   workingDirectory?: string | 'user_default' | 'none'
   model?: string
-  llmConnection?: string
+  provider?: string
   systemPromptPreset?: 'default' | 'mini' | string
   hidden?: boolean
   sessionStatus?: SessionStatus
@@ -184,7 +183,7 @@ export type SessionEvent =
   | { type: 'plan_mode_state_changed'; sessionId: string; state: PlanModeStateV1 }
   | { type: 'sources_changed'; sessionId: string; enabledSourceSlugs: string[] }
   | { type: 'labels_changed'; sessionId: string; labels: string[] }
-  | { type: 'connection_changed'; sessionId: string; connectionSlug: string; supportsBranching?: boolean }
+  | { type: 'provider_changed'; sessionId: string; provider?: string; supportsBranching?: boolean }
   | { type: 'task_backgrounded'; sessionId: string; toolUseId: string; taskId: string; intent?: string; turnId?: string }
   | { type: 'shell_backgrounded'; sessionId: string; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
   | { type: 'task_progress'; sessionId: string; toolUseId: string; elapsedSeconds: number; turnId?: string }
@@ -209,10 +208,14 @@ export type SessionEvent =
   | { type: 'message_annotations_updated'; sessionId: string; messageId: string; annotations: AnnotationV1[] }
   | { type: 'working_directory_error'; sessionId: string; error: string }
 
+export type MidStreamSendIntent = 'default' | 'alternate'
+
 export interface SendMessageOptions {
   skillSlugs?: string[]
   badges?: ContentBadge[]
   optimisticMessageId?: string
+  /** Use the configured Enter behavior, or its opposite for Ctrl/Cmd+Enter. */
+  midStreamSendIntent?: MidStreamSendIntent
 }
 
 // ---------------------------------------------------------------------------
@@ -240,7 +243,7 @@ export type SessionCommand =
   | { type: 'updateShare' }
   | { type: 'revokeShare' }
   | { type: 'refreshTitle' }
-  | { type: 'setConnection'; connectionSlug: string }
+  | { type: 'setProvider'; provider: string }
   | { type: 'setPendingPlanExecution'; planPath?: string; artifactId?: string; draftInputSnapshot?: string }
   | { type: 'markCompactionComplete' }
   | { type: 'markPendingPlanExecutionDispatched' }
@@ -330,61 +333,17 @@ export interface FileSearchResult {
 }
 
 // ---------------------------------------------------------------------------
-// LLM connection types
+// provider types
 // ---------------------------------------------------------------------------
 
 /**
  * Resolved OAuth identity (issue #838), captured from the
  * token-exchange response by the caller and threaded through the
- * SETUP_LLM_CONNECTION payload. All fields optional and fail-soft.
+ * Provider setup payloads may include these optional, fail-soft fields.
  */
 export interface ClaudeOAuthIdentityDto {
   account?: { uuid?: string; emailAddress?: string }
   organization?: { uuid?: string; name?: string }
-}
-
-export interface LlmConnectionSetup {
-  slug: string
-  credential?: string
-  baseUrl?: string | null
-  defaultModel?: string | null
-  models?: string[] | null
-  piAuthProvider?: string
-  modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
-  /** When true, reject setup if the connection doesn't already exist (reauth guard). */
-  updateOnly?: boolean
-  /** Custom endpoint protocol for arbitrary OpenAI/Anthropic-compatible APIs */
-  customEndpoint?: CustomEndpointConfig
-  /** IAM credentials for Pi+Bedrock (piAuthProvider='amazon-bedrock') connections */
-  iamCredentials?: {
-    accessKeyId: string
-    secretAccessKey: string
-    sessionToken?: string
-  }
-  /** AWS region for Pi+Bedrock connections */
-  awsRegion?: string
-  /** Bedrock authentication method — determines auth type for Pi+Bedrock connections */
-  bedrockAuthMethod?: 'iam_credentials' | 'environment'
-  /**
-   * Resolved Anthropic OAuth identity (issue #838), threaded through setup so it
-   * persists for both new and re-auth connections. Optional and fail-soft.
-   */
-  oauthIdentity?: ClaudeOAuthIdentityDto
-}
-
-export interface TestLlmConnectionParams {
-  provider: 'pi'
-  apiKey: string
-  baseUrl?: string
-  model?: string
-  piAuthProvider?: string
-  /** Optional custom endpoint protocol hint so setup tests mirror runtime routing */
-  customEndpoint?: CustomEndpointConfig
-}
-
-export interface TestLlmConnectionResult {
-  success: boolean
-  error?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -506,13 +465,13 @@ export interface UpdateInfo {
 
 export interface WorkspaceSettings {
   name?: string
+  provider?: string
   model?: string
   permissionMode?: PermissionMode
   cyclablePermissionModes?: PermissionMode[]
   thinkingLevel?: ThinkingLevel
   workingDirectory?: string
   localMcpEnabled?: boolean
-  defaultLlmConnection?: string
   enabledSourceSlugs?: string[]
 }
 
@@ -521,7 +480,7 @@ export interface WorkspaceSettings {
 // ---------------------------------------------------------------------------
 
 export type TestAutomationAction =
-  | { type: 'prompt'; prompt: string; llmConnection?: string; model?: string; thinkingLevel?: ThinkingLevel }
+  | { type: 'prompt'; prompt: string; provider?: string; model?: string; thinkingLevel?: ThinkingLevel }
   | { type: 'webhook'; url: string; method?: string; headers?: Record<string, string>; bodyFormat?: 'json' | 'form' | 'raw'; body?: unknown; captureResponse?: boolean; auth?: { type: 'basic'; username: string; password: string } | { type: 'bearer'; token: string } }
 
 export interface TestAutomationPayload {

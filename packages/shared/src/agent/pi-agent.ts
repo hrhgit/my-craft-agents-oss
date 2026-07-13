@@ -136,30 +136,41 @@ function remoteUIResponseValue(payload: unknown): string {
   return '';
 }
 
-const ASK_USER_MULTIPLE_OPTIONS_PREFIX = '\n\nOptions (select one or more):\n';
+const ASK_USER_EXTENSION_IDS = new Set(['ask-user', 'ask_user']);
+const ASK_USER_MULTIPLE_OPTIONS_MARKER = /(?:\r?\n){2}Options \(select one or more\):[ \t]*(?:\r?\n)/;
+const ASK_USER_CONTEXT_MARKER = /(?:\r?\n){2}Context:[ \t]*(?:\r?\n)/;
+
+function isAskUserExtension(extensionId: string): boolean {
+  return ASK_USER_EXTENSION_IDS.has(extensionId);
+}
 
 function parseAskUserMultipleChoiceInput(title: string): {
   title: string;
   message?: string;
   options: Array<{ title: string; description?: string }>;
 } | null {
-  const optionsStart = title.indexOf(ASK_USER_MULTIPLE_OPTIONS_PREFIX);
-  if (optionsStart < 0) return null;
+  const optionsMarker = ASK_USER_MULTIPLE_OPTIONS_MARKER.exec(title);
+  if (!optionsMarker || optionsMarker.index === undefined) return null;
 
-  const prompt = title.slice(0, optionsStart).trim();
-  const rawOptions = title.slice(optionsStart + ASK_USER_MULTIPLE_OPTIONS_PREFIX.length).split(/\r?\n/);
+  const prompt = title.slice(0, optionsMarker.index).trim();
+  const rawOptions = title
+    .slice(optionsMarker.index + optionsMarker[0].length)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
   const options = rawOptions.map((line) => {
-    const match = /^(\d+)\.\s+(.+?)(?:\s+\u2014\s+(.+))?$/.exec(line.trim());
+    const match = /^(\d+)\.\s+(.+?)(?:\s+\u2014\s+(.+))?$/.exec(line);
     if (!match) return null;
     return { title: match[2]!, ...(match[3] ? { description: match[3] } : {}) };
   });
   if (options.length === 0 || options.some((option) => option === null)) return null;
 
-  const contextPrefix = '\n\nContext:\n';
-  const contextStart = prompt.indexOf(contextPrefix);
+  const contextMarker = ASK_USER_CONTEXT_MARKER.exec(prompt);
   return {
-    title: (contextStart < 0 ? prompt : prompt.slice(0, contextStart)).trim(),
-    ...(contextStart < 0 ? {} : { message: prompt.slice(contextStart + contextPrefix.length).trim() }),
+    title: (contextMarker ? prompt.slice(0, contextMarker.index) : prompt).trim(),
+    ...(contextMarker
+      ? { message: prompt.slice(contextMarker.index + contextMarker[0].length).trim() }
+      : {}),
     options: options as Array<{ title: string; description?: string }>,
   };
 }
@@ -342,7 +353,7 @@ export class PiAgent extends BaseAgent {
         piSessionId: this.piSessionId,
         workspaceId: this.config.workspace.id,
         workspaceRootPath: this.config.workspace.rootPath,
-        connectionSlug: this.config.connectionSlug,
+        providerKey: this.config.providerKey,
         provider: this.config.provider,
         providerType: this.config.providerType,
         model: this._model,
@@ -392,8 +403,8 @@ export class PiAgent extends BaseAgent {
   // OAuth token refresh (ChatGPT Plus)
   private tokenRefreshInProgress: Promise<void> | null = null;
 
-  // Global mutex: keyed by connectionSlug so multiple PiAgent instances
-  // sharing the same connection don't race concurrent token refreshes.
+  // Global mutex: keyed by providerKey so multiple PiAgent instances
+  // sharing the same provider don't race concurrent token refreshes.
   private static globalRefreshMutex: Map<string, Promise<void>> = new Map();
 
   // ============================================================
@@ -611,8 +622,8 @@ export class PiAgent extends BaseAgent {
     const commandArgs: string[] = [];
 
     if (this.config.authType === 'oauth' && runtime.piAuthProvider === 'github-copilot') {
-      const slug = this.config.connectionSlug || 'pi';
-      const stored = await getCredentialManager().getLlmOAuth(slug);
+      const slug = this.config.providerKey || 'pi';
+      const stored = await getCredentialManager().getProviderOAuth(slug);
       if (stored?.refreshToken && (!stored.expiresAt || stored.expiresAt < Date.now() + 5 * 60_000)) {
         this.debug('Copilot token expired or expiring soon — refreshing before session start');
         await this.refreshAndPushTokens();
@@ -830,10 +841,10 @@ export class PiAgent extends BaseAgent {
 
     try {
       const credentialManager = getCredentialManager();
-      const slug = this.config.connectionSlug || 'pi';
+      const slug = this.config.providerKey || 'pi';
 
       if (this.config.authType === 'oauth') {
-        const oauth = await credentialManager.getLlmOAuth(slug);
+        const oauth = await credentialManager.getProviderOAuth(slug);
         if (oauth?.accessToken) {
           // Copilot: pass full OAuth credential so the Pi SDK can derive the
           // correct API endpoint from the Copilot token's proxy-ep field.
@@ -862,7 +873,7 @@ export class PiAgent extends BaseAgent {
         // AWS IAM credentials — pass structured fields so RpcClient can
         // identify the credential type. Actual AWS env var injection happens
         // at process start for proper isolation.
-        const iam = await credentialManager.getLlmIamCredentials(slug);
+        const iam = await credentialManager.getProviderIamCredentials(slug);
         if (iam) {
           this.debug(`Retrieved IAM credentials for Pi provider: ${piAuthProvider}`);
           return {
@@ -882,7 +893,7 @@ export class PiAgent extends BaseAgent {
         // intentionally falls through here, finds no API key, and returns null.
         // buildAwsEnv() re-adds only the AWS credential-chain variables needed
         // for Bedrock environment auth after the base subprocess env is sanitized.
-        const apiKey = await credentialManager.getLlmApiKey(slug);
+        const apiKey = await credentialManager.getProviderApiKey(slug);
         if (apiKey) {
           this.debug(`Retrieved API key credential for Pi provider: ${piAuthProvider}`);
           return {
@@ -943,9 +954,9 @@ export class PiAgent extends BaseAgent {
   private async refreshAndPushTokens(): Promise<void> {
     if (this.config.authType !== 'oauth') return;
 
-    const slug = this.config.connectionSlug || 'pi';
+    const slug = this.config.providerKey || 'pi';
 
-    // Global mutex — if another PiAgent instance on the same connection slug
+    // Global mutex — if another PiAgent instance on the same provider key
     // is already refreshing, just wait for that to finish.
     const existing = PiAgent.globalRefreshMutex.get(slug);
     if (existing) {
@@ -957,7 +968,7 @@ export class PiAgent extends BaseAgent {
     const refreshPromise = (async () => {
       const piAuthProvider = getBackendRuntime(this.config).piAuthProvider;
       const credentialManager = getCredentialManager();
-      const stored = await credentialManager.getLlmOAuth(slug);
+      const stored = await credentialManager.getProviderOAuth(slug);
 
       if (!stored?.refreshToken) {
         this.debug('No refresh token available — re-auth required');
@@ -970,7 +981,7 @@ export class PiAgent extends BaseAgent {
           // Copilot: refresh the short-lived Copilot token using the GitHub access token
           const { refreshGitHubCopilotToken } = await import('@earendil-works/pi-ai/oauth');
           const newCreds = await refreshGitHubCopilotToken(stored.refreshToken);
-          await credentialManager.setLlmOAuth(slug, {
+          await credentialManager.setProviderOAuth(slug, {
             accessToken: newCreds.access,
             refreshToken: newCreds.refresh,
             expiresAt: newCreds.expires,
@@ -1207,7 +1218,7 @@ export class PiAgent extends BaseAgent {
       };
     }
     if (event.method === 'select') {
-      const isAskUser = extensionId === 'ask_user';
+      const isAskUser = isAskUserExtension(extensionId);
       const hasFreeformOption = isAskUser && event.options.some(option => /write my own answer/i.test(option));
       return {
         type: 'remoteui_request',
@@ -1236,7 +1247,7 @@ export class PiAgent extends BaseAgent {
       };
     }
     if (event.method === 'input') {
-      const multipleChoice = extensionId === 'ask_user'
+      const multipleChoice = isAskUserExtension(extensionId)
         ? parseAskUserMultipleChoiceInput(event.title)
         : null;
       if (multipleChoice) {

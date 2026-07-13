@@ -78,7 +78,7 @@ describe('AutomationSystem', () => {
               actions: [{
                 type: 'prompt',
                 prompt: 'Audit changes',
-                llmConnection: 'anthropic',
+                provider: 'anthropic',
                 model: 'claude-opus-4-7',
                 thinkingLevel: 'high',
               }],

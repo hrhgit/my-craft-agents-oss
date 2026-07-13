@@ -1,8 +1,3 @@
-import {
-  isLocalConnection,
-  type LlmConnection,
-} from '@config/llm-connections'
-
 /**
  * Format token count for display (e.g., 1500 -> "1.5k", 200000 -> "200k").
  * Shared by the desktop model dropdown and the compact (drawer) model picker.
@@ -25,31 +20,16 @@ export function stripPiPrefixForDisplay(value: string): string {
   return value.startsWith('pi/') ? value.slice(3) : value
 }
 
-export type ConnectionGroup = [groupName: string, connections: LlmConnection[]]
+export function groupProviders<T>(providers: readonly T[]): Array<[string, T[]]> {
+  return providers.length > 0 ? [['Providers', [...providers]]] : []
+}
 
-/**
- * Group connections by provider type for hierarchical picker rendering.
- * Each provider section can contain multiple connections (API Key, OAuth, …).
- * Order is significant for UI: Anthropic auth, Local, Craft Agents Backend.
- * Empty groups are dropped.
- */
-export function groupConnectionsByProvider<T extends LlmConnection>(
-  connections: readonly T[],
-): Array<[string, T[]]> {
-  const groups: Record<string, T[]> = {
-    'Anthropic': [],
-    'Local': [],
-    'Craft Agents Backend': [],
-  }
-  for (const conn of connections) {
-    const provider = conn.providerType || 'pi'
-    if (provider === 'pi' && conn.piAuthProvider === 'anthropic') {
-      groups['Anthropic'].push(conn)
-    } else if (provider === 'pi_compat' && isLocalConnection(conn)) {
-      groups['Local'].push(conn)
-    } else if (provider === 'pi' || provider === 'pi_compat') {
-      groups['Craft Agents Backend'].push(conn)
-    }
-  }
-  return Object.entries(groups).filter(([, conns]) => conns.length > 0)
+export function resolveEffectiveProvider<T extends { key: string }>(
+  sessionProvider: string | undefined,
+  defaultProvider: string | undefined,
+  providers: readonly T[],
+): string | undefined {
+  if (sessionProvider && providers.some(entry => entry.key === sessionProvider)) return sessionProvider
+  if (defaultProvider && providers.some(entry => entry.key === defaultProvider)) return defaultProvider
+  return providers[0]?.key
 }

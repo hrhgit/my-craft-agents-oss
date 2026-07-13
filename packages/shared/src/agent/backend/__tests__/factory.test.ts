@@ -3,7 +3,7 @@
  *
  * Verifies:
  * - Backend creation for different providers
- * - LLM connection type mapping
+ * - provider type mapping
  */
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { join } from 'node:path';
@@ -13,16 +13,13 @@ import {
   initializeBackendHostRuntime,
   AGENT_PROVIDER,
   resolveModelForProvider,
-  resolveSetupTestConnectionHint,
-  createBackendFromConnection,
   testBackendConnection,
-  validateStoredBackendConnection,
+  validateStoredBackendProvider,
 } from '../factory.ts';
 import type { BackendConfig } from '../types.ts';
-import type { Workspace, LlmConnection } from '../../../config/storage.ts';
+import type { Workspace } from '../../../config/storage.ts';
 import type { SessionHeader as Session } from '../../../sessions/types.ts';
 import { PiAgent } from '../../pi-agent.ts';
-import { isValidProviderAuthCombination } from '../../../config/llm-connections.ts';
 
 // Test helpers
 function createTestWorkspace(): Workspace {
@@ -89,45 +86,6 @@ describe('AGENT_PROVIDER', () => {
   });
 });
 
-// ============================================================
-// Provider-Auth Validation Tests
-// ============================================================
-
-describe('isValidProviderAuthCombination', () => {
-  describe('Legacy Anthropic providerType', () => {
-    it('rejects legacy auth combinations', () => {
-      for (const authType of ['api_key', 'oauth', 'api_key_with_endpoint', 'none'] as const) {
-        expect(isValidProviderAuthCombination('anthropic' as any, authType)).toBe(false);
-      }
-    });
-  });
-
-  describe('Pi provider', () => {
-    it('should accept api_key auth', () => {
-      expect(isValidProviderAuthCombination('pi', 'api_key')).toBe(true);
-    });
-
-    it('should accept oauth auth', () => {
-      expect(isValidProviderAuthCombination('pi', 'oauth')).toBe(true);
-    });
-
-    it('should accept none auth', () => {
-      expect(isValidProviderAuthCombination('pi', 'none')).toBe(true);
-    });
-  });
-
-  describe('Pi compat provider', () => {
-    it('should accept api_key_with_endpoint auth', () => {
-      expect(isValidProviderAuthCombination('pi_compat', 'api_key_with_endpoint')).toBe(true);
-    });
-
-    it('should accept none auth (for local models like Ollama)', () => {
-      expect(isValidProviderAuthCombination('pi_compat', 'none')).toBe(true);
-    });
-  });
-
-});
-
 describe('phase4 backend abstraction APIs', () => {
   it('initializeBackendHostRuntime bootstraps without throwing in dev runtime', () => {
     expect(() => initializeBackendHostRuntime({
@@ -138,46 +96,10 @@ describe('phase4 backend abstraction APIs', () => {
     })).not.toThrow();
   });
 
-  it('resolveSetupTestConnectionHint maps provider/baseUrl/piAuthProvider correctly', () => {
-    expect(resolveSetupTestConnectionHint({
-      provider: 'anthropic',
-      baseUrl: 'https://api.example.com',
-    })).toEqual({ providerType: 'pi_compat', piAuthProvider: 'anthropic' });
-
-    expect(resolveSetupTestConnectionHint({
-      provider: 'anthropic',
-      baseUrl: '',
-    })).toEqual({ providerType: 'pi', piAuthProvider: 'anthropic' });
-
-    expect(resolveSetupTestConnectionHint({
-      provider: 'pi',
-      piAuthProvider: 'openai-codex',
-    })).toEqual({ providerType: 'pi', piAuthProvider: 'openai-codex' });
-
-    expect(resolveSetupTestConnectionHint({
-      provider: 'pi',
-      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      customEndpoint: { api: 'openai-completions' },
-    })).toEqual({ providerType: 'pi_compat', piAuthProvider: 'openai', customEndpoint: { api: 'openai-completions' } });
-
-    expect(resolveSetupTestConnectionHint({
-      provider: 'pi',
-      baseUrl: 'https://my-anthropic-proxy.internal/v1',
-      customEndpoint: { api: 'anthropic-messages' },
-    })).toEqual({ providerType: 'pi_compat', piAuthProvider: 'anthropic', customEndpoint: { api: 'anthropic-messages' } });
-  });
-
   it('fetchBackendModels dispatches for pi provider', async () => {
-    const connection: LlmConnection = {
-      slug: 'pi-test',
-      name: 'Pi Test',
-      providerType: 'pi',
-      authType: 'none',
-      createdAt: Date.now(),
-    };
-
     const result = await fetchBackendModels({
-      connection,
+      providerKey: 'anthropic',
+      providerConfig: {},
       credentials: {},
       hostRuntime: {
         appRootPath: process.cwd(),
@@ -188,9 +110,9 @@ describe('phase4 backend abstraction APIs', () => {
     expect(result.models.length).toBeGreaterThan(0);
   });
 
-  it('validateStoredBackendConnection returns not found for unknown slug', async () => {
-    const result = await validateStoredBackendConnection({
-      slug: '__missing-connection__',
+  it('validateStoredBackendProvider returns not found for unknown provider', async () => {
+    const result = await validateStoredBackendProvider({
+      providerKey: '__missing-provider__',
       hostRuntime: {
         appRootPath: process.cwd(),
         isPackaged: false,
@@ -198,7 +120,7 @@ describe('phase4 backend abstraction APIs', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('Connection not found');
+    expect(result.error).toBe('Provider not found');
   });
 
   it('testBackendConnection keeps required model argument and validates key presence', async () => {
@@ -218,14 +140,9 @@ describe('phase4 backend abstraction APIs', () => {
 });
 
 describe('resolveModelForProvider', () => {
-  it('falls back to the Pi connection default when a normalized stale model is not in the connection list', () => {
-    const connection = {
-      providerType: 'pi',
-      defaultModel: 'pi/claude-opus-4-7',
-      models: ['pi/claude-opus-4-7', 'pi/claude-sonnet-4-6'],
-    } as unknown as LlmConnection;
-
-    expect(resolveModelForProvider('pi', 'pi/claude-opus-4-6', connection)).toBe('pi/claude-opus-4-7');
+  it('falls back to the first provider model when a stale model is not available', () => {
+    const provider = { models: [{ id: 'pi/claude-opus-4-7' }, { id: 'pi/claude-sonnet-4-6' }] };
+    expect(resolveModelForProvider('pi', 'pi/claude-opus-4-6', provider)).toBe('pi/claude-opus-4-7');
   });
 });
 

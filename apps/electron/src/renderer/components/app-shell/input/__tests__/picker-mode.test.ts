@@ -10,10 +10,10 @@ import { derivePickerMode, type PickerModeInput } from '../picker-mode'
 
 function input(overrides: Partial<PickerModeInput> = {}): PickerModeInput {
   return {
-    connectionUnavailable: false,
-    connectionDefaultModel: null,
+    providerUnavailable: false,
+    providerDefaultModel: null,
     isEmptySession: false,
-    connectionCount: 1,
+    providerCount: 1,
     ...overrides,
   }
 }
@@ -23,14 +23,14 @@ describe('derivePickerMode', () => {
   // Precedence: unavailable wins
   // -------------------------------------------------------------------------
 
-  test('connectionUnavailable beats every other flag', () => {
+  test('providerUnavailable beats every other flag', () => {
     expect(
       derivePickerMode(
         input({
-          connectionUnavailable: true,
-          connectionDefaultModel: 'mistral-7b',
+          providerUnavailable: true,
+          providerDefaultModel: 'mistral-7b',
           isEmptySession: true,
-          connectionCount: 5,
+          providerCount: 5,
         }),
       ),
     ).toBe('unavailable')
@@ -40,37 +40,37 @@ describe('derivePickerMode', () => {
   // The #727 regression: switcher must win over locked-single on empty session
   // -------------------------------------------------------------------------
 
-  test('empty session + ≥2 connections + single-model pi_compat default → switcher (#727)', () => {
+  test('empty session + ≥2 providers + single-model Pi default → switcher (#727)', () => {
     expect(
       derivePickerMode(
         input({
-          connectionDefaultModel: 'mistral-7b',
+          providerDefaultModel: 'mistral-7b',
           isEmptySession: true,
-          connectionCount: 2,
+          providerCount: 2,
         }),
       ),
     ).toBe('switcher')
   })
 
-  test('empty session + many connections + single-model pi_compat default → switcher', () => {
+  test('empty session + many providers + single-model Pi default → switcher', () => {
     expect(
       derivePickerMode(
         input({
-          connectionDefaultModel: 'llama3',
+          providerDefaultModel: 'llama3',
           isEmptySession: true,
-          connectionCount: 7,
+          providerCount: 7,
         }),
       ),
     ).toBe('switcher')
   })
 
-  test('empty session + ≥2 connections + multi-model default → switcher', () => {
+  test('empty session + ≥2 providers + multi-model default → switcher', () => {
     expect(
       derivePickerMode(
         input({
-          connectionDefaultModel: null,
+          providerDefaultModel: null,
           isEmptySession: true,
-          connectionCount: 3,
+          providerCount: 3,
         }),
       ),
     ).toBe('switcher')
@@ -80,101 +80,105 @@ describe('derivePickerMode', () => {
   // Mid-session switching: switcher stays available after the first message
   // -------------------------------------------------------------------------
 
-  test('non-empty session + many connections + single-model pi_compat default → switcher', () => {
+  test('non-empty session + many providers + single-model Pi default → switcher', () => {
     expect(
       derivePickerMode(
         input({
-          connectionDefaultModel: 'mistral-7b',
+          providerDefaultModel: 'mistral-7b',
           isEmptySession: false,
-          connectionCount: 5,
+          providerCount: 5,
         }),
       ),
     ).toBe('switcher')
   })
 
-  test('empty session + only 1 connection + single-model pi_compat default → locked-single (no switcher possible)', () => {
-    // No other connection to switch to, so the picker stays in the disabled
+  test('empty session + only 1 provider + single-model Pi default → locked-single (no switcher possible)', () => {
+    // No other provider to switch to, so the picker stays in the disabled
     // single-row UI even on a fresh session. That's correct.
     expect(
       derivePickerMode(
         input({
-          connectionDefaultModel: 'mistral-7b',
+          providerDefaultModel: 'mistral-7b',
           isEmptySession: true,
-          connectionCount: 1,
+          providerCount: 1,
         }),
       ),
     ).toBe('locked-single')
   })
 
   // -------------------------------------------------------------------------
-  // Flat list: the unremarkable "list models for the active connection" case
+  // Flat list: the unremarkable "list models for the active provider" case
   // -------------------------------------------------------------------------
 
-  test('non-empty session + many connections + multi-model connection → switcher', () => {
+  test('non-empty session + many providers + multi-model provider → switcher', () => {
     expect(
       derivePickerMode(
         input({
-          connectionDefaultModel: null,
+          providerDefaultModel: null,
           isEmptySession: false,
-          connectionCount: 3,
+          providerCount: 3,
         }),
       ),
     ).toBe('switcher')
   })
 
-  test('empty session + only 1 multi-model connection → flat', () => {
+  test('empty session + only 1 multi-model provider → flat', () => {
     expect(
       derivePickerMode(
         input({
-          connectionDefaultModel: null,
+          providerDefaultModel: null,
           isEmptySession: true,
-          connectionCount: 1,
+          providerCount: 1,
         }),
       ),
     ).toBe('flat')
   })
 
-  test('non-empty session + 1 connection + multi-model → flat', () => {
+  test('non-empty session + 1 provider + multi-model → flat', () => {
     expect(
       derivePickerMode(
         input({
-          connectionDefaultModel: null,
+          providerDefaultModel: null,
           isEmptySession: false,
-          connectionCount: 1,
+          providerCount: 1,
         }),
       ),
     ).toBe('flat')
   })
 
   // -------------------------------------------------------------------------
-  // Boundary: connectionCount > 1 vs == 1
+  // Boundary: providerCount > 1 vs == 1
   // -------------------------------------------------------------------------
 
-  test('connectionCount=2 triggers switcher even mid-session (lower bound for >1)', () => {
+  test('providerCount=2 triggers switcher even mid-session (lower bound for >1)', () => {
     expect(
       derivePickerMode(
-        input({ connectionDefaultModel: 'm', isEmptySession: false, connectionCount: 2 }),
+        input({ providerDefaultModel: 'm', isEmptySession: false, providerCount: 2 }),
       ),
     ).toBe('switcher')
   })
 
-  test('connectionCount=1 on empty session never triggers switcher', () => {
+  test('providerCount=1 on empty session never triggers switcher', () => {
     expect(
       derivePickerMode(
-        input({ connectionDefaultModel: 'm', isEmptySession: true, connectionCount: 1 }),
+        input({ providerDefaultModel: 'm', isEmptySession: true, providerCount: 1 }),
       ),
     ).toBe('locked-single')
   })
 
   // -------------------------------------------------------------------------
-  // connectionCount=0 — defensive: should never panic, falls through to flat
+  // providerCount=0 — defensive: should never panic, falls through to flat
   // -------------------------------------------------------------------------
 
-  test('connectionCount=0 (no connections configured) → flat (defensive fallthrough)', () => {
+  test('providerCount=0 (no providers configured) → flat (defensive fallthrough)', () => {
     expect(
       derivePickerMode(
-        input({ connectionDefaultModel: null, isEmptySession: true, connectionCount: 0 }),
+        input({ providerDefaultModel: null, isEmptySession: true, providerCount: 0 }),
       ),
     ).toBe('flat')
   })
 })
+
+
+
+

@@ -60,8 +60,8 @@ export const AGENT_EVENTS: AgentEvent[] = [
 export interface PromptAction {
   type: 'prompt'
   prompt: string
-  /** LLM connection slug override for the spawned session */
-  llmConnection?: string
+  /** Pi provider key override for the spawned session */
+  provider?: string
   /** Model ID override for the spawned session */
   model?: string
   /** Thinking level override for the spawned session */
@@ -372,7 +372,7 @@ interface AutomationsConfigFile {
 }
 
 type RawAction =
-  | { type: 'prompt'; prompt: string; llmConnection?: string; model?: string; thinkingLevel?: ThinkingLevel }
+  | { type: 'prompt'; prompt: string; provider?: string; model?: string; thinkingLevel?: ThinkingLevel }
   | { type: 'webhook'; url: string; method?: string; headers?: Record<string, string>; bodyFormat?: 'json' | 'form' | 'raw'; body?: unknown; captureResponse?: boolean; auth?: WebhookAction['auth'] }
 
 interface AutomationsConfigMatcher {

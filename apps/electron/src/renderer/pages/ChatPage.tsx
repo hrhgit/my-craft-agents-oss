@@ -29,8 +29,7 @@ import { deriveSessionMessagesLoadState, formatSessionLoadFailure } from '@/lib/
 import { ensureSessionMessagesLoadedAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { piProjectionAtomFamily } from '@/atoms/pi-projection'
 import { getSessionTitle } from '@/utils/session'
-// Model resolution: connection.defaultModel (no hardcoded defaults)
-import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable } from '@config/llm-connections'
+import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
 
 export interface ChatPageProps {
   sessionId: string
@@ -47,8 +46,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
   const {
     activeWorkspaceId,
-    llmConnections,
-    workspaceDefaultLlmConnection,
+    piProviders,
+    piGlobalSettings,
     onSendMessage,
     onOpenFile,
     onOpenUrl,
@@ -238,43 +237,33 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onAttachmentsChange(sessionId, attachments)
   }, [sessionId, onAttachmentsChange])
 
-  // Session model change handler - persists per-session model and connection
-  const handleModelChange = React.useCallback((model: string, connection?: string) => {
+  // Session model change handler - persists the provider/model pair directly.
+  const handleModelChange = React.useCallback((model: string, provider?: string) => {
     if (activeWorkspaceId) {
-      window.electronAPI.setSessionModel(sessionId, activeWorkspaceId, model, connection)
+      window.electronAPI.setSessionModel(sessionId, activeWorkspaceId, model, provider)
     }
   }, [sessionId, activeWorkspaceId])
 
-  // Session connection change handler - can only change before first message
-  const handleConnectionChange = React.useCallback(async (connectionSlug: string) => {
+  const handleProviderChange = React.useCallback(async (provider: string) => {
     try {
-      await window.electronAPI.sessionCommand(sessionId, { type: 'setConnection', connectionSlug })
+      await window.electronAPI.sessionCommand(sessionId, { type: 'setProvider', provider })
     } catch (error) {
-      // Connection change may fail if session already started or connection is invalid
-      console.error('Failed to change connection:', error)
+      console.error('Failed to change provider:', error)
     }
   }, [sessionId])
 
-  // Check if session's selected connection has been removed
-  const connectionUnavailable = React.useMemo(() =>
-    isSessionConnectionUnavailable(session?.llmConnection, llmConnections),
-    [session?.llmConnection, llmConnections]
+  const providerUnavailable = React.useMemo(() =>
+    !!session?.provider && !piProviders.some(entry => entry.key === session.provider),
+    [session?.provider, piProviders]
   )
 
   // Effective model for this session (session-specific or global fallback)
   const effectiveModel = React.useMemo(() => {
     if (session?.model) return session.model
 
-    // When connection is unavailable, don't resolve through a different connection
-    if (connectionUnavailable) return session?.model ?? ''
-
-    const connectionSlug = resolveEffectiveConnectionSlug(
-      session?.llmConnection, workspaceDefaultLlmConnection, llmConnections
-    )
-    const connection = connectionSlug ? llmConnections.find(c => c.slug === connectionSlug) : null
-
-    return connection?.defaultModel ?? ''
-  }, [session?.id, session?.model, session?.llmConnection, workspaceDefaultLlmConnection, llmConnections, connectionUnavailable])
+    if (providerUnavailable) return ''
+    return piGlobalSettings.defaultModel ?? ''
+  }, [session?.model, providerUnavailable, piGlobalSettings.defaultModel])
 
   // Compatibility DTO field; complete-unification keeps it equal to the
   // workspace root, which is the authoritative base for relative paths.
@@ -664,7 +653,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 onOpenUrl={handleOpenUrl}
                 currentModel={effectiveModel}
                 onModelChange={handleModelChange}
-                onConnectionChange={handleConnectionChange}
+                onProviderChange={handleProviderChange}
                 pendingPermission={undefined}
                 onRespondToPermission={onRespondToPermission}
                 pendingCredential={undefined}
@@ -689,7 +678,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 searchQuery={sessionListSearchQuery}
                 isSearchModeActive={isSearchModeActive}
                 onMatchInfoChange={onChatMatchInfoChange}
-                connectionUnavailable={connectionUnavailable}
+                providerUnavailable={providerUnavailable}
                 compactMode={!!isCompactMode}
                 enableCompactModelPicker={!!isCompactMode}
               />
@@ -728,16 +717,16 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
           <ChatDisplay
             ref={chatDisplayRef}
             session={session}
-            onSendMessage={(message, attachments, skillSlugs) => {
+            onSendMessage={(message, attachments, skillSlugs, midStreamSendIntent: MidStreamSendIntent | undefined) => {
               if (session) {
-                onSendMessage(session.id, message, attachments, skillSlugs)
+                onSendMessage(session.id, message, attachments, skillSlugs, undefined, midStreamSendIntent)
               }
             }}
             onOpenFile={handleOpenFile}
             onOpenUrl={handleOpenUrl}
             currentModel={effectiveModel}
             onModelChange={handleModelChange}
-            onConnectionChange={handleConnectionChange}
+            onProviderChange={handleProviderChange}
             pendingPermission={pendingPermission}
             onRespondToPermission={onRespondToPermission}
             pendingCredential={pendingCredential}
@@ -765,7 +754,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             searchQuery={sessionListSearchQuery}
             isSearchModeActive={isSearchModeActive}
             onMatchInfoChange={onChatMatchInfoChange}
-            connectionUnavailable={connectionUnavailable}
+            providerUnavailable={providerUnavailable}
             compactMode={!!isCompactMode}
             enableCompactModelPicker={!!isCompactMode}
           />

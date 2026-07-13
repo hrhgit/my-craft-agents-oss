@@ -212,7 +212,7 @@ Manage workspace automations stored in `automations.json`.
 | `--enabled true\|false` | Enable/disable the automation |
 | `--labels "label1,label2"` | Comma-separated labels for created sessions |
 | `--prompt "..."` | Prompt text (creates a prompt action automatically) |
-| `--llm-connection "<slug>"` | LLM connection slug for the created session |
+| `--provider "<key>"` | Provider key for the created session |
 | `--model "<model-id>"` | Model ID for the created session |
 
 ### Examples

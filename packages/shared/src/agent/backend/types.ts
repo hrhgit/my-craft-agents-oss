@@ -65,9 +65,16 @@ export interface HostQueuedUserProjection {
   }>;
 }
 
-// Import LLM connection types for auth
-import type { LlmAuthType, LlmProviderType } from '../../config/llm-connections.ts';
-export type { LlmAuthType, LlmProviderType } from '../../config/llm-connections.ts';
+export type LlmProviderType = 'pi' | 'pi_compat';
+export type LlmAuthType =
+  | 'api_key'
+  | 'api_key_with_endpoint'
+  | 'oauth'
+  | 'iam_credentials'
+  | 'bearer_token'
+  | 'service_account_file'
+  | 'environment'
+  | 'none';
 
 export interface BackendRuntimeUpdate {
   model: string;
@@ -364,9 +371,6 @@ export interface CoreBackendConfig {
 
   /** Release all in-flight capabilities owned by a stopped Pi runtime. */
   onHostCapabilityRuntimeReleased?: (runtimeId: string) => void;
-
-  /** Enable 1M context window for current Opus models. Default: true. Set false to use 200K and conserve usage limits. */
-  enable1MContext?: boolean;
 
   /**
    * Pre-computed source configurations for initial setup.
@@ -797,14 +801,14 @@ export interface BackendConfig extends CoreBackendConfig {
   provider: ModelProvider;
 
   /**
-   * Full provider type from LLM connection.
+   * Full provider type from Pi provider.
    * Includes compat variants and cloud providers.
    * Used for routing validation, credential lookup, etc.
    */
   providerType?: LlmProviderType;
 
   /**
-   * Authentication mechanism from LLM connection.
+   * Authentication mechanism from Pi provider.
    * Determines how credentials are retrieved and passed to the backend.
    */
   authType?: LlmAuthType;
@@ -817,7 +821,7 @@ export interface BackendConfig extends CoreBackendConfig {
    * Set by factory when creating from a connection.
    * Used to read/write credentials under the correct key.
    */
-  connectionSlug?: string;
+  providerKey?: string;
 
   /** Workspace-level automation system for user-defined SDK hooks (automations.json) */
   automationSystem?: AutomationSystem;

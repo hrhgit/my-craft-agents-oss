@@ -153,10 +153,10 @@ export const CHANNEL_MAP = {
   getServerStatus: invoke(RPC_CHANNELS.settings.GET_SERVER_STATUS),
 
   // Settings - API Setup
-  setupLlmConnection: invoke(RPC_CHANNELS.settings.SETUP_LLM_CONNECTION),
-  testLlmConnectionSetup: invoke(RPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP),
   getDefaultThinkingLevel: invoke(RPC_CHANNELS.settings.GET_DEFAULT_THINKING_LEVEL),
   setDefaultThinkingLevel: invoke(RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL),
+  getMidStreamBehavior: invoke(RPC_CHANNELS.settings.GET_MID_STREAM_BEHAVIOR),
+  setMidStreamBehavior: invoke(RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR),
   getNetworkProxySettings: invoke(RPC_CHANNELS.settings.GET_NETWORK_PROXY),
   setNetworkProxySettings: invoke(RPC_CHANNELS.settings.SET_NETWORK_PROXY),
 
@@ -254,11 +254,6 @@ export const CHANNEL_MAP = {
   deleteLabel: invoke(RPC_CHANNELS.labels.DELETE),
   onLabelsChanged: listener(RPC_CHANNELS.labels.CHANGED),
 
-  // LLM connections change listener
-  onLlmConnectionsChanged: listener(RPC_CHANNELS.llmConnections.CHANGED),
-
-  // Refresh models for a single LLM connection (triggers ModelRefreshService)
-  refreshLlmConnectionModels: invoke(RPC_CHANNELS.llmConnections.REFRESH_MODELS),
 
   // Views
   listViews: invoke(RPC_CHANNELS.views.LIST),
@@ -331,18 +326,6 @@ export const CHANNEL_MAP = {
   // Pi session tree — list child sessions spawned via spawn_session tool
   listChildSessions: invoke(RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS),
 
-  // Prompt caching & context
-  getExtendedPromptCache: invoke(RPC_CHANNELS.caching.GET_EXTENDED_PROMPT_CACHE),
-  setExtendedPromptCache: invoke(RPC_CHANNELS.caching.SET_EXTENDED_PROMPT_CACHE),
-  getEnable1MContext: invoke(RPC_CHANNELS.caching.GET_ENABLE_1M_CONTEXT),
-  setEnable1MContext: invoke(RPC_CHANNELS.caching.SET_ENABLE_1M_CONTEXT),
-
-  // RTK token optimization
-  getRtkEnabled: invoke(RPC_CHANNELS.rtk.GET_ENABLED),
-  setRtkEnabled: invoke(RPC_CHANNELS.rtk.SET_ENABLED),
-  getRtkStatus: invoke(RPC_CHANNELS.rtk.GET_STATUS),
-  getRtkGain: invoke(RPC_CHANNELS.rtk.GET_GAIN),
-
   // Badge
   refreshBadge: invoke(RPC_CHANNELS.badge.REFRESH),
   setDockIconWithBadge: invoke(RPC_CHANNELS.badge.SET_ICON),
@@ -392,15 +375,6 @@ export const CHANNEL_MAP = {
   'browserPane.onInteracted': listener(RPC_CHANNELS.browserPane.INTERACTED),
 
   // LLM Connections
-  listLlmConnections: invoke(RPC_CHANNELS.llmConnections.LIST),
-  listLlmConnectionsWithStatus: invoke(RPC_CHANNELS.llmConnections.LIST_WITH_STATUS),
-  getLlmConnection: invoke(RPC_CHANNELS.llmConnections.GET),
-  getLlmConnectionApiKey: invoke(RPC_CHANNELS.llmConnections.GET_API_KEY),
-  saveLlmConnection: invoke(RPC_CHANNELS.llmConnections.SAVE),
-  deleteLlmConnection: invoke(RPC_CHANNELS.llmConnections.DELETE),
-  testLlmConnection: invoke(RPC_CHANNELS.llmConnections.TEST),
-  setDefaultLlmConnection: invoke(RPC_CHANNELS.llmConnections.SET_DEFAULT),
-  setWorkspaceDefaultLlmConnection: invoke(RPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT),
 
   // Automations
   getAutomations: invoke(RPC_CHANNELS.automations.GET),

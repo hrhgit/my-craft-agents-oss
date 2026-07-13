@@ -7,11 +7,10 @@
  * When adding a new model or provider:
  * 1. Add the model(s) to MODEL_REGISTRY
  * 2. The convenience exports (ANTHROPIC_MODELS, OPENAI_MODELS) auto-update
- * 3. Update llm-connections.ts if adding a new built-in connection
+ * 3. Update Pi's provider registry when adding a provider model
  */
 // Bedrock-native → bare Anthropic ID reverse mapping.
-// Duplicated from llm-connections.ts to avoid circular imports (llm-connections imports models).
-// Must stay in sync with BEDROCK_MODEL_MAP in llm-connections.ts.
+// Bedrock-native model IDs accepted by the Pi provider runtime.
 const BEDROCK_TO_BARE: Record<string, string> = {
   // US inference profile IDs (primary)
   'us.anthropic.claude-opus-4-8': 'claude-opus-4-8',
@@ -211,7 +210,7 @@ export function getModelIdByShortName(shortName: string): string {
 
 // ============================================
 // CONNECTION DEFAULTS
-// Used ONLY when writing defaults to LLM connection config (not as runtime fallbacks).
+// Used ONLY when writing defaults to Pi provider config (not as runtime fallbacks).
 // ============================================
 
 /** Default model for Anthropic connections (used when creating/backfilling connections) */
@@ -228,7 +227,7 @@ export const DEFAULT_MODEL = getModelIdByShortName('Opus');
  * (e.g., url-validator, mcp/validation, summarize.ts without modelOverride).
  *
  * For connection-aware summarization model resolution, use
- * getSummarizationModel(connection) from llm-connections.ts instead.
+ * provider-specific selection should use the Pi provider model list instead.
  */
 export function getDefaultSummarizationModel(): string {
   return findModelIdByShortName('Haiku') ?? DEFAULT_MODEL;

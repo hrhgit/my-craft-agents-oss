@@ -68,8 +68,8 @@ mock.module('@craft-agent/shared/config', () => ({
       thinkingLevel: 'medium',
     },
   }),
-  getLlmConnection: () => null,
-  getDefaultLlmConnection: () => null,
+  readPiGlobalProviders: () => ({}),
+  readPiGlobalSettings: () => ({}),
   getToolIconsDir: () => '/tmp/tool-icons',
   getMiniModel: () => 'claude-haiku-4-5-20251001',
   getDefaultThinkingLevel: () => 'medium',
@@ -78,7 +78,6 @@ mock.module('@craft-agent/shared/config', () => ({
     start() {}
     stop() {}
   },
-  repairDefaultLlmConnectionReferences: async () => {},
   MODEL_REGISTRY: [],
   // Targeted stubs: prevent SyntaxError in tests that import these from the barrel
   DEFAULT_MODEL: 'claude-sonnet-4-20250514',
@@ -99,13 +98,6 @@ mock.module('@craft-agent/shared/config', () => ({
   getSessionDraft: () => null,
   setSessionDraft: async () => {},
   deleteSessionDraft: async () => {},
-  getLlmConnections: () => [],
-  addLlmConnection: async () => null,
-  updateLlmConnection: async () => null,
-  deleteLlmConnection: async () => {},
-  setDefaultLlmConnection: async () => {},
-  touchLlmConnection: async () => {},
-  isCompatProvider: () => false,
 }))
 
 mock.module('@craft-agent/shared/workspaces', () => ({
@@ -113,7 +105,7 @@ mock.module('@craft-agent/shared/workspaces', () => ({
     defaults: {
       permissionMode: 'ask',
       thinkingLevel: 'medium',
-      defaultLlmConnection: undefined,
+      provider: undefined,
     },
   }),
 }))
@@ -136,8 +128,8 @@ mock.module('@craft-agent/shared/agent', () => ({
 
 mock.module('@craft-agent/shared/agent/backend', () => ({
   ...actualSharedAgentBackendModule,
-  resolveSessionConnection: () => null,
-  createBackendFromConnection: () => {
+  resolveSessionProvider: () => null,
+  createBackendFromProvider: () => {
     throw new Error('not used in this test')
   },
   resolveBackendContext: () => ({
@@ -302,7 +294,7 @@ describe('Pi projection branch creation', () => {
     storedById.set('source-1', {
       id: 'source-1',
       workspaceRootPath,
-      llmConnection: undefined,
+      provider: undefined,
       model: 'claude-sonnet-4-20250514',
       sdkSessionId: 'sdk-parent',
       messages: [

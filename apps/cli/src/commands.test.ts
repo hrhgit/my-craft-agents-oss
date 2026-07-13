@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { parseArgs, resolveApiKey, resolveCustomEndpointCliSetup, shouldSetupLlmConnection, getValidateSteps } from './index.ts'
+import { parseArgs, resolveApiKey, resolveCustomEndpointCliSetup, shouldSetupProvider, getValidateSteps } from './index.ts'
 
 // ---------------------------------------------------------------------------
 // Arg parsing tests
@@ -303,17 +303,17 @@ describe('resolveCustomEndpointCliSetup', () => {
   })
 })
 
-describe('shouldSetupLlmConnection', () => {
+describe('shouldSetupProvider', () => {
   it('forces setup for non-default providers even when connections already exist', () => {
-    expect(shouldSetupLlmConnection(2, { provider: 'deepseek', baseUrl: '' })).toBe(true)
+    expect(shouldSetupProvider(2, { provider: 'deepseek', baseUrl: '' })).toBe(true)
   })
 
   it('skips setup for the default anthropic provider when connections already exist', () => {
-    expect(shouldSetupLlmConnection(2, { provider: 'anthropic', baseUrl: '' })).toBe(false)
+    expect(shouldSetupProvider(2, { provider: 'anthropic', baseUrl: '' })).toBe(false)
   })
 
   it('forces setup for custom endpoints', () => {
-    expect(shouldSetupLlmConnection(2, { provider: 'anthropic', baseUrl: 'https://api.example.com' })).toBe(true)
+    expect(shouldSetupProvider(2, { provider: 'anthropic', baseUrl: 'https://api.example.com' })).toBe(true)
   })
 })
 

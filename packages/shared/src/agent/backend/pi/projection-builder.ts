@@ -488,7 +488,8 @@ export class PiProjectionBuilder {
       delta: value.type === 'thinking_delta' || value.type === 'text_delta' ? value.delta : undefined,
       streaming: value.type !== 'thinking_end' && value.type !== 'text_end',
       contentIndex: value.contentIndex,
-    }, this.activeTurnId ?? undefined)]
+      timestamp: this.messageTimestamp(message),
+    }, this.activeTurnId ?? undefined, this.messageTimestamp(message))]
   }
 
   private acceptAssistantMessageEnd(message: {
@@ -526,6 +527,7 @@ export class PiProjectionBuilder {
         streaming: false, contentIndex, stopReason,
         isIntermediate,
         isFinal: !isIntermediate,
+        timestamp: this.messageTimestamp(message),
       }
       events.push(this.createEvent(
         entityId,
@@ -534,6 +536,7 @@ export class PiProjectionBuilder {
         contentKind === 'thinking' ? 'thinking_end' : 'assistant_text',
         state.payload,
         this.activeTurnId ?? undefined,
+        this.messageTimestamp(message),
       ))
     }
 

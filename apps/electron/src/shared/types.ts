@@ -67,9 +67,9 @@ export type { LoadedSkill, SkillMetadata };
 import type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult } from '@craft-agent/shared/resources';
 export type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult };
 
-// LLM connection types
-import type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult } from '@craft-agent/shared/config';
-export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult };
+// provider types
+import type { NetworkProxySettings, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult } from '@craft-agent/shared/config';
+export type { NetworkProxySettings, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult };
 
 // =============================================================================
 // GUI-only types (not used by server/handler code)
@@ -191,9 +191,6 @@ import type {
   RefreshTitleResult,
   FileSearchResult,
   SessionSearchResult,
-  LlmConnectionSetup,
-  TestLlmConnectionParams,
-  TestLlmConnectionResult,
   SkillFile,
   SessionFile,
   OAuthResult,
@@ -404,10 +401,6 @@ export interface ElectronAPI {
   /** Defer onboarding setup — user chose "Setup later" */
   deferSetup(): Promise<{ success: boolean }>
 
-  /** Unified LLM connection setup */
-  setupLlmConnection(setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }>
-  /** Unified connection test — spawns a lightweight agent subprocess to validate credentials */
-  testLlmConnectionSetup(params: TestLlmConnectionParams): Promise<TestLlmConnectionResult>
   // Pi provider discovery (main process only — Pi SDK can't run in renderer)
   getPiApiKeyProviders(): Promise<Array<{ key: string; label: string; placeholder: string }>>
   getPiProviderBaseUrl(provider: string): Promise<string | undefined>
@@ -424,12 +417,10 @@ export interface ElectronAPI {
   fetchModelsForEndpoint(args: { baseUrl: string; apiKey?: string; api?: PiCustomApi; authHeader?: boolean }): Promise<{ success: boolean; models: FetchedEndpointModel[]; resolvedBaseUrl?: string; error?: string }>
   onPiGlobalChanged(callback: () => void): () => void
 
-  // Refresh models for a single LLM connection (triggers ModelRefreshService)
-  refreshLlmConnectionModels(slug: string): Promise<{ success: boolean; error?: string }>
 
   // Session-specific model (overrides global)
   getSessionModel(sessionId: string, workspaceId: string): Promise<string | null>
-  setSessionModel(sessionId: string, workspaceId: string, model: string | null, connection?: string): Promise<void>
+  setSessionModel(sessionId: string, workspaceId: string, model: string | null, provider?: string): Promise<void>
 
   // Workspace Settings (per-workspace configuration)
   getWorkspaceSettings(workspaceId: string): Promise<WorkspaceSettings | null>
@@ -501,8 +492,6 @@ export interface ElectronAPI {
   deleteLabel(workspaceId: string, labelId: string): Promise<{ stripped: number }>
   onLabelsChanged(callback: (workspaceId: string) => void): () => void
 
-  // LLM connections change listener
-  onLlmConnectionsChanged(callback: () => void): () => void
 
   // Views (workspace-scoped, stored in views.json)
   listViews(workspaceId: string): Promise<import('@craft-agent/shared/views').ViewConfig[]>
@@ -575,18 +564,6 @@ export interface ElectronAPI {
   getRichToolDescriptions(): Promise<boolean>
   setRichToolDescriptions(enabled: boolean): Promise<void>
 
-  // Prompt caching & context
-  getExtendedPromptCache(): Promise<boolean>
-  setExtendedPromptCache(enabled: boolean): Promise<void>
-  getEnable1MContext(): Promise<boolean>
-  setEnable1MContext(enabled: boolean): Promise<void>
-
-  // RTK token optimization
-  getRtkEnabled(): Promise<boolean>
-  setRtkEnabled(enabled: boolean): Promise<void>
-  getRtkStatus(opts?: { forceRecheck?: boolean }): Promise<{ installed: boolean; path: string | null; version: string | null }>
-  getRtkGain(): Promise<{ totalCommands: number; totalInput: number; totalOutput: number; totalSaved: number; avgSavingsPct: number; totalTimeMs: number; avgTimeMs: number } | null>
-
   // Network proxy settings
   getNetworkProxySettings(): Promise<NetworkProxySettings | undefined>
   setNetworkProxySettings(settings: NetworkProxySettings): Promise<void>
@@ -648,18 +625,10 @@ export interface ElectronAPI {
     onInteracted(callback: (id: string) => void): () => void
   }
 
-  // LLM Connections (provider configurations)
-  listLlmConnections(): Promise<LlmConnection[]>
-  listLlmConnectionsWithStatus(): Promise<LlmConnectionWithStatus[]>
-  getLlmConnection(slug: string): Promise<LlmConnection | null>
-  getLlmConnectionApiKey(slug: string): Promise<string | null>
-  saveLlmConnection(connection: LlmConnection): Promise<{ success: boolean; error?: string }>
-  deleteLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
-  testLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
-  setDefaultLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
   getDefaultThinkingLevel(): Promise<ThinkingLevel>
   setDefaultThinkingLevel(level: ThinkingLevel): Promise<{ success: boolean; error?: string }>
-  setWorkspaceDefaultLlmConnection(workspaceId: string, slug: string | null): Promise<{ success: boolean; error?: string }>
+  getMidStreamBehavior(): Promise<MidStreamBehavior>
+  setMidStreamBehavior(behavior: MidStreamBehavior): Promise<{ success: boolean; error?: string }>
 
   // Automations
   getAutomations(workspaceId: string): Promise<unknown>

@@ -8,7 +8,6 @@
 
 import { existsSync, mkdirSync, watch, type FSWatcher } from 'fs';
 import {
-  deleteCraftLlmConnection as deletePiHostCraftLlmConnection,
   deleteGlobalApiKey as deletePiHostGlobalApiKey,
   deleteGlobalProvider as deletePiHostGlobalProvider,
   deleteShellGuiEntry as deletePiHostShellGuiEntry,
@@ -17,7 +16,6 @@ import {
   migrateGlobalProviderApiKeysToAuth as migratePiHostGlobalProviderApiKeysToAuth,
   getExtensions as getPiHostExtensions,
   readCraftAgentSettings as readPiHostCraftAgentSettings,
-  readCraftLlmConnections as readPiHostCraftLlmConnections,
   readExtensionConfig as readPiHostExtensionConfig,
   readExtensionNamespace as readPiHostExtensionNamespace,
   readGlobalAuthFile as readPiHostGlobalAuthFile,
@@ -35,47 +33,21 @@ import {
   setGlobalApiKey as setPiHostGlobalApiKey,
   setGlobalDefault as setPiHostGlobalDefault,
   setShellGuiEntry as setPiHostShellGuiEntry,
-  upsertCraftLlmConnection as upsertPiHostCraftLlmConnection,
   writeCraftAgentSettingsBulk as writePiHostCraftAgentSettingsBulk,
-  writeCraftLlmConnections as writePiHostCraftLlmConnections,
   type HostGlobalProvider,
 } from '@earendil-works/pi-coding-agent/host-facade';
-import type { LlmConnection } from './llm-connections.ts';
 import type { PiExtensionCatalogEntry, PiExtensionCatalogResult } from './pi-extension-settings.ts';
+import type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
 import { PI_AGENT_DIR } from './paths';
 
-export type PiCustomApi =
-  | 'openai-completions'
-  | 'openai-responses'
-  | 'anthropic-messages'
-  | 'google-generative-ai';
-
-export interface PiGlobalModel {
-  id: string;
-  name?: string;
-  reasoning?: boolean;
-  input?: ('text' | 'image')[];
-  contextWindow?: number;
-  maxTokens?: number;
-  thinkingLevelMap?: Record<string, string | null>;
-  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
-  headers?: Record<string, string>;
-  [key: string]: unknown;
-}
-
-export interface PiGlobalProvider {
-  baseUrl?: string;
-  api?: PiCustomApi;
-  authHeader?: boolean;
-  headers?: Record<string, string>;
-  models?: PiGlobalModel[];
-  [key: string]: unknown;
-}
+export {
+  piProviderModelSupportsImages,
+  setPiProviderModelSupportsImages,
+} from './pi-provider-models.ts';
+export type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
 
 export interface PiGlobalModelsFile {
   providers?: Record<string, PiGlobalProvider>;
-  /** Craft-owned connection metadata; Pi ModelRegistry ignores this top-level field. */
-  craftConnections?: LlmConnection[];
   [key: string]: unknown;
 }
 
@@ -105,20 +77,8 @@ export function readPiGlobalProviders(): Record<string, PiGlobalProvider> {
   return readPiHostGlobalProviders() as Record<string, PiGlobalProvider>;
 }
 
-export function readPiCraftLlmConnections(): LlmConnection[] {
-  return readPiHostCraftLlmConnections<LlmConnection>();
-}
-
-export function writePiCraftLlmConnections(connections: LlmConnection[]): void {
-  writePiHostCraftLlmConnections(connections);
-}
-
-export function upsertPiCraftLlmConnection(connection: LlmConnection): void {
-  upsertPiHostCraftLlmConnection(connection as LlmConnection & { [key: string]: unknown });
-}
-
-export function deletePiCraftLlmConnection(slug: string): boolean {
-  return deletePiHostCraftLlmConnection(slug);
+export function getPiGlobalProvider(key: string): PiGlobalProvider | null {
+  return readPiGlobalProviders()[key] ?? null;
 }
 
 export function readPiGlobalSettings(): PiGlobalSettings {
@@ -198,8 +158,15 @@ export function hasPiGlobalProviderAuth(providerKey: string | undefined): boolea
   return hasPiHostGlobalProviderAuth(providerKey);
 }
 
+/** Minimal legacy connection shape accepted during provider migration. */
+type LegacyPiConnectionReference = {
+  slug: string;
+  piAuthProvider?: string;
+  providerType?: string;
+};
+
 export function getPiGlobalProviderKeyForConnection(
-  connection: Pick<LlmConnection, 'slug' | 'piAuthProvider' | 'providerType'> | null | undefined,
+  connection: LegacyPiConnectionReference | null | undefined,
 ): string | undefined {
   if (!connection) return undefined;
   const inferredFromSlug = inferPiGlobalProviderKeyFromSlug(connection.slug);
@@ -209,38 +176,24 @@ export function getPiGlobalProviderKeyForConnection(
   return inferredFromSlug || connection.piAuthProvider;
 }
 
-export function readPiGlobalApiKeyForConnection(
-  connection: Pick<LlmConnection, 'slug' | 'piAuthProvider' | 'providerType'> | null | undefined,
-): string | undefined {
-  if (!connection) return undefined;
-  if (connection.providerType !== 'pi' && connection.providerType !== 'pi_compat') return undefined;
-  const providerKey = getPiGlobalAuthProviderKeyForConnection(connection);
-  return providerKey ? readPiGlobalApiKey(providerKey) : undefined;
-}
-
 export function hasPiGlobalAuthForConnection(
-  connection: Pick<LlmConnection, 'slug' | 'piAuthProvider' | 'providerType'> | null | undefined,
+  connection: LegacyPiConnectionReference | null | undefined,
 ): boolean {
   if (!connection) return false;
   if (connection.providerType !== 'pi' && connection.providerType !== 'pi_compat') return false;
-  return hasPiGlobalProviderAuth(getPiGlobalAuthProviderKeyForConnection(connection));
+  const providerKey = getPiGlobalProviderKeyForConnection(connection);
+  if (!providerKey) return false;
+  return connection.providerType === 'pi'
+    ? hasPiGlobalProviderAuth(providerKey)
+    : !!readPiGlobalProviders()[providerKey] && hasPiGlobalProviderAuth(providerKey);
 }
 
 function inferPiGlobalProviderKeyFromSlug(slug: string): string | undefined {
   if (!slug.startsWith('pi-')) return undefined;
   const key = slug.slice('pi-'.length);
-  // pi-api-key is a generic onboarding slug; the real provider is piAuthProvider.
+  // pi-api-key is a generic onboarding slug; the provider is piAuthProvider.
   if (key === 'api-key' || /^api-key-\d+$/.test(key)) return undefined;
   return key;
-}
-
-function getPiGlobalAuthProviderKeyForConnection(
-  connection: Pick<LlmConnection, 'slug' | 'piAuthProvider' | 'providerType'>,
-): string | undefined {
-  const providerKey = getPiGlobalProviderKeyForConnection(connection);
-  if (!providerKey) return undefined;
-  if (connection.providerType === 'pi') return providerKey;
-  return readPiGlobalProviders()[providerKey] ? providerKey : undefined;
 }
 
 /** Mask apiKey for list display: first 7 + last 4 chars. */

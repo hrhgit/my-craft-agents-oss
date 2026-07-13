@@ -6,10 +6,11 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { routes } from '@/lib/navigate'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
-import type { LlmConnectionWithStatus, PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionSettings, StoredPiExtensionSettings } from '@craft-agent/shared/config'
+import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionSettings, StoredPiExtensionSettings } from '@craft-agent/shared/config'
 import { mergePiExtensionSettings } from '@craft-agent/shared/config/pi-extension-settings'
 import { ExtensionListPanel } from './PiExtensionsSettingsPanel'
 import { ExtensionDetailPanel } from './ExtensionDetailPanel'
+import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
@@ -19,7 +20,7 @@ export const meta: DetailsPageMeta = {
 export default function ExtensionsSettingsPage() {
   const { t } = useTranslation()
   const [piExtensionSettings, setPiExtensionSettings] = useState<PiExtensionSettings | null>(null)
-  const [llmConnections, setLlmConnections] = useState<LlmConnectionWithStatus[]>([])
+  const { providers } = usePiGlobalConfig()
   const [extensionCatalog, setExtensionCatalog] = useState<PiExtensionCatalogEntry[]>([])
   const [extensionErrors, setExtensionErrors] = useState<PiExtensionCatalogError[]>([])
   const [extensionStates, setExtensionStates] = useState<Record<string, boolean>>({})
@@ -30,14 +31,12 @@ export default function ExtensionsSettingsPage() {
 
     async function load() {
       try {
-        const [settings, connections, catalog] = await Promise.all([
+        const [settings, catalog] = await Promise.all([
           window.electronAPI.getPiExtensionSettings(),
-          window.electronAPI.listLlmConnectionsWithStatus(),
           window.electronAPI.getPiExtensionCatalog(),
         ])
         if (disposed) return
         setPiExtensionSettings(settings)
-        setLlmConnections(connections)
         setExtensionCatalog(catalog.extensions)
         setExtensionErrors(catalog.errors)
         setExtensionStates(Object.fromEntries(catalog.extensions.map((extension) => [extension.id, extension.enabled])))
@@ -96,7 +95,7 @@ export default function ExtensionsSettingsPage() {
             <ExtensionDetailPanel
               extensionId={selectedExtensionId!}
               settings={piExtensionSettings!}
-              llmConnections={llmConnections}
+              providers={providers}
               onPatch={handlePatch}
               onBack={handleBack}
             />

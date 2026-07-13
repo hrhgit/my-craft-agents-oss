@@ -77,8 +77,9 @@ export interface ISessionManager {
   updateWorkingDirectory(sessionId: string, path: string): void
   setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void>
   setSessionLabels(sessionId: string, labels: string[]): void
-  setSessionConnection(sessionId: string, connectionSlug: string): Promise<void>
-  updateSessionModel(sessionId: string, workspaceId: string, model: string | null, connection?: string): Promise<void>
+  setSessionProvider(sessionId: string, provider: string): Promise<void>
+  clearDeletedProviderReferences(provider: string): Promise<void>
+  updateSessionModel(sessionId: string, workspaceId: string, model: string | null, provider?: string): Promise<void>
 
   // ---------------------------------------------------------------------------
   // Messaging
@@ -243,13 +244,13 @@ export interface ISessionManager {
   // Auth
   // ---------------------------------------------------------------------------
 
-  reinitializeAuth(connectionSlug?: string): Promise<void>
+  reinitializeAuth(provider?: string): Promise<void>
   /**
    * Push runtime updates (e.g. capability toggles) to every active session
    * that uses the given connection. Backstopped by the lazy refresh path in
    * `getOrCreateAgent`.
    */
-  refreshConnectionRuntime(connectionSlug: string): Promise<void>
+  refreshProviderRuntime(provider: string): Promise<void>
   completeAuthRequest(sessionId: string, result: AuthResult): Promise<void>
   executePromptAutomation(input: ExecutePromptAutomationInput): Promise<{ sessionId: string }>
 
@@ -279,7 +280,7 @@ export interface ExecutePromptAutomationInput {
   labels?: string[]
   permissionMode?: PermissionMode
   mentions?: string[]
-  llmConnection?: string
+  provider?: string
   model?: string
   /** Override the workspace default thinking level for the spawned session. */
   thinkingLevel?: ThinkingLevel

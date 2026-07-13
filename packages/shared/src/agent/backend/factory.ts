@@ -6,8 +6,8 @@
  *
  * All agents implement AgentBackend directly.
  *
- * LLM Connections:
- * - Backends can be created from LLM connection configs
+ * Pi Providers:
+ * - Backends can be created from Pi provider configs
  * - providerType determines SDK selection and credential routing
  * - authType determines how credentials are retrieved
  */
@@ -23,16 +23,11 @@ import type {
 } from './types.ts';
 import { PiAgent } from '../pi-agent.ts';
 import {
-  getLlmConnection,
-  getDefaultLlmConnection,
-  type LlmConnection,
-} from '../../config/storage.ts';
-import { hasPiGlobalAuthForConnection } from '../../config/pi-global-config.ts';
-import type { CustomEndpointConfig } from '../../config/llm-connections.ts';
-// Import validation helpers for provider-auth combinations
-import {
-  isValidProviderAuthCombination,
-} from '../../config/llm-connections.ts';
+  hasPiGlobalProviderAuth,
+  readPiGlobalProviders,
+  readPiGlobalSettings,
+  type PiGlobalProvider,
+} from '../../config/pi-global-config.ts';
 import { parseValidationError } from '../../config/llm-validation.ts';
 import type { ModelFetchResult } from '../../config/model-fetcher.ts';
 // Model resolution utilities
@@ -47,7 +42,7 @@ import type {
   BackendResolutionContext,
   ProviderDriver,
   ResolvedBackendConfig,
-  StoredConnectionValidationResult,
+  StoredProviderValidationResult,
 } from './internal/driver-types.ts';
 import { getDefaultProviderType } from './internal/driver-types.ts';
 import {
@@ -130,10 +125,10 @@ export function createBackendFromResolvedContext(args: {
   const config: ResolvedBackendConfig = {
     ...coreConfig,
     provider: context.provider,
-    providerType: context.connection?.providerType ?? getDefaultProviderType(context.provider),
+    providerType: context.providerConfig?.baseUrl ? 'pi_compat' : getDefaultProviderType(context.provider),
     authType: context.authType || getDefaultAuthType(context.provider),
     model: context.resolvedModel,
-    connectionSlug: context.connection?.slug,
+    providerKey: context.providerKey,
     runtime,
   };
 
@@ -191,33 +186,24 @@ const _providerTypeExhaustiveCheck: Record<LlmProviderType, ModelProvider> = {
 export const AGENT_PROVIDER: ModelProvider = 'pi';
 
 /**
- * Get LLM connection for a session.
- * Resolution order: session.llmConnection > workspace.defaults.defaultLlmConnection > global default
+ * Get Pi provider for a session.
+ * Resolution order: session provider > workspace default provider > Pi global default
  *
  * @param sessionConnection - Connection slug from session (may be undefined)
  * @param workspaceDefaultConnection - Workspace default connection (may be undefined)
- * @returns The resolved LLM connection or null if not found
+ * @returns The resolved Pi provider or null if not found
  */
-export function resolveSessionConnection(
-  sessionConnection?: string,
-  workspaceDefaultConnection?: string
-): LlmConnection | null {
-  // 1. Session-level connection
-  if (sessionConnection) {
-    const connection = getLlmConnection(sessionConnection);
-    if (connection) return connection;
+export function resolveSessionProvider(
+  sessionProvider?: string,
+  workspaceDefaultProvider?: string,
+): { key: string; provider: PiGlobalProvider } | null {
+  const providers = readPiGlobalProviders();
+  const globalDefault = readPiGlobalSettings().defaultProvider;
+  for (const key of [sessionProvider, workspaceDefaultProvider, globalDefault]) {
+    if (key && providers[key]) return { key, provider: providers[key] };
   }
-
-  // 2. Workspace default
-  if (workspaceDefaultConnection) {
-    const connection = getLlmConnection(workspaceDefaultConnection);
-    if (connection) return connection;
-  }
-
-  // 3. Global default
-  const defaultSlug = getDefaultLlmConnection();
-  if (!defaultSlug) return null;
-  return getLlmConnection(defaultSlug);
+  const first = Object.entries(providers)[0];
+  return first ? { key: first[0], provider: first[1] } : null;
 }
 
 /**
@@ -230,31 +216,22 @@ export type ResolvedBackendContext = BackendResolutionContext;
  * This keeps main-process orchestration free from provider-specific branching.
  */
 export function resolveBackendContext(args: {
-  sessionConnectionSlug?: string;
-  workspaceDefaultConnectionSlug?: string;
+  sessionProvider?: string;
+  workspaceDefaultProvider?: string;
   managedModel?: string;
 }): ResolvedBackendContext {
-  const connection = resolveSessionConnection(
-    args.sessionConnectionSlug,
-    args.workspaceDefaultConnectionSlug
+  const resolved = resolveSessionProvider(
+    args.sessionProvider,
+    args.workspaceDefaultProvider,
   );
-
-  const provider = connection
-    ? AGENT_PROVIDER
-    : 'pi';
-
-  const authType = connection
-    ? (connection.authType === 'none' || connection.authType === 'environment'
-      ? undefined
-      : connection.authType)
-    : undefined;
-
-  const resolvedModel = resolveModelForProvider(provider, args.managedModel, connection);
+  const provider = AGENT_PROVIDER;
+  const resolvedModel = resolveModelForProvider(provider, args.managedModel, resolved?.provider ?? null);
 
   return {
-    connection,
+    providerKey: resolved?.key,
+    providerConfig: resolved?.provider ?? null,
     provider,
-    authType,
+    authType: resolved?.provider && hasPiGlobalProviderAuth(resolved.key) ? 'api_key' : undefined,
     resolvedModel,
     capabilities: { needsHttpPoolServer: false },
   };
@@ -264,39 +241,13 @@ export function resolveBackendContext(args: {
  * Resolve provider hint for setup-time connection tests.
  * Keeps provider-specific hint mapping out of Electron main IPC handlers.
  */
-export function resolveSetupTestConnectionHint(args: {
-  provider: ModelProvider | 'anthropic';
-  baseUrl?: string;
-  piAuthProvider?: string;
-  customEndpoint?: CustomEndpointConfig;
-}): Pick<LlmConnection, 'providerType' | 'piAuthProvider' | 'customEndpoint'> {
-  if (args.provider === 'pi') {
-    if (args.customEndpoint && args.baseUrl?.trim()) {
-      return {
-        providerType: 'pi_compat',
-        piAuthProvider: args.customEndpoint.api === 'anthropic-messages' ? 'anthropic' : 'openai',
-        customEndpoint: args.customEndpoint,
-      };
-    }
-
-    return {
-      providerType: 'pi',
-      piAuthProvider: args.piAuthProvider,
-    };
-  }
-
-  return {
-    providerType: args.baseUrl ? 'pi_compat' : 'pi',
-    piAuthProvider: args.baseUrl ? 'anthropic' : args.piAuthProvider ?? 'anthropic',
-  };
-}
-
 /**
  * Provider-agnostic model discovery for model refresh flows.
  * Dispatches to provider drivers and keeps provider-specific SDK usage internal.
  */
 export async function fetchBackendModels(args: {
-  connection: LlmConnection;
+  providerKey: string;
+  providerConfig: PiGlobalProvider;
   credentials: BackendModelFetchCredentials;
   hostRuntime: BackendHostRuntimeContext;
   timeoutMs?: number;
@@ -315,7 +266,8 @@ export async function fetchBackendModels(args: {
   }
 
   return driver.fetchModels({
-    connection: args.connection,
+    providerKey: args.providerKey,
+    providerConfig: args.providerConfig,
     credentials: args.credentials,
     hostRuntime: args.hostRuntime,
     resolvedPaths,
@@ -327,26 +279,16 @@ export async function fetchBackendModels(args: {
  * Provider-agnostic stored-connection validation.
  * Moves provider/auth branching out of Electron main IPC handlers.
  */
-export async function validateStoredBackendConnection(args: {
-  slug: string;
+export async function validateStoredBackendProvider(args: {
+  providerKey: string;
   hostRuntime: BackendHostRuntimeContext;
-}): Promise<StoredConnectionValidationResult> {
+}): Promise<StoredProviderValidationResult> {
   try {
-    const connection = getLlmConnection(args.slug);
-    if (!connection) {
-      return { success: false, error: 'Connection not found' };
+    const providerConfig = readPiGlobalProviders()[args.providerKey];
+    if (!providerConfig) {
+      return { success: false, error: 'Provider not found' };
     }
-
-    const credentialManager = getCredentialManager();
-    const hasCredentials =
-      await credentialManager.hasLlmCredentials(
-        args.slug,
-        connection.authType,
-        connection.providerType,
-      )
-      || hasPiGlobalAuthForConnection(connection);
-
-    if (!hasCredentials && connection.authType !== 'none') {
+    if (!hasPiGlobalProviderAuth(args.providerKey) && providerConfig.authHeader === true) {
       return { success: false, error: 'No credentials configured' };
     }
 
@@ -358,14 +300,14 @@ export async function validateStoredBackendConnection(args: {
       resolvedPaths,
     });
 
-    if (!driver.validateStoredConnection) {
+    if (!driver.validateStoredProvider) {
       return { success: true };
     }
 
-    return driver.validateStoredConnection({
-      slug: args.slug,
-      connection,
-      credentialManager,
+    return driver.validateStoredProvider({
+      providerKey: args.providerKey,
+      providerConfig,
+      credentialManager: getCredentialManager(),
       hostRuntime: args.hostRuntime,
       resolvedPaths,
     });
@@ -376,44 +318,31 @@ export async function validateStoredBackendConnection(args: {
 }
 
 /**
- * Create backend from an LLM connection slug.
+ * Create backend from an Pi provider slug.
  *
- * @param connectionSlug - The LLM connection slug
+ * @param providerKey - The Pi provider slug
  * @param baseConfig - Base backend config (workspace, session, etc.)
  * @returns An initialized AgentBackend instance
  * @throws Error if connection not found or has invalid provider-auth combination
  */
-export function createBackendFromConnection(
-  connectionSlug: string,
+export function createBackendFromProvider(
+  providerKey: string,
   baseConfig: Omit<BackendConfig, 'provider' | 'authType'>,
   hostRuntime?: BackendHostRuntimeContext,
   providerOptions?: BackendProviderOptions,
 ): AgentBackend {
-  const connection = getLlmConnection(connectionSlug);
-  if (!connection) {
-    throw new Error(`LLM connection not found: ${connectionSlug}`);
-  }
-
-  // Validate provider-auth combination before creating backend
-  // This catches invalid configurations early with a clear error message
-  if (!isValidProviderAuthCombination(connection.providerType, connection.authType)) {
-    throw new Error(
-      `Invalid LLM connection configuration: provider '${connection.providerType}' ` +
-      `does not support auth type '${connection.authType}'. ` +
-      `Please update the connection settings for '${connection.name}'.`
-    );
-  }
+  const providerConfig = readPiGlobalProviders()[providerKey];
+  if (!providerConfig) throw new Error(`Provider not found: ${providerKey}`);
 
   const context: ResolvedBackendContext = {
-    connection,
+    providerKey,
+    providerConfig,
     provider: AGENT_PROVIDER,
-    authType: connection.authType === 'none' || connection.authType === 'environment'
-      ? undefined
-      : connection.authType,
+    authType: hasPiGlobalProviderAuth(providerKey) ? 'api_key' : undefined,
     resolvedModel: resolveModelForProvider(
       AGENT_PROVIDER,
       baseConfig.model,
-      connection
+      providerConfig
     ),
     capabilities: { needsHttpPoolServer: false },
   };
@@ -427,14 +356,13 @@ export function createBackendFromConnection(
     });
   }
 
-  const providerType = connection.providerType || 'pi';
   const config: BackendConfig = {
     ...baseConfig,
     provider: AGENT_PROVIDER,
-    providerType,
-    authType: connection.authType,
-    connectionSlug: connection.slug,
-    model: context.resolvedModel || connection.defaultModel,
+    providerType: providerConfig.baseUrl ? 'pi_compat' : 'pi',
+    authType: context.authType,
+    providerKey: providerKey,
+    model: context.resolvedModel,
   };
   return createBackend(config);
 }
@@ -461,50 +389,51 @@ export function getDefaultAuthType(provider: ModelProvider): LlmAuthType | undef
 // ============================================================
 
 /**
- * Resolve the model ID for a given provider, validating against the connection's model list.
+ * Resolve the model ID for a given provider, validating against the provider's model list.
  *
- * Pi falls back to an empty model string when no connection/default model is set,
+ * Pi falls back to an empty model string when no provider/default model is set,
  * allowing the Pi backend to select its configured default.
  *
  * @param provider - The agent provider
  * @param managedModel - The model stored on the session (user's choice)
- * @param connection - The LLM connection config (has defaultModel and models[])
+ * @param connection - The Pi provider config (has defaultModel and models[])
  * @returns Resolved model ID string
  */
 export function resolveModelForProvider(
   provider: ModelProvider,
   managedModel: string | undefined,
-  connection: LlmConnection | null
+  providerConfig: PiGlobalProvider | null,
 ): string {
   // Cross-provider guard: if the model belongs to a different provider, fall back
-  // to the connection's default. This prevents e.g. sending a Claude model to Pi.
+  // to the provider's default. This prevents e.g. sending a Claude model to Pi.
   if (managedModel) {
     managedModel = normalizeDeprecatedModelId(managedModel);
     const modelProvider = getModelProvider(managedModel);
     if (modelProvider && modelProvider !== provider) {
-      managedModel = undefined; // Clear — will fall through to connection default
+      managedModel = undefined; // Clear — will fall through to provider default
     }
   }
 
-  let connectionDefault = connection?.defaultModel
-    ? normalizeDeprecatedModelId(connection.defaultModel)
-    : undefined;
+  const settings = readPiGlobalSettings();
+  let providerDefault = settings.defaultModel
+    ? normalizeDeprecatedModelId(settings.defaultModel)
+    : providerConfig?.models?.[0]?.id;
 
-  if (provider === 'pi' && connection?.models?.length) {
-    const connectionModelIds = connection.models.map(m => typeof m === 'string' ? m : m.id);
-    if (managedModel && !connectionModelIds.includes(managedModel)) {
+  if (provider === 'pi' && providerConfig?.models?.length) {
+    const modelIds = providerConfig.models.map(model => model.id);
+    if (managedModel && !modelIds.includes(managedModel)) {
       managedModel = undefined;
     }
-    if (connectionDefault && !connectionModelIds.includes(connectionDefault)) {
-      connectionDefault = connectionModelIds[0];
+    if (providerDefault && !modelIds.includes(providerDefault)) {
+      providerDefault = modelIds[0];
     }
   }
 
   switch (provider) {
     case 'pi':
-      return managedModel || connectionDefault || '';
+      return managedModel || providerDefault || '';
     default:
-      return managedModel || connectionDefault || DEFAULT_MODEL;
+      return managedModel || providerDefault || DEFAULT_MODEL;
   }
 }
 
@@ -538,7 +467,8 @@ export async function testBackendConnection(args: {
   hostRuntime: BackendHostRuntimeContext;
   timeoutMs?: number;
   allowEmptyApiKey?: boolean;
-  connection?: Pick<LlmConnection, 'providerType' | 'piAuthProvider' | 'customEndpoint'>;
+  providerKey?: string;
+  providerConfig?: PiGlobalProvider;
 }): Promise<{ success: boolean; error?: string }> {
   const trimmedKey = args.apiKey.trim();
   if (!trimmedKey && !args.allowEmptyApiKey) {
@@ -549,14 +479,13 @@ export async function testBackendConnection(args: {
   const tempSlug = `__test-${Date.now()}`;
   const cm = getCredentialManager();
   if (trimmedKey) {
-    await cm.setLlmApiKey(tempSlug, trimmedKey);
+    await cm.setProviderApiKey(tempSlug, trimmedKey);
   }
 
   try {
     const testModel = args.model;
-    const providerType = args.connection?.providerType ?? getDefaultProviderType(runtimeProvider);
-    const piAuthProvider = args.connection?.piAuthProvider
-      ?? (args.provider === 'anthropic' ? 'anthropic' : undefined);
+    const providerType = args.providerConfig?.baseUrl ? 'pi_compat' : getDefaultProviderType(runtimeProvider);
+    const piAuthProvider = args.providerKey ?? (args.provider === 'anthropic' ? 'anthropic' : undefined);
     const now = Date.now();
     const authType: LlmAuthType = (
       providerType === 'pi_compat'
@@ -564,20 +493,14 @@ export async function testBackendConnection(args: {
       ? 'api_key_with_endpoint'
       : 'api_key';
 
-    const syntheticConnection = {
-      slug: tempSlug,
-      name: 'Temporary Connection Test',
-      providerType,
-      authType,
-      defaultModel: testModel,
-      createdAt: now,
-      piAuthProvider,
-      customEndpoint: args.connection?.customEndpoint,
+    const providerConfig: PiGlobalProvider = args.providerConfig ?? {
       ...(args.baseUrl?.trim() ? { baseUrl: args.baseUrl.trim() } : {}),
-    } as LlmConnection;
+      models: [{ id: testModel }],
+    };
 
     const context: ResolvedBackendContext = {
-      connection: syntheticConnection,
+      providerKey: piAuthProvider ?? tempSlug,
+      providerConfig,
       provider: runtimeProvider,
       authType,
       resolvedModel: testModel,
@@ -591,7 +514,8 @@ export async function testBackendConnection(args: {
         apiKey: trimmedKey,
         model: testModel,
         baseUrl: args.baseUrl,
-        connection: args.connection,
+        providerKey: piAuthProvider,
+        providerConfig,
         hostRuntime: args.hostRuntime,
         resolvedPaths,
         timeoutMs: args.timeoutMs ?? 20000,
@@ -655,6 +579,6 @@ export async function testBackendConnection(args: {
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    await cm.deleteLlmApiKey(tempSlug).catch(() => {});
+    await cm.deleteProviderApiKey(tempSlug).catch(() => {});
   }
 }

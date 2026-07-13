@@ -24,7 +24,7 @@ import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from './thinking-level
 import type { PermissionMode } from './mode-manager.ts';
 import type { LoadedSource } from '../sources/types.ts';
 import { type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
-import { getLlmConnections, getDefaultLlmConnection } from '../config/storage.ts';
+import { readPiGlobalProviders, readPiGlobalSettings } from '../config/pi-global-config.ts';
 import { loadAllSources } from '../sources/storage.ts';
 import type { ApiServerConfig } from '../mcp/mcp-pool.ts';
 
@@ -92,7 +92,7 @@ export interface MiniAgentConfig {
 export interface SpawnSessionRequest {
   prompt: string;
   name?: string;
-  llmConnection?: string;
+  provider?: string;
   model?: string;
   enabledSourceSlugs?: string[];
   permissionMode?: PermissionMode;
@@ -106,16 +106,15 @@ export interface SpawnSessionResult {
   sessionId: string;
   name: string;
   status: 'started';
-  connection?: string;
+  provider?: string;
   model?: string;
 }
 
 export interface SpawnSessionHelpResult {
-  connections: Array<{
-    slug: string;
+  providers: Array<{
+    key: string;
     name: string;
     isDefault: boolean;
-    providerType: string;
     models: string[];
     defaultModel?: string;
   }>;
@@ -126,7 +125,7 @@ export interface SpawnSessionHelpResult {
     enabled: boolean;
   }>;
   defaults: {
-    defaultConnection: string | null;
+    defaultProvider: string | null;
     permissionMode: string;
   };
 }
@@ -1140,7 +1139,7 @@ ${formattedMessages}
     const request: SpawnSessionRequest = {
       prompt,
       name: input.name as string | undefined,
-      llmConnection: input.llmConnection as string | undefined,
+      provider: input.provider as string | undefined,
       model: input.model as string | undefined,
       enabledSourceSlugs: input.enabledSourceSlugs as string[] | undefined,
       permissionMode: input.permissionMode as SpawnSessionRequest['permissionMode'],
@@ -1153,22 +1152,21 @@ ${formattedMessages}
   }
 
   /**
-   * Get available connections, models, and sources for spawn_session help mode.
+   * Get available providers, models, and sources for spawn_session help mode.
    */
   protected getSpawnSessionHelp(): SpawnSessionHelpResult {
-    const connections = getLlmConnections();
-    const defaultConnectionSlug = getDefaultLlmConnection();
+    const providers = readPiGlobalProviders();
+    const settings = readPiGlobalSettings();
     const allSources = loadAllSources(this.config.workspace.rootPath);
     const activeSlugs = this.sourceManager.getActiveSlugs();
 
     return {
-      connections: connections.map(c => ({
-        slug: c.slug,
-        name: c.name,
-        isDefault: c.slug === defaultConnectionSlug,
-        providerType: c.providerType,
-        models: (c.models || []).map(m => typeof m === 'string' ? m : m.id),
-        defaultModel: c.defaultModel,
+      providers: Object.entries(providers).map(([key, provider]) => ({
+        key,
+        name: key,
+        isDefault: key === settings.defaultProvider,
+        models: (provider.models || []).map(model => model.id),
+        defaultModel: key === settings.defaultProvider ? settings.defaultModel : undefined,
       })),
       sources: allSources.map(s => ({
         slug: s.config.slug,
@@ -1177,7 +1175,7 @@ ${formattedMessages}
         enabled: activeSlugs.has(s.config.slug),
       })),
       defaults: {
-        defaultConnection: defaultConnectionSlug,
+        defaultProvider: settings.defaultProvider ?? null,
         permissionMode: this.permissionManager.getPermissionMode(),
       },
     };

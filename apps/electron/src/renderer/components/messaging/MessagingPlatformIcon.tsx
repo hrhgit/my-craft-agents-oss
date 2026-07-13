@@ -1,7 +1,7 @@
 /**
  * MessagingPlatformIcon
  *
- * Parallel of ConnectionIcon (for LLM providers) but for messaging platforms.
+ * Parallel of ProviderIcon (for LLM providers) but for messaging platforms.
  * Renders the brand mark for Telegram / WhatsApp. Falls back to a colored
  * platform-initial badge if the SVG import fails at runtime.
  *

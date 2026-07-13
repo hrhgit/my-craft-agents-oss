@@ -115,7 +115,7 @@ health                 Check credential store health
 versions               Show server runtime versions
 workspaces             List workspaces
 sessions               List sessions in workspace
-connections            List LLM connections
+providers              List AI providers
 sources                List configured sources
 session create         Create a session (--name, --mode)
 session messages <id>  Print session message history

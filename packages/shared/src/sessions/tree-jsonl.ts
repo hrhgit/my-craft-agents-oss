@@ -40,6 +40,11 @@ export type CraftMetadataOnDisk =
   id?: string;
 };
 
+type CraftMetadataWithLegacyProviderLock = CraftMetadataOnDisk & {
+  connectionLocked?: unknown;
+  providerLocked?: unknown;
+};
+
 export interface TreeSessionSpawnConfig {
   connection?: string;
   model?: string;
@@ -263,6 +268,10 @@ function buildCraftMetadataOnDisk(
   }
 
   delete craftMetadata.craftId;
+  // Provider selection is no longer locked after agent creation. Remove both
+  // the old connection flag and its short-lived migration alias on rewrite.
+  delete (craftMetadata as Record<string, unknown>).connectionLocked;
+  delete (craftMetadata as Record<string, unknown>).providerLocked;
   return craftMetadata;
 }
 
@@ -1111,7 +1120,12 @@ function projectParsedTreeSessionAsStoredSession(
   // field onto SessionHeader (which declares only `craftId`). Without this,
   // tree-derived headers would carry `.id === craftId` while legacy-derived
   // headers carry no `.id`, causing silent source-dependent divergence.
-  const { id: _craftIdOnDisk, ...craftRest } = craft;
+  const {
+    id: _craftIdOnDisk,
+    connectionLocked: _connectionLocked,
+    providerLocked: _providerLocked,
+    ...craftRest
+  } = craft as CraftMetadataWithLegacyProviderLock;
 
   return {
     ...craftRest,
@@ -1170,7 +1184,12 @@ export function projectTreeSessionHeaderAsSessionHeader(
     ?? dirname(sessionFile);
   const craft = header.craft ?? {};
   const craftId = getCraftIdFromTreeHeader(header, options.sessionIdPrefix ?? '');
-  const { id: _craftIdOnDisk, ...craftRest } = craft;
+  const {
+    id: _craftIdOnDisk,
+    connectionLocked: _connectionLocked,
+    providerLocked: _providerLocked,
+    ...craftRest
+  } = craft as CraftMetadataWithLegacyProviderLock;
 
   return {
     ...craftRest,

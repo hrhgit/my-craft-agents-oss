@@ -197,8 +197,8 @@ const instance = await (async () => {
       initModelRefreshService: () => initModelRefreshService(async (slug: string) => {
         const manager = getCredentialManager()
         const [apiKey, oauth] = await Promise.all([
-          manager.getLlmApiKey(slug).catch(() => null),
-          manager.getLlmOAuth(slug).catch(() => null),
+          manager.getProviderApiKey(slug).catch(() => null),
+          manager.getProviderOAuth(slug).catch(() => null),
         ])
         return {
           apiKey: apiKey ?? undefined,

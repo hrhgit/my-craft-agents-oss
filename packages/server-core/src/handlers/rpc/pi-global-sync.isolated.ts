@@ -17,9 +17,9 @@ mock.module('@craft-agent/shared/config', () => ({
     mockSetPiGlobalDefault(provider, model, thinkingLevel),
 }))
 
-const { syncPiGlobalToLlmConnections } = await import('./pi-global-sync.ts')
+const { syncPiGlobalConfig } = await import('./pi-global-sync.ts')
 
-describe('syncPiGlobalToLlmConnections', () => {
+describe('syncPiGlobalConfig', () => {
   beforeEach(() => {
     mockReadPiGlobalProviders.mockReset()
     mockReadPiGlobalSettings.mockReset()
@@ -42,7 +42,7 @@ describe('syncPiGlobalToLlmConnections', () => {
       changed: true,
     }))
 
-    await expect(syncPiGlobalToLlmConnections()).resolves.toEqual({ changed: true })
+    await expect(syncPiGlobalConfig()).resolves.toEqual({ changed: true })
   })
 
   it('returns an error when automatic defaultProvider repair fails', async () => {
@@ -62,7 +62,7 @@ describe('syncPiGlobalToLlmConnections', () => {
     const warnSpy = spyOn(console, 'warn').mockImplementation(() => {})
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
     try {
-      const result = await syncPiGlobalToLlmConnections()
+      const result = await syncPiGlobalConfig()
 
       expect(result.changed).toBe(false)
       expect(result.error).toContain('settings flush failed')

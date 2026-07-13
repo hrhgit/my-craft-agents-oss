@@ -22,18 +22,20 @@
 export type PickerMode = 'unavailable' | 'switcher' | 'locked-single' | 'flat'
 
 export interface PickerModeInput {
-  connectionUnavailable: boolean
+  providerUnavailable: boolean
   /** Non-null when the active connection is `pi_compat` with ≤1 model. */
-  connectionDefaultModel: string | null
+  providerDefaultModel: string | null
   /** Kept for call-site compatibility; provider switching is no longer gated by emptiness. */
   isEmptySession: boolean
   /** Total number of configured connections in the workspace. */
-  connectionCount: number
+  providerCount: number
 }
 
 export function derivePickerMode(input: PickerModeInput): PickerMode {
-  if (input.connectionUnavailable) return 'unavailable'
-  if (input.connectionCount > 1) return 'switcher'
-  if (input.connectionDefaultModel != null) return 'locked-single'
+  if (input.providerUnavailable) return 'unavailable'
+  if (input.providerCount > 1) return 'switcher'
+  if (input.providerDefaultModel != null) return 'locked-single'
   return 'flat'
 }
+
+

@@ -87,8 +87,8 @@ export function createOAuthCapabilityProvider(adapter: OAuthCapabilityAdapter): 
 
 /** Secret-free keychain metadata operations. Values are intentionally absent. */
 export interface KeychainCapabilityAdapter {
-  has(input: { type: string; sourceId?: string; name?: string; connectionSlug?: string }, sessionId: string): Promise<{ present: boolean }>
-  remove(input: { type: string; sourceId?: string; name?: string; connectionSlug?: string }, sessionId: string): Promise<{ removed: boolean }>
+  has(input: { type: string; sourceId?: string; name?: string; providerKey?: string }, sessionId: string): Promise<{ present: boolean }>
+  remove(input: { type: string; sourceId?: string; name?: string; providerKey?: string }, sessionId: string): Promise<{ removed: boolean }>
 }
 
 export function createKeychainCapabilityProvider(adapter: KeychainCapabilityAdapter): CapabilityProvider {
@@ -96,14 +96,14 @@ export function createKeychainCapabilityProvider(adapter: KeychainCapabilityAdap
     capability: 'credentials.keychain',
     async invoke(operation, input, context) {
       const value = objectInput(input)
-      onlyKeys(value, ['type', 'sourceId', 'name', 'connectionSlug'])
+      onlyKeys(value, ['type', 'sourceId', 'name', 'providerKey'])
       const type = requiredString(value, 'type')
       if (!/^[a-z][a-z0-9_]{1,63}$/.test(type)) throw new Error('type is invalid')
       const id = {
         type,
         ...(typeof value.sourceId === 'string' ? { sourceId: value.sourceId } : {}),
         ...(typeof value.name === 'string' ? { name: value.name } : {}),
-        ...(typeof value.connectionSlug === 'string' ? { connectionSlug: value.connectionSlug } : {}),
+        ...(typeof value.providerKey === 'string' ? { providerKey: value.providerKey } : {}),
       }
       if (operation === 'has') return { present: (await adapter.has(id, context.request.sessionId)).present === true }
       if (operation === 'remove') return { removed: (await adapter.remove(id, context.request.sessionId)).removed === true }

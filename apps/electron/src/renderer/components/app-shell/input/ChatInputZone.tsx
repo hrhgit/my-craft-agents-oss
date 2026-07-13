@@ -91,9 +91,8 @@ export function ChatInputZone({
     }
   }, [])
 
-  const showConversationModes = piExtensionSettings?.enabled !== false
-  const showDiscussionMode = showConversationModes && piExtensionSettings?.planMode?.showDiscussionButton !== false
-  const showPlanMode = showConversationModes && piExtensionSettings?.planMode?.showPlanButton !== false
+  const showDiscussionMode = piExtensionSettings?.planMode?.showDiscussionButton !== false
+  const showPlanMode = piExtensionSettings?.planMode?.showPlanButton !== false
 
   const handleClearDraft = React.useCallback(() => {
     inputProps.onInputChange?.('')

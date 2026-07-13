@@ -7,7 +7,7 @@ import { LocalModelStep, type LocalModelSubmitData } from "./LocalModelStep"
 import { CompletionStep } from "./CompletionStep"
 import { GitBashWarning, type GitBashStatus } from "./GitBashWarning"
 import type { ApiKeySubmitData } from "../apisetup"
-import type { CustomEndpointApi } from '@config/llm-connections'
+import type { PiCustomApi as CustomEndpointApi } from '@craft-agent/shared/config/pi-provider-models'
 
 export type OnboardingStep =
   | 'welcome'
@@ -61,7 +61,7 @@ interface OnboardingWizardProps {
   editInitialValues?: {
     apiKey?: string
     baseUrl?: string
-    connectionDefaultModel?: string
+    providerDefaultModel?: string
     activePreset?: string
     models?: string[]
     customApi?: CustomEndpointApi

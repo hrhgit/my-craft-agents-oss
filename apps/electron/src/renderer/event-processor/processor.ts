@@ -40,7 +40,7 @@ import {
   handleWorkingDirectoryChanged,
   handlePermissionModeChanged,
   handleSessionModelChanged,
-  handleConnectionChanged,
+  handleProviderChanged,
   handleUserMessage,
   handleMessageAnnotationsUpdated,
   handleSessionShared,
@@ -145,8 +145,8 @@ export function processEvent(
     case 'session_model_changed':
       return handleSessionModelChanged(state, event)
 
-    case 'connection_changed':
-      return handleConnectionChanged(state, event)
+    case 'provider_changed':
+      return handleProviderChanged(state, event)
 
     case 'sources_changed':
       return handleSourcesChanged(state, event)

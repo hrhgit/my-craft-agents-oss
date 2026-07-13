@@ -128,12 +128,12 @@ export default function AppearanceSettingsPage() {
   const [toolIconsJsonPath, setToolIconsJsonPath] = useState<string | null>(null)
 
   // Connection icon visibility toggle
-  const [showConnectionIcons, setShowConnectionIcons] = useState(() =>
-    storage.get(storage.KEYS.showConnectionIcons, true)
+  const [showProviderIcons, setShowProviderIcons] = useState(() =>
+    storage.get(storage.KEYS.showProviderIcons, true)
   )
-  const handleConnectionIconsChange = useCallback((checked: boolean) => {
-    setShowConnectionIcons(checked)
-    storage.set(storage.KEYS.showConnectionIcons, checked)
+  const handleProviderIconsChange = useCallback((checked: boolean) => {
+    setShowProviderIcons(checked)
+    storage.set(storage.KEYS.showProviderIcons, checked)
   }, [])
 
   // Rich tool descriptions toggle (persisted in config.json, read by SDK subprocess)
@@ -359,8 +359,8 @@ export default function AppearanceSettingsPage() {
                   <SettingsToggle
                     label={t("settings.appearance.connectionIcons")}
                     description={t("settings.appearance.connectionIconsDesc")}
-                    checked={showConnectionIcons}
-                    onCheckedChange={handleConnectionIconsChange}
+                    checked={showProviderIcons}
+                    onCheckedChange={handleProviderIconsChange}
                   />
                   <SettingsToggle
                     label={t("settings.appearance.richToolDescriptions")}

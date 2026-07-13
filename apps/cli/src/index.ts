@@ -323,9 +323,9 @@ async function cmdSessions(client: CliRpcClient, args: CliArgs): Promise<void> {
   }
 }
 
-async function cmdConnections(client: CliRpcClient, args: CliArgs): Promise<void> {
+async function cmdProviders(client: CliRpcClient, args: CliArgs): Promise<void> {
   await client.connect()
-  const result = await client.invoke('LLM_Connection:list')
+  const result = await client.invoke('pi:getGlobalProviders')
   out(result, args.json)
 }
 
@@ -561,7 +561,7 @@ async function spawnLocalServer(args: CliArgs, opts?: { quiet?: boolean }): Prom
 }
 
 // ---------------------------------------------------------------------------
-// LLM connection helpers
+// Provider setup helpers
 // ---------------------------------------------------------------------------
 
 const PROVIDER_ENV_KEYS: Record<string, string> = {
@@ -643,81 +643,38 @@ export function resolveCustomEndpointCliSetup(provider: string, baseUrl: string,
   }
 }
 
-export function shouldSetupLlmConnection(existingConnectionCount: number, args: Pick<CliArgs, 'provider' | 'baseUrl'>): boolean {
-  return existingConnectionCount === 0 || !!args.baseUrl || args.provider !== 'anthropic'
+export function shouldSetupProvider(existingProviderCount: number, args: Pick<CliArgs, 'provider' | 'baseUrl'>): boolean {
+  return existingProviderCount === 0 || !!args.baseUrl || args.provider !== 'anthropic'
 }
 
-async function setupLlmConnection(
+async function setupProvider(
   client: CliRpcClient,
   args: CliArgs,
-): Promise<{ connectionSlug: string }> {
+): Promise<{ provider: string; model: string }> {
   const { provider, baseUrl } = args
-  const connectionSlug = `${provider}-cli`
-
-  let providerType: string
-  let authType: string
-  let displayName = getProviderDisplayName(provider)
-  const setupPayload: Record<string, unknown> = { slug: connectionSlug }
-
-  if (baseUrl) {
-    // Custom endpoint — send the same payload shape as the desktop UI.
-    // The server handler detects customEndpoint + baseUrl and resolves
-    // loopback endpoints without credentials to authType='none'.
-    const customSetup = resolveCustomEndpointCliSetup(provider, baseUrl, args.apiKey)
-    providerType = customSetup.providerType
-    authType = customSetup.authType
-    displayName = customSetup.displayName
-    setupPayload.baseUrl = baseUrl
-    setupPayload.customEndpoint = customSetup.customEndpoint
-    setupPayload.defaultModel = customSetup.defaultModel
-    if (customSetup.credential) setupPayload.credential = customSetup.credential
-  } else if (provider === 'anthropic') {
-    const key = resolveApiKey(provider, args.apiKey)
-    providerType = 'pi'
-    authType = 'api_key'
-    setupPayload.credential = key
-    setupPayload.piAuthProvider = 'anthropic'
-  } else if (provider === 'amazon-bedrock') {
-    // Bedrock uses IAM credentials, not a single API key
-    const accessKeyId = process.env.AWS_ACCESS_KEY_ID
-    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
-    const region = process.env.AWS_REGION || 'us-east-1'
-    const sessionToken = process.env.AWS_SESSION_TOKEN
-    if (!accessKeyId || !secretAccessKey) {
-      throw new Error(
-        'Amazon Bedrock requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables',
-      )
-    }
-    providerType = 'pi'
-    authType = 'iam_credentials'
-    setupPayload.piAuthProvider = 'amazon-bedrock'
-    setupPayload.bedrockAuthMethod = 'iam_credentials'
-    setupPayload.iamCredentials = { accessKeyId, secretAccessKey, sessionToken }
-    setupPayload.awsRegion = region
-    delete setupPayload.credential // IAM credentials go through iamCredentials field
-  } else {
-    const key = resolveApiKey(provider, args.apiKey)
-    providerType = 'pi'
-    authType = 'api_key'
-    setupPayload.credential = key
-    setupPayload.piAuthProvider = provider
-  }
-
-  await client.invoke('LLM_Connection:save', {
-    slug: connectionSlug,
-    name: displayName,
-    providerType,
-    authType,
-    createdAt: Date.now(),
-  })
-  const setupResult = await client.invoke('settings:setupLlmConnection', setupPayload) as { success: boolean; error?: string }
+  if (provider === 'amazon-bedrock') throw new Error('Configure Amazon Bedrock through Pi before using craft-cli')
+  const custom = baseUrl ? resolveCustomEndpointCliSetup(provider, baseUrl, args.apiKey) : null
+  const apiKey = custom?.credential ?? resolveApiKey(provider, args.apiKey)
+  const catalog = await client.invoke('pi:getProviderModels', provider) as { models?: Array<{ id: string; name?: string }> }
+  const models = (catalog.models ?? []).map(item => ({ id: item.id, name: item.name ?? item.id }))
+  const model = models[0]?.id ?? custom?.defaultModel
+  if (!model) throw new Error(`No models available for provider ${provider}`)
+  const setupResult = await client.invoke('pi:saveGlobalProvider', {
+    key: provider,
+    provider: {
+      name: custom?.displayName ?? getProviderDisplayName(provider),
+      baseUrl: baseUrl || await client.invoke('pi:getProviderBaseUrl', provider),
+      api: custom?.customEndpoint.api ?? (provider === 'anthropic' ? 'anthropic-messages' : 'openai-completions'),
+      models,
+    },
+    apiKey,
+  }) as { success: boolean; error?: string }
   if (!setupResult?.success) {
-    throw new Error(`LLM connection setup failed: ${setupResult?.error ?? 'unknown error'}`)
+    throw new Error(`Provider setup failed: ${setupResult?.error ?? 'unknown error'}`)
   }
-  await client.invoke('LLM_Connection:setDefault', connectionSlug)
-  process.stderr.write(`LLM connection configured: ${provider}${baseUrl ? ` (${baseUrl})` : ''}\n`)
-
-  return { connectionSlug }
+  await client.invoke('pi:setGlobalDefault', { provider, model })
+  process.stderr.write(`Provider configured: ${provider}${baseUrl ? ` (${baseUrl})` : ''}\n`)
+  return { provider, model }
 }
 
 async function cmdRun(args: CliArgs): Promise<void> {
@@ -822,14 +779,13 @@ async function cmdRun(args: CliArgs): Promise<void> {
       process.stderr.write(`Workspace registered: ${absPath}\n`)
     }
 
-    // Auto-setup LLM connection from flags / env vars.
-    // When --base-url is provided, always create the custom endpoint connection
-    // (even if other connections exist) so the session routes through it.
-    const connections = (await client.invoke('LLM_Connection:list')) as any[]
-    let connectionSlug: string | undefined
-    if (shouldSetupLlmConnection(connections?.length ?? 0, args)) {
-      const result = await setupLlmConnection(client, args)
-      connectionSlug = result.connectionSlug
+    // Auto-setup a provider from flags / environment variables.
+    // A custom base URL always selects the requested provider endpoint.
+    const providers = (await client.invoke('pi:getGlobalProviders')) as any[]
+    let selectedProvider: string | undefined
+    if (shouldSetupProvider(providers?.length ?? 0, args)) {
+      const result = await setupProvider(client, args)
+      selectedProvider = result.provider
     }
 
     const workspaceId = bootstrappedWorkspaceId
@@ -849,7 +805,7 @@ async function cmdRun(args: CliArgs): Promise<void> {
     sessionId = session.id
 
     if (args.model) {
-      await client.invoke('session:setModel', sessionId, workspaceId, args.model, connectionSlug)
+      await client.invoke('session:setModel', sessionId, workspaceId, args.model, selectedProvider)
     }
 
     const exitCode = await sendAndStream(client, sessionId, message, args)
@@ -1221,96 +1177,10 @@ export function getValidateSteps(): ValidateStep[] {
       },
     },
     {
-      name: 'LLM_Connection:list',
-      fn: async (client, ctx) => {
-        const r = (await client.invoke('LLM_Connection:list')) as any[]
-
-        // Custom endpoint: always create/update when --base-url is provided
-        if (ctx.baseUrl) {
-          const provider = ctx.provider || 'anthropic'
-          let customSetup: ReturnType<typeof resolveCustomEndpointCliSetup>
-          try {
-            customSetup = resolveCustomEndpointCliSetup(provider, ctx.baseUrl, ctx.apiKey || '')
-          } catch (error) {
-            return `0 connections (${error instanceof Error ? error.message : 'missing API key'})`
-          }
-          const slug = `${provider}-cli`
-          await client.invoke('LLM_Connection:save', {
-            slug,
-            name: customSetup.displayName,
-            providerType: customSetup.providerType,
-            authType: customSetup.authType,
-            createdAt: Date.now(),
-          })
-          const setupPayload: Record<string, unknown> = {
-            slug,
-            baseUrl: ctx.baseUrl,
-            customEndpoint: customSetup.customEndpoint,
-            defaultModel: customSetup.defaultModel,
-          }
-          if (customSetup.credential) setupPayload.credential = customSetup.credential
-          const result = await client.invoke('settings:setupLlmConnection', setupPayload) as { success: boolean; error?: string }
-          if (!result?.success) return `setup failed: ${result?.error ?? 'unknown'}`
-          await client.invoke('LLM_Connection:setDefault', slug)
-          return `${r?.length ?? 0} existing + custom endpoint via ${ctx.baseUrl}`
-        }
-
-        // Amazon Bedrock: IAM credential setup
-        if (ctx.provider === 'amazon-bedrock') {
-          const accessKeyId = process.env.AWS_ACCESS_KEY_ID
-          const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
-          const region = process.env.AWS_REGION || 'us-east-1'
-          const sessionToken = process.env.AWS_SESSION_TOKEN
-          if (!accessKeyId || !secretAccessKey) {
-            return '0 connections (missing AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)'
-          }
-          const slug = 'amazon-bedrock-cli'
-          await client.invoke('LLM_Connection:save', {
-            slug,
-            name: 'Amazon Bedrock',
-            providerType: 'pi',
-            authType: 'iam_credentials',
-            piAuthProvider: 'amazon-bedrock',
-            createdAt: Date.now(),
-          })
-          const result = await client.invoke('settings:setupLlmConnection', {
-            slug,
-            piAuthProvider: 'amazon-bedrock',
-            bedrockAuthMethod: 'iam_credentials',
-            iamCredentials: { accessKeyId, secretAccessKey, sessionToken },
-            awsRegion: region,
-          }) as { success: boolean; error?: string }
-          if (!result?.success) return `setup failed: ${result?.error ?? 'unknown'}`
-          await client.invoke('LLM_Connection:setDefault', slug)
-          return `${r?.length ?? 0} existing + Bedrock IAM (${region})`
-        }
-
-        const provider = ctx.provider || 'anthropic'
-        if (!shouldSetupLlmConnection(r?.length ?? 0, { provider, baseUrl: ctx.baseUrl ?? '' })) {
-          return `${r.length} connections`
-        }
-        // Auto-setup from env / flags for the requested provider.
-        let key = ''
-        try {
-          key = resolveApiKey(provider, ctx.apiKey || '')
-        } catch (error) {
-          return `0 connections (${error instanceof Error ? error.message : 'missing API key'})`
-        }
-        const slug = `${provider}-cli`
-        const providerType = 'pi'
-        const authType = 'api_key'
-        await client.invoke('LLM_Connection:save', {
-          slug,
-          name: getProviderDisplayName(provider),
-          providerType,
-          authType,
-          createdAt: Date.now(),
-        })
-        const setupPayload = { slug, credential: key, piAuthProvider: provider }
-        const result = await client.invoke('settings:setupLlmConnection', setupPayload) as { success: boolean; error?: string }
-        if (!result?.success) return `setup failed: ${result?.error ?? 'unknown'}`
-        await client.invoke('LLM_Connection:setDefault', slug)
-        return `0 found → created ${provider} connection`
+      name: 'pi:getGlobalProviders',
+      fn: async (client) => {
+        const providers = (await client.invoke('pi:getGlobalProviders')) as any[]
+        return `${providers?.length ?? 0} providers`
       },
     },
     {
@@ -1882,7 +1752,7 @@ export async function runValidation(
 
     // Spinner + live event printer
     // Spinner keeps running until the agent produces real output.
-    // Early events (user_message, connection_changed, usage_update) are buffered or ignored
+    // Early events (user_message, provider_changed, usage_update) are buffered or ignored
     // so the spinner stays visible while the agent is thinking.
     let spinner: { stop(): void } | undefined
     if (!jsonMode) {
@@ -1960,7 +1830,7 @@ export async function runValidation(
             textFlushed = false
             break
           }
-          // Ignore internal events (connection_changed, usage_update, etc.)
+          // Ignore internal events (provider_changed, usage_update, etc.)
         }
       }
     } else {
@@ -2086,7 +1956,7 @@ Commands:
   versions               Show server runtime versions
   workspaces             List workspaces
   sessions               List sessions in workspace
-  connections            List LLM connections
+  providers              List AI providers
   sources                List configured sources
   session create         Create a session (--name, --mode)
   session messages <id>  Print session message history
@@ -2186,8 +2056,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       case 'sessions':
         await cmdSessions(client, args)
         break
-      case 'connections':
-        await cmdConnections(client, args)
+      case 'providers':
+        await cmdProviders(client, args)
         break
       case 'sources':
         await cmdSources(client, args)

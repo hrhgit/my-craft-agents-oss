@@ -6,33 +6,13 @@
  * - Workspace/MCP configuration
  */
 
-import { getCredentialManager } from '../credentials/index.ts';
 import {
   loadStoredConfig,
   getActiveWorkspace,
-  getDefaultLlmConnection,
-  getLlmConnection,
   type AuthType,
   type Workspace,
 } from '../config/storage.ts';
-import { hasPiGlobalAuthForConnection, readPiGlobalApiKeyForConnection } from '../config/pi-global-config.ts';
-
-function toLegacyBillingType(
-  authType: NonNullable<ReturnType<typeof getLlmConnection>>['authType'],
-): AuthType {
-  switch (authType) {
-    case 'oauth':
-      return 'oauth_token'
-    case 'api_key':
-    case 'api_key_with_endpoint':
-    case 'bearer_token':
-    case 'iam_credentials':
-    case 'service_account_file':
-    case 'environment':
-    case 'none':
-      return 'api_key'
-  }
-}
+import { hasPiGlobalProviderAuth, readPiGlobalApiKey, readPiGlobalCredential, readPiGlobalProviders, readPiGlobalSettings } from '../config/pi-global-config.ts';
 
 // ============================================
 // Types
@@ -74,57 +54,24 @@ export interface SetupNeeds {
 /**
  * Get complete authentication state from all sources (config file + credential store)
  *
- * Uses LLM connections as the source of truth for auth type and credentials.
+ * Uses Pi provider settings and auth.json as the source of truth.
  */
 export async function getAuthState(): Promise<AuthState> {
   const config = loadStoredConfig();
-  const manager = getCredentialManager();
   const activeWorkspace = getActiveWorkspace();
-
-  // Get the default LLM connection to determine auth type
-  const defaultConnectionSlug = getDefaultLlmConnection();
-  const connection = defaultConnectionSlug ? getLlmConnection(defaultConnectionSlug) : null;
-
-  // Determine auth type from connection
-  let effectiveAuthType: AuthType | null = null;
-  if (connection) {
-    // Any configured default connection counts as billing-configured,
-    // including environment/IAM auth (Bedrock, Vertex).
-    effectiveAuthType = toLegacyBillingType(connection.authType)
-  }
-
-  // Check credentials based on the effective auth type and connection
-  let hasCredentials = false;
-  let apiKey: string | null = null;
-  let oauthToken: string | null = null;
-
-  if (connection && defaultConnectionSlug) {
-    // Use LLM connection credentials
-    // Pass providerType for OAuth routing (OpenAI OAuth needs idToken)
-    hasCredentials =
-      await manager.hasLlmCredentials(defaultConnectionSlug, connection.authType, connection.providerType)
-      || hasPiGlobalAuthForConnection(connection);
-
-    if (connection.authType === 'api_key' || connection.authType === 'api_key_with_endpoint' || connection.authType === 'bearer_token') {
-      apiKey = await manager.getLlmApiKey(defaultConnectionSlug)
-        || readPiGlobalApiKeyForConnection(connection)
-        || null;
-      // Keyless providers (Ollama) are valid when a custom base URL is configured
-      if (!apiKey && connection.baseUrl) {
-        hasCredentials = true;
-      }
-    } else if (connection.authType === 'oauth') {
-      const llmOAuth = await manager.getLlmOAuth(defaultConnectionSlug);
-      if (llmOAuth?.accessToken) {
-        oauthToken = llmOAuth.accessToken;
-      }
-    }
-    // Other auth types (iam_credentials, service_account_file, environment, none) are handled by hasLlmCredentials
-    // OpenAI / ChatGPT OAuth credentials are handled inside PiAgent's auth path
-  } else {
-    // No connection configured - credentials not available
-    hasCredentials = false;
-  }
+  const settings = readPiGlobalSettings();
+  const providerKey = settings.defaultProvider;
+  const provider = providerKey ? readPiGlobalProviders()[providerKey] : undefined;
+  const credential = providerKey ? readPiGlobalCredential(providerKey) : undefined;
+  const effectiveAuthType: AuthType | null = provider
+    ? (credential?.type === 'oauth' ? 'oauth_token' : 'api_key')
+    : null;
+  const apiKey = providerKey ? readPiGlobalApiKey(providerKey) ?? null : null;
+  const oauthToken = credential?.type === 'oauth' ? credential.access ?? null : null;
+  const hasCredentials = !!provider && (
+    hasPiGlobalProviderAuth(providerKey)
+    || !!provider.baseUrl
+  );
 
   return {
     billing: {

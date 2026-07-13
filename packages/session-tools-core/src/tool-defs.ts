@@ -131,10 +131,10 @@ export const BrowserToolSchema = z.object({
 });
 
 export const SpawnSessionSchema = z.object({
-  help: z.boolean().optional().describe('If true, returns available connections, models, and sources instead of creating a session'),
+  help: z.boolean().optional().describe('If true, returns available providers, models, and sources instead of creating a session'),
   prompt: z.string().optional().describe('Instructions for the new session (required when not in help mode)'),
   name: z.string().optional().describe('Session name'),
-  llmConnection: z.string().optional().describe('Connection slug (e.g., "anthropic-api", "codex")'),
+  provider: z.string().optional().describe('Pi provider key (e.g., "anthropic", "openai")'),
   model: z.string().optional().describe('Model ID override'),
   enabledSourceSlugs: z.array(z.string()).optional().describe('Source slugs to enable in the new session'),
   permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional().describe('Permission mode for the new session'),
@@ -385,10 +385,10 @@ Examples:
 
 Use this to delegate tasks to parallel sessions — research, analysis, drafts, or any work that benefits from separate context.
 
-Call with help=true first to discover available connections, models, and sources.
+Call with help=true first to discover available providers, models, and sources.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: \`model\`, \`llmConnection\`, \`permissionMode\`, \`thinkingLevel\`, \`enabledSourceSlugs\`, \`labels\`. Omitted fields inherit from the spawning session or the workspace default. \`workingDirectory\` is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
+Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, \`thinkingLevel\`, \`enabledSourceSlugs\`, \`labels\`. Omitted fields inherit from the spawning session or the workspace default. \`workingDirectory\` is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 

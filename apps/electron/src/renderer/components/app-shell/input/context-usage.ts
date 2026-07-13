@@ -13,7 +13,7 @@ function validContextWindow(value: number | undefined): number | undefined {
 
 /** Resolve a custom model's configured window when the runtime did not report one. */
 export function getConnectionModelContextWindow(
-  models: readonly (Pick<ModelDefinition, 'id' | 'contextWindow'> | string)[] | undefined,
+  models: readonly (Pick<ModelDefinition, 'id'> & { contextWindow?: number } | string)[] | undefined,
   modelId: string,
 ): number | undefined {
   const model = models?.find(entry =>

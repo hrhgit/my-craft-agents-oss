@@ -1,4 +1,7 @@
-import type { CustomEndpointApi, CustomEndpointConfig } from '@config/llm-connections'
+import type { PiCustomApi } from '@craft-agent/shared/config/pi-provider-models'
+
+type CustomEndpointApi = PiCustomApi
+export interface CustomEndpointConfig { api: PiCustomApi }
 
 export type PresetKey = string
 

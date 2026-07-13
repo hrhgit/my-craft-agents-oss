@@ -1,5 +1,5 @@
 /**
- * Connection Setup Logic
+ * Provider Setup Logic
  *
  * Pure functions extracted from ipc.ts for testability.
  * No dependency on ipcMain, sessionManager, credential manager, or file I/O.
@@ -7,11 +7,7 @@
 
 import type { ModelDefinition } from '@craft-agent/shared/config/models'
 import {
-  type LlmConnection,
-  type CustomEndpointApi,
-  getDefaultModelsForConnection,
-  getDefaultModelForConnection,
-  defaultMidStreamBehavior,
+  type PiCustomApi,
 } from '@craft-agent/shared/config'
 
 // ============================================================
@@ -107,9 +103,9 @@ export function setupTestRequiresApiKey(baseUrl?: string): boolean {
 export function resolveCustomEndpointSetup(input: {
   baseUrl: string | undefined
   credential: string | undefined
-  customEndpointApi: CustomEndpointApi
+  customEndpointApi: PiCustomApi
 }): {
-  authType: Extract<LlmConnection['authType'], 'none' | 'api_key_with_endpoint'>
+  authType: 'none' | 'api_key_with_endpoint'
   name?: 'Local Model'
   piAuthProvider?: 'openai' | 'anthropic'
 } {
@@ -121,34 +117,6 @@ export function resolveCustomEndpointSetup(input: {
     authType: 'api_key_with_endpoint',
     piAuthProvider: input.customEndpointApi === 'anthropic-messages' ? 'anthropic' : 'openai',
   }
-}
-
-// ============================================================
-// Built-in Connection Templates
-// ============================================================
-
-/**
- * Built-in connection templates for the onboarding flow.
- * Each template defines the default configuration for a known connection slug.
- */
-export const BUILT_IN_CONNECTION_TEMPLATES: Record<string, {
-  name: string | ((hasCustomEndpoint: boolean) => string)
-  providerType: LlmConnection['providerType'] | ((hasCustomEndpoint: boolean) => LlmConnection['providerType'])
-  authType: LlmConnection['authType'] | ((hasCustomEndpoint: boolean) => LlmConnection['authType'])
-  piAuthProvider?: string
-}> = {
-  'pi-anthropic': {
-    name: (h) => h ? 'Custom Anthropic-Compatible' : 'Pi (Anthropic)',
-    providerType: (h) => h ? 'pi_compat' : 'pi',
-    authType: (h) => h ? 'api_key_with_endpoint' : 'api_key',
-    piAuthProvider: 'anthropic',
-  },
-  'pi-api-key': {
-    name: 'Pi (API Key)',
-    providerType: 'pi',
-    authType: 'api_key',
-    // piAuthProvider set dynamically from setup.piAuthProvider
-  },
 }
 
 // ============================================================
@@ -181,54 +149,6 @@ export function piAuthProviderDisplayName(piAuthProvider: string): string | null
 }
 
 // ============================================================
-// Connection Creation
-// ============================================================
-
-/**
- * Create an LLM connection configuration from a connection slug.
- * Uses built-in templates for known slugs, throws for unknown slugs
- * (custom connections are created through the settings UI).
- */
-export function createBuiltInConnection(slug: string, baseUrl?: string | null): LlmConnection {
-  // Try exact match first, then strip numeric suffix for derived slugs (e.g. 'anthropic-api-2' → 'anthropic-api')
-  const baseSlug = slug.replace(/-\d+$/, '')
-  const template = BUILT_IN_CONNECTION_TEMPLATES[slug] ?? BUILT_IN_CONNECTION_TEMPLATES[baseSlug]
-  if (!template) {
-    throw new Error(`Unknown built-in connection slug: ${slug}. Custom connections should be created through settings.`)
-  }
-
-  const hasCustomEndpoint = !!baseUrl
-  const providerType = typeof template.providerType === 'function'
-    ? template.providerType(hasCustomEndpoint)
-    : template.providerType
-  const authType = typeof template.authType === 'function'
-    ? template.authType(hasCustomEndpoint)
-    : template.authType
-  let name = typeof template.name === 'function'
-    ? template.name(hasCustomEndpoint)
-    : template.name
-
-  // Append suffix number to name for derived connections (e.g. 'anthropic-api-2' → 'Anthropic (API Key) 2')
-  const suffixMatch = slug.match(/-(\d+)$/)
-  if (suffixMatch && !BUILT_IN_CONNECTION_TEMPLATES[slug]) {
-    name = `${name} ${suffixMatch[1]}`
-  }
-
-  return {
-    slug,
-    name,
-    providerType,
-    authType,
-    models: getDefaultModelsForConnection(providerType, template.piAuthProvider),
-    defaultModel: getDefaultModelForConnection(providerType, template.piAuthProvider),
-    modelSelectionMode: providerType === 'pi' ? 'automaticallySyncedFromProvider' : undefined,
-    piAuthProvider: template.piAuthProvider,
-    midStreamBehavior: defaultMidStreamBehavior(providerType),
-    createdAt: Date.now(),
-  }
-}
-
-// ============================================================
 // Model Validation
 // ============================================================
 
@@ -236,9 +156,7 @@ export function createBuiltInConnection(slug: string, baseUrl?: string | null): 
  * Validate that the default model exists in the provided model list.
  * Handles both string and ModelDefinition model entries.
  *
- * This was extracted from inline logic in the setupLlmConnection IPC handler
- * to fix a bug where Array.includes() compared strings against ModelDefinition
- * objects, always returning false for Pi connections.
+ * Handles both string IDs and structured provider model entries.
  */
 export function validateModelList(
   models: Array<ModelDefinition | string>,

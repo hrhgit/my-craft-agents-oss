@@ -12,7 +12,7 @@
  */
 
 import type { ModelDefinition } from './models';
-import type { LlmProviderType, LlmConnection } from './llm-connections';
+import type { PiGlobalProvider } from './pi-global-config.ts';
 
 // ============================================================
 // Types
@@ -26,9 +26,7 @@ import type { LlmProviderType, LlmConnection } from './llm-connections';
  * Adding a new LlmProviderType without updating this type
  * will cause a compile error in the fetcher registry.
  */
-export type FetchableProvider = Exclude<LlmProviderType,
-  | 'pi_compat'
->;
+export type FetchableProvider = string;
 
 /**
  * Result of a model fetch operation.
@@ -62,7 +60,8 @@ export interface ModelFetcher {
    * Throws on failure — the ModelRefreshService handles fallback.
    */
   fetchModels(
-    connection: LlmConnection,
+    providerKey: string,
+    provider: PiGlobalProvider,
     credentials: ModelFetcherCredentials,
   ): Promise<ModelFetchResult>;
 

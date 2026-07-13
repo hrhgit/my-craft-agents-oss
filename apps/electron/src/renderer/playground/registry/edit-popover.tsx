@@ -257,7 +257,7 @@ const mockAppShellContext = {
   pendingPermissions: new Map(),
   pendingCredentials: new Map(),
   currentModel: 'haiku',
-  connectionDefaultModel: null,
+  providerDefaultModel: null,
   sessionOptions: new Map(),
   getDraft: () => '',
   onSelectSession: () => {},
@@ -502,3 +502,5 @@ export const editPopoverComponents: ComponentEntry[] = [
     }),
   },
 ]
+
+

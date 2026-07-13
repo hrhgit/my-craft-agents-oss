@@ -7,7 +7,7 @@
 
 import type { CredentialBackend } from './backends/types.ts';
 import type { CredentialId, CredentialType, StoredCredential, CredentialHealthStatus, CredentialHealthIssue } from './types.ts';
-import type { LlmAuthType, LlmProviderType } from '../config/llm-connections.ts';
+import type { LlmAuthType, LlmProviderType } from '../agent/backend/types.ts';
 import { PiCredentialStore } from './backends/secure-storage.ts';
 import { debug } from '../utils/debug.ts';
 
@@ -277,46 +277,46 @@ export class CredentialManager {
   // ============================================================
 
   /**
-   * Get API key for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Get API key for an Pi provider.
+   * @param providerKey - The provider key
    * @returns API key or null if not found
    */
-  async getLlmApiKey(connectionSlug: string): Promise<string | null> {
-    const cred = await this.get({ type: 'llm_api_key', connectionSlug });
+  async getProviderApiKey(providerKey: string): Promise<string | null> {
+    const cred = await this.get({ type: 'llm_api_key', providerKey });
     return cred?.value || null;
   }
 
   /**
-   * Set API key for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Set API key for an Pi provider.
+   * @param providerKey - The provider key
    * @param apiKey - The API key to store
    */
-  async setLlmApiKey(connectionSlug: string, apiKey: string): Promise<void> {
-    await this.set({ type: 'llm_api_key', connectionSlug }, { value: apiKey });
+  async setProviderApiKey(providerKey: string, apiKey: string): Promise<void> {
+    await this.set({ type: 'llm_api_key', providerKey }, { value: apiKey });
   }
 
   /**
-   * Delete API key for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Delete API key for an Pi provider.
+   * @param providerKey - The provider key
    * @returns true if deleted, false if not found
    */
-  async deleteLlmApiKey(connectionSlug: string): Promise<boolean> {
-    return this.delete({ type: 'llm_api_key', connectionSlug });
+  async deleteProviderApiKey(providerKey: string): Promise<boolean> {
+    return this.delete({ type: 'llm_api_key', providerKey });
   }
 
   /**
-   * Get OAuth token for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Get OAuth token for an Pi provider.
+   * @param providerKey - The provider key
    * @returns OAuth credentials or null if not found
    */
-  async getLlmOAuth(connectionSlug: string): Promise<{
+  async getProviderOAuth(providerKey: string): Promise<{
     accessToken: string;
     refreshToken?: string;
     expiresAt?: number;
     /** OIDC id_token (used by OpenAI/Codex) */
     idToken?: string;
   } | null> {
-    const cred = await this.get({ type: 'llm_oauth', connectionSlug });
+    const cred = await this.get({ type: 'llm_oauth', providerKey });
     if (!cred) return null;
     return {
       accessToken: cred.value,
@@ -327,18 +327,18 @@ export class CredentialManager {
   }
 
   /**
-   * Set OAuth token for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Set OAuth token for an Pi provider.
+   * @param providerKey - The provider key
    * @param credentials - OAuth credentials to store
    */
-  async setLlmOAuth(connectionSlug: string, credentials: {
+  async setProviderOAuth(providerKey: string, credentials: {
     accessToken: string;
     refreshToken?: string;
     expiresAt?: number;
     /** OIDC id_token (used by OpenAI/Codex) */
     idToken?: string;
   }): Promise<void> {
-    await this.set({ type: 'llm_oauth', connectionSlug }, {
+    await this.set({ type: 'llm_oauth', providerKey }, {
       value: credentials.accessToken,
       refreshToken: credentials.refreshToken,
       expiresAt: credentials.expiresAt,
@@ -347,14 +347,14 @@ export class CredentialManager {
   }
 
   /**
-   * Delete all credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Delete all credentials for an Pi provider.
+   * @param providerKey - The provider key
    */
-  async deleteLlmCredentials(connectionSlug: string): Promise<void> {
-    await this.delete({ type: 'llm_api_key', connectionSlug });
-    await this.delete({ type: 'llm_oauth', connectionSlug });
-    await this.delete({ type: 'llm_iam', connectionSlug });
-    await this.delete({ type: 'llm_service_account', connectionSlug });
+  async deleteProviderCredentials(providerKey: string): Promise<void> {
+    await this.delete({ type: 'llm_api_key', providerKey });
+    await this.delete({ type: 'llm_oauth', providerKey });
+    await this.delete({ type: 'llm_iam', providerKey });
+    await this.delete({ type: 'llm_service_account', providerKey });
   }
 
   // ============================================================
@@ -362,17 +362,17 @@ export class CredentialManager {
   // ============================================================
 
   /**
-   * Get IAM credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Get IAM credentials for an Pi provider.
+   * @param providerKey - The provider key
    * @returns IAM credentials or null if not found
    */
-  async getLlmIamCredentials(connectionSlug: string): Promise<{
+  async getProviderIamCredentials(providerKey: string): Promise<{
     accessKeyId: string;
     secretAccessKey: string;
     region?: string;
     sessionToken?: string;
   } | null> {
-    const cred = await this.get({ type: 'llm_iam', connectionSlug });
+    const cred = await this.get({ type: 'llm_iam', providerKey });
     if (!cred || !cred.awsAccessKeyId) return null;
     return {
       accessKeyId: cred.awsAccessKeyId,
@@ -383,17 +383,17 @@ export class CredentialManager {
   }
 
   /**
-   * Set IAM credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Set IAM credentials for an Pi provider.
+   * @param providerKey - The provider key
    * @param credentials - IAM credentials to store
    */
-  async setLlmIamCredentials(connectionSlug: string, credentials: {
+  async setProviderIamCredentials(providerKey: string, credentials: {
     accessKeyId: string;
     secretAccessKey: string;
     region?: string;
     sessionToken?: string;
   }): Promise<void> {
-    await this.set({ type: 'llm_iam', connectionSlug }, {
+    await this.set({ type: 'llm_iam', providerKey }, {
       value: credentials.secretAccessKey, // Primary secret in value field
       awsAccessKeyId: credentials.accessKeyId,
       awsRegion: credentials.region,
@@ -406,17 +406,17 @@ export class CredentialManager {
   // ============================================================
 
   /**
-   * Get service account credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Get service account credentials for an Pi provider.
+   * @param providerKey - The provider key
    * @returns Service account JSON and metadata or null if not found
    */
-  async getLlmServiceAccount(connectionSlug: string): Promise<{
+  async getProviderServiceAccount(providerKey: string): Promise<{
     serviceAccountJson: string;
     projectId?: string;
     region?: string;
     email?: string;
   } | null> {
-    const cred = await this.get({ type: 'llm_service_account', connectionSlug });
+    const cred = await this.get({ type: 'llm_service_account', providerKey });
     if (!cred) return null;
     return {
       serviceAccountJson: cred.value, // Full JSON stored in value field
@@ -427,17 +427,17 @@ export class CredentialManager {
   }
 
   /**
-   * Set service account credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * Set service account credentials for an Pi provider.
+   * @param providerKey - The provider key
    * @param credentials - Service account credentials to store
    */
-  async setLlmServiceAccount(connectionSlug: string, credentials: {
+  async setProviderServiceAccount(providerKey: string, credentials: {
     serviceAccountJson: string;
     projectId?: string;
     region?: string;
     email?: string;
   }): Promise<void> {
-    await this.set({ type: 'llm_service_account', connectionSlug }, {
+    await this.set({ type: 'llm_service_account', providerKey }, {
       value: credentials.serviceAccountJson, // Full JSON in value field
       gcpProjectId: credentials.projectId,
       gcpRegion: credentials.region,
@@ -450,16 +450,16 @@ export class CredentialManager {
   // ============================================================
 
   /**
-   * Check if an LLM connection has valid credentials.
+   * Check if an Pi provider has valid credentials.
    * Uses the new LlmAuthType system - routes by auth mechanism.
    *
-   * @param connectionSlug - The connection slug
+   * @param providerKey - The provider key
    * @param authType - The auth type to check
    * @param providerType - Optional provider type for OAuth routing
    * @returns true if credentials exist and are valid
    */
-  async hasLlmCredentials(
-    connectionSlug: string,
+  async hasProviderCredentials(
+    providerKey: string,
     authType: LlmAuthType,
     providerType?: LlmProviderType
   ): Promise<boolean> {
@@ -473,19 +473,19 @@ export class CredentialManager {
       case 'api_key':
       case 'api_key_with_endpoint':
       case 'bearer_token':
-        return this.hasLlmApiKeyCredential(connectionSlug);
+        return this.hasProviderApiKeyCredential(providerKey);
 
       // OAuth - browser flow
       case 'oauth':
-        return this.hasLlmOAuthCredential(connectionSlug, providerType);
+        return this.hasProviderOAuthCredential(providerKey, providerType);
 
       // AWS IAM credentials
       case 'iam_credentials':
-        return this.hasLlmIamCredential(connectionSlug);
+        return this.hasProviderIamCredential(providerKey);
 
       // GCP service account
       case 'service_account_file':
-        return this.hasLlmServiceAccountCredential(connectionSlug);
+        return this.hasProviderServiceAccountCredential(providerKey);
 
       default:
         // Exhaustive check - TypeScript will error if we miss a case
@@ -498,8 +498,8 @@ export class CredentialManager {
    * Check if connection has valid API key credential.
    * @internal
    */
-  private async hasLlmApiKeyCredential(connectionSlug: string): Promise<boolean> {
-    const apiKey = await this.getLlmApiKey(connectionSlug);
+  private async hasProviderApiKeyCredential(providerKey: string): Promise<boolean> {
+    const apiKey = await this.getProviderApiKey(providerKey);
     return !!apiKey;
   }
 
@@ -507,11 +507,11 @@ export class CredentialManager {
    * Check if connection has valid OAuth credential.
    * @internal
    */
-  private async hasLlmOAuthCredential(
-    connectionSlug: string,
+  private async hasProviderOAuthCredential(
+    providerKey: string,
     providerType?: LlmProviderType
   ): Promise<boolean> {
-    const oauth = await this.getLlmOAuth(connectionSlug);
+    const oauth = await this.getProviderOAuth(providerKey);
     if (!oauth) return false;
 
     // Check if expired
@@ -525,8 +525,8 @@ export class CredentialManager {
    * Check if connection has valid IAM credential.
    * @internal
    */
-  private async hasLlmIamCredential(connectionSlug: string): Promise<boolean> {
-    const cred = await this.getLlmIamCredentials(connectionSlug);
+  private async hasProviderIamCredential(providerKey: string): Promise<boolean> {
+    const cred = await this.getProviderIamCredentials(providerKey);
     return !!cred?.accessKeyId && !!cred?.secretAccessKey;
   }
 
@@ -534,8 +534,8 @@ export class CredentialManager {
    * Check if connection has valid service account credential.
    * @internal
    */
-  private async hasLlmServiceAccountCredential(connectionSlug: string): Promise<boolean> {
-    const cred = await this.getLlmServiceAccount(connectionSlug);
+  private async hasProviderServiceAccountCredential(providerKey: string): Promise<boolean> {
+    const cred = await this.getProviderServiceAccount(providerKey);
     return !!cred?.serviceAccountJson;
   }
 
@@ -576,7 +576,7 @@ export class CredentialManager {
    *
    * This validates:
    * 1. The credential file (pi auth.json) can be read and parsed (if it exists)
-   * 2. The default LLM connection has valid credentials
+   * 2. The default Pi provider has valid credentials
    *
    * Note: credentials are stored as plaintext JSON in ~/.pi/agent/auth.json
    * (0600 permissions). There is no decryption step; the former
@@ -623,34 +623,23 @@ export class CredentialManager {
       return { healthy: false, issues };
     }
 
-    // 2. Check if default connection has credentials
+    // 2. Check if the default Pi provider has credentials.
     // Import lazily to avoid circular dependency
     try {
-      const { getDefaultLlmConnection, getLlmConnection } = await import('../config/storage.ts');
-      const { hasPiGlobalAuthForConnection } = await import('../config/pi-global-config.ts');
-      const defaultSlug = getDefaultLlmConnection();
+      const { hasPiGlobalProviderAuth, readPiGlobalProviders, readPiGlobalSettings } = await import('../config/pi-global-config.ts');
+      const settings = readPiGlobalSettings();
+      const providerKey = settings.defaultProvider;
+      const provider = providerKey ? readPiGlobalProviders()[providerKey] : undefined;
 
-      if (defaultSlug) {
-        const connection = getLlmConnection(defaultSlug);
-        if (connection && connection.authType !== 'none' && connection.authType !== 'environment') {
-          const hasCredentials =
-            await this.hasLlmCredentials(
-              defaultSlug,
-              connection.authType,
-              connection.providerType
-            )
-            || hasPiGlobalAuthForConnection(connection);
-          if (!hasCredentials) {
-            issues.push({
-              type: 'no_default_credentials',
-              message: `No credentials found for default connection "${connection.name}".`,
-            });
-          }
-        }
+      if (providerKey && provider && !provider.baseUrl && !hasPiGlobalProviderAuth(providerKey)) {
+        issues.push({
+          type: 'no_default_credentials',
+          message: `No credentials found for default provider "${providerKey}".`,
+        });
       }
     } catch (configError) {
       // Config not yet initialized - skip this check
-      debug('[CredentialManager] Skipping default connection check - config not available');
+      debug('[CredentialManager] Skipping default provider check - config not available');
     }
 
     return {

@@ -14,10 +14,10 @@
  *
  * Slug 命名约定（沿用 credentialIdToAccount 的 `::` 分隔格式，无 `.`，符合
  * pi setCraftCredential 的 slug 校验）：
- *   - llm_api_key::<connectionSlug>
- *   - llm_oauth::<connectionSlug>
- *   - llm_iam::<connectionSlug>
- *   - llm_service_account::<connectionSlug>
+ *   - llm_api_key::<providerKey>
+ *   - llm_oauth::<providerKey>
+ *   - llm_iam::<providerKey>
+ *   - llm_service_account::<providerKey>
  *   - workspace_oauth::<workspaceId>
  *   - source_oauth::<workspaceId>::<sourceId>
  *   - source_bearer::<workspaceId>::<sourceId>
@@ -87,7 +87,7 @@ function listCraftSlugs(): string[] {
 
 /**
  * Slug 点号转义：pi 的 setCraftCredential 校验 slug 不含 `.`（与 `craft.<slug>`
- * 命名空间前缀冲突），而 craft 的 scope 段（connectionSlug / sourceId / 自定义
+ * 命名空间前缀冲突），而 craft 的 scope 段（providerKey / sourceId / 自定义
  * 连接名）可能含 `.`。使用百分号编码 `%2E`——可逆且无碰撞风险。
  *
  * 例：`source_oauth::ws1::my.api.source` → `source_oauth::ws1::my%2Eapi%2Esource`
@@ -185,7 +185,7 @@ export class PiCredentialStore implements CredentialBackend {
       if (filter.type && id.type !== filter.type) return false;
       if (filter.workspaceId && id.workspaceId !== filter.workspaceId) return false;
       if (filter.name && id.name !== filter.name) return false;
-      if (filter.connectionSlug && id.connectionSlug !== filter.connectionSlug) return false;
+      if (filter.providerKey && id.providerKey !== filter.providerKey) return false;
       return true;
     });
   }

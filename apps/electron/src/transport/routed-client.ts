@@ -133,9 +133,11 @@ export class RoutedClient implements RpcClient {
       ? await target.invokeWithOptions(channel, translatedArgs, options)
       : await target.invoke(channel, ...translatedArgs)
 
-    // Intercept SWITCH_WORKSPACE response to swap workspace client
+    // Intercept SWITCH_WORKSPACE response to swap workspace client. Wait for
+    // the workspace transport to adopt the new context before the renderer
+    // starts issuing workspace-scoped requests.
     if (channel === RPC_CHANNELS.window.SWITCH_WORKSPACE) {
-      this.handleWorkspaceSwitch(result as WorkspaceSwitchResult)
+      await this.handleWorkspaceSwitch(result as WorkspaceSwitchResult)
     }
 
     return result
@@ -201,7 +203,7 @@ export class RoutedClient implements RpcClient {
   // Workspace switch
   // -------------------------------------------------------------------------
 
-  private handleWorkspaceSwitch(result: WorkspaceSwitchResult): void {
+  private async handleWorkspaceSwitch(result: WorkspaceSwitchResult): Promise<void> {
     if (!result) return
 
     if (result.remoteServer && this.clientFactory) {
@@ -210,11 +212,24 @@ export class RoutedClient implements RpcClient {
       const newClient = this.clientFactory(result.remoteServer)
       newClient.connect()
       this.swapWorkspaceClient(newClient)
-    } else if (!result.remoteServer && this.workspaceClient !== this.localWorkspaceClient) {
+    } else if (!result.remoteServer) {
+      // SWITCH_WORKSPACE is LOCAL_ONLY, so the first invocation above updates
+      // the Electron GUI bridge. In isolated-runtime mode, workspace-scoped
+      // requests use a separate child-server connection whose handshake still
+      // carries the previous workspace until we update it explicitly.
+      if (this.localWorkspaceClient !== this.localClient) {
+        await this.localWorkspaceClient.invoke(
+          RPC_CHANNELS.window.SWITCH_WORKSPACE,
+          result.workspaceId,
+        )
+      }
+
       // Switching to a local workspace — clear mapping and use the local
       // workspace runtime. This can be distinct from the Electron GUI bridge.
       this.clearWorkspaceMapping()
-      this.swapWorkspaceClient(this.localWorkspaceClient)
+      if (this.workspaceClient !== this.localWorkspaceClient) {
+        this.swapWorkspaceClient(this.localWorkspaceClient)
+      }
     }
   }
 

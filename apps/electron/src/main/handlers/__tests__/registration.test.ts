@@ -110,7 +110,7 @@ async function getExpectedChannels(): Promise<Set<string>> {
     import('@craft-agent/server-core/handlers/rpc/automations'),
     import('@craft-agent/server-core/handlers/rpc/files'),
     import('@craft-agent/server-core/handlers/rpc/labels'),
-    import('@craft-agent/server-core/handlers/rpc/llm-connections'),
+    import('@craft-agent/server-core/handlers/rpc/pi-providers'),
     import('@craft-agent/server-core/handlers/rpc/oauth'),
     import('@craft-agent/server-core/handlers/rpc/sessions'),
     import('@craft-agent/server-core/handlers/rpc/settings'),

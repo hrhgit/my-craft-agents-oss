@@ -36,8 +36,8 @@ export const CRAFT_SESSION_METADATA_FIELDS = [
   'lastReadMessageId', 'hasUnread',
   // Config
   'enabledSourceSlugs', 'permissionMode', 'previousPermissionMode', 'workingDirectory',
-  // Model/Connection
-  'model', 'llmConnection', 'connectionLocked', 'thinkingLevel',
+  // Model/Provider
+  'model', 'provider', 'thinkingLevel',
   // Sharing
   'sharedUrl', 'sharedId',
   // Plan execution
@@ -204,15 +204,13 @@ export interface CraftSessionMetadata {
   sdkCwd?: string;
 
   // ============================================
-  // Craft 模型/连接
+  // Craft Provider/模型
   // ============================================
 
   /** 模型 ID（覆盖全局配置） */
   model?: string;
-  /** LLM connection slug（首条消息后锁定） */
-  llmConnection?: string;
-  /** 连接是否锁定（首 agent 创建后不可更改） */
-  connectionLocked?: boolean;
+  /** Pi provider key（session override） */
+  provider?: string;
   /** 思考级别（'off', 'think', 'max'） */
   thinkingLevel?: ThinkingLevel;
 

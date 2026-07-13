@@ -65,21 +65,18 @@ import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { ImageSupportWarningBanner } from './ImageSupportWarningBanner'
 import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, type ModelDefinition } from '@config/models'
-import {
-  resolveEffectiveConnectionSlug,
-  isCompatProvider,
-  modelSupportsImages,
-} from '@config/llm-connections'
+import { piProviderModelSupportsImages } from '@craft-agent/shared/config/pi-provider-models'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import { SourceSelectorPopover } from '@/components/ui/SourceSelectorPopover'
 import { CompactSourceSelector } from '@/components/ui/CompactSourceSelector'
 import { CompactWorkingDirectorySelector } from '@/components/ui/CompactWorkingDirectorySelector'
-import { ConnectionIcon } from '@/components/icons/ConnectionIcon'
+import { ProviderIcon } from '@/components/icons/ProviderIcon'
 import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
 import { derivePickerMode } from './picker-mode'
 import type { FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
+import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@craft-agent/shared/agent/thinking-levels'
 import {
@@ -101,7 +98,8 @@ import { CompactPermissionModeSelector } from './CompactPermissionModeSelector'
 import { CompactModelSelector } from './CompactModelSelector'
 import {
   formatTokenCount,
-  groupConnectionsByProvider,
+  groupProviders,
+  resolveEffectiveProvider,
   stripPiPrefixForDisplay,
 } from './model-picker-helpers'
 import {
@@ -245,15 +243,15 @@ export interface FreeFormInputProps {
   /** Whether the session is currently processing */
   isProcessing?: boolean
   /** Callback when message is submitted (skillSlugs from @mentions) */
-  onSubmit: (message: string, attachments?: FileAttachment[], skillSlugs?: string[]) => void
+  onSubmit: (message: string, attachments?: FileAttachment[], skillSlugs?: string[], midStreamSendIntent?: MidStreamSendIntent) => void
   /** Callback to stop processing. Pass silent=true to skip "Response interrupted" message */
   onStop?: (silent?: boolean) => void
   /** External ref for the input */
   inputRef?: React.RefObject<RichTextInputHandle>
   /** Current model ID */
   currentModel: string
-  /** Callback when model changes (includes connection slug for proper persistence) */
-  onModelChange: (model: string, connection?: string) => void
+  /** Callback when model changes (includes provider key for proper persistence) */
+  onModelChange: (model: string, provider?: string) => void
   // Thinking level (session-level setting)
   /** Current thinking level ('off', 'minimal', 'low', 'medium', 'high', 'xhigh') */
   thinkingLevel?: ThinkingLevel
@@ -342,12 +340,12 @@ export interface FreeFormInputProps {
    */
   enableCompactModelPicker?: boolean
   // Connection selection (hierarchical connection → model selector)
-  /** Current LLM connection slug */
-  currentConnection?: string
+  /** Current provider key */
+  currentProvider?: string
   /** Callback when connection changes */
-  onConnectionChange?: (connectionSlug: string) => void
+  onProviderChange?: (providerKey: string) => void
   /** When true, the session's selected connection has been removed */
-  connectionUnavailable?: boolean
+  providerUnavailable?: boolean
   /**
    * True when the input is collapsed because the agent is processing in
    * compact mode and the user hasn't expanded it yet. Owned by
@@ -410,9 +408,9 @@ export function FreeFormInput({
   onFollowUpIndexClick,
   compactMode = false,
   enableCompactModelPicker = false,
-  currentConnection,
-  onConnectionChange,
-  connectionUnavailable = false,
+  currentProvider,
+  onProviderChange,
+  providerUnavailable = false,
   isCollapsedInCompact = false,
   onRequestExpand,
 }: FreeFormInputProps) {
@@ -434,48 +432,45 @@ export function FreeFormInput({
   // Read connection default model, connections, and workspace info from context.
   // Uses optional variant so playground (no provider) doesn't crash.
   const appShellCtx = useOptionalAppShellContext()
-  const llmConnections = appShellCtx?.llmConnections ?? []
-  const workspaceDefaultConnection = appShellCtx?.workspaceDefaultLlmConnection
+  const providerItems = appShellCtx?.piProviders ?? []
+  const defaultProvider = appShellCtx?.piGlobalSettings.defaultProvider
 
-  // Derive connectionDefaultModel per-session from the effective connection.
+  // Derive providerDefaultModel per-session from the effective connection.
   // Only non-null for compat providers (custom endpoints with fixed models).
   // Standard providers (anthropic, pi) → null → normal model picker.
-  const connectionDefaultModel = React.useMemo(() => {
-    const effectiveSlug = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, llmConnections)
-    const conn = llmConnections.find(c => c.slug === effectiveSlug)
-    if (!conn) return null
-    if (!isCompatProvider(conn.providerType)) return null
-    // Allow model switching when connection has multiple models
-    if (conn.models && conn.models.length > 1) return null
-    return conn.defaultModel ?? null
-  }, [currentConnection, workspaceDefaultConnection, llmConnections])
+  const providerDefaultModel = React.useMemo(() => {
+    const effectiveKey = resolveEffectiveProvider(currentProvider, defaultProvider, providerItems)
+    const entry = providerItems.find(candidate => candidate.key === effectiveKey)
+    if (!entry || (entry.provider.models?.length ?? 0) > 1) return null
+    return entry.provider.models?.[0]?.id ?? null
+  }, [currentProvider, defaultProvider, providerItems])
 
   // Decide which of the four picker UIs to render. The `switcher` branch
   // wins over `locked-single` so users with multiple providers can always
   // reach the connection list, including after a session has started.
   const pickerMode = derivePickerMode({
-    connectionUnavailable,
-    connectionDefaultModel,
+    providerUnavailable,
+    providerDefaultModel,
     isEmptySession,
-    connectionCount: llmConnections.length,
+    providerCount: providerItems.length,
   })
 
   // Compute available models from the effective connection.
   // All connections have models populated by backfillAllConnectionModels().
   const availableModels = React.useMemo(() => {
     // Connection removed — don't fall through to another connection's models
-    if (connectionUnavailable) return []
+    if (providerUnavailable) return []
 
     // Determine effective connection using the canonical fallback chain
-    const effectiveSlug = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, llmConnections)
-    const connection = llmConnections.find(c => c.slug === effectiveSlug)
+    const effectiveKey = resolveEffectiveProvider(currentProvider, defaultProvider, providerItems)
+    const provider = providerItems.find(entry => entry.key === effectiveKey)
 
-    if (!connection) {
+    if (!provider) {
       return ANTHROPIC_MODELS // Safety net — shouldn't happen
     }
 
-    return connection.models || ANTHROPIC_MODELS
-  }, [llmConnections, currentConnection, workspaceDefaultConnection, connectionUnavailable])
+    return provider.provider.models || ANTHROPIC_MODELS
+  }, [providerItems, currentProvider, defaultProvider, providerUnavailable])
 
   const availableThinkingLevels = THINKING_LEVELS
 
@@ -487,7 +482,7 @@ export function FreeFormInput({
 
   // Get display name for current model (full name, not short name)
   const currentModelDisplayName = React.useMemo(() => {
-    const modelToDisplay = connectionDefaultModel ?? currentModel
+    const modelToDisplay = providerDefaultModel ?? currentModel
     const model = availableModels.find(m =>
       typeof m === 'string' ? m === modelToDisplay : m.id === modelToDisplay
     )
@@ -500,35 +495,35 @@ export function FreeFormInput({
     // promotions) may lack `name`. Fall back to the id so the trigger button
     // never goes blank.
     return model.name ?? stripPiPrefixForDisplay(model.id)
-  }, [availableModels, currentModel, connectionDefaultModel])
+  }, [availableModels, currentModel, providerDefaultModel])
 
   // Group connections by provider type for hierarchical dropdown.
   // Each provider (Anthropic, Pi) can have multiple connections (API Key, OAuth, etc.)
-  const connectionsByProvider = React.useMemo(
-    () => groupConnectionsByProvider(llmConnections),
-    [llmConnections],
+  const providerGroups = React.useMemo(
+    () => groupProviders(providerItems),
+    [providerItems],
   )
 
   // Find current connection details for display
-  const currentConnectionDetails = React.useMemo(() => {
-    if (!currentConnection) return null
-    return llmConnections.find(c => c.slug === currentConnection) ?? null
-  }, [llmConnections, currentConnection])
+  const currentProviderDetails = React.useMemo(() => {
+    if (!currentProvider) return null
+    return providerItems.find(entry => entry.key === currentProvider) ?? null
+  }, [providerItems, currentProvider])
 
   // Effective connection: canonical fallback chain (session → workspace default → global default → first)
-  const effectiveConnection = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, llmConnections)
+  const effectiveProvider = resolveEffectiveProvider(currentProvider, defaultProvider, providerItems)
 
   // Effective connection details (with fallbacks) for model list
-  // Unlike currentConnectionDetails which is null when no explicit connection is set,
+  // Unlike currentProviderDetails which is null when no explicit connection is set,
   // this resolves to the actual connection being used (including workspace default)
-  const effectiveConnectionDetails = React.useMemo(() => {
-    if (!effectiveConnection) return null
-    return llmConnections.find(c => c.slug === effectiveConnection) ?? null
-  }, [llmConnections, effectiveConnection])
+  const effectiveProviderDetails = React.useMemo(() => {
+    if (!effectiveProvider) return null
+    return providerItems.find(entry => entry.key === effectiveProvider) ?? null
+  }, [providerItems, effectiveProvider])
 
   const configuredContextWindow = React.useMemo(
-    () => getConnectionModelContextWindow(effectiveConnectionDetails?.models, currentModel),
-    [currentModel, effectiveConnectionDetails?.models],
+    () => getConnectionModelContextWindow(effectiveProviderDetails?.provider.models, currentModel),
+    [currentModel, effectiveProviderDetails?.provider.models],
   )
 
 
@@ -1414,7 +1409,7 @@ export function FreeFormInput({
   }
 
   // Submit message - backend handles queueing and interruption
-  const submitMessage = React.useCallback(() => {
+  const submitMessage = React.useCallback((midStreamSendIntent: MidStreamSendIntent = 'default') => {
     const hasContent = input.trim() || attachments.length > 0 || followUpItems.length > 0
     if (!hasContent || disabled) return false
 
@@ -1440,7 +1435,8 @@ export function FreeFormInput({
     onSubmit(
       input.trim(),
       attachmentSnapshot.length > 0 ? attachmentSnapshot : undefined,
-      mentions.skills.length > 0 ? mentions.skills : undefined
+      mentions.skills.length > 0 ? mentions.skills : undefined,
+      midStreamSendIntent,
     )
     setInput('')
     setAttachments([])
@@ -1533,18 +1529,18 @@ export function FreeFormInput({
       // Enter sends, Shift+Enter adds newline
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
         e.preventDefault()
-        submitMessage()
+        submitMessage('default')
       }
       // Also allow Cmd/Ctrl+Enter to send (power user shortcut)
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
         e.preventDefault()
-        submitMessage()
+        submitMessage('alternate')
       }
     } else {
       // cmd-enter mode: ⌘/Ctrl+Enter sends, plain Enter adds newline
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
         e.preventDefault()
-        submitMessage()
+        submitMessage('alternate')
       }
       // Plain Enter is allowed to pass through (adds newline)
     }
@@ -1713,9 +1709,9 @@ export function FreeFormInput({
   const hasStagedImages = attachments.some(a => a.type === 'image' || a.mimeType?.startsWith('image/'))
   const showVisionWarning =
     hasStagedImages
-    && !!effectiveConnectionDetails
-    && isCompatProvider(effectiveConnectionDetails.providerType)
-    && !modelSupportsImages(effectiveConnectionDetails, currentModel)
+    && !!effectiveProviderDetails
+    && true
+    && !piProviderModelSupportsImages(effectiveProviderDetails!.provider, currentModel)
 
   return (
     <form onSubmit={handleSubmit}>
@@ -1799,10 +1795,10 @@ export function FreeFormInput({
         {/* Pre-flight image-support warning — only for pi_compat connections
             where the renderer can both detect text-only models and offer to
             flip the per-model supportsImages override on the spot. */}
-        {showVisionWarning && effectiveConnectionDetails && (
+        {showVisionWarning && effectiveProviderDetails && (
           <ImageSupportWarningBanner
             modelName={currentModelDisplayName}
-            onEnable={() => handleToggleModelVision(effectiveConnectionDetails.slug, currentModel, true)}
+            onEnable={() => handleToggleModelVision(effectiveProviderDetails.key, currentModel, true)}
           />
         )}
 
@@ -1975,13 +1971,13 @@ export function FreeFormInput({
           {enableCompactModelPicker && (
             <CompactModelSelector
               currentModel={currentModel}
-              currentConnection={currentConnection}
+              currentProvider={currentProvider}
               onModelChange={onModelChange}
-              onConnectionChange={onConnectionChange}
+              onProviderChange={onProviderChange}
               thinkingLevel={thinkingLevel}
               onThinkingLevelChange={onThinkingLevelChange}
               isEmptySession={isEmptySession}
-              connectionUnavailable={connectionUnavailable}
+              providerUnavailable={providerUnavailable}
               contextStatus={contextStatus}
             />
           )}
@@ -2221,17 +2217,17 @@ export function FreeFormInput({
                     className={cn(
                       "input-toolbar-btn inline-flex items-center h-7 px-1.5 gap-0.5 text-[13px] shrink-0 rounded-[6px] hover:bg-foreground/5 transition-colors select-none",
                       modelDropdownOpen && "bg-foreground/5",
-                      connectionUnavailable && "text-destructive",
+                      providerUnavailable && "text-destructive",
                     )}
                   >
-                    {connectionUnavailable ? (
+                    {providerUnavailable ? (
                       <>
                         <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                         {t('common.unavailable')}
                       </>
                     ) : (
                       <>
-                        {effectiveConnectionDetails && llmConnections.length > 1 && storage.get(storage.KEYS.showConnectionIcons, true) && <ConnectionIcon connection={effectiveConnectionDetails} size={14} showTooltip />}
+                        {effectiveProviderDetails && providerItems.length > 1 && storage.get(storage.KEYS.showProviderIcons, true) && <ProviderIcon provider={effectiveProviderDetails} size={14} showTooltip />}
                         {currentModelDisplayName}
                         {pickerMode !== 'locked-single' && <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />}
                       </>
@@ -2248,31 +2244,31 @@ export function FreeFormInput({
               {pickerMode === 'unavailable' ? (
                 <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
                   <AlertCircle className="h-8 w-8 text-destructive mb-2" />
-                  <div className="font-medium text-sm mb-1">{t('chat.connectionUnavailable')}</div>
+                  <div className="font-medium text-sm mb-1">{t('chat.providerUnavailable')}</div>
                   <div className="text-xs text-muted-foreground">
-                    {t('chat.connectionUnavailableDescription')}
+                    {t('chat.providerUnavailableDescription')}
                   </div>
                 </div>
-              ) : pickerMode === 'locked-single' && connectionDefaultModel ? (
+              ) : pickerMode === 'locked-single' && providerDefaultModel ? (
                 (() => {
                   // Single-model pi_compat connection on a non-empty session (or
                   // when there's only one connection, so no switcher to show).
                   // Model row is disabled (locked to this session); vision toggle
                   // remains interactive.
                   const showVisionToggle =
-                    !!effectiveConnectionDetails && isCompatProvider(effectiveConnectionDetails.providerType)
-                  const visionOn = showVisionToggle && modelSupportsImages(effectiveConnectionDetails!, connectionDefaultModel)
+                    !!effectiveProviderDetails
+                  const visionOn = showVisionToggle && piProviderModelSupportsImages(effectiveProviderDetails!.provider, providerDefaultModel)
                   return (
                     <StyledDropdownMenuItem
                       disabled
                       className="flex items-center justify-between px-2 py-2 rounded-lg"
                     >
                       <div className="text-left">
-                        <div className="font-medium text-sm">{stripPiPrefixForDisplay(connectionDefaultModel)}</div>
-                        <div className="text-xs text-muted-foreground">{t('chat.connectionDefault')}</div>
+                        <div className="font-medium text-sm">{stripPiPrefixForDisplay(providerDefaultModel)}</div>
+                        <div className="text-xs text-muted-foreground">{t('chat.providerDefault')}</div>
                       </div>
                       <div className="flex items-center gap-1 ml-3 shrink-0">
-                        {showVisionToggle && effectiveConnectionDetails && (
+                        {showVisionToggle && effectiveProviderDetails && (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span
@@ -2285,13 +2281,13 @@ export function FreeFormInput({
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
-                                  handleToggleModelVision(effectiveConnectionDetails.slug, connectionDefaultModel, !visionOn)
+                                  handleToggleModelVision(effectiveProviderDetails.key, providerDefaultModel, !visionOn)
                                 }}
                                 onKeyDown={(e) => {
                                   if (e.key === 'Enter' || e.key === ' ') {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    handleToggleModelVision(effectiveConnectionDetails.slug, connectionDefaultModel, !visionOn)
+                                    handleToggleModelVision(effectiveProviderDetails.key, providerDefaultModel, !visionOn)
                                   }
                                 }}
                               >
@@ -2315,29 +2311,29 @@ export function FreeFormInput({
                 })()
               ) : pickerMode === 'switcher' ? (
                 /* Hierarchical view: Provider → Connection → Models */
-                connectionsByProvider.map(([providerName, connections], index) => (
+                providerGroups.map(([providerName, providers], index) => (
                   <React.Fragment key={providerName}>
                     {/* Provider group label */}
                     <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide select-none">
                       {providerName}
                     </div>
-                    {connections.map((conn) => {
-                      const isCurrentConnection = effectiveConnection === conn.slug
-                      const isAuthenticated = conn.isAuthenticated
+                    {providers.map((conn) => {
+                      const isCurrentProvider = effectiveProvider === conn.key
+                      const isAuthenticated = true
                       return (
-                        <DropdownMenuSub key={conn.slug}>
+                        <DropdownMenuSub key={conn.key}>
                           <StyledDropdownMenuSubTrigger
                             disabled={!isAuthenticated}
                             className={cn(
                               "flex items-center justify-between px-2 py-2 rounded-lg",
-                              isCurrentConnection && "bg-foreground/5"
+                              isCurrentProvider && "bg-foreground/5"
                             )}
                           >
                             <div className="text-left flex-1">
                               <div className="font-medium text-sm flex items-center gap-1.5">
-                                <ConnectionIcon connection={conn} size={14} />
-                                {conn.name}
-                                {isCurrentConnection && <Check className="h-3 w-3 text-foreground" />}
+                                <ProviderIcon provider={conn} size={14} />
+                                {conn.key}
+                                {isCurrentProvider && <Check className="h-3 w-3 text-foreground" />}
                               </div>
                               {!isAuthenticated && (
                                 <div className="text-xs text-muted-foreground">{t('settings.ai.notAuthenticated')}</div>
@@ -2347,24 +2343,24 @@ export function FreeFormInput({
                           {isAuthenticated && (
                             <StyledDropdownMenuSubContent className="min-w-[220px]">
                               {/* Show models for this connection - use provider-specific models as fallback */}
-                              {(conn.models || ANTHROPIC_MODELS).map((model) => {
+                              {(conn.provider.models || ANTHROPIC_MODELS).map((model) => {
                                 const modelId = typeof model === 'string' ? model : model.id
                                 const modelName = typeof model === 'string'
                                   ? stripPiPrefixForDisplay(getModelShortName(model))
                                   : (model.name ?? stripPiPrefixForDisplay(model.id))
-                                const isSelectedModel = isCurrentConnection && currentModel === modelId
-                                const showVisionToggle = isCompatProvider(conn.providerType)
-                                const visionOn = showVisionToggle && modelSupportsImages(conn, modelId)
+                                const isSelectedModel = isCurrentProvider && currentModel === modelId
+                                const showVisionToggle = true
+                                const visionOn = showVisionToggle && piProviderModelSupportsImages(conn.provider, modelId)
                                 return (
                                   <StyledDropdownMenuItem
                                     key={modelId}
                                     onSelect={() => {
                                       // If selecting a different connection, update both connection and model
-                                      if (!isCurrentConnection && onConnectionChange) {
-                                        onConnectionChange(conn.slug)
+                                      if (!isCurrentProvider && onProviderChange) {
+                                        onProviderChange(conn.key)
                                       }
                                       // Always pass connection with model for proper persistence
-                                      onModelChange(modelId, conn.slug)
+                                      onModelChange(modelId, conn.key)
                                     }}
                                     className="flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer"
                                   >
@@ -2383,13 +2379,13 @@ export function FreeFormInput({
                                               onClick={(e) => {
                                                 e.preventDefault()
                                                 e.stopPropagation()
-                                                handleToggleModelVision(conn.slug, modelId, !visionOn)
+                                                handleToggleModelVision(conn.key, modelId, !visionOn)
                                               }}
                                               onKeyDown={(e) => {
                                                 if (e.key === 'Enter' || e.key === ' ') {
                                                   e.preventDefault()
                                                   e.stopPropagation()
-                                                  handleToggleModelVision(conn.slug, modelId, !visionOn)
+                                                  handleToggleModelVision(conn.key, modelId, !visionOn)
                                                 }
                                               }}
                                             >
@@ -2418,7 +2414,7 @@ export function FreeFormInput({
                         </DropdownMenuSub>
                       )
                     })}
-                    {index < connectionsByProvider.length - 1 && (
+                    {index < providerGroups.length - 1 && (
                       <StyledDropdownMenuSeparator className="my-1" />
                     )}
                   </React.Fragment>
@@ -2427,10 +2423,10 @@ export function FreeFormInput({
                 /* Flat model list (single connection) */
                 <>
                   {/* Indicator showing which connection is being used */}
-                  {!isEmptySession && currentConnectionDetails && llmConnections.length > 1 && (
+                  {!isEmptySession && currentProviderDetails && providerItems.length > 1 && (
                     <>
                       <div className="flex items-center gap-2 px-2 py-1.5 text-xs select-none text-muted-foreground">
-                        <span>{t('chat.usingConnection', { name: currentConnectionDetails.name })}</span>
+                        <span>{t('chat.usingProvider', { name: currentProviderDetails.key })}</span>
                       </div>
                       <StyledDropdownMenuSeparator className="my-1" />
                     </>
@@ -2445,12 +2441,12 @@ export function FreeFormInput({
                     const descriptionKey = typeof model !== 'string' && 'descriptionKey' in model ? (model.descriptionKey as string) : undefined
                     const description = descriptionKey ? t(descriptionKey) : (typeof model !== 'string' && 'description' in model ? (model.description as string) : '')
                     const showVisionToggle =
-                      !!effectiveConnectionDetails && isCompatProvider(effectiveConnectionDetails.providerType)
-                    const visionOn = showVisionToggle && modelSupportsImages(effectiveConnectionDetails!, modelId)
+                      !!effectiveProviderDetails
+                    const visionOn = showVisionToggle && piProviderModelSupportsImages(effectiveProviderDetails!.provider, modelId)
                     return (
                       <StyledDropdownMenuItem
                         key={modelId}
-                        onSelect={() => onModelChange(modelId, effectiveConnection)}
+                        onSelect={() => onModelChange(modelId, effectiveProvider)}
                         className="flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer"
                       >
                         <div className="text-left">
@@ -2460,7 +2456,7 @@ export function FreeFormInput({
                           )}
                         </div>
                         <div className="flex items-center gap-1 ml-3 shrink-0">
-                          {showVisionToggle && effectiveConnectionDetails && (
+                          {showVisionToggle && effectiveProviderDetails && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span
@@ -2473,13 +2469,13 @@ export function FreeFormInput({
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    handleToggleModelVision(effectiveConnectionDetails.slug, modelId, !visionOn)
+                                    handleToggleModelVision(effectiveProviderDetails.key, modelId, !visionOn)
                                   }}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter' || e.key === ' ') {
                                       e.preventDefault()
                                       e.stopPropagation()
-                                      handleToggleModelVision(effectiveConnectionDetails.slug, modelId, !visionOn)
+                                      handleToggleModelVision(effectiveProviderDetails.key, modelId, !visionOn)
                                     }
                                   }}
                                 >
@@ -2861,3 +2857,9 @@ function WorkingDirectoryBadge({
     </>
   )
 }
+
+
+
+
+
+

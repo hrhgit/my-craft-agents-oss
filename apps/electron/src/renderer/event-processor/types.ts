@@ -316,12 +316,12 @@ export interface SessionModelChangedEvent {
 }
 
 /**
- * LLM connection changed event - syncs session.llmConnection to renderer
+ * Provider changed event - syncs session.provider to renderer
  */
-export interface LLMConnectionChangedEvent {
-  type: 'connection_changed'
+export interface ProviderChangedEvent {
+  type: 'provider_changed'
   sessionId: string
-  connectionSlug: string
+  provider?: string
   supportsBranching?: boolean
 }
 
@@ -505,7 +505,7 @@ export type AgentEvent =
   | WorkingDirectoryErrorEvent
   | PermissionModeChangedEvent
   | SessionModelChangedEvent
-  | LLMConnectionChangedEvent
+  | ProviderChangedEvent
   | TaskBackgroundedEvent
   | ShellBackgroundedEvent
   | TaskProgressEvent

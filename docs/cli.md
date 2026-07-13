@@ -64,7 +64,7 @@ craft-cli versions          # Show server runtime versions
 ```bash
 craft-cli workspaces        # List all workspaces
 craft-cli sessions          # List sessions in workspace
-craft-cli connections       # List LLM connections
+craft-cli providers         # List AI providers
 craft-cli sources           # List configured sources
 ```
 

@@ -12,8 +12,8 @@ import { randomUUID } from 'node:crypto'
 import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
 import type { AgentEvent, PlanModeStateV1 } from '@craft-agent/core/types'
 import {
-  resolveSessionConnection,
-  createBackendFromConnection,
+  resolveSessionProvider,
+  createBackendFromProvider,
   resolveBackendContext,
   createBackendFromResolvedContext,
   cleanupSourceRuntimeArtifacts,
@@ -24,7 +24,7 @@ import {
   buildPiProjectionSnapshotFromHostProjection,
   PiProjectionBuilder,
 } from '@craft-agent/shared/agent/backend'
-import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
+import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker, SessionShareTransferService } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
@@ -34,7 +34,6 @@ import {
   getWorkspaceByNameOrId,
   loadConfigDefaults,
   loadPreferences,
-  repairDefaultLlmConnectionReferences,
   MODEL_REGISTRY,
   type Workspace,
   type WorkspaceInfo,
@@ -95,7 +94,7 @@ import { CapabilityRouter, ELECTRON_CAPABILITY_POLICY_V1, createCapabilityAuthor
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
 import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, writeRuntimeLog } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
-import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
+import { getToolIconsDir } from '@craft-agent/shared/config'
 import { getDefaultSummarizationModel } from '@craft-agent/shared/config/models'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
@@ -106,7 +105,7 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot, type PendingPrompt } from '@craft-agent/shared/automations'
 import { FEATURE_FLAGS } from '@craft-agent/shared/feature-flags'
-import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput, normalizeConnectionRuntimeBaseUrl } from './runtime-config'
+import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput, normalizeProviderRuntimeBaseUrl } from './runtime-config'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -753,10 +752,8 @@ interface ManagedSession {
   sharedId?: string
   // Model to use for this session (overrides global config if set)
   model?: string
-  // LLM connection slug selected for this session.
-  llmConnection?: string
-  // Legacy persisted field; provider switching no longer uses it.
-  connectionLocked?: boolean
+  // Pi provider slug selected for this session.
+  provider?: string
   // Thinking level for this session ('off', 'think', 'max')
   thinkingLevel?: ThinkingLevel
   // System prompt preset for mini agents ('default' | 'mini')
@@ -1113,6 +1110,11 @@ function resolveSupportsBranching(managed: ManagedSession): boolean {
   }
 
   return true // default: branching enabled for all backends
+}
+
+/** Return true only for an explicitly configured Pi provider key. */
+function hasConfiguredPiProvider(provider?: string): boolean {
+  return !!provider && Object.hasOwn(readPiGlobalProviders(), provider)
 }
 
 const DEFAULT_TOKEN_USAGE = {
@@ -1625,9 +1627,9 @@ export class SessionManager implements ISessionManager {
         // Notify renderer to re-read automations.json
         this.broadcastAutomationsChanged(workspaceId)
       },
-      onLlmConnectionsChange: () => {
-        sessionLog.info(`LLM connections changed in ${workspaceId}`)
-        this.broadcastLlmConnectionsChanged()
+      onProvidersChange: () => {
+        sessionLog.info(`Pi providers changed in ${workspaceId}`)
+        this.broadcastProvidersChanged()
       },
       onAppThemeChange: (theme) => {
         sessionLog.info(`App theme changed`)
@@ -1749,7 +1751,7 @@ export class SessionManager implements ISessionManager {
                 labels: pending.labels,
                 permissionMode: pending.permissionMode,
                 mentions: pending.mentions,
-                llmConnection: pending.llmConnection,
+                provider: pending.provider,
                 model: pending.model,
                 thinkingLevel: pending.thinkingLevel,
                 automationName: pending.automationName,
@@ -1842,10 +1844,10 @@ export class SessionManager implements ISessionManager {
     this.eventSink(RPC_CHANNELS.theme.APP_CHANGED, { to: 'all' }, theme)
   }
 
-  private broadcastLlmConnectionsChanged(): void {
+  private broadcastProvidersChanged(): void {
     if (!this.eventSink) return
-    sessionLog.info('Broadcasting LLM connections changed')
-    this.eventSink(RPC_CHANNELS.llmConnections.CHANGED, { to: 'all' })
+    sessionLog.info('Broadcasting providers changed')
+    this.eventSink(RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
   }
 
   private broadcastSkillsChanged(workspaceId: string, skills: import('@craft-agent/shared/skills').LoadedSkill[]): void {
@@ -1906,28 +1908,28 @@ export class SessionManager implements ISessionManager {
   /**
    * Reinitialize authentication environment variables.
    *
-   * Uses the default LLM connection to determine which credentials to set.
+   * Uses the selected Pi provider to reset managed authentication state.
    *
-   * @param connectionSlug - Optional connection slug to use (overrides default)
+   * @param provider - Optional provider key to use (overrides default)
    */
-  async reinitializeAuth(connectionSlug?: string): Promise<void> {
+  async reinitializeAuth(provider?: string): Promise<void> {
     try {
       // Get the connection to use (explicit parameter or default)
-      const slug = connectionSlug || getDefaultLlmConnection()
+      const slug = provider || readPiGlobalSettings().defaultProvider
       if (!slug) {
-        sessionLog.warn('No LLM connection slug available for reinitializeAuth')
+        sessionLog.warn('No provider key available for reinitializeAuth')
       }
-      const connection = slug ? getLlmConnection(slug) : null
+      const connection = slug ? readPiGlobalProviders()[slug] : null
 
       // Restore managed auth env vars to their baseline before applying this connection.
       resetManagedAnthropicAuthEnvVars()
 
       if (!connection) {
-        sessionLog.error(`No LLM connection found for slug: ${slug}`)
+        sessionLog.error(`No provider found for key: ${slug}`)
         return
       }
 
-      sessionLog.info(`Reinitializing auth for connection: ${slug} (${connection.authType})`)
+      sessionLog.info(`Reinitializing auth for provider: ${slug}`)
 
       // Pi is the only runtime provider. Credential routing is handled natively
       // by PiAgent via ~/.pi/agent/auth.json — no env-var injection needed here.
@@ -2191,8 +2193,7 @@ export class SessionManager implements ISessionManager {
 
   async initialize(): Promise<void> {
     try {
-      // Fix defaultLlmConnection if it points to a non-existent connection
-      repairDefaultLlmConnectionReferences()
+      // Fix provider if it points to a non-existent connection
 
       // Set up authentication environment variables (critical for SDK to work)
       await this.reinitializeAuth()
@@ -2238,13 +2239,13 @@ export class SessionManager implements ISessionManager {
             workingDirectory: workspaceRootPath,
           })
 
-          // Migration: clear orphaned llmConnection references (e.g., after connection was deleted)
-          if (managed.llmConnection) {
-            const conn = resolveSessionConnection(managed.llmConnection, undefined)
-            if (!conn) {
-              sessionLog.warn(`Session ${meta.craftId} has orphaned llmConnection "${managed.llmConnection}", clearing`)
-              managed.llmConnection = undefined
-              managed.connectionLocked = false
+          // Clear persisted overrides that point to a provider removed outside this process.
+          if (managed.provider) {
+            if (!hasConfiguredPiProvider(managed.provider)) {
+              sessionLog.warn(`Session ${meta.craftId} has orphaned provider "${managed.provider}", clearing`)
+              managed.provider = undefined
+              this.setMetadataWriteGuard(managed)
+              this.persistSession(managed)
             }
           }
 
@@ -2291,7 +2292,7 @@ export class SessionManager implements ISessionManager {
    * synchronously from the JSONL first — otherwise the snapshot we enqueue
    * would write `messages: []` over the real messages on disk. Hydration
    * deliberately does NOT touch persistent metadata fields (name, labels,
-   * sessionStatus, llmConnection, ...) because the caller may have just
+   * sessionStatus, provider, ...) because the caller may have just
    * mutated them; the in-memory mutation must win over what's on disk.
    * `loadStoredSession` is synchronous (sync fs reads), so the entire path
    * stays sync — no microtask race window between the load and the enqueue.
@@ -2769,12 +2770,9 @@ export class SessionManager implements ISessionManager {
       managed.sharedId = storedSession.sharedId
       // Sync name from disk - ensures title persistence across lazy loading
       managed.name = storedSession.name
-      // Restore LLM connection state - ensures correct provider on resume
-      if (storedSession.llmConnection) {
-        managed.llmConnection = storedSession.llmConnection
-      }
-      if (storedSession.connectionLocked) {
-        managed.connectionLocked = storedSession.connectionLocked
+      // Restore Pi provider state - ensures correct provider on resume
+      if (storedSession.provider) {
+        managed.provider = storedSession.provider
       }
       // Sync transferred session summary state from disk
       managed.transferredSessionSummary = storedSession.transferredSessionSummary
@@ -2820,6 +2818,14 @@ export class SessionManager implements ISessionManager {
       ?? getDefaultThinkingLevel()
     // Get default model from workspace config (used when no session-specific model is set)
     const defaultModel = wsConfig?.defaults?.model
+    const requestedProvider = options?.provider
+    const sessionProvider = hasConfiguredPiProvider(requestedProvider)
+      ? requestedProvider
+      : undefined
+    if (requestedProvider && !sessionProvider) {
+      sessionLog.warn(`Creating session without deleted provider "${requestedProvider}"; using defaults`)
+    }
+
     // Get default enabled sources from workspace config
     const defaultEnabledSourceSlugs = options?.enabledSourceSlugs ?? wsConfig?.defaults?.enabledSourceSlugs
 
@@ -2828,14 +2834,15 @@ export class SessionManager implements ISessionManager {
     // so the right model is selected regardless of the active LLM provider.
     let resolvedModelOption = options?.model || defaultModel
     if (resolvedModelOption === 'fast' || resolvedModelOption === 'default') {
-      const tierConnection = resolveSessionConnection(
-        options?.llmConnection,
-        wsConfig?.defaults?.defaultLlmConnection,
+      const tierProvider = resolveSessionProvider(
+        sessionProvider,
+        wsConfig?.defaults?.provider,
       )
-      if (tierConnection) {
+      if (tierProvider) {
+        const models = tierProvider.provider.models ?? []
         resolvedModelOption = resolvedModelOption === 'fast'
-          ? (getMiniModel(tierConnection) ?? tierConnection.defaultModel ?? defaultModel)
-          : (tierConnection.defaultModel ?? defaultModel)
+          ? (models[1]?.id ?? models[0]?.id ?? defaultModel)
+          : (models[0]?.id ?? defaultModel)
       } else {
         resolvedModelOption = defaultModel
       }
@@ -2843,13 +2850,12 @@ export class SessionManager implements ISessionManager {
 
     // Resolve backend target early for branching policy checks.
     const targetBackendContext = resolveBackendContext({
-      sessionConnectionSlug: options?.llmConnection,
-      workspaceDefaultConnectionSlug: wsConfig?.defaults?.defaultLlmConnection,
+      sessionProvider,
+      workspaceDefaultProvider: wsConfig?.defaults?.provider,
       managedModel: resolvedModelOption,
     })
-    const targetProviderType = targetBackendContext.connection?.providerType
-      ?? 'pi'
-    const targetPiAuthProvider = targetBackendContext.connection?.piAuthProvider
+    const targetProviderType = targetBackendContext.providerConfig?.baseUrl ? 'pi_compat' : 'pi'
+    const targetPiAuthProvider = targetBackendContext.providerKey
 
     const resolvedWorkingDir = workspaceRootPath
 
@@ -2904,13 +2910,12 @@ export class SessionManager implements ISessionManager {
       }
 
       const sourceBackendContext = resolveBackendContext({
-        sessionConnectionSlug: sourceManaged?.llmConnection || sourceSession.llmConnection,
-        workspaceDefaultConnectionSlug: wsConfig?.defaults?.defaultLlmConnection,
+        sessionProvider: sourceManaged?.provider || sourceSession.provider,
+        workspaceDefaultProvider: wsConfig?.defaults?.provider,
         managedModel: sourceManaged?.model || sourceSession.model,
       })
-      const sourceProviderType = sourceBackendContext.connection?.providerType
-        ?? 'pi'
-      const sourcePiAuthProvider = sourceBackendContext.connection?.piAuthProvider
+      const sourceProviderType = sourceBackendContext.providerConfig?.baseUrl ? 'pi_compat' : 'pi'
+      const sourcePiAuthProvider = sourceBackendContext.providerKey
 
       const providerMismatch = sourceBackendContext.provider !== targetBackendContext.provider
       const providerTypeMismatch = sourceProviderType !== targetProviderType
@@ -2928,7 +2933,7 @@ export class SessionManager implements ISessionManager {
           targetProviderType,
           targetPiAuthProvider,
         })
-        throw new Error('Branching is only supported within the same provider/backend. Switch this panel connection and try again.')
+        throw new Error('Branching is only supported within the same provider/backend. Switch this panel provider and try again.')
       }
 
       const sourceProjection = await findPiSessionProjectionById(workspaceRootPath, options.branchFromSessionId)
@@ -3068,7 +3073,7 @@ export class SessionManager implements ISessionManager {
       permissionMode: defaultPermissionMode,
       workingDirectory: resolvedWorkingDir,
       model: resolvedModel,
-      llmConnection: options?.llmConnection,
+      provider: sessionProvider,
       thinkingLevel: defaultThinkingLevel,
       systemPromptPreset: options?.systemPromptPreset,
       enabledSourceSlugs: defaultEnabledSourceSlugs,
@@ -3192,7 +3197,7 @@ export class SessionManager implements ISessionManager {
 
   /**
    * Refresh an existing agent's runtime config in place when the session's
-   * resolved connection signature has drifted from what the agent was created
+   * resolved provider signature has drifted from what the agent was created
    * with. No-ops when the agent doesn't exist, when the signature still
    * matches, or when the agent is mid-stream (the gate is `agent.isProcessing()`
    * — `managed.isProcessing` is not used because `sendMessage` flips it before
@@ -3226,13 +3231,14 @@ export class SessionManager implements ISessionManager {
 
     const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
     const backendContext = resolveBackendContext({
-      sessionConnectionSlug: managed.llmConnection,
-      workspaceDefaultConnectionSlug: workspaceConfig?.defaults?.defaultLlmConnection,
+      sessionProvider: managed.provider,
+      workspaceDefaultProvider: workspaceConfig?.defaults?.provider,
       managedModel: managed.model,
     })
-    const connection = backendContext.connection
+    const providerConfig = backendContext.providerConfig
     const sigInput = {
-      connection,
+      providerKey: backendContext.providerKey,
+      providerConfig,
       provider: backendContext.provider,
       authType: backendContext.authType,
       resolvedModel: backendContext.resolvedModel,
@@ -3295,30 +3301,23 @@ export class SessionManager implements ISessionManager {
       return
     }
 
-    const connection = backendContext.connection
+    const providerConfig = backendContext.providerConfig
     let refreshed = false
     if (managed.agent?.updateRuntimeConfig) {
       try {
         refreshed = await managed.agent.updateRuntimeConfig({
           model: backendContext.resolvedModel,
-          providerType: connection?.providerType,
+          providerType: providerConfig?.baseUrl ? 'pi_compat' : 'pi',
           authType: backendContext.authType,
-          runtime: connection ? {
-            baseUrl: normalizeConnectionRuntimeBaseUrl(connection),
-            piAuthProvider: connection.piAuthProvider,
-            customEndpoint: connection.customEndpoint,
-            customModels: connection.models?.map(model => {
-              if (typeof model === 'string') return model
-              const supportsImages = typeof model.supportsImages === 'boolean' ? model.supportsImages : undefined
-              if (model.contextWindow || supportsImages !== undefined) {
-                return {
-                  id: model.id,
-                  ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
-                  ...(supportsImages !== undefined ? { supportsImages } : {}),
-                }
-              }
-              return model.id
-            }),
+          runtime: providerConfig ? {
+            baseUrl: normalizeProviderRuntimeBaseUrl(providerConfig),
+            piAuthProvider: backendContext.providerKey,
+            customEndpoint: providerConfig.api ? { api: providerConfig.api } : undefined,
+            customModels: providerConfig.models?.map(model => ({
+              id: model.id,
+              ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+              ...(model.input ? { supportsImages: model.input.includes('image') } : {}),
+            })),
           } : undefined,
         })
       } catch (error) {
@@ -3338,30 +3337,30 @@ export class SessionManager implements ISessionManager {
 
   /**
    * Push a connection's runtime updates (e.g. `supportsImages` toggle) to every
-   * active session that uses it. Called from the `llmConnections.SAVE` handler
+   * active session that uses it. Called from the `providers.SAVE` handler
    * so capability changes reach live Pi subprocesses immediately instead of
    * waiting for the next send to lazily notice the signature drift.
    */
-  async refreshConnectionRuntime(connectionSlug: string): Promise<void> {
+  async refreshProviderRuntime(provider: string): Promise<void> {
     for (const managed of this.sessions.values()) {
-      if (managed.llmConnection !== connectionSlug) continue
+      if (managed.provider !== provider) continue
       try {
-        await this.tryRefreshAgentRuntime(managed, 'connection update')
+        await this.tryRefreshAgentRuntime(managed, 'provider update')
       } catch (error) {
-        sessionLog.warn(`refreshConnectionRuntime failed for ${managed.id}: ${error instanceof Error ? error.message : error}`)
+        sessionLog.warn(`refreshProviderRuntime failed for ${managed.id}: ${error instanceof Error ? error.message : error}`)
       }
     }
   }
 
   /**
    * Get or create agent for a session (lazy loading)
-   * Creates the appropriate backend agent based on LLM connection.
+   * Creates the appropriate backend agent based on Pi provider.
    *
    * Provider resolution order:
-   * 1. session.llmConnection (explicit per-session selection)
-   * 2. workspace.defaults.defaultLlmConnection
-   * 3. global defaultLlmConnection
-   * 4. fallback: no connection configured
+   * 1. session.provider (explicit per-session selection)
+   * 2. workspace.defaults.provider
+   * 3. global provider
+   * 4. fallback: no provider configured
    */
   private async getOrCreateAgent(managed: ManagedSession): Promise<AgentInstance> {
     // Recovery callbacks are synchronous once the agent is constructed. Load
@@ -3377,13 +3376,14 @@ export class SessionManager implements ISessionManager {
 
     const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
     const backendContext = resolveBackendContext({
-      sessionConnectionSlug: managed.llmConnection,
-      workspaceDefaultConnectionSlug: workspaceConfig?.defaults?.defaultLlmConnection,
+      sessionProvider: managed.provider,
+      workspaceDefaultProvider: workspaceConfig?.defaults?.provider,
       managedModel: managed.model,
     })
-    const connection = backendContext.connection
+    const providerConfig = backendContext.providerConfig
     const sigInput = {
-      connection,
+      providerKey: backendContext.providerKey,
+      providerConfig,
       provider: backendContext.provider,
       authType: backendContext.authType,
       resolvedModel: backendContext.resolvedModel,
@@ -3394,29 +3394,28 @@ export class SessionManager implements ISessionManager {
     if (!managed.agent) {
       const end = perf.start('agent.create', { sessionId: managed.id })
 
-      // Persist the first resolved connection so the renderer and session
+      // Persist the first resolved provider so the renderer and session
       // metadata agree, while still allowing the user to switch providers
       // later from the picker.
-      if (connection && !managed.llmConnection) {
-        managed.llmConnection = connection.slug
-        managed.connectionLocked = false
-        sessionLog.info(`Resolved session ${managed.id} to connection "${connection.slug}"`)
+      if (backendContext.providerKey && !managed.provider) {
+        managed.provider = backendContext.providerKey
+        sessionLog.info(`Resolved session ${managed.id} to provider "${backendContext.providerKey}"`)
         this.persistSession(managed)
 
         // Keep renderer session capabilities in sync when auto-locking the connection.
         this.sendEvent({
-          type: 'connection_changed',
+          type: 'provider_changed',
           sessionId: managed.id,
-          connectionSlug: connection.slug,
+          provider: backendContext.providerKey,
           supportsBranching: resolveSupportsBranching(managed),
         }, managed.workspace.id)
       }
 
       const provider = backendContext.provider
-      if (connection) {
-        sessionLog.info(`Using LLM connection "${connection.slug}" (${connection.providerType}) for session ${managed.id}`)
+      if (providerConfig) {
+        sessionLog.info(`Using provider "${backendContext.providerKey}" for session ${managed.id}`)
       } else {
-        sessionLog.warn(`No LLM connection found for session ${managed.id}, using default anthropic provider`)
+        sessionLog.warn(`No configured provider found for session ${managed.id}`)
       }
 
       // Keep SDK subprocess side-channel files, such as api-error.json,
@@ -3454,7 +3453,7 @@ export class SessionManager implements ISessionManager {
       }
 
       // Per-session env overrides
-      const miniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
+      const miniModel = providerConfig?.models?.[1]?.id ?? providerConfig?.models?.[0]?.id
       const envOverrides: Record<string, string> = {
         CRAFT_WORKSPACE_PATH: managed.workspace.rootPath,
       }
@@ -3479,7 +3478,7 @@ export class SessionManager implements ISessionManager {
         workingDirectory: managed.workspace.rootPath,
         sdkCwd: managed.sdkCwd ?? managed.workspace.rootPath,
         model: managed.model,
-        llmConnection: managed.llmConnection,
+        provider: managed.provider,
         permissionMode: managed.permissionMode,
         previousPermissionMode: managed.previousPermissionMode,
       }
@@ -3628,7 +3627,6 @@ export class SessionManager implements ISessionManager {
         automationSystem: this.automationSystems.get(managed.workspace.rootPath),
         systemPromptPreset: managed.systemPromptPreset,
         debugMode: _platform?.isDebugMode ? { enabled: true, logFilePath: _platform.getLogFilePath?.() } : undefined,
-        enable1MContext: await (async () => { const { getEnable1MContext } = await import('@craft-agent/shared/config/storage'); return getEnable1MContext(); })(),
         // Image resize callback — prevents oversized images from entering conversation history
         onImageResize: async (filePath: string, maxSizeBytes: number): Promise<string | null> => {
           try {
@@ -3951,7 +3949,7 @@ export class SessionManager implements ISessionManager {
 
         const result = await agent.spawnChildSession(parentSessionId, {
           prompt: request.prompt,
-          connection: request.llmConnection,
+          connection: request.provider,
           model: request.model,
           enabledSources: request.enabledSourceSlugs,
           permissionMode: request.permissionMode,
@@ -3970,7 +3968,7 @@ export class SessionManager implements ISessionManager {
           sessionId: result.sessionId,
           name: request.name || result.sessionId,
           status: 'started' as const,
-          connection: request.llmConnection ?? managed.llmConnection,
+          connection: request.provider ?? managed.provider,
           model: request.model ?? managed.model,
         }
       }
@@ -3995,7 +3993,7 @@ export class SessionManager implements ISessionManager {
             permissionMode: session.permissionMode ?? 'ask',
             createdAt: session.createdAt ?? 0,
             workingDirectory: session.workingDirectory,
-            llmConnection: session.llmConnection,
+            provider: session.provider,
             model: session.model,
             isActive: session.agent != null,
           }
@@ -4296,39 +4294,66 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set the LLM connection for a session.
+   * Set the Pi provider for a session.
    * This determines which LLM provider/backend will be used for this session.
    */
-  async setSessionConnection(sessionId: string, connectionSlug: string): Promise<void> {
+  async setSessionProvider(sessionId: string, provider: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
-      sessionLog.warn(`setSessionConnection: session ${sessionId} not found`)
+      sessionLog.warn(`setSessionProvider: session ${sessionId} not found`)
       throw new Error(`Session ${sessionId} not found`)
     }
 
-    // Validate connection exists
-    const { getLlmConnection } = await import('@craft-agent/shared/config/storage')
-    const connection = getLlmConnection(connectionSlug)
-    if (!connection) {
-      sessionLog.warn(`setSessionConnection: connection "${connectionSlug}" not found`)
-      throw new Error(`LLM connection "${connectionSlug}" not found`)
+    // Validate provider exists.
+    if (!hasConfiguredPiProvider(provider)) {
+      sessionLog.warn(`setSessionProvider: provider "${provider}" not found`)
+      throw new Error(`Provider "${provider}" not found`)
     }
 
-    managed.llmConnection = connectionSlug
-    managed.connectionLocked = false
+    managed.provider = provider
     // Persist in-memory state directly to avoid race with pending queue writes
     this.persistSession(managed)
     await this.flushSession(managed.id)
-    await this.tryRefreshAgentRuntime(managed, 'session connection changed')
-    sessionLog.info(`Set LLM connection for session ${sessionId} to ${connectionSlug}`)
+    await this.tryRefreshAgentRuntime(managed, 'session provider changed')
+    sessionLog.info(`Set provider for session ${sessionId} to ${provider}`)
 
-    // Notify UI that connection changed (triggers capabilities refresh)
+    // Notify UI that the provider changed.
     this.sendEvent({
-      type: 'connection_changed',
+      type: 'provider_changed',
       sessionId,
-      connectionSlug,
+      provider,
       supportsBranching: resolveSupportsBranching(managed),
     }, managed.workspace.id)
+  }
+
+  /**
+   * Clear per-session overrides for a provider that was deleted from Pi global
+   * config. The next resolution inherits the workspace/global default instead
+   * of silently routing through it while retaining the stale key.
+   */
+  async clearDeletedProviderReferences(provider: string): Promise<void> {
+    const affected = [...this.sessions.values()].filter(managed => managed.provider === provider)
+
+    await Promise.all(affected.map(async (managed) => {
+      managed.provider = undefined
+      this.setMetadataWriteGuard(managed)
+
+      try {
+        this.persistSession(managed)
+        await this.flushSession(managed.id)
+      } catch (error) {
+        // Startup repair retries an unsuccessful persistence attempt on the
+        // next launch, while this process has already dropped the stale key.
+        sessionLog.warn(`Failed to persist cleared provider for ${managed.id}: ${error instanceof Error ? error.message : error}`)
+      }
+
+      this.sendEvent({
+        type: 'provider_changed',
+        sessionId: managed.id,
+        provider: undefined,
+        supportsBranching: resolveSupportsBranching(managed),
+      }, managed.workspace.id)
+    }))
   }
 
   // ============================================
@@ -4722,18 +4747,18 @@ export class SessionManager implements ISessionManager {
     let agent: AgentInstance | null = managed.agent
     let isTemporary = false
 
-    if (!agent && managed.llmConnection) {
+    if (!agent && managed.provider) {
       try {
-        const connection = getLlmConnection(managed.llmConnection)
-        const resolvedMiniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
+        const providerConfig = readPiGlobalProviders()[managed.provider]
+        const resolvedMiniModel = providerConfig?.models?.[1]?.id ?? providerConfig?.models?.[0]?.id
 
-        agent = createBackendFromConnection(managed.llmConnection, {
+        agent = createBackendFromProvider(managed.provider, {
           workspace: managed.workspace,
           miniModel: resolvedMiniModel,
           session: {
             craftId: `title-${managed.id}`,
             workspaceRootPath: managed.workspace.rootPath,
-            llmConnection: managed.llmConnection,
+            provider: managed.provider,
             createdAt: Date.now(),
             lastUsedAt: Date.now(),
           },
@@ -4825,46 +4850,45 @@ export class SessionManager implements ISessionManager {
   /**
    * Update the model for a session
    * Pass null to clear the session-specific model (will use global config)
-   * @param connection - Optional LLM connection slug to apply with the model
+   * @param provider - Optional Pi provider key to apply with the model
    */
-  async updateSessionModel(sessionId: string, workspaceId: string, model: string | null, connection?: string): Promise<void> {
-    sessionLog.info(`[updateSessionModel] sessionId=${sessionId}, model=${model}, connection=${connection}`)
+  async updateSessionModel(sessionId: string, workspaceId: string, model: string | null, provider?: string): Promise<void> {
+    sessionLog.info(`[updateSessionModel] sessionId=${sessionId}, model=${model}, provider=${provider}`)
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      if (connection && !getLlmConnection(connection)) {
-        sessionLog.warn(`[updateSessionModel] connection "${connection}" not found`)
-        throw new Error(`LLM connection "${connection}" not found`)
+      if (provider && !readPiGlobalProviders()[provider]) {
+        sessionLog.warn(`[updateSessionModel] provider "${provider}" not found`)
+        throw new Error(`Pi provider "${provider}" not found`)
       }
 
-      const previousConnection = managed.llmConnection
+      const previousProvider = managed.provider
       managed.model = model ?? undefined
       // Also update connection if provided. Sessions no longer lock provider
       // selection after the first message.
-      if (connection) {
-        managed.llmConnection = connection
-        managed.connectionLocked = false
+      if (provider) {
+        managed.provider = provider
       }
       // Persist to disk (include connection if it was updated)
-      const updates: { model?: string; llmConnection?: string } = { model: model ?? undefined }
-      if (connection) {
-        updates.llmConnection = connection
+      const updates: { model?: string; provider?: string } = { model: model ?? undefined }
+      if (provider) {
+        updates.provider = provider
       }
       await updateSessionMetadata(managed.workspace.rootPath, sessionId, updates)
-      if (connection && connection !== previousConnection) {
-        await this.tryRefreshAgentRuntime(managed, 'session model connection changed')
+      if (provider && provider !== previousProvider) {
+        await this.tryRefreshAgentRuntime(managed, 'session model provider changed')
         this.sendEvent({
-          type: 'connection_changed',
+          type: 'provider_changed',
           sessionId,
-          connectionSlug: connection,
+          provider,
           supportsBranching: resolveSupportsBranching(managed),
         }, managed.workspace.id)
       }
       // Update agent model if it already exists (takes effect on next query)
       if (managed.agent) {
-        // Fallback chain: session model > workspace default > connection default
+        // Fallback chain: session model > workspace default > provider default
         const wsConfig = loadWorkspaceConfig(managed.workspace.rootPath)
-        const sessionConn = resolveSessionConnection(managed.llmConnection, wsConfig?.defaults?.defaultLlmConnection)
-        const effectiveModel = model ?? wsConfig?.defaults?.model ?? sessionConn?.defaultModel
+        const sessionConn = resolveSessionProvider(managed.provider, wsConfig?.defaults?.provider)
+        const effectiveModel = model ?? wsConfig?.defaults?.model ?? sessionConn?.provider.models?.[0]?.id
         if (effectiveModel) {
           sessionLog.info(`[updateSessionModel] Calling agent.setModel(${effectiveModel}) [agent exists=${!!managed.agent}]`)
           managed.agent.setModel(effectiveModel)
@@ -5197,9 +5221,9 @@ export class SessionManager implements ISessionManager {
     // Ensure messages are loaded before we try to add new ones
     await this.ensureMessagesLoaded(managed)
 
-    // If currently processing, behavior depends on the connection's
-    // `midStreamBehavior` (resolved via {@link resolveMidStreamBehavior},
-    // defaults to provider-appropriate value):
+    // Mid-stream delivery uses the configured Enter behavior. Ctrl/Cmd+Enter
+    // selects the opposite behavior, so both actions are always available and
+    // changing the setting swaps their shortcuts.
     //
     // - 'steer': try to deliver into the in-flight turn. Pi steers natively;
     //   Claude emulates via PreToolUse hook. If `redirect()` returns false
@@ -5209,10 +5233,10 @@ export class SessionManager implements ISessionManager {
     //   to natural completion; replay as a new turn afterwards. NO call to
     //   `agent.redirect()`, NO forceAbort, NO interruption.
     if (managed.isProcessing && !isQueuedReplay) {
-      const connection = resolveSessionConnection(managed.llmConnection, undefined)
-      // Fallback to 'steer' when no connection is resolvable — preserves
-      // today's exact behavior (call redirect, take whatever it returns).
-      const behavior = connection ? resolveMidStreamBehavior(connection) : 'steer'
+      const configuredBehavior = getMidStreamBehavior()
+      const behavior = options?.midStreamSendIntent === 'alternate'
+        ? alternateMidStreamBehavior(configuredBehavior)
+        : configuredBehavior
 
       const agent = managed.agent
       const messageId = options?.optimisticMessageId ?? generateMessageId()
@@ -5225,10 +5249,11 @@ export class SessionManager implements ISessionManager {
       sessionLog.info('mid-stream send', {
         sessionId,
         behavior,
+        sendIntent: options?.midStreamSendIntent ?? 'default',
         steered,
         queueLengthBefore: managed.messageQueue.length,
         backend: agent ? agent.constructor.name : 'none',
-        connectionSlug: connection?.slug,
+        provider: managed.provider,
       })
 
       managed.lastMessageRole = 'user'
@@ -5286,7 +5311,7 @@ export class SessionManager implements ISessionManager {
           messageId,
           optimisticMessageId: options?.optimisticMessageId,
           status: steered ? 'accepted' : 'queued',
-          llmConnection: managed.llmConnection,
+          provider: managed.provider,
           model: managed.model,
         },
       })
@@ -5316,7 +5341,7 @@ export class SessionManager implements ISessionManager {
           workspaceId: managed.workspace.id,
           messageId,
           optimisticMessageId: options?.optimisticMessageId,
-          llmConnection: managed.llmConnection,
+          provider: managed.provider,
           model: managed.model,
         },
       })
@@ -5552,13 +5577,13 @@ export class SessionManager implements ISessionManager {
       }
 
       const messageBackendContext = resolveBackendContext({
-        sessionConnectionSlug: managed.llmConnection,
-        workspaceDefaultConnectionSlug: loadWorkspaceConfig(workspaceRootPath)?.defaults?.defaultLlmConnection,
+        sessionProvider: managed.provider,
+        workspaceDefaultProvider: loadWorkspaceConfig(workspaceRootPath)?.defaults?.provider,
         managedModel: managed.model,
       })
       const modelInputAttachments = filterAttachmentsForModelInput(
         attachments,
-        messageBackendContext.connection,
+        messageBackendContext.providerConfig,
         messageBackendContext.resolvedModel,
       )
       if (modelInputAttachments.omittedImages.length > 0) {
@@ -5607,7 +5632,7 @@ export class SessionManager implements ISessionManager {
               sessionId,
               workspaceId: managed.workspace.id,
               messageId,
-              llmConnection: managed.llmConnection,
+              provider: managed.provider,
               model: managed.model,
             },
           })
@@ -5737,7 +5762,7 @@ export class SessionManager implements ISessionManager {
             sessionId,
             workspaceId: managed.workspace.id,
             workspaceRootPath: managed.workspace.rootPath,
-            llmConnection: managed.llmConnection,
+            provider: managed.provider,
             model: managed.model,
             error,
           },
@@ -6419,7 +6444,7 @@ export class SessionManager implements ISessionManager {
           labels: pending.labels,
           permissionMode: pending.permissionMode,
           mentions: pending.mentions,
-          llmConnection: pending.llmConnection,
+          provider: pending.provider,
           model: pending.model,
           thinkingLevel: pending.thinkingLevel,
           automationName: pending.automationName,
@@ -6642,17 +6667,17 @@ export class SessionManager implements ISessionManager {
     }
 
     // If still no agent, create a temporary one using the session's connection
-    if (!agent && managed.llmConnection) {
+    if (!agent && managed.provider) {
       try {
-        const connection = getLlmConnection(managed.llmConnection)
+        const providerConfig = readPiGlobalProviders()[managed.provider]
 
-        agent = createBackendFromConnection(managed.llmConnection, {
+        agent = createBackendFromProvider(managed.provider, {
           workspace: managed.workspace,
-          miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
+          miniModel: providerConfig?.models?.[1]?.id ?? providerConfig?.models?.[0]?.id,
           session: {
             craftId: `title-${managed.id}`,
             workspaceRootPath: managed.workspace.rootPath,
-            llmConnection: managed.llmConnection,
+            provider: managed.provider,
             createdAt: Date.now(),
             lastUsedAt: Date.now(),
           },
@@ -7129,19 +7154,16 @@ export class SessionManager implements ISessionManager {
       labels,
       permissionMode,
       mentions,
-      llmConnection,
+      provider,
       model,
       thinkingLevel,
       automationName,
       telegramTopic,
     } = input
 
-    // Warn if llmConnection was specified but doesn't resolve
-    if (llmConnection) {
-      const connection = resolveSessionConnection(llmConnection)
-      if (!connection) {
-        sessionLog.warn(`[Automations] llmConnection "${llmConnection}" not found, using default`)
-      }
+    const automationProvider = hasConfiguredPiProvider(provider) ? provider : undefined
+    if (provider && !automationProvider) {
+      sessionLog.warn(`[Automations] provider "${provider}" not found, using default`)
     }
 
     // Resolve @mentions to source/skill slugs
@@ -7162,7 +7184,7 @@ export class SessionManager implements ISessionManager {
       labels: resolvedLabels,
       permissionMode: permissionMode || 'safe',
       enabledSourceSlugs: resolved?.sourceSlugs,
-      llmConnection,
+      provider: automationProvider,
       model,
       thinkingLevel,
     })
@@ -7245,14 +7267,14 @@ export class SessionManager implements ISessionManager {
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
     const defaultModel = wsConfig?.defaults?.model
     const backendContext = resolveBackendContext({
-      sessionConnectionSlug: managed.llmConnection,
-      workspaceDefaultConnectionSlug: wsConfig?.defaults?.defaultLlmConnection,
+      sessionProvider: managed.provider,
+      workspaceDefaultProvider: wsConfig?.defaults?.provider,
       managedModel: managed.model || defaultModel,
     })
 
-    const miniModel = backendContext.connection
-      ? (getMiniModel(backendContext.connection) ?? backendContext.connection.defaultModel ?? getDefaultSummarizationModel())
-      : getDefaultSummarizationModel()
+    const miniModel = backendContext.providerConfig?.models?.[1]?.id
+      ?? backendContext.providerConfig?.models?.[0]?.id
+      ?? getDefaultSummarizationModel()
 
     const envOverrides: Record<string, string> = {
       CRAFT_WORKSPACE_PATH: workspaceRootPath,
@@ -7271,7 +7293,7 @@ export class SessionManager implements ISessionManager {
           workingDirectory: workspaceRootPath,
           sdkCwd: managed.sdkCwd ?? workspaceRootPath,
           model: managed.model,
-          llmConnection: managed.llmConnection,
+          provider: managed.provider,
           permissionMode: managed.permissionMode,
           previousPermissionMode: managed.previousPermissionMode,
         },
@@ -7279,7 +7301,7 @@ export class SessionManager implements ISessionManager {
         envOverrides,
         isHeadless: true,
       },
-      providerOptions: { piAuthProvider: backendContext.connection?.piAuthProvider },
+      providerOptions: { piAuthProvider: backendContext.providerKey },
     })
 
     try {
@@ -7414,29 +7436,27 @@ export class SessionManager implements ISessionManager {
       storedSession.sharedUrl = undefined
       storedSession.sharedId = undefined
 
-      // Resume-first: try to find a compatible LLM connection on the target workspace.
+      // Resume-first: try to find a compatible Pi provider on the target workspace.
       // If found and the session has an sdkSessionId, preserve it for API-level resume.
       // If not, clear SDK state and fall back to transferred session summary.
-      const sourceProviderType = header.llmConnection
-        ? getLlmConnection(header.llmConnection)?.providerType
+      const sourceProviderType = header.provider
+        ? (readPiGlobalProviders()[header.provider]?.baseUrl ? 'pi_compat' : 'pi')
         : undefined
       const compatibleConnection = sourceProviderType
-        ? this.findCompatibleLlmConnection(workspaceRootPath, sourceProviderType)
+        ? this.findCompatibleProvider(workspaceRootPath, sourceProviderType)
         : null
 
       if (compatibleConnection && storedSession.sdkSessionId) {
         // Resume path: compatible credentials exist — preserve SDK session ID
         sessionLog.info(`[import] Fork: compatible ${sourceProviderType} connection "${compatibleConnection}" found — preserving sdkSessionId for resume`)
-        storedSession.llmConnection = compatibleConnection
-        storedSession.connectionLocked = false
+        storedSession.provider = compatibleConnection
       } else {
         // Summary path: no compatible connection or no SDK session — clear for fresh start
-        if (storedSession.llmConnection) {
+        if (storedSession.provider) {
           sessionLog.info(`[import] Fork: no compatible ${sourceProviderType ?? 'unknown'} connection — clearing, will use summary context`)
         }
         storedSession.sdkSessionId = undefined
-        storedSession.llmConnection = undefined
-        storedSession.connectionLocked = false
+        storedSession.provider = undefined
       }
       // Clear thinking level so the session inherits the workspace default
       storedSession.thinkingLevel = undefined
@@ -7454,20 +7474,18 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Check LLM connection compatibility for move mode (fork already cleared above)
-    if (mode === 'move' && storedSession.llmConnection) {
-      sessionLog.info(`[import] Checking LLM connection: "${storedSession.llmConnection}"`)
-      const conn = resolveSessionConnection(storedSession.llmConnection, undefined)
-      if (!conn) {
-        sessionLog.warn(`[import] LLM connection "${storedSession.llmConnection}" not found — clearing to use default`)
-        warnings.push(`LLM connection "${storedSession.llmConnection}" not found in target — session will use default`)
-        storedSession.llmConnection = undefined
-        storedSession.connectionLocked = false
+    // Check Pi provider compatibility for move mode (fork already cleared above)
+    if (mode === 'move' && storedSession.provider) {
+      sessionLog.info(`[import] Checking Pi provider: "${storedSession.provider}"`)
+      if (!hasConfiguredPiProvider(storedSession.provider)) {
+        sessionLog.warn(`[import] Pi provider "${storedSession.provider}" not found — clearing to use default`)
+        warnings.push(`Pi provider "${storedSession.provider}" not found in target — session will use default`)
+        storedSession.provider = undefined
       } else {
-        sessionLog.info(`[import] LLM connection "${storedSession.llmConnection}" resolved OK`)
+        sessionLog.info(`[import] Pi provider "${storedSession.provider}" resolved OK`)
       }
-    } else if (mode === 'move' && !storedSession.llmConnection) {
-      sessionLog.info('[import] No LLM connection in bundle — will use default')
+    } else if (mode === 'move' && !storedSession.provider) {
+      sessionLog.info('[import] No Pi provider in bundle — will use default')
     }
 
     storedSession.workingDirectory = workspaceRootPath
@@ -7476,7 +7494,7 @@ export class SessionManager implements ISessionManager {
     // Create/update the Pi session header + Craft metadata first, then import
     // canonical transcript entries through Pi's public SessionManager API.
     const sessionFile = getSessionFilePath(workspaceRootPath, sessionId, workspaceRootPath, storedSession.createdAt)
-    sessionLog.info(`[import] Creating Pi canonical session: ${sessionFile} (llmConnection=${storedSession.llmConnection ?? 'default'}, messages=${storedSession.messages.length})`)
+    sessionLog.info(`[import] Creating Pi canonical session: ${sessionFile} (provider=${storedSession.provider ?? 'default'}, messages=${storedSession.messages.length})`)
     await saveStoredSession(storedSession)
     const importedIdMap = appendStoredMessagesViaPiSessionManager(
       sessionFile,
@@ -7535,20 +7553,19 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Find an LLM connection on this server that matches the given provider type.
+   * Find an Pi provider on this server that matches the given provider type.
    * Checks workspace default first, then falls back to any matching connection.
    */
-  private findCompatibleLlmConnection(workspaceRootPath: string, providerType: string): string | null {
+  private findCompatibleProvider(workspaceRootPath: string, providerType: string): string | null {
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
-    const defaultSlug = wsConfig?.defaults?.defaultLlmConnection
+    const defaultSlug = wsConfig?.defaults?.provider
     if (defaultSlug) {
-      const conn = getLlmConnection(defaultSlug)
-      if (conn?.providerType === providerType) return defaultSlug
+      const provider = readPiGlobalProviders()[defaultSlug]
+      if (provider && (provider.baseUrl ? 'pi_compat' : 'pi') === providerType) return defaultSlug
     }
     // Fall back: any connection with matching provider type
-    const connections = getLlmConnections()
-    const match = connections.find(c => c.providerType === providerType)
-    return match?.slug ?? null
+    const match = Object.entries(readPiGlobalProviders()).find(([, provider]) => (provider.baseUrl ? 'pi_compat' : 'pi') === providerType)
+    return match?.[0] ?? null
   }
 
   /**

@@ -433,7 +433,7 @@ export interface SessionInfo {
   createdAt: number;
   updatedAt?: number;
   workingDirectory?: string;
-  llmConnection?: string;
+  provider?: string;
   model?: string;
   isActive: boolean;
 }

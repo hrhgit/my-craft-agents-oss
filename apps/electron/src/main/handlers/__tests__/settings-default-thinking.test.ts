@@ -7,6 +7,8 @@ type HandlerFn = (ctx: { clientId: string }, ...args: any[]) => Promise<any> | a
 
 const getDefaultThinkingLevelMock = mock(() => 'think')
 const setDefaultThinkingLevelMock = mock((_level: string) => true)
+const getMidStreamBehaviorMock = mock(() => 'steer')
+const setMidStreamBehaviorMock = mock((_behavior: string) => true)
 
 mock.module('@craft-agent/shared/config', () => ({
   getPreferencesPath: () => '/tmp/preferences.json',
@@ -17,6 +19,9 @@ mock.module('@craft-agent/shared/config', () => ({
   getWorkspaceByNameOrId: () => null,
   getDefaultThinkingLevel: getDefaultThinkingLevelMock,
   setDefaultThinkingLevel: setDefaultThinkingLevelMock,
+  getMidStreamBehavior: getMidStreamBehaviorMock,
+  setMidStreamBehavior: setMidStreamBehaviorMock,
+  readPiGlobalProviders: () => ({}),
 }))
 
 describe('settings default thinking RPC handlers', () => {
@@ -26,6 +31,8 @@ describe('settings default thinking RPC handlers', () => {
     handlers.clear()
     getDefaultThinkingLevelMock.mockClear()
     setDefaultThinkingLevelMock.mockClear()
+    getMidStreamBehaviorMock.mockClear()
+    setMidStreamBehaviorMock.mockClear()
 
     const server: RpcServer = {
       handle(channel, handler) {
@@ -106,5 +113,32 @@ describe('settings default thinking RPC handlers', () => {
 
     await expect(setHandler!({ clientId: 'client-1' }, 'ultra')).rejects.toThrow('Invalid thinking level')
     expect(setDefaultThinkingLevelMock).not.toHaveBeenCalled()
+  })
+
+  it('returns persisted mid-stream behavior', async () => {
+    const getHandler = handlers.get(RPC_CHANNELS.settings.GET_MID_STREAM_BEHAVIOR)
+    expect(getHandler).toBeTruthy()
+
+    const result = await getHandler!({ clientId: 'client-1' })
+    expect(result).toBe('steer')
+    expect(getMidStreamBehaviorMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists valid mid-stream behavior values', async () => {
+    const setHandler = handlers.get(RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR)
+    expect(setHandler).toBeTruthy()
+
+    const result = await setHandler!({ clientId: 'client-1' }, 'queue')
+    expect(result).toEqual({ success: true })
+    expect(setMidStreamBehaviorMock).toHaveBeenCalledWith('queue')
+    expect(setMidStreamBehaviorMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects invalid mid-stream behavior values before persistence', async () => {
+    const setHandler = handlers.get(RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR)
+    expect(setHandler).toBeTruthy()
+
+    await expect(setHandler!({ clientId: 'client-1' }, 'abort')).rejects.toThrow('Invalid mid-stream behavior')
+    expect(setMidStreamBehaviorMock).not.toHaveBeenCalled()
   })
 })

@@ -10,8 +10,8 @@ import type { SpawnedServer } from './server-spawner.ts'
 // ---------------------------------------------------------------------------
 
 interface MockServerOptions {
-  /** What LLM_Connection:list returns */
-  connections?: unknown[]
+  /** What pi:getGlobalProviders returns */
+  providers?: unknown[]
 }
 
 interface MockServer {
@@ -48,7 +48,7 @@ function createMockServer(opts?: MockServerOptions): MockServer {
   const invokedChannels: string[] = []
   const invokeArgs: Record<string, unknown[][]> = {}
   let createSessionArgs: unknown[] | undefined
-  const connections = opts?.connections ?? []
+  const providers = opts?.providers ?? []
 
   const server = Bun.serve({
     port: 0,
@@ -88,17 +88,14 @@ function createMockServer(opts?: MockServerOptions): MockServer {
             case 'window:switchWorkspace':
               result = { ok: true }
               break
-            case 'LLM_Connection:list':
-              result = connections
+            case 'pi:getGlobalProviders':
+              result = providers
               break
-            case 'LLM_Connection:save':
-              result = { ok: true }
-              break
-            case 'settings:setupLlmConnection':
+            case 'pi:saveGlobalProvider':
               result = { success: true }
               break
-            case 'LLM_Connection:setDefault':
-              result = { ok: true }
+            case 'pi:setGlobalDefault':
+              result = { success: true }
               break
             case 'sessions:create':
               createSessionArgs = envelope.args
@@ -363,10 +360,9 @@ describe('run command', () => {
     client.destroy()
   })
 
-  it('LLM bootstrap calls save, setup, and setDefault when no connections exist', async () => {
-    // Server returns empty connections list
+  it('provider bootstrap calls save and setDefault when no providers exist', async () => {
     mockWsServer?.close()
-    mockWsServer = createMockServer({ connections: [] })
+    mockWsServer = createMockServer({ providers: [] })
 
     const { CliRpcClient } = await import('./client.ts')
     const client = new CliRpcClient(mockWsServer!.url, {
@@ -375,39 +371,29 @@ describe('run command', () => {
     })
     await client.connect()
 
-    // Simulate the LLM bootstrap path from cmdRun
-    const connections = (await client.invoke('LLM_Connection:list')) as any[]
-    expect(connections).toEqual([])
+    const providers = (await client.invoke('pi:getGlobalProviders')) as any[]
+    expect(providers).toEqual([])
 
-    await client.invoke('LLM_Connection:save', {
-      slug: 'anthropic-api',
-      name: 'Anthropic',
-      providerType: 'pi',
-      piAuthProvider: 'anthropic',
-      authType: 'api_key',
-      createdAt: 123,
+    await client.invoke('pi:saveGlobalProvider', {
+      key: 'anthropic',
+      provider: { models: [{ id: 'claude-sonnet-4-6' }] },
+      apiKey: 'sk-test-key',
     })
-    await client.invoke('settings:setupLlmConnection', {
-      slug: 'anthropic-api',
-      credential: 'sk-test-key',
-    })
-    await client.invoke('LLM_Connection:setDefault', 'anthropic-api')
+    await client.invoke('pi:setGlobalDefault', { provider: 'anthropic', model: 'claude-sonnet-4-6' })
 
     expect(mockWsServer!.invokedChannels).toEqual([
-      'LLM_Connection:list',
-      'LLM_Connection:save',
-      'settings:setupLlmConnection',
-      'LLM_Connection:setDefault',
+      'pi:getGlobalProviders',
+      'pi:saveGlobalProvider',
+      'pi:setGlobalDefault',
     ])
 
     client.destroy()
   })
 
-  it('LLM bootstrap is skipped when connections already exist', async () => {
-    // Server returns existing connection
+  it('provider bootstrap is skipped when providers already exist', async () => {
     mockWsServer?.close()
     mockWsServer = createMockServer({
-      connections: [{ slug: 'existing', name: 'Existing' }],
+      providers: [{ key: 'existing', name: 'Existing' }],
     })
 
     const { CliRpcClient } = await import('./client.ts')
@@ -417,12 +403,11 @@ describe('run command', () => {
     })
     await client.connect()
 
-    // Simulate: check connections — they exist, so skip bootstrap
-    const connections = (await client.invoke('LLM_Connection:list')) as any[]
-    expect(connections).toHaveLength(1)
+    const providers = (await client.invoke('pi:getGlobalProviders')) as any[]
+    expect(providers).toHaveLength(1)
 
     // No further LLM calls should be needed
-    expect(mockWsServer!.invokedChannels).toEqual(['LLM_Connection:list'])
+    expect(mockWsServer!.invokedChannels).toEqual(['pi:getGlobalProviders'])
 
     client.destroy()
   })

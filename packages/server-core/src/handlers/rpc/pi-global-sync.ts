@@ -3,19 +3,19 @@
  *
  * ~/.pi/agent/ 是 "pure Pi + custom provider" 模式的唯一数据源（SoT）。
  * Craft 现在直接读写 ~/.pi/agent/，不再在 config.json 中维护 `pi-*`
- * LlmConnection 副本，pi 凭证统一存储在 ~/.pi/agent/auth.json。
+ * Pi 凭证统一存储在 ~/.pi/agent/auth.json。
  *
  * 职责（thin wrapper）：
  * - 读取 ~/.pi/agent/ 的 providers + settings（用于启动校验与 defaultProvider
  *   自动修复）。
  *
  * 不再做的事：
- * - 不构建 config.llmConnections 中的 `pi-*` 条目，不调用 saveConfig。
- * - 不调用 credentialManager.setLlmApiKey / setLlmOAuth / setLlmIamCredentials
+ * - 不构建 Craft provider 副本，不调用 saveConfig。
+ * - 不调用 credentialManager.setProviderApiKey / setProviderOAuth / setProviderIamCredentials
  *   写入 `pi-*` slug 的凭证。
  *
  * 触发时机：
- *   1. 服务器启动时一次（registerLlmConnectionsHandlers）。
+ *   1. 服务器启动时一次（registerPiProviderHandlers）。
  *   2. 每次 pi:saveGlobalProvider / pi:deleteGlobalProvider /
  *      pi:setGlobalDefault 之后。
  */
@@ -38,11 +38,11 @@ export interface SyncResult {
  * ~/.pi/agent/ 的 thin wrapper。
  *
  * - 读取 ~/.pi/agent/ 的 providers + default，并对失效的 defaultProvider 做自动修复。
- * - 不写入 config.llmConnections 或旧凭证路径。
+ * - 不写入 Craft 旧配置或旧凭证路径。
  *
  * 返回 SyncResult。永不抛错——错误会被记录并以 `error` 字段返回。
  */
-export async function syncPiGlobalToLlmConnections(): Promise<SyncResult> {
+export async function syncPiGlobalConfig(): Promise<SyncResult> {
   let providers: Record<string, PiGlobalProvider> = {}
   let settings: { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string } = {}
   let changed = false

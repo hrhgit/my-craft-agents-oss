@@ -24,7 +24,7 @@ const ThinkingLevelInputSchema = z
 export const PromptActionSchema = z.object({
   type: z.literal('prompt'),
   prompt: z.string().min(1, 'Prompt cannot be empty'),
-  llmConnection: z.string().min(1).optional(),
+  provider: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   thinkingLevel: ThinkingLevelInputSchema,
 });

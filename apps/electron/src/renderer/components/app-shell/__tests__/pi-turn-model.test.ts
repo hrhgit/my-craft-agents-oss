@@ -143,6 +143,33 @@ describe('buildPiTurns', () => {
     })
   })
 
+  it('falls back to the final assistant message timestamp when terminal times are missing', () => {
+    const startedAt = 1_783_861_200_000
+    const completedAt = startedAt + 4_200
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'content:user:user-message-fallback', createdSeq: 1, turnId: 'turn-message-fallback', kind: 'user_text',
+        payload: { role: 'user', messageId: 'user-message-fallback', text: 'timed request', streaming: false, timestamp: startedAt },
+      }),
+      entity({
+        entityId: 'turn:turn-message-fallback', entityType: 'turn', createdSeq: 2, lastSeq: 4,
+        turnId: 'turn-message-fallback', kind: 'turn_end',
+        payload: { status: 'completed' },
+      }),
+      entity({
+        entityId: 'content:text:assistant-message-fallback:0', createdSeq: 3, turnId: 'turn-message-fallback',
+        payload: {
+          role: 'assistant', messageId: 'assistant-message-fallback', contentIndex: 0,
+          text: 'done', streaming: false, isFinal: true, timestamp: completedAt,
+        },
+      }),
+    ])
+
+    expect(turns[1]).toMatchObject({
+      type: 'assistant', startedAt, completedAt, durationMs: 4_200,
+    })
+  })
+
   it('keeps attachment-only prompts visible with a safe fallback attachment', () => {
     const turns = buildPiTurns([entity({
       entityId: 'artifact:attachment:user-1:file-1', entityType: 'artifact_ref',

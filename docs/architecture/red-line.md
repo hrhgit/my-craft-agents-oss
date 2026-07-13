@@ -110,7 +110,7 @@ where Craft is preserving its own opaque metadata.
   setup. `RpcClient.getAvailableModels()` requires a live authenticated session
   and cannot serve this path.
 - `packages/shared/src/config/pi-global-config.ts` — compatibility shell around
-  Pi host facade for global providers/defaults, `craftConnections`,
+  Pi host facade for global providers/defaults,
   `craft.agent.*`, `shellGui.*`, and `extensionConfig.*`. Its only raw Pi path
   constant is `PI_AGENT_DIR`, used to watch for external Pi config changes; it
   must not import `PI_SETTINGS_FILE`, `PI_MODELS_FILE`, or `PI_AUTH_FILE`.
@@ -159,5 +159,5 @@ the case here for why it is a seam extension.
   sidecar/projection contract.
 - The legacy Craft storage migration window is closed. Craft no longer imports
   or reads legacy session, skill, credential, or messaging storage, and no
-  longer migrates legacy workspace cwd or LLM connection configuration at
+  longer migrates legacy workspace cwd or Pi provider configuration at
   startup.

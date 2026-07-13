@@ -22,11 +22,13 @@ import type {
   LoadedSource,
   LoadedSkill,
   NewChatActionParams,
-  LlmConnectionWithStatus,
+  PiGlobalProviderForDisplay,
+  PiGlobalSettings,
   TestAutomationResult,
 } from '../../shared/types'
 import type { SessionStatus as SessionStatusConfig } from '@/config/session-status-config'
 import type { SessionOptions, SessionOptionUpdates } from '../hooks/useSessionOptions'
+import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
 import { defaultSessionOptions } from '../hooks/useSessionOptions'
 import { sessionAtomFamily } from '../atoms/sessions'
 import type {
@@ -44,12 +46,10 @@ export interface AppShellContextType {
   activeWorkspaceId: string | null
   /** Workspace slug for SDK skill qualification (derived from workspace path) */
   activeWorkspaceSlug: string | null
-  /** All LLM connections with authentication status */
-  llmConnections: LlmConnectionWithStatus[]
-  /** Default LLM connection slug for the current workspace */
-  workspaceDefaultLlmConnection?: string
-  /** Refresh LLM connections from config */
-  refreshLlmConnections: () => Promise<void>
+  /** Pi providers and global provider/model defaults. */
+  piProviders: PiGlobalProviderForDisplay[]
+  piGlobalSettings: PiGlobalSettings
+  refreshPiGlobalConfig: () => Promise<void>
   pendingPermissions: Map<string, PermissionRequest[]>
   pendingCredentials: Map<string, CredentialRequest[]>
   /** Get draft input text for a session - reads from ref without triggering re-renders */
@@ -83,7 +83,7 @@ export interface AppShellContextType {
 
   // Session callbacks
   onCreateSession: (workspaceId: string, options?: import('../../shared/types').CreateSessionOptions) => Promise<Session>
-  onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@craft-agent/core').ContentBadge[]) => void
+  onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@craft-agent/core').ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => void
   onRenameSession: (sessionId: string, name: string) => void
   onFlagSession: (sessionId: string) => void
   onUnflagSession: (sessionId: string) => void

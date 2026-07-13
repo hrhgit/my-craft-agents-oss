@@ -9,9 +9,9 @@
  *
  *   const manager = getCredentialManager();
  *
- *   // Get/set LLM connection API key
- *   const apiKey = await manager.getLlmApiKey(connectionSlug);
- *   await manager.setLlmApiKey(connectionSlug, 'sk-...');
+ *   // Get/set Pi provider API key
+ *   const apiKey = await manager.getProviderApiKey(providerKey);
+ *   await manager.setProviderApiKey(providerKey, 'sk-...');
  *
  *   // Get/set workspace OAuth
  *   const oauth = await manager.getWorkspaceOAuth(workspaceId);

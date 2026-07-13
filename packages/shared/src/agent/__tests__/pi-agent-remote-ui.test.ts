@@ -19,7 +19,7 @@ describe('PiAgent RemoteUI bridge', () => {
     const { agent } = createAgent()
     const map = (agent as any).mapExtensionUiRequest.bind(agent)
 
-    expect(map({ type: 'extension_ui_request', id: 'select', extensionId: 'ask_user', method: 'select', title: 'Pick one', options: ['A'] })).toMatchObject({
+    expect(map({ type: 'extension_ui_request', id: 'select', extensionId: 'ask-user', method: 'select', title: 'Pick one', options: ['A'] })).toMatchObject({
       type: 'remoteui_request', kind: 'select', requestId: 'select', options: [{ title: 'A' }],
     })
     expect(map({ type: 'extension_ui_request', id: 'confirm', extensionId: 'ambiguity-dictionary', method: 'confirm', title: 'Continue?', message: 'Confirm it' })).toMatchObject({
@@ -34,7 +34,7 @@ describe('PiAgent RemoteUI bridge', () => {
     expect(map({
       type: 'extension_ui_request',
       id: 'ask-user-single',
-      extensionId: 'ask_user',
+      extensionId: 'ask-user',
       method: 'select',
       title: 'Pick an approach',
       options: ['Prototype', '✏️ Write my own answer...'],
@@ -45,23 +45,58 @@ describe('PiAgent RemoteUI bridge', () => {
       options: [{ title: 'Prototype' }],
       allowFreeform: true,
     })
+    agent.destroy()
+  })
+
+  it('maps canonical ask-user multi-select input titles to structured select requests', () => {
+    const { agent } = createAgent()
+    const map = (agent as any).mapExtensionUiRequest.bind(agent)
+
     expect(map({
       type: 'extension_ui_request',
       id: 'ask-user-multiple',
-      extensionId: 'ask_user',
+      extensionId: 'ask-user',
       method: 'input',
-      title: 'Choose areas\n\nContext:\nSelect everything that applies.\n\nOptions (select one or more):\n1. UI — Screen work\n2. Backend',
+      title: '[2/3] 多选测试：请选择两个或更多常用工具。\r\n\r\nContext:\r\n这是纯多选测试。\r\n\r\nOptions (select one or more):\r\n1. VS Code\r\n2. Git\r\n3. Docker\r\n4. Postman',
       placeholder: 'Type your selection(s)...',
     })).toMatchObject({
       type: 'remoteui_request',
       kind: 'select',
       requestId: 'ask-user-multiple',
-      title: 'Choose areas',
-      message: 'Select everything that applies.',
-      options: [{ title: 'UI', description: 'Screen work' }, { title: 'Backend' }],
+      title: '[2/3] 多选测试：请选择两个或更多常用工具。',
+      message: '这是纯多选测试。',
+      options: [
+        { title: 'VS Code' },
+        { title: 'Git' },
+        { title: 'Docker' },
+        { title: 'Postman' },
+      ],
       allowMultiple: true,
       allowFreeform: true,
     })
+
+    agent.destroy()
+  })
+
+  it('keeps multi-select title decoding scoped to ask-user extension IDs', () => {
+    const { agent } = createAgent()
+    const map = (agent as any).mapExtensionUiRequest.bind(agent)
+    const encodedTitle = 'Choose areas\n\nOptions (select one or more):\n1. UI\n2. Backend'
+
+    expect(map({
+      type: 'extension_ui_request',
+      id: 'legacy-ask-user',
+      extensionId: 'ask_user',
+      method: 'input',
+      title: encodedTitle,
+    })).toMatchObject({ kind: 'select', allowMultiple: true })
+    expect(map({
+      type: 'extension_ui_request',
+      id: 'other-extension',
+      extensionId: 'prompt-automation',
+      method: 'input',
+      title: encodedTitle,
+    })).toMatchObject({ kind: 'editor', title: encodedTitle })
 
     agent.destroy()
   })

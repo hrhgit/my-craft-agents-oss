@@ -24,8 +24,8 @@ import { debug } from '../utils/debug.ts';
 import { expandPath } from '../utils/paths.ts';
 import { readJsonFileSync } from '../utils/files.ts';
 import { perf } from '../utils/perf.ts';
-import { getDefaultLlmConnection, getLlmConnections, loadStoredConfig, type StoredConfig } from './storage.ts';
-import { watchPiGlobalModelsFile } from './pi-global-config.ts';
+import { loadStoredConfig, type StoredConfig } from './storage.ts';
+import { readPiGlobalProviders, readPiGlobalSettings, watchPiGlobalModelsFile, type PiGlobalProvider } from './pi-global-config.ts';
 import {
   validateConfig,
   validatePreferences,
@@ -115,8 +115,8 @@ export interface ConfigWatcherCallbacks {
   onConfigChange?: (config: StoredConfig) => void;
   /** Called when preferences.json changes */
   onPreferencesChange?: (prefs: UserPreferences) => void;
-  /** Called when LLM connections array changes (add/remove/update connections) */
-  onLlmConnectionsChange?: (connections: import('./storage.ts').LlmConnection[]) => void;
+  /** Called when Pi providers or their default provider/model changes. */
+  onProvidersChange?: (providers: Record<string, PiGlobalProvider>) => void;
 
   // Source callbacks
   /** Called when a specific source config changes (null if deleted) */
@@ -213,8 +213,7 @@ export class ConfigWatcher {
   private knownSkills: Set<string> = new Set();
   private knownThemes: Set<string> = new Set();
 
-  // Track LLM connections for change detection (JSON string for deep comparison)
-  private lastLlmConnectionsHash: string = '';
+  private lastProvidersHash: string = '';
 
   // Computed paths
   private workspaceDir: string;
@@ -306,25 +305,23 @@ export class ConfigWatcher {
     this.scanAppThemes();
     span.mark('scanAppThemes');
 
-    // Initialize LLM connections hash for change detection
-    this.initLlmConnectionsHash();
-    span.mark('initLlmConnectionsHash');
+    this.initProvidersHash();
+    span.mark('initProvidersHash');
 
     debug('[ConfigWatcher] Started watching files');
     span.end();
   }
 
-  /**
-   * Initialize LLM connections hash for change detection
-   */
-  private initLlmConnectionsHash(): void {
-    this.lastLlmConnectionsHash = this.getLlmConnectionsHash();
+  private initProvidersHash(): void {
+    this.lastProvidersHash = this.getProvidersHash();
   }
 
-  private getLlmConnectionsHash(): string {
+  private getProvidersHash(): string {
+    const settings = readPiGlobalSettings();
     return JSON.stringify({
-      connections: getLlmConnections(),
-      defaultSlug: getDefaultLlmConnection(),
+      providers: readPiGlobalProviders(),
+      defaultProvider: settings.defaultProvider,
+      defaultModel: settings.defaultModel,
     });
   }
 
@@ -409,7 +406,7 @@ export class ConfigWatcher {
   private watchPiGlobalConfigs(): void {
     try {
       const watcher = watchPiGlobalModelsFile(() => {
-        this.debounce('pi-models.json', () => this.handleLlmConnectionsChange());
+        this.debounce('pi-models.json', () => this.handleProvidersChange());
       });
 
       watcher.on('error', (err) => debug('[ConfigWatcher] Pi global configs watcher error:', err));
@@ -922,22 +919,20 @@ export class ConfigWatcher {
     if (config) {
       this.callbacks.onConfigChange?.(config);
 
-      // Keep compatibility with callers that still save config.json after
-      // mutating Pi models.json; the actual SoT is read in this helper.
-      this.handleLlmConnectionsChange();
+      this.handleProvidersChange();
     } else {
       this.callbacks.onError?.('config.json', new Error('Failed to load config'));
     }
   }
 
-  private handleLlmConnectionsChange(): void {
+  private handleProvidersChange(): void {
     try {
-      const connections = getLlmConnections();
-      const currentHash = this.getLlmConnectionsHash();
-      if (currentHash !== this.lastLlmConnectionsHash) {
-        debug('[ConfigWatcher] LLM connections changed');
-        this.lastLlmConnectionsHash = currentHash;
-        this.callbacks.onLlmConnectionsChange?.(connections);
+      const providers = readPiGlobalProviders();
+      const currentHash = this.getProvidersHash();
+      if (currentHash !== this.lastProvidersHash) {
+        debug('[ConfigWatcher] Pi providers changed');
+        this.lastProvidersHash = currentHash;
+        this.callbacks.onProvidersChange?.(providers);
       }
     } catch (error) {
       this.callbacks.onError?.('models.json', error instanceof Error ? error : new Error(String(error)));

@@ -7,12 +7,10 @@ import { _electron as electron, chromium, type Browser, type BrowserContext, typ
 
 type JsonRecord = Record<string, unknown>;
 
-interface LlmConnectionWithStatus {
-  slug: string;
+interface ProviderForTest {
+  key: string;
   name?: string;
-  isAuthenticated?: boolean;
-  isDefault?: boolean;
-  defaultModel?: string;
+  models?: Array<{ id: string }>;
 }
 
 interface Summary {
@@ -24,8 +22,8 @@ interface Summary {
   artifactsDir: string;
   tempRoot: string;
   tempProfileRemoved?: boolean;
-  selectedConnection?: Pick<LlmConnectionWithStatus, "slug" | "name" | "defaultModel">;
-  requestedConnectionSlug?: string;
+  selectedProvider?: Pick<ProviderForTest, "key" | "name">;
+  requestedProviderKey?: string;
   chatPhaseStartMs?: number;
   error?: string;
   evidence?: {
@@ -100,7 +98,7 @@ const electronProcessLogPath = join(artifactsDir, "electron-process.log");
 const summaryPath = join(artifactsDir, "summary.json");
 const tracePath = join(artifactsDir, "trace.zip");
 const tempRoot = join(tmpdir(), `craft-electron-chat-${runId}`);
-const requestedConnectionSlug = process.env.CRAFT_E2E_CONNECTION_SLUG?.trim() || undefined;
+const requestedProviderKey = process.env.CRAFT_E2E_PROVIDER?.trim() || undefined;
 const packagedExecutable = process.env.CRAFT_E2E_EXECUTABLE?.trim()
   ? resolve(process.env.CRAFT_E2E_EXECUTABLE.trim())
   : undefined;
@@ -112,7 +110,7 @@ let summary: Summary = {
   rootDir: ROOT_DIR,
   artifactsDir,
   tempRoot,
-  requestedConnectionSlug,
+  requestedProviderKey,
   phases: {
     build: { status: "pending" },
     profile: { status: "pending" },
@@ -747,150 +745,41 @@ function attachPageLogs(page: Page): void {
   });
 }
 
-async function chooseAndPreflightConnection(page: Page): Promise<LlmConnectionWithStatus> {
+async function chooseAndPreflightProvider(page: Page): Promise<ProviderForTest> {
   updatePhase("connection", "running");
-
-  const connections = await page.evaluate(async () => {
-    return await (window as any).electronAPI.listLlmConnectionsWithStatus();
-  }) as LlmConnectionWithStatus[];
-
-  if (!Array.isArray(connections) || connections.length === 0) {
-    throw new Error("No LLM connections are configured in the cloned profile.");
-  }
-
-  const selected = selectConnection(connections);
-  updateSummary({
-    selectedConnection: {
-      slug: selected.slug,
-      name: selected.name,
-      defaultModel: selected.defaultModel,
-    },
-  });
-
-  const setGlobal = await page.evaluate(async (slug) => {
-    return await (window as any).electronAPI.setDefaultLlmConnection(slug);
-  }, selected.slug) as { success: boolean; error?: string };
-
-  if (!setGlobal?.success) {
-    throw new Error(`Failed to set global default connection "${selected.slug}": ${setGlobal?.error ?? "unknown error"}`);
-  }
-
-  const workspaceId = await page.evaluate(async () => {
-    return await (window as any).electronAPI.getWindowWorkspace();
-  }) as string | null;
-
-  if (workspaceId) {
-    const setWorkspace = await page.evaluate(async ({ workspaceId, slug }) => {
-      return await (window as any).electronAPI.setWorkspaceDefaultLlmConnection(workspaceId, slug);
-    }, { workspaceId, slug: selected.slug }) as { success: boolean; error?: string };
-
-    if (!setWorkspace?.success) {
-      throw new Error(`Failed to set workspace default connection "${selected.slug}": ${setWorkspace?.error ?? "unknown error"}`);
-    }
-  }
-
-  const preflight = await page.evaluate(async (slug) => {
-    return await (window as any).electronAPI.testLlmConnection(slug);
-  }, selected.slug) as { success: boolean; error?: string };
-
-  if (!preflight?.success) {
-    throw new Error(`Connection preflight failed for "${selected.slug}": ${preflight?.error ?? "unknown error"}`);
-  }
-
-  updatePhase("connection", "passed", selected.slug);
+  const state = await page.evaluate(async () => ({ providers: await (window as any).electronAPI.getPiGlobalProviders(), settings: await (window as any).electronAPI.getPiGlobalSettings() }));
+  const selected = selectProvider(state.providers, state.settings.defaultProvider);
+  updateSummary({ selectedProvider: { key: selected.key, name: selected.name } });
+  updatePhase("connection", "passed", selected.key);
   return selected;
 }
 
-function selectConnection(connections: LlmConnectionWithStatus[]): LlmConnectionWithStatus {
-  if (requestedConnectionSlug) {
-    const requested = connections.find((connection) => connection.slug === requestedConnectionSlug);
-    if (!requested) {
-      throw new Error(`CRAFT_E2E_CONNECTION_SLUG "${requestedConnectionSlug}" was not found.`);
-    }
-    if (!requested.isAuthenticated) {
-      throw new Error(`CRAFT_E2E_CONNECTION_SLUG "${requestedConnectionSlug}" is not authenticated.`);
-    }
-    return requested;
-  }
-
-  const selected =
-    connections.find((connection) => connection.isDefault && connection.isAuthenticated) ??
-    connections.find((connection) => connection.isAuthenticated);
-
-  if (!selected) {
-    const slugs = connections.map((connection) => connection.slug).join(", ");
-    throw new Error(`No authenticated LLM connection is available. Configured connections: ${slugs || "(none)"}`);
-  }
-
+function selectProvider(providers: ProviderForTest[], defaultProvider?: string): ProviderForTest {
+  const selected = providers.find(provider => provider.key === requestedProviderKey)
+    ?? providers.find(provider => provider.key === defaultProvider)
+    ?? providers[0];
+  if (!selected) throw new Error("No AI providers are configured in the cloned profile.");
   return selected;
 }
 
-async function chooseAndPreflightConnectionWithInspector(inspector: NodeInspectorClient): Promise<LlmConnectionWithStatus> {
+async function chooseAndPreflightProviderWithInspector(inspector: NodeInspectorClient): Promise<ProviderForTest> {
   updatePhase("connection", "running");
-
-  const selected = await evaluateInRendererWhenConnected<LlmConnectionWithStatus>(inspector, `(
+  const selected = await evaluateInRendererWhenConnected<ProviderForTest>(inspector, `(
     async () => {
       const api = window.electronAPI;
       if (!api) throw new Error('window.electronAPI is not available.');
-      const requestedConnectionSlug = ${JSON.stringify(requestedConnectionSlug ?? null)};
-      const connections = await api.listLlmConnectionsWithStatus();
-      if (!Array.isArray(connections) || connections.length === 0) {
-        throw new Error('No LLM connections are configured in the cloned profile.');
-      }
-
-      function selectConnection() {
-        if (requestedConnectionSlug) {
-          const requested = connections.find((connection) => connection.slug === requestedConnectionSlug);
-          if (!requested) throw new Error('CRAFT_E2E_CONNECTION_SLUG "' + requestedConnectionSlug + '" was not found.');
-          if (!requested.isAuthenticated) throw new Error('CRAFT_E2E_CONNECTION_SLUG "' + requestedConnectionSlug + '" is not authenticated.');
-          return requested;
-        }
-        const selected = connections.find((connection) => connection.isDefault && connection.isAuthenticated)
-          ?? connections.find((connection) => connection.isAuthenticated);
-        if (!selected) {
-          const slugs = connections.map((connection) => connection.slug).join(', ');
-          throw new Error('No authenticated LLM connection is available. Configured connections: ' + (slugs || '(none)'));
-        }
-        return selected;
-      }
-
-      const selected = selectConnection();
-      const setGlobal = await api.setDefaultLlmConnection(selected.slug);
-      if (!setGlobal?.success) {
-        throw new Error('Failed to set global default connection "' + selected.slug + '": ' + (setGlobal?.error ?? 'unknown error'));
-      }
-
-      const workspaceId = await api.getWindowWorkspace();
-      if (workspaceId) {
-        const setWorkspace = await api.setWorkspaceDefaultLlmConnection(workspaceId, selected.slug);
-        if (!setWorkspace?.success) {
-          throw new Error('Failed to set workspace default connection "' + selected.slug + '": ' + (setWorkspace?.error ?? 'unknown error'));
-        }
-      }
-
-      const preflight = await api.testLlmConnection(selected.slug);
-      if (!preflight?.success) {
-        throw new Error('Connection preflight failed for "' + selected.slug + '": ' + (preflight?.error ?? 'unknown error'));
-      }
-
-      return {
-        slug: selected.slug,
-        name: selected.name,
-        defaultModel: selected.defaultModel,
-        isAuthenticated: selected.isAuthenticated,
-        isDefault: selected.isDefault,
-      };
+      const requestedProviderKey = ${JSON.stringify(requestedProviderKey ?? null)};
+      const providers = await api.getPiGlobalProviders();
+      const settings = await api.getPiGlobalSettings();
+      const selected = providers.find(provider => provider.key === requestedProviderKey)
+        ?? providers.find(provider => provider.key === settings.defaultProvider)
+        ?? providers[0];
+      if (!selected) throw new Error('No AI providers are configured in the cloned profile.');
+      return selected;
     }
   )()`);
-
-  updateSummary({
-    selectedConnection: {
-      slug: selected.slug,
-      name: selected.name,
-      defaultModel: selected.defaultModel,
-    },
-  });
-  updatePhase("connection", "passed", selected.slug);
+  updateSummary({ selectedProvider: { key: selected.key, name: selected.name } });
+  updatePhase("connection", "passed", selected.key);
   return selected;
 }
 
@@ -1402,12 +1291,12 @@ async function main(): Promise<void> {
     let chatResult: InspectorChatResult;
     if (desktop.mode === "node-inspector") {
       if (!desktop.inspector) throw new Error("Node inspector fallback did not return an inspector client.");
-      await chooseAndPreflightConnectionWithInspector(desktop.inspector);
+      await chooseAndPreflightProviderWithInspector(desktop.inspector);
       chatResult = await runChatFlowWithInspector(desktop.inspector);
     } else {
       if (!desktop.page) throw new Error("Playwright launch did not return a page.");
       page = desktop.page;
-      await chooseAndPreflightConnection(page);
+      await chooseAndPreflightProvider(page);
       chatResult = await runChatFlow(page);
     }
     assertProviderEvidence(chatResult);

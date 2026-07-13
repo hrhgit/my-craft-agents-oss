@@ -1,34 +1,101 @@
-param(
-  [ValidateRange(1, 100000)]
-  [int]$Instance = 1
-)
-
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$webuiScript = Join-Path $PSScriptRoot 'start-webui.ps1'
-$portmuxProject = Join-Path $repoRoot ".craft-agent\portmux\webui-instance-$Instance"
-$portmuxConfig = Join-Path $portmuxProject '.portmux.json'
-$portmuxLauncher = Join-Path $portmuxProject 'start.ps1'
+$launcherStateRoot = Join-Path $repoRoot '.craft-agent\portmux'
 
 if (-not (Get-Command portmux -ErrorAction SilentlyContinue)) {
   throw 'portmux is required to start the WebUI test environment.'
 }
 
-New-Item -ItemType Directory -Force $portmuxProject | Out-Null
+New-Item -ItemType Directory -Force $launcherStateRoot | Out-Null
 
-# Each instance has its own portmux project identity, so portmux allocates a
-# collision-free base port instead of deriving one from another instance.
-$escapedWebuiScript = $webuiScript.Replace("'", "''")
-$launcher = "& '$escapedWebuiScript' -PortmuxManaged -Instance $Instance$([Environment]::NewLine)exit `$LASTEXITCODE$([Environment]::NewLine)"
-[System.IO.File]::WriteAllText($portmuxLauncher, $launcher, [System.Text.UTF8Encoding]::new($false))
+function Open-ExclusiveFile {
+  param([string]$Path)
 
-$config = [ordered]@{
-  start = 'powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File start.ps1'
-  port_env = @('CRAFT_WEBUI_PORT', 'PORT')
+  try {
+    return [System.IO.File]::Open(
+      $Path,
+      [System.IO.FileMode]::OpenOrCreate,
+      [System.IO.FileAccess]::ReadWrite,
+      [System.IO.FileShare]::None
+    )
+  } catch [System.IO.IOException] {
+    return $null
+  }
 }
-$json = ($config | ConvertTo-Json -Depth 3) + [Environment]::NewLine
-[System.IO.File]::WriteAllText($portmuxConfig, $json, [System.Text.UTF8Encoding]::new($false))
 
-& portmux start --project $portmuxProject
-exit $LASTEXITCODE
+function Get-RunningWebuiUrl {
+  $escapedRepoRoot = [Regex]::Escape($repoRoot)
+  $viteProcesses = @(
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.CommandLine -match $escapedRepoRoot -and
+        $_.CommandLine -match 'vite\.js.+apps[\\/]webui[\\/]vite\.config\.ts'
+      } |
+      Sort-Object CreationDate
+  )
+
+  foreach ($process in $viteProcesses) {
+    $listener = Get-NetTCPConnection -State Listen -OwningProcess $process.ProcessId -ErrorAction SilentlyContinue |
+      Where-Object { $_.LocalAddress -in @('127.0.0.1', '::1', '0.0.0.0', '::') } |
+      Sort-Object LocalPort |
+      Select-Object -First 1
+    if ($null -ne $listener) {
+      return "http://localhost:$($listener.LocalPort)"
+    }
+  }
+
+  return $null
+}
+
+function Open-WebuiUrl {
+  param([string]$Url)
+
+  Write-Host "[Craft Agents Web] Opening shared WebUI: $Url" -ForegroundColor Cyan
+  Start-Process $Url
+}
+
+$existingUrl = Get-RunningWebuiUrl
+if ($null -ne $existingUrl) {
+  Open-WebuiUrl $existingUrl
+  exit 0
+}
+
+$primaryLockPath = Join-Path $launcherStateRoot 'webui-primary.lock'
+$primaryLock = Open-ExclusiveFile $primaryLockPath
+
+if ($null -eq $primaryLock) {
+  Write-Host '[Craft Agents Web] The shared WebUI is starting. Waiting for its URL...' -ForegroundColor Cyan
+  $deadline = (Get-Date).AddSeconds(180)
+  do {
+    Start-Sleep -Milliseconds 250
+    $existingUrl = Get-RunningWebuiUrl
+    if ($null -ne $existingUrl) {
+      Open-WebuiUrl $existingUrl
+      exit 0
+    }
+
+    # If the first launcher failed, take over and start the shared service.
+    $primaryLock = Open-ExclusiveFile $primaryLockPath
+  } while ($null -eq $primaryLock -and (Get-Date) -lt $deadline)
+
+  if ($null -eq $primaryLock) {
+    throw 'Timed out waiting for the shared WebUI to start.'
+  }
+}
+
+try {
+  $existingUrl = Get-RunningWebuiUrl
+  if ($null -ne $existingUrl) {
+    Open-WebuiUrl $existingUrl
+    exit 0
+  }
+
+  Write-Host '[Craft Agents Web] Starting the shared WebUI with ~/.craft-agent...' -ForegroundColor Cyan
+  & portmux start --project $repoRoot
+  exit $LASTEXITCODE
+} finally {
+  if ($null -ne $primaryLock) {
+    $primaryLock.Dispose()
+  }
+}

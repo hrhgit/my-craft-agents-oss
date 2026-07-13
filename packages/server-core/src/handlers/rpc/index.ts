@@ -5,7 +5,7 @@ import { registerAuthHandlers } from './auth'
 import { registerAutomationsHandlers } from './automations'
 import { registerFilesHandlers } from './files'
 import { registerLabelsHandlers } from './labels'
-import { registerLlmConnectionsHandlers } from './llm-connections'
+import { registerPiProviderHandlers } from './pi-providers'
 import { registerOAuthHandlers } from './oauth'
 import { registerResourcesHandlers } from './resources'
 import { registerOnboardingHandlers } from './onboarding'
@@ -33,7 +33,7 @@ export function registerCoreRpcHandlers(
   registerAutomationsHandlers(server, deps)
   registerFilesHandlers(server, deps)
   registerLabelsHandlers(server, deps)
-  registerLlmConnectionsHandlers(server, deps)
+  registerPiProviderHandlers(server, deps)
   registerOAuthHandlers(server, deps)
   registerOnboardingHandlers(server, deps)
   registerResourcesHandlers(server, deps)

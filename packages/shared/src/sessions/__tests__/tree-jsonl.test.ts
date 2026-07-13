@@ -439,6 +439,34 @@ Active: none
     expect(header.craft.messageCount).toBe(stored!.messages.length)
   })
 
+  it('ignores and removes legacy provider lock metadata on the next write', async () => {
+    writeJsonl(sessionFile, [{
+      type: 'session',
+      version: 3,
+      id: 'abc123',
+      timestamp: '2026-07-01T00:00:00.000Z',
+      cwd: '/work/project',
+      craft: {
+        id: 'abc123',
+        provider: 'anthropic',
+        connectionLocked: true,
+        providerLocked: true,
+      },
+    }])
+
+    const stored = readSessionJsonl(sessionFile)
+    expect(stored).not.toBeNull()
+    expect(stored).not.toHaveProperty('connectionLocked')
+    expect(stored).not.toHaveProperty('providerLocked')
+
+    writeSessionJsonl(sessionFile, stored!)
+
+    const header = JSON.parse((await Bun.file(sessionFile).text()).trim().split('\n')[0]!)
+    expect(header.craft.provider).toBe('anthropic')
+    expect(header.craft.connectionLocked).toBeUndefined()
+    expect(header.craft.providerLocked).toBeUndefined()
+  })
+
   it('persists projection-derived computed metadata instead of recalculating it from overlays', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()

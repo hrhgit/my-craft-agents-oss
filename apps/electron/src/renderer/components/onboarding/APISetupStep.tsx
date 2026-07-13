@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { Check, Key } from "lucide-react"
 import { StepFormLayout, BackButton, ContinueButton } from "./primitives"
-import type { LlmAuthType, LlmProviderType } from "@craft-agent/shared/config/llm-connections"
+type ProviderType = 'pi'
+type ProviderAuthType = 'api_key'
 
 /** Provider segment for the segmented control */
 export type ProviderSegment = 'pi'
@@ -24,11 +25,11 @@ export type ApiSetupMethod =
   | 'pi_api_key'
 
 /**
- * Map ApiSetupMethod to the underlying LLM connection types.
+ * Map ApiSetupMethod to the underlying provider types.
  */
-export function apiSetupMethodToConnectionTypes(method: ApiSetupMethod): {
-  providerType: LlmProviderType;
-  authType: LlmAuthType;
+export function apiSetupMethodToProvider(method: ApiSetupMethod): {
+  providerType: ProviderType;
+  authType: ProviderAuthType;
 } {
   switch (method) {
     case 'pi_api_key':
@@ -41,7 +42,7 @@ interface ApiSetupOption {
   name: string
   description: string
   icon: React.ReactNode
-  providerType: LlmProviderType
+  providerType: ProviderType
 }
 
 const API_SETUP_ICONS: Record<ApiSetupMethod, React.ReactNode> = {

@@ -548,10 +548,9 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       case 'refreshTitle':
         log.info(`IPC: refreshTitle received for session ${sessionId}`)
         return sessionManager.refreshTitle(sessionId)
-      // Connection selection
-      case 'setConnection':
-        log.info(`IPC: setConnection received for session ${sessionId}, connection: ${command.connectionSlug}`)
-        return sessionManager.setSessionConnection(sessionId, command.connectionSlug)
+      case 'setProvider':
+        log.info(`IPC: setProvider received for session ${sessionId}, provider: ${command.provider}`)
+        return sessionManager.setSessionProvider(sessionId, command.provider)
       // Pending plan execution (Accept & Compact flow)
       case 'setPendingPlanExecution':
         return sessionManager.setPendingPlanExecution(sessionId, { planPath: command.planPath, artifactId: command.artifactId }, command.draftInputSnapshot)

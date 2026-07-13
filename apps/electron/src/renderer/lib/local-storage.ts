@@ -53,7 +53,7 @@ export const KEYS = {
   lastSettingsSubpage: 'last-settings-subpage',
 
   // Appearance
-  showConnectionIcons: 'show-connection-icons',
+  showProviderIcons: 'show-provider-icons',
 
   // What's New
   whatsNewLastSeenVersion: 'whats-new-last-seen-version',

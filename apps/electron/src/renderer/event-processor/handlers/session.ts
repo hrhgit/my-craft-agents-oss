@@ -32,7 +32,7 @@ import type {
   WorkingDirectoryChangedEvent,
   PermissionModeChangedEvent,
   SessionModelChangedEvent,
-  LLMConnectionChangedEvent,
+  ProviderChangedEvent,
   UserMessageEvent,
   MessageAnnotationsUpdatedEvent,
   SessionSharedEvent,
@@ -447,11 +447,11 @@ export function handleSessionModelChanged(
 }
 
 /**
- * Handle connection_changed - sync session.llmConnection to renderer state
+ * Handle provider_changed - sync session.provider to renderer state
  */
-export function handleConnectionChanged(
+export function handleProviderChanged(
   state: SessionState,
-  event: LLMConnectionChangedEvent
+  event: ProviderChangedEvent
 ): ProcessResult {
   const { session, streaming } = state
 
@@ -459,7 +459,7 @@ export function handleConnectionChanged(
     state: {
       session: {
         ...session,
-        llmConnection: event.connectionSlug,
+        provider: event.provider,
         ...(event.supportsBranching !== undefined && { supportsBranching: event.supportsBranching }),
       },
       streaming,

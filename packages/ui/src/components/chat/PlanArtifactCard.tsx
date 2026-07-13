@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AnnotationV1, ExtensionCommandResult, PlanArtifactV1 } from '@craft-agent/core'
-import { AlertTriangle, Check, Circle, CircleDot, FileText, GitBranch, ListChecks, Maximize2, MessageSquareText, Play, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Check, Circle, CircleDot, Copy, FileText, GitBranch, ListChecks, MessageSquareText, Play, RefreshCw } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { Markdown } from '../markdown'
 import { DocumentFormattedMarkdownOverlay } from '../overlay'
@@ -15,6 +15,7 @@ export interface PlanArtifactCardProps {
   content: string
   onOpenFile?: (path: string) => void
   onOpenUrl?: (url: string) => void
+  onPopOut?: () => void
   onExecute?: PlanAction
   onExecuteWithCompact?: PlanAction
   onRefine?: PlanAction
@@ -68,6 +69,7 @@ export function PlanArtifactCard({
   content,
   onOpenFile,
   onOpenUrl,
+  onPopOut,
   onExecute,
   onExecuteWithCompact,
   onRefine,
@@ -86,6 +88,7 @@ export function PlanArtifactCard({
   const [pendingAction, setPendingAction] = React.useState<'execute' | 'compact' | 'refine' | null>(null)
   const [actionError, setActionError] = React.useState<string | null>(null)
   const [isFullscreen, setIsFullscreen] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
   const isReady = artifact.state === 'ready'
   const reviewWarning = artifact.review.status === 'error'
     || artifact.review.status === 'failed'
@@ -110,6 +113,24 @@ export function PlanArtifactCard({
       setPendingAction(null)
     }
   }, [artifact.artifactId, pendingAction])
+
+  const handleCopy = React.useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      console.error('Failed to copy plan artifact:', error)
+    }
+  }, [content])
+
+  const handleOpenMarkdown = React.useCallback(() => {
+    if (onPopOut) {
+      onPopOut()
+      return
+    }
+    setIsFullscreen(true)
+  }, [onPopOut])
 
   const reviewPanel = (
     <div className="space-y-3">
@@ -187,39 +208,46 @@ export function PlanArtifactCard({
         </aside>
       </div>
 
-      {(isReady || onRefine || onBranch || messageId || hasCompletionTiming) && (
+      {(isReady || onRefine || onBranch || content.length > 0 || hasCompletionTiming) && (
         <footer className="border-t border-border/60 bg-muted/15 px-3 py-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            {isReady && onExecute && (
-              <button type="button" disabled={pendingAction !== null} onClick={() => void runAction('execute', onExecute)} className="inline-flex h-8 items-center gap-1.5 bg-foreground px-3 text-xs font-medium text-background transition-opacity disabled:opacity-50">
-                {pendingAction === 'execute' ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}{t('plan.artifact.execute')}
-              </button>
-            )}
-            {isReady && onExecuteWithCompact && (
-              <button type="button" disabled={pendingAction !== null} onClick={() => void runAction('compact', onExecuteWithCompact)} className="inline-flex h-8 items-center gap-1.5 border border-border bg-background px-3 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50">
-                {pendingAction === 'compact' ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ListChecks className="h-3.5 w-3.5" />}{t('plan.artifact.compactExecute')}
-              </button>
-            )}
-            {onRefine && artifact.state !== 'executing' && artifact.state !== 'completed' && (
-              <button type="button" disabled={pendingAction !== null} onClick={() => void runAction('refine', onRefine)} className="inline-flex h-8 items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50">
-                <MessageSquareText className="h-3.5 w-3.5" />{t('plan.artifact.refine')}
-              </button>
-            )}
-            <span className="min-w-2 flex-1" />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {isReady && onExecute && (
+                <button type="button" disabled={pendingAction !== null} onClick={() => void runAction('execute', onExecute)} className="inline-flex h-8 items-center gap-1.5 bg-foreground px-3 text-xs font-medium text-background transition-opacity disabled:opacity-50">
+                  {pendingAction === 'execute' ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}{t('plan.artifact.execute')}
+                </button>
+              )}
+              {isReady && onExecuteWithCompact && (
+                <button type="button" disabled={pendingAction !== null} onClick={() => void runAction('compact', onExecuteWithCompact)} className="inline-flex h-8 items-center gap-1.5 border border-border bg-background px-3 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50">
+                  {pendingAction === 'compact' ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ListChecks className="h-3.5 w-3.5" />}{t('plan.artifact.compactExecute')}
+                </button>
+              )}
+              {onRefine && artifact.state !== 'executing' && artifact.state !== 'completed' && (
+                <button type="button" disabled={pendingAction !== null} onClick={() => void runAction('refine', onRefine)} className="inline-flex h-8 items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50">
+                  <MessageSquareText className="h-3.5 w-3.5" />{t('plan.artifact.refine')}
+                </button>
+              )}
+              {content.length > 0 && (
+                <>
+                  <button type="button" onClick={() => void handleCopy()} className={cn('inline-flex h-8 items-center gap-1.5 px-2 text-xs transition-colors', copied ? 'text-success' : 'text-muted-foreground hover:text-foreground')}>
+                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    <span>{copied ? t('common.copied') : t('common.copy')}</span>
+                  </button>
+                  <button type="button" onClick={handleOpenMarkdown} className="inline-flex h-8 items-center gap-1.5 px-2 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                    <FileText className="h-3.5 w-3.5" />Markdown
+                  </button>
+                </>
+              )}
+              {onBranch && (
+                <button type="button" onClick={onBranch} className="inline-flex h-8 items-center gap-1.5 px-2 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                  <GitBranch className="h-3.5 w-3.5" />{t('plan.artifact.branch')}
+                </button>
+              )}
+            </div>
             {hasCompletionTiming && (
-              <span className="shrink-0 tabular-nums text-xs text-muted-foreground/70" data-response-completion-time={completedAt}>
-                {formatCompletionClock(completedAt!)} {t('turnCard.elapsed')} {formatRequestDuration(durationMs!)}
+              <span className="ml-auto shrink-0 tabular-nums text-xs text-muted-foreground/70" data-response-completion-time={completedAt}>
+                {formatCompletionClock(completedAt!)} {t('turnCard.elapsed')}{formatRequestDuration(durationMs!)}
               </span>
-            )}
-            {messageId && (
-              <button type="button" onClick={() => setIsFullscreen(true)} className="inline-flex h-8 items-center gap-1.5 px-2 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                <Maximize2 className="h-3.5 w-3.5" />{t('plan.artifact.readAnnotate')}
-              </button>
-            )}
-            {onBranch && (
-              <button type="button" onClick={onBranch} className="inline-flex h-8 items-center gap-1.5 px-2 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                <GitBranch className="h-3.5 w-3.5" />{t('plan.artifact.branch')}
-              </button>
             )}
           </div>
           {isReady && <p className="mt-2 text-[11px] text-muted-foreground">{t('plan.artifact.allowAllNotice')}</p>}

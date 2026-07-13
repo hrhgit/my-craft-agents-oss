@@ -323,12 +323,12 @@ export function createWorkspaceAtPath(
   const globalDefaults = loadConfigDefaults();
 
   // Merge global defaults with provided defaults
-  // AI settings (model, thinkingLevel, defaultLlmConnection) are left undefined
+  // AI settings (provider, model, thinkingLevel) are left undefined
   // so they fall back to app-level defaults
   const workspaceDefaults: WorkspaceConfig['defaults'] = {
     model: undefined,
     thinkingLevel: undefined,
-    // defaultLlmConnection: undefined - falls back to app default
+    // provider/model: undefined - fall back to Pi global defaults
     permissionMode: globalDefaults.workspaceDefaults.permissionMode,
     cyclablePermissionModes: globalDefaults.workspaceDefaults.cyclablePermissionModes,
     enabledSourceSlugs: [],

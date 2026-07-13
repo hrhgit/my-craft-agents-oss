@@ -6,7 +6,7 @@ import type {
   LlmAuthType,
   LlmProviderType,
 } from '../types.ts';
-import type { LlmConnection } from '../../../config/storage.ts';
+import type { PiGlobalProvider } from '../../../config/pi-global-config.ts';
 import type { ModelFetchResult } from '../../../config/model-fetcher.ts';
 import type { CredentialManager } from '../../../credentials/manager.ts';
 import type { ResolvedBackendRuntimePaths } from './runtime-resolver.ts';
@@ -22,7 +22,7 @@ export interface BackendRuntimePaths {
 export interface BackendRuntimePayload extends Record<string, unknown> {
   paths?: BackendRuntimePaths;
   piAuthProvider?: string;
-  /** Custom base URL from the LLM connection (e.g. Azure OpenAI endpoint). */
+  /** Custom base URL from the Pi provider (e.g. Azure OpenAI endpoint). */
   baseUrl?: string;
   /** Custom endpoint protocol config (api type for routing). */
   customEndpoint?: { api: string; supportsImages?: boolean };
@@ -31,7 +31,8 @@ export interface BackendRuntimePayload extends Record<string, unknown> {
 }
 
 export interface BackendResolutionContext {
-  connection: LlmConnection | null;
+  providerKey?: string;
+  providerConfig: PiGlobalProvider | null;
   provider: ModelProvider;
   authType?: LlmAuthType;
   resolvedModel: string;
@@ -65,20 +66,21 @@ export interface DriverBuildArgs {
 }
 
 export interface DriverFetchModelsArgs extends DriverHostRuntimeArgs {
-  connection: LlmConnection;
+  providerKey: string;
+  providerConfig: PiGlobalProvider;
   credentials: BackendModelFetchCredentials;
   timeoutMs: number;
 }
 
-export interface StoredConnectionValidationResult {
+export interface StoredProviderValidationResult {
   success: boolean;
   error?: string;
   shouldRefreshModels?: boolean;
 }
 
-export interface DriverValidateStoredConnectionArgs extends DriverHostRuntimeArgs {
-  slug: string;
-  connection: LlmConnection;
+export interface DriverValidateStoredProviderArgs extends DriverHostRuntimeArgs {
+  providerKey: string;
+  providerConfig: PiGlobalProvider;
   credentialManager: CredentialManager;
 }
 
@@ -87,7 +89,8 @@ export interface DriverTestConnectionArgs extends DriverHostRuntimeArgs {
   apiKey: string;
   model: string;
   baseUrl?: string;
-  connection?: Pick<LlmConnection, 'providerType' | 'piAuthProvider' | 'customEndpoint'>;
+  providerKey?: string;
+  providerConfig?: PiGlobalProvider;
   timeoutMs: number;
 }
 
@@ -95,7 +98,7 @@ export interface ProviderDriver {
   provider: ModelProvider;
   initializeHostRuntime?: (args: DriverHostRuntimeArgs) => void;
   fetchModels?: (args: DriverFetchModelsArgs) => Promise<ModelFetchResult>;
-  validateStoredConnection?: (args: DriverValidateStoredConnectionArgs) => Promise<StoredConnectionValidationResult>;
+  validateStoredProvider?: (args: DriverValidateStoredProviderArgs) => Promise<StoredProviderValidationResult>;
   testConnection?: (args: DriverTestConnectionArgs) => Promise<{ success: boolean; error?: string } | null>;
   prepareRuntime?: (args: DriverBuildArgs) => void;
   buildRuntime: (args: DriverBuildArgs) => BackendRuntimePayload;

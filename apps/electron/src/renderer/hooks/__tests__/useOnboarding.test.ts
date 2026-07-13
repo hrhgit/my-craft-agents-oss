@@ -1,142 +1,16 @@
-import { describe, it, expect } from 'bun:test'
-import {
-  resolveSlugForMethod,
-  apiSetupMethodToConnectionSetup,
-  BASE_SLUG_FOR_METHOD,
-} from '../useOnboarding'
-import type { ApiSetupMethod } from '@/components/onboarding'
+import { describe, expect, test } from 'bun:test'
+import { resolveSlugForMethod } from '../useOnboarding'
 
-// ============================================================
-// resolveSlugForMethod
-// ============================================================
-
-describe('resolveSlugForMethod', () => {
-  it('returns the base slug when it is available', () => {
-    const slug = resolveSlugForMethod('pi_api_key', null, new Set())
-    expect(slug).toBe('pi-api-key')
+describe('provider key allocation', () => {
+  test('uses the standard Pi API key when available', () => {
+    expect(resolveSlugForMethod('pi_api_key', null, new Set())).toBe('pi-api-key')
   })
 
-  it('reuses editingSlug when editing an existing connection', () => {
-    const slug = resolveSlugForMethod('pi_api_key', 'my-custom-slug', new Set(['pi-api-key']))
-    expect(slug).toBe('my-custom-slug')
+  test('keeps the key when editing a provider', () => {
+    expect(resolveSlugForMethod('pi_api_key', 'anthropic', new Set(['anthropic']))).toBe('anthropic')
   })
 
-  it('appends -2 when base slug is taken', () => {
-    const slug = resolveSlugForMethod('pi_api_key', null, new Set(['pi-api-key']))
-    expect(slug).toBe('pi-api-key-2')
-  })
-
-  it('appends -3 when both base and -2 are taken', () => {
-    const slug = resolveSlugForMethod('pi_api_key', null, new Set(['pi-api-key', 'pi-api-key-2']))
-    expect(slug).toBe('pi-api-key-3')
-  })
-
-  it('works for all setup methods', () => {
-    const methods: ApiSetupMethod[] = [
-      'pi_api_key',
-    ]
-    for (const method of methods) {
-      const slug = resolveSlugForMethod(method, null, new Set())
-      expect(slug).toBe(BASE_SLUG_FOR_METHOD[method])
-    }
-  })
-})
-
-// ============================================================
-// apiSetupMethodToConnectionSetup
-// ============================================================
-
-describe('apiSetupMethodToConnectionSetup', () => {
-  it('pi_api_key includes credential, baseUrl, defaultModel, models', () => {
-    const setup = apiSetupMethodToConnectionSetup(
-      'pi_api_key',
-      { credential: 'sk-ant-test', baseUrl: 'https://custom.api', connectionDefaultModel: 'claude-sonnet-4-6', models: ['model-a'] },
-      null,
-      new Set(),
-    )
-    expect(setup.slug).toBe('pi-api-key')
-    expect(setup.credential).toBe('sk-ant-test')
-    expect(setup.baseUrl).toBe('https://custom.api')
-    expect(setup.defaultModel).toBe('claude-sonnet-4-6')
-    expect(setup.models).toEqual(['model-a'])
-  })
-
-  it('pi_api_key includes piAuthProvider and modelSelectionMode', () => {
-    const setup = apiSetupMethodToConnectionSetup(
-      'pi_api_key',
-      {
-        credential: 'sk-pi',
-        piAuthProvider: 'anthropic',
-        modelSelectionMode: 'userDefined3Tier',
-      },
-      null,
-      new Set(),
-    )
-    expect(setup.slug).toBe('pi-api-key')
-    expect(setup.credential).toBe('sk-pi')
-    expect(setup.piAuthProvider).toBe('anthropic')
-    expect(setup.modelSelectionMode).toBe('userDefined3Tier')
-  })
-
-  it('uses editingSlug when editing', () => {
-    const setup = apiSetupMethodToConnectionSetup(
-      'pi_api_key',
-      { credential: 'sk-ant' },
-      'existing-connection',
-      new Set(['pi-api-key']),
-    )
-    expect(setup.slug).toBe('existing-connection')
-  })
-
-  it('generates unique slug when base is taken', () => {
-    const setup = apiSetupMethodToConnectionSetup(
-      'pi_api_key',
-      {},
-      null,
-      new Set(['pi-api-key']),
-    )
-    expect(setup.slug).toBe('pi-api-key-2')
-  })
-})
-
-// ============================================================
-// Reauth slug regression tests
-// ============================================================
-
-describe('reauth slug resolution', () => {
-  it('slug override wins over null editingSlug (stale closure scenario)', () => {
-    // Simulates the reauth bug: editingSlug is null (stale closure),
-    // but connectionSlugOverride provides the correct slug.
-    const existingSlugs = new Set(['pi-api-key'])
-
-    // Without override: generates -2 (the bug)
-    const wrongSlug = resolveSlugForMethod('pi_api_key', null, existingSlugs)
-    expect(wrongSlug).toBe('pi-api-key-2')
-
-    // With override: reuses existing slug (the fix)
-    const correctSlug = resolveSlugForMethod('pi_api_key', 'pi-api-key', existingSlugs)
-    expect(correctSlug).toBe('pi-api-key')
-  })
-
-  it('apiSetupMethodToConnectionSetup uses override slug for reauth', () => {
-    const existingSlugs = new Set(['pi-api-key'])
-    const setup = apiSetupMethodToConnectionSetup(
-      'pi_api_key',
-      {},
-      'pi-api-key',  // override slug (reauth)
-      existingSlugs,
-    )
-    expect(setup.slug).toBe('pi-api-key')
-  })
-
-  it('new connection flow still generates unique slugs when base is taken', () => {
-    const existingSlugs = new Set(['pi-api-key'])
-    const setup = apiSetupMethodToConnectionSetup(
-      'pi_api_key',
-      {},
-      null,  // no editing slug (new connection)
-      existingSlugs,
-    )
-    expect(setup.slug).toBe('pi-api-key-2')
+  test('allocates a unique provider key', () => {
+    expect(resolveSlugForMethod('pi_api_key', null, new Set(['pi-api-key', 'pi-api-key-2']))).toBe('pi-api-key-3')
   })
 })

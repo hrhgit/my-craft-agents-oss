@@ -3,8 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
-import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, SessionStatus, NewChatActionParams, ContentBadge, LlmConnectionWithStatus, PermissionModeState } from '../shared/types'
+import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, SessionStatus, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@craft-agent/shared/config'
+import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
 import { generateMessageId } from '../shared/types'
@@ -23,6 +24,7 @@ import { ModalProvider } from '@/context/ModalContext'
 import { DismissibleLayerProvider } from '@/context/DismissibleLayerContext'
 import { useWindowCloseHandler } from '@/hooks/useWindowCloseHandler'
 import { useOnboarding } from '@/hooks/useOnboarding'
+import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useSessionSelectionStore } from '@/hooks/useSession'
 import { createInitialState } from '@/hooks/useMultiSelect'
@@ -303,17 +305,11 @@ export default function App() {
     return workspace?.remoteServer?.remoteWorkspaceId ?? null
   }, [windowWorkspaceId, workspaces])
 
-  // LLM connections with authentication status (for provider selection)
-  const [llmConnections, setLlmConnections] = useState<LlmConnectionWithStatus[]>([])
-  // Workspace default LLM connection (for new sessions)
-  const [workspaceDefaultLlmConnection, setWorkspaceDefaultLlmConnection] = useState<string | undefined>()
-  // Global default LLM connection slug (from app config)
-  const [defaultLlmConnectionSlug, setDefaultLlmConnectionSlug] = useState<string | undefined>()
-
-  // Derive connection default model override from the default LLM connection
-  const defaultConnection = useMemo(() => {
-    return llmConnections.find(c => c.slug === defaultLlmConnectionSlug) ?? null
-  }, [llmConnections, defaultLlmConnectionSlug])
+  const {
+    providers: piProviders,
+    settings: piGlobalSettings,
+    refresh: refreshPiGlobalConfig,
+  } = usePiGlobalConfig()
 
   const [menuNewChatTrigger, setMenuNewChatTrigger] = useState(0)
   // Permission requests per session (queue to handle multiple concurrent requests)
@@ -499,10 +495,6 @@ export default function App() {
       }
       setSessionOptions(optionsMap)
 
-      await Promise.allSettled(
-        loadedSessions.map((s) => reconcilePermissionModeState(s.id))
-      )
-
       setSessionsLoaded(true)
 
       if (initialSessionId && windowWorkspaceId) {
@@ -525,7 +517,7 @@ export default function App() {
       setSessionLoadError(formatSessionLoadFailure(err))
       setSessionsLoaded(true)
     }
-  }, [initializeSessions, initialSessionId, reconcilePermissionModeState, windowWorkspaceId])
+  }, [initializeSessions, initialSessionId, windowWorkspaceId])
 
   const refreshSessionListMetadataFromServer = useCallback(async (options: SessionListRefreshOptions = {}): Promise<Map<string, SessionMeta> | null> => {
     const {
@@ -575,8 +567,6 @@ export default function App() {
       for (const session of sessions) {
         syncSessionOptionsFromSession(session)
       }
-      await Promise.allSettled(sessions.map(s => reconcilePermissionModeState(s.id)))
-
       return nextMetaMap
     } catch (err) {
       rendererLog.error('[App] Failed to refresh session list metadata after reconnect:', {
@@ -593,7 +583,7 @@ export default function App() {
       })
       return null
     }
-  }, [store, syncSessionOptionsFromSession, reconcilePermissionModeState, windowWorkspaceId, windowRemoteWorkspaceId])
+  }, [store, syncSessionOptionsFromSession, windowWorkspaceId, windowRemoteWorkspaceId])
 
   // Stale session watchdog — catches stuck sessions that the reconnect protocol misses
   const { trackSessionActivity } = useStaleSessionRecovery({
@@ -602,22 +592,6 @@ export default function App() {
   })
 
   const DRAFT_SAVE_DEBOUNCE_MS = 500
-
-  const resolveDefaultConnectionSlug = useCallback((connections: LlmConnectionWithStatus[]) => {
-    return connections.find(c => c.isDefault)?.slug ?? connections[0]?.slug
-  }, [])
-
-  // Refresh LLM connections from config (called on workspace change and after connection updates)
-  const refreshLlmConnections = useCallback(async () => {
-    const connections = await window.electronAPI.listLlmConnectionsWithStatus()
-    setLlmConnections(connections)
-    setDefaultLlmConnectionSlug(resolveDefaultConnectionSlug(connections))
-    // Also refresh workspace default
-    if (windowWorkspaceId) {
-      const settings = await window.electronAPI.getWorkspaceSettings(windowWorkspaceId)
-      setWorkspaceDefaultLlmConnection(settings?.defaultLlmConnection)
-    }
-  }, [resolveDefaultConnectionSlug, windowWorkspaceId])
 
   // Handle onboarding completion
   const handleOnboardingComplete = useCallback(async () => {
@@ -639,11 +613,10 @@ export default function App() {
     setAppState('ready')
   }, [])
 
-  // Onboarding hook — onConfigSaved fires immediately when billing is saved,
-  // ensuring connection state updates before the wizard closes.
+  // Keep the provider/model source of truth fresh after onboarding changes.
   const onboarding = useOnboarding({
     onComplete: handleOnboardingComplete,
-    onConfigSaved: refreshLlmConnections,
+    onConfigSaved: refreshPiGlobalConfig,
     initialSetupNeeds: setupNeeds || undefined,
   })
 
@@ -752,6 +725,15 @@ export default function App() {
 
   usePiProjectionSync(sessionSelection.selected, handlePiProjectionEventApplied)
 
+  // Permission diagnostics are only needed for the session the user can act
+  // on. Reconciling every sidebar item turns workspace loading into N extra
+  // RPCs and can force every transcript to be read from disk.
+  useEffect(() => {
+    if (sessionSelection.selected) {
+      void reconcilePermissionModeState(sessionSelection.selected)
+    }
+  }, [sessionSelection.selected, reconcilePermissionModeState])
+
   // Load workspaces, sessions, model, notifications setting, and drafts when app is ready
   useEffect(() => {
     if (appState !== 'ready') return
@@ -781,11 +763,6 @@ export default function App() {
       }
     }).catch(() => { /* non-fatal startup check */ })
     void loadSessionsFromServer()
-    // Load LLM connections with authentication status
-    window.electronAPI.listLlmConnectionsWithStatus().then((connections) => {
-      setLlmConnections(connections)
-      setDefaultLlmConnectionSlug(resolveDefaultConnectionSlug(connections))
-    })
     // Load persisted input drafts into ref (no re-render needed).
     // Attachment files are not read here — hydration happens lazily when the session
     // is opened so app startup isn't delayed by reading potentially large files.
@@ -796,7 +773,7 @@ export default function App() {
     })
     // Load app-level theme
     window.electronAPI.getAppTheme().then(setAppTheme)
-  }, [appState, loadSessionsFromServer, resolveDefaultConnectionSlug])
+  }, [appState, loadSessionsFromServer])
 
   // Subscribe to theme change events (live updates when theme.json changes)
   useEffect(() => {
@@ -807,21 +784,6 @@ export default function App() {
       cleanupApp()
     }
   }, [])
-
-  // Subscribe to LLM connections change events (live updates when models are fetched)
-  useEffect(() => {
-    const cleanup = window.electronAPI.onLlmConnectionsChanged(() => {
-      refreshLlmConnections()
-    })
-    return () => { cleanup() }
-  }, [refreshLlmConnections])
-
-  // Refresh LLM connections and workspace default when workspace changes
-  useEffect(() => {
-    if (windowWorkspaceId) {
-      refreshLlmConnections()
-    }
-  }, [windowWorkspaceId, refreshLlmConnections])
 
   // Listen for session events - uses centralized event processor for consistent state transitions
   //
@@ -1257,7 +1219,7 @@ export default function App() {
     window.electronAPI.sessionCommand(sessionId, { type: 'rename', name })
   }, [updateSessionById])
 
-  const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[]) => {
+  const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => {
     let optimisticMessageId: string | null = null
     try {
       // Capture pre-send processing state so we can flag mid-stream sends
@@ -1447,6 +1409,7 @@ export default function App() {
         skillSlugs,
         badges: badges.length > 0 ? badges : undefined,
         optimisticMessageId,
+        midStreamSendIntent,
       })
       updateSessionById(sessionId, (s) => ({
         messages: settlePiUserOverlayCarrier(s.messages, optimisticMessageId!),
@@ -1854,9 +1817,9 @@ export default function App() {
     workspaces,
     activeWorkspaceId: windowWorkspaceId,
     activeWorkspaceSlug: windowWorkspaceSlug,
-    llmConnections,
-    workspaceDefaultLlmConnection,
-    refreshLlmConnections,
+    piProviders,
+    piGlobalSettings,
+    refreshPiGlobalConfig,
     pendingPermissions,
     pendingCredentials,
     getDraft,
@@ -1899,9 +1862,9 @@ export default function App() {
     workspaces,
     windowWorkspaceId,
     windowWorkspaceSlug,
-    llmConnections,
-    workspaceDefaultLlmConnection,
-    refreshLlmConnections,
+    piProviders,
+    piGlobalSettings,
+    refreshPiGlobalConfig,
     pendingPermissions,
     pendingCredentials,
     getDraft,

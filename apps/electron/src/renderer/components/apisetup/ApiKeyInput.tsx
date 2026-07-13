@@ -31,7 +31,10 @@ import {
   type PresetKey,
 } from "./submit-helpers"
 
-import type { CustomEndpointApi, CustomEndpointConfig } from '@config/llm-connections'
+import type { PiCustomApi } from '@craft-agent/shared/config/pi-provider-models'
+import type { CustomEndpointConfig } from './submit-helpers'
+
+type CustomEndpointApi = PiCustomApi
 
 export type ApiKeyStatus = 'idle' | 'validating' | 'success' | 'error'
 
@@ -40,7 +43,7 @@ export type { CustomEndpointApi }
 export interface ApiKeySubmitData {
   apiKey: string
   baseUrl?: string
-  connectionDefaultModel?: string
+  providerDefaultModel?: string
   models?: string[]
   piAuthProvider?: string
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
@@ -65,7 +68,7 @@ export interface ApiKeyInputProps {
   initialValues?: {
     apiKey?: string
     baseUrl?: string
-    connectionDefaultModel?: string
+    providerDefaultModel?: string
     activePreset?: string
     models?: string[]
     /** Pre-fill the protocol toggle for custom endpoints */
@@ -184,7 +187,7 @@ export function ApiKeyInput({
   const [lastNonCustomPreset, setLastNonCustomPreset] = useState<PresetKey | null>(
     initialPreset !== 'custom' ? initialPreset : defaultPreset.key
   )
-  const [connectionDefaultModel, setConnectionDefaultModel] = useState(initialValues?.connectionDefaultModel ?? '')
+  const [providerDefaultModel, setProviderDefaultModel] = useState(initialValues?.providerDefaultModel ?? '')
   const [customApi, setCustomApi] = useState<CustomEndpointApi>(initialValues?.customApi ?? 'openai-completions')
   const [modelError, setModelError] = useState<string | null>(null)
 
@@ -263,19 +266,19 @@ export function ApiKeyInput({
     // Pre-fill recommended model for Ollama; clear for all others
     // (Default provider presets hide the field entirely, others default to provider model IDs when empty)
     if (preset.key === 'ollama') {
-      setConnectionDefaultModel('qwen3-coder')
+      setProviderDefaultModel('qwen3-coder')
     } else if (preset.key === 'openrouter' || preset.key === 'vercel-ai-gateway') {
-      setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
+      setProviderDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
     } else if (preset.key === 'minimax-global' || preset.key === 'minimax-cn') {
-      setConnectionDefaultModel(COMPAT_MINIMAX_DEFAULTS)
+      setProviderDefaultModel(COMPAT_MINIMAX_DEFAULTS)
     } else if (preset.key === 'kimi-coding') {
-      setConnectionDefaultModel(COMPAT_KIMI_DEFAULTS)
+      setProviderDefaultModel(COMPAT_KIMI_DEFAULTS)
     } else if (preset.key === 'manifest') {
-      setConnectionDefaultModel('auto')
+      setProviderDefaultModel('auto')
     } else if (preset.key === 'custom' || OPENAI_COMPAT_CUSTOM_URL_PRESETS.has(preset.key)) {
-      setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
+      setProviderDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
     } else {
-      setConnectionDefaultModel('')
+      setProviderDefaultModel('')
     }
   }
 
@@ -292,17 +295,17 @@ export function ApiKeyInput({
     setActivePreset(nextPresetState.activePreset)
     setLastNonCustomPreset(nextPresetState.lastNonCustomPreset)
     setModelError(null)
-    if (!connectionDefaultModel.trim()) {
+    if (!providerDefaultModel.trim()) {
       if (presetKey === 'ollama') {
-        setConnectionDefaultModel('qwen3-coder')
+        setProviderDefaultModel('qwen3-coder')
       } else if (presetKey === 'manifest') {
-        setConnectionDefaultModel('auto')
+        setProviderDefaultModel('auto')
       } else if (presetKey === 'minimax-global' || presetKey === 'minimax-cn') {
-        setConnectionDefaultModel(COMPAT_MINIMAX_DEFAULTS)
+        setProviderDefaultModel(COMPAT_MINIMAX_DEFAULTS)
       } else if (presetKey === 'kimi-coding') {
-        setConnectionDefaultModel(COMPAT_KIMI_DEFAULTS)
+        setProviderDefaultModel(COMPAT_KIMI_DEFAULTS)
       } else if (presetKey === 'openrouter' || presetKey === 'vercel-ai-gateway' || presetKey === 'custom') {
-        setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
+        setProviderDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
       }
     }
   }
@@ -324,7 +327,7 @@ export function ApiKeyInput({
       onSubmit({
         apiKey: apiKey.trim(),
         baseUrl: baseUrl.trim() || undefined,
-        connectionDefaultModel: bestModel,
+        providerDefaultModel: bestModel,
         models,
         piAuthProvider: effectivePiAuthProvider,
         modelSelectionMode: 'userDefined3Tier',
@@ -334,7 +337,7 @@ export function ApiKeyInput({
 
     const effectiveBaseUrl = baseUrl.trim()
 
-    const parsedModels = parseModelList(connectionDefaultModel)
+    const parsedModels = parseModelList(providerDefaultModel)
 
     const isUsingDefaultEndpoint = isDefaultProviderPreset || !effectiveBaseUrl
     const requiresModel = !isDefaultProviderPreset && !!effectiveBaseUrl
@@ -357,7 +360,7 @@ export function ApiKeyInput({
     onSubmit({
       apiKey: apiKey.trim(),
       baseUrl: isUsingDefaultEndpoint ? undefined : effectiveBaseUrl,
-      connectionDefaultModel: parsedModels[0],
+      providerDefaultModel: parsedModels[0],
       models: parsedModels.length > 0 ? parsedModels : undefined,
       piAuthProvider: resolvedPiAuthProvider,
       modelSelectionMode: isPiApiKeyFlow
@@ -619,9 +622,9 @@ export function ApiKeyInput({
             <Input
               id="connection-default-model"
               type="text"
-              value={connectionDefaultModel}
+              value={providerDefaultModel}
               onChange={(e) => {
-                setConnectionDefaultModel(e.target.value)
+                setProviderDefaultModel(e.target.value)
                 setModelError(null)
               }}
               placeholder="e.g. claude-opus-4-8, claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5"
@@ -650,3 +653,5 @@ export function ApiKeyInput({
     </form>
   )
 }
+
+

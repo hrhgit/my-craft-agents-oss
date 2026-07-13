@@ -54,16 +54,14 @@ export { AbortReason } from './types.ts';
 // Factory
 export {
   createBackend,
-  // LLM Connection support
-  resolveSessionConnection,
+  resolveSessionProvider,
   resolveBackendContext,
-  resolveSetupTestConnectionHint,
-  createBackendFromConnection,
+  createBackendFromProvider,
   createBackendFromResolvedContext,
   initializeBackendHostRuntime,
   resolveBackendHostTooling,
   fetchBackendModels,
-  validateStoredBackendConnection,
+  validateStoredBackendProvider,
   AGENT_PROVIDER,
   // Utilities
   resolveModelForProvider,

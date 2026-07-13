@@ -189,6 +189,66 @@ describe('RoutedClient', () => {
       expect(local.invoke).not.toHaveBeenCalledWith(REMOTE_CHANNEL)
     })
 
+    it('updates a separate local workspace transport on local-to-local switch', async () => {
+      const local = stubClient({
+        invoke: mock(async () => ({
+          workspaceId: 'ws-2',
+          remoteServer: null,
+        })),
+      })
+      const localWorkspace = stubClient()
+      const routed = new RoutedClient(local, localWorkspace, {
+        localWorkspaceClient: localWorkspace,
+      })
+
+      await routed.invoke(SWITCH_CHANNEL, 'ws-2')
+
+      expect(localWorkspace.invoke).toHaveBeenCalledWith(SWITCH_CHANNEL, 'ws-2')
+    })
+
+    it('waits for local workspace transport context before completing the switch', async () => {
+      const local = stubClient({
+        invoke: mock(async () => ({
+          workspaceId: 'ws-2',
+          remoteServer: null,
+        })),
+      })
+      let finishWorkspaceSwitch: (() => void) | undefined
+      const localWorkspace = stubClient({
+        invoke: mock(() => new Promise<void>((resolve) => {
+          finishWorkspaceSwitch = resolve
+        })),
+      })
+      const routed = new RoutedClient(local, localWorkspace, {
+        localWorkspaceClient: localWorkspace,
+      })
+      let completed = false
+
+      const switching = routed.invoke(SWITCH_CHANNEL, 'ws-2').then(() => {
+        completed = true
+      })
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      expect(completed).toBe(false)
+      expect(finishWorkspaceSwitch).toBeDefined()
+      finishWorkspaceSwitch!()
+      await switching
+      expect(completed).toBe(true)
+    })
+
+    it('does not repeat the switch when GUI and workspace transport are shared', async () => {
+      const localInvoke = mock(async () => ({
+        workspaceId: 'ws-2',
+        remoteServer: null,
+      }))
+      const local = stubClient({ invoke: localInvoke })
+      const routed = new RoutedClient(local, local)
+
+      await routed.invoke(SWITCH_CHANNEL, 'ws-2')
+
+      expect(localInvoke).toHaveBeenCalledTimes(1)
+    })
+
     it('re-subscribes REMOTE_ELIGIBLE listeners on swap (make-before-break)', async () => {
       const local = stubClient({
         invoke: mock(async () => ({

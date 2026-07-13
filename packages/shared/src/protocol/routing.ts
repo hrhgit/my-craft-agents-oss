@@ -149,18 +149,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.appearance.GET_RICH_TOOL_DESCRIPTIONS,
   RPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS,
 
-  // caching — prompt cache and context settings
-  RPC_CHANNELS.caching.GET_EXTENDED_PROMPT_CACHE,
-  RPC_CHANNELS.caching.SET_EXTENDED_PROMPT_CACHE,
-  RPC_CHANNELS.caching.GET_ENABLE_1M_CONTEXT,
-  RPC_CHANNELS.caching.SET_ENABLE_1M_CONTEXT,
-
-  // rtk — token-optimization opt-in
-  RPC_CHANNELS.rtk.GET_ENABLED,
-  RPC_CHANNELS.rtk.SET_ENABLED,
-  RPC_CHANNELS.rtk.GET_STATUS,
-  RPC_CHANNELS.rtk.GET_GAIN,
-
   // tools — local tool settings
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
@@ -288,24 +276,12 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   // credentials — remote server's credential state
   RPC_CHANNELS.credentials.HEALTH_CHECK,
 
-  // llmConnections — LLM config lives on server running workspace
-  RPC_CHANNELS.llmConnections.LIST,
-  RPC_CHANNELS.llmConnections.LIST_WITH_STATUS,
-  RPC_CHANNELS.llmConnections.GET,
-  RPC_CHANNELS.llmConnections.GET_API_KEY,
-  RPC_CHANNELS.llmConnections.SAVE,
-  RPC_CHANNELS.llmConnections.DELETE,
-  RPC_CHANNELS.llmConnections.TEST,
-  RPC_CHANNELS.llmConnections.SET_DEFAULT,
-  RPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT,
-  RPC_CHANNELS.llmConnections.REFRESH_MODELS,
-  RPC_CHANNELS.llmConnections.CHANGED,
 
   // settings — workspace-level settings
-  RPC_CHANNELS.settings.SETUP_LLM_CONNECTION,
-  RPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP,
   RPC_CHANNELS.settings.GET_DEFAULT_THINKING_LEVEL,
   RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL,
+  RPC_CHANNELS.settings.GET_MID_STREAM_BEHAVIOR,
+  RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR,
 
   // pi — provider config on workspace server
   RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS,

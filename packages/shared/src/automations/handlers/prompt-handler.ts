@@ -115,7 +115,7 @@ export class PromptHandler implements AutomationHandler {
           mentions: references.mentions,
           labels: expandedLabels,
           permissionMode,
-          llmConnection: prompt.llmConnection,
+          provider: prompt.provider,
           model: prompt.model,
           thinkingLevel: prompt.thinkingLevel,
           telegramTopic: finalTopic,

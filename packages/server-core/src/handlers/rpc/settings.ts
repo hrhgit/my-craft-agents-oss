@@ -1,9 +1,20 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'path'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getDefaultThinkingLevel, setDefaultThinkingLevel } from '@craft-agent/shared/config'
+import {
+  getPreferencesPath,
+  getSessionDraft,
+  setSessionDraft,
+  deleteSessionDraft,
+  getAllSessionDrafts,
+  getDefaultThinkingLevel,
+  setDefaultThinkingLevel,
+  getMidStreamBehavior,
+  setMidStreamBehavior,
+} from '@craft-agent/shared/config'
 import { normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
 import * as configStorage from '@craft-agent/shared/config/storage'
+import { readPiGlobalProviders } from '@craft-agent/shared/config'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
 import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '@craft-agent/server-core/handlers'
@@ -29,18 +40,12 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.power.GET_KEEP_AWAKE,
   RPC_CHANNELS.appearance.GET_RICH_TOOL_DESCRIPTIONS,
   RPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS,
-  RPC_CHANNELS.caching.GET_EXTENDED_PROMPT_CACHE,
-  RPC_CHANNELS.caching.SET_EXTENDED_PROMPT_CACHE,
-  RPC_CHANNELS.caching.GET_ENABLE_1M_CONTEXT,
-  RPC_CHANNELS.caching.SET_ENABLE_1M_CONTEXT,
-  RPC_CHANNELS.rtk.GET_ENABLED,
-  RPC_CHANNELS.rtk.SET_ENABLED,
-  RPC_CHANNELS.rtk.GET_STATUS,
-  RPC_CHANNELS.rtk.GET_GAIN,
   RPC_CHANNELS.sessions.GET_MODEL,
   RPC_CHANNELS.sessions.SET_MODEL,
   RPC_CHANNELS.settings.GET_DEFAULT_THINKING_LEVEL,
   RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL,
+  RPC_CHANNELS.settings.GET_MID_STREAM_BEHAVIOR,
+  RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR,
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION,
@@ -76,6 +81,20 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     return { success: true }
   })
 
+  server.handle(RPC_CHANNELS.settings.GET_MID_STREAM_BEHAVIOR, async () => {
+    return getMidStreamBehavior()
+  })
+
+  server.handle(RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR, async (_ctx, behavior: string) => {
+    if (behavior !== 'steer' && behavior !== 'queue') {
+      throw new Error(`Invalid mid-stream behavior: ${behavior}. Valid values: 'steer', 'queue'`)
+    }
+    if (!setMidStreamBehavior(behavior)) {
+      throw new Error('Failed to persist mid-stream behavior')
+    }
+    return { success: true }
+  })
+
   // ============================================================
   // Settings - Model (Session-Specific)
   // ============================================================
@@ -90,8 +109,8 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     return session?.model ?? null
   })
 
-  // Set session-specific model (and optionally connection)
-  server.handle(RPC_CHANNELS.sessions.SET_MODEL, async (ctx, sessionId: string, workspaceId: string, model: string | null, connection?: string) => {
+  // Set session-specific provider/model overrides.
+  server.handle(RPC_CHANNELS.sessions.SET_MODEL, async (ctx, sessionId: string, workspaceId: string, model: string | null, provider?: string) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     if (wid) {
       const session = await deps.sessionManager.getSession(sessionId)
@@ -99,8 +118,8 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
         throw new Error(`Session workspace mismatch: session ${sessionId} belongs to workspace ${session.workspaceId}, but caller is authenticated to ${wid}`)
       }
     }
-    await deps.sessionManager.updateSessionModel(sessionId, wid, model, connection)
-    deps.platform.logger.info(`Session ${sessionId} model updated to: ${model}${connection ? ` (connection: ${connection})` : ''}`)
+    await deps.sessionManager.updateSessionModel(sessionId, wid, model, provider)
+    deps.platform.logger.info(`Session ${sessionId} model updated to: ${model}${provider ? ` (provider: ${provider})` : ''}`)
   })
 
   // Open native folder dialog for selecting working directory (routed to client)
@@ -129,13 +148,13 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
     return {
       name: config?.name,
+      provider: config?.defaults?.provider,
       model: config?.defaults?.model,
       permissionMode: config?.defaults?.permissionMode,
       cyclablePermissionModes: config?.defaults?.cyclablePermissionModes,
       thinkingLevel: normalizeThinkingLevel(config?.defaults?.thinkingLevel),
       workingDirectory: workspace.rootPath,
       localMcpEnabled: config?.localMcpServers?.enabled ?? true,
-      defaultLlmConnection: config?.defaults?.defaultLlmConnection,
       enabledSourceSlugs: config?.defaults?.enabledSourceSlugs ?? [],
     }
   })
@@ -147,16 +166,14 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     const normalizedValue = value
 
     // Validate key is a known workspace setting
-    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'localMcpEnabled', 'defaultLlmConnection']
+    const validKeys = ['name', 'provider', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'localMcpEnabled']
     if (!validKeys.includes(key)) {
       throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
     }
 
-    // Validate defaultLlmConnection exists before saving
-    if (key === 'defaultLlmConnection' && normalizedValue !== undefined && normalizedValue !== null) {
-      if (!configStorage.getLlmConnection(normalizedValue as string)) {
-        throw new Error(`LLM connection "${normalizedValue}" not found`)
-      }
+    if (key === 'provider' && normalizedValue !== undefined && normalizedValue !== null) {
+      const providers = readPiGlobalProviders()
+      if (!providers[String(normalizedValue)]) throw new Error(`Provider "${normalizedValue}" not found`)
     }
 
     const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
@@ -288,56 +305,6 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Set rich tool descriptions setting
   server.handle(RPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS, async (_ctx, enabled: boolean) => {
     configStorage.setRichToolDescriptions(enabled)
-  })
-
-  // ============================================================
-  // Prompt Caching Settings
-  // ============================================================
-
-  // Get extended prompt cache (1h TTL) setting
-  server.handle(RPC_CHANNELS.caching.GET_EXTENDED_PROMPT_CACHE, async () => {
-    return configStorage.getExtendedPromptCache()
-  })
-
-  // Set extended prompt cache (1h TTL) setting
-  server.handle(RPC_CHANNELS.caching.SET_EXTENDED_PROMPT_CACHE, async (_ctx, enabled: boolean) => {
-    await configStorage.setExtendedPromptCache(enabled)
-  })
-
-  // Get 1M context window setting
-  server.handle(RPC_CHANNELS.caching.GET_ENABLE_1M_CONTEXT, async () => {
-    return configStorage.getEnable1MContext()
-  })
-
-  // Set 1M context window setting
-  server.handle(RPC_CHANNELS.caching.SET_ENABLE_1M_CONTEXT, async (_ctx, enabled: boolean) => {
-    await configStorage.setEnable1MContext(enabled)
-  })
-
-  // ============================================================
-  // RTK Token-Optimization Settings
-  // ============================================================
-
-  // Get rtk Bash-output compression setting
-  server.handle(RPC_CHANNELS.rtk.GET_ENABLED, async () => {
-    return configStorage.getRtkEnabled()
-  })
-
-  // Set rtk Bash-output compression setting
-  server.handle(RPC_CHANNELS.rtk.SET_ENABLED, async (_ctx, enabled: boolean) => {
-    await configStorage.setRtkEnabled(enabled)
-  })
-
-  // Detect rtk installation (used by Settings UI to swap install prompt ↔ toggle)
-  server.handle(RPC_CHANNELS.rtk.GET_STATUS, async (_ctx, opts?: { forceRecheck?: boolean }) => {
-    const { getRtkStatus } = await import('@craft-agent/shared/agent')
-    return getRtkStatus(opts)
-  })
-
-  // Token-savings summary from `rtk gain --format json` (efficiency meter)
-  server.handle(RPC_CHANNELS.rtk.GET_GAIN, async () => {
-    const { getRtkGain } = await import('@craft-agent/shared/agent')
-    return getRtkGain()
   })
 
   // ============================================================

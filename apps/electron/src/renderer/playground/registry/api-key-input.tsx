@@ -65,7 +65,7 @@ export const apiKeyInputComponents: ComponentEntry[] = [
           initialValues: {
             activePreset: 'custom',
             baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            connectionDefaultModel: 'qwen3-coder-plus, qwen3-coder-flash, qwen-max',
+            providerDefaultModel: 'qwen3-coder-plus, qwen3-coder-flash, qwen-max',
             customApi: 'openai-completions',
           },
         },
@@ -78,7 +78,7 @@ export const apiKeyInputComponents: ComponentEntry[] = [
           initialValues: {
             activePreset: 'custom',
             baseUrl: 'http://localhost:11434/v1',
-            connectionDefaultModel: 'qwen3-coder',
+            providerDefaultModel: 'qwen3-coder',
             customApi: 'openai-completions',
           },
         },
@@ -91,7 +91,7 @@ export const apiKeyInputComponents: ComponentEntry[] = [
           initialValues: {
             activePreset: 'custom',
             baseUrl: 'https://my-anthropic-proxy.internal/v1',
-            connectionDefaultModel: 'claude-sonnet-4-6',
+            providerDefaultModel: 'claude-sonnet-4-6',
             customApi: 'anthropic-messages',
           },
         },
@@ -116,7 +116,7 @@ export const apiKeyInputComponents: ComponentEntry[] = [
           initialValues: {
             activePreset: 'custom',
             baseUrl: 'http://localhost:11434/v1',
-            connectionDefaultModel: 'qwen3-coder',
+            providerDefaultModel: 'qwen3-coder',
             customApi: 'openai-completions',
           },
         },
@@ -133,3 +133,5 @@ export const apiKeyInputComponents: ComponentEntry[] = [
     }),
   },
 ]
+
+

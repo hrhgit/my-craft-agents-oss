@@ -111,7 +111,7 @@ if (-not (Test-Path $nodeModulesPath)) {
   }
 }
 
-$webuiInstance = if ($Instance -gt 0) { $Instance } else { 1 }
+$webuiInstance = 1
 $webuiPort = if ($env:CRAFT_WEBUI_PORT) {
   Get-Port "CRAFT_WEBUI_PORT" 5175
 } elseif ($env:PORT) {
@@ -134,7 +134,7 @@ $rpcPort = if (-not $PortmuxManaged -and $env:CRAFT_RPC_PORT) {
 
 foreach ($port in @($webuiPort, $rpcPort)) {
   if (-not (Test-PortAvailable $port)) {
-    Fail-And-Wait "Port $port cannot be bound. Run start-webui.cmd $webuiInstance again after selecting another portmux port."
+    Fail-And-Wait "Port $port cannot be bound. Close the conflicting process, or run start-webui.cmd again if the shared WebUI is already running."
   }
 }
 
@@ -143,15 +143,7 @@ $env:CRAFT_RPC_HOST = "127.0.0.1"
 $env:CRAFT_RPC_PORT = "$rpcPort"
 $env:CRAFT_WEBUI_PORT = "$webuiPort"
 $env:CRAFT_WEBUI_INSTANCE = "$webuiInstance"
-if (-not $env:CRAFT_CONFIG_DIR) {
-  if ($webuiInstance -eq 1) {
-    # Keep the primary development instance aligned with Electron's profile.
-    $env:CRAFT_CONFIG_DIR = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".craft-agent"
-  } else {
-    # Parallel instances must not share the server lock or mutable test state.
-    $env:CRAFT_CONFIG_DIR = Join-Path $repoRoot ".craft-agent\webui-instance-$webuiInstance"
-  }
-}
+$env:CRAFT_CONFIG_DIR = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".craft-agent"
 $env:CRAFT_WEBUI_DIR = (Join-Path $repoRoot "apps\webui\dist")
 $env:CRAFT_WEBUI_AUTO_LOGIN = "true"
 $env:CRAFT_WEBUI_HOST = "127.0.0.1"

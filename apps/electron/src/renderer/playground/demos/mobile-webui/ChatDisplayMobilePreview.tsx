@@ -7,7 +7,7 @@ import { MobilePlaygroundProviders } from './MobilePlaygroundProviders'
 import {
   MOCK_MESSAGES,
   MOCK_LABELS,
-  MOCK_LLM_CONNECTIONS,
+  MOCK_PI_PROVIDERS,
   MOCK_SESSION_STATUSES,
   MOCK_SOURCES,
   MOCK_SKILLS,
@@ -100,7 +100,7 @@ export function ChatDisplayMobilePreview({
   )
 
   return (
-    <MobilePlaygroundProviders session={session} llmConnections={MOCK_LLM_CONNECTIONS}>
+    <MobilePlaygroundProviders session={session} piProviders={MOCK_PI_PROVIDERS}>
       <MobileWebUIFrame device={device} showBezel={showBezel}>
         <div className="flex flex-col h-full bg-background">
           <ChatDisplay

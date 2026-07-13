@@ -4,8 +4,7 @@ import {
   isLoopbackBaseUrl,
   setupTestRequiresApiKey,
   resolveCustomEndpointSetup,
-  createBuiltInConnection,
-} from './connection-setup-logic'
+} from './provider-setup-logic'
 
 describe('validateSetupTestInput', () => {
   it('rejects pi custom endpoint tests without piAuthProvider', () => {
@@ -111,31 +110,3 @@ describe('resolveCustomEndpointSetup', () => {
   })
 })
 
-// New connections must persist a per-provider midStreamBehavior default so the
-// per-connection submenu in Settings → AI shows a checkmark on the right item
-// out of the box (no read-time fallback needed for fresh connections).
-describe('createBuiltInConnection seeds midStreamBehavior', () => {
-  it("Pi (Anthropic) API key → 'steer'", () => {
-    const conn = createBuiltInConnection('pi-anthropic')
-    expect(conn.providerType).toBe('pi')
-    expect(conn.midStreamBehavior).toBe('steer')
-  })
-
-  it("Pi (Anthropic) custom endpoint becomes pi_compat → 'steer'", () => {
-    const conn = createBuiltInConnection('pi-anthropic', 'http://localhost:11434/v1')
-    expect(conn.providerType).toBe('pi_compat')
-    expect(conn.midStreamBehavior).toBe('steer')
-  })
-
-  it('rejects the retired ChatGPT Plus Craft connection template', () => {
-    expect(() => createBuiltInConnection('chatgpt-plus')).toThrow(
-      'Unknown built-in connection slug: chatgpt-plus',
-    )
-  })
-
-  it("Pi API key (Craft Agents Backend) → 'steer'", () => {
-    const conn = createBuiltInConnection('pi-api-key')
-    expect(conn.providerType).toBe('pi')
-    expect(conn.midStreamBehavior).toBe('steer')
-  })
-})

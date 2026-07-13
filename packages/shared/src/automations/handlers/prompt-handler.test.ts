@@ -119,7 +119,7 @@ describe('PromptHandler', () => {
           actions: [{
             type: 'prompt',
             prompt: 'Audit changes',
-            llmConnection: 'anthropic',
+            provider: 'anthropic',
             model: 'claude-opus-4-7',
             thinkingLevel: 'high',
           }],
@@ -138,7 +138,7 @@ describe('PromptHandler', () => {
       const prompts: PendingPrompt[] = onPromptsReady.mock.calls[0]![0];
       expect(prompts).toHaveLength(1);
       expect(prompts[0]).toMatchObject({
-        llmConnection: 'anthropic',
+        provider: 'anthropic',
         model: 'claude-opus-4-7',
         thinkingLevel: 'high',
       });
@@ -422,15 +422,15 @@ describe('PromptHandler', () => {
     });
   });
 
-  describe('llmConnection passthrough', () => {
-    it('should pass llmConnection from prompt action to pending prompt', async () => {
+  describe('provider passthrough', () => {
+    it('should pass provider from prompt action to pending prompt', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
         LabelAdd: [{
           actions: [{
             type: 'prompt',
             prompt: 'Create a source',
-            llmConnection: 'my-codex',
+            provider: 'my-codex',
           }],
         }],
       });
@@ -446,12 +446,12 @@ describe('PromptHandler', () => {
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
       const prompts: PendingPrompt[] = onPromptsReady.mock.calls[0]![0];
-      expect(prompts[0]!.llmConnection).toBe('my-codex');
+      expect(prompts[0]!.provider).toBe('my-codex');
 
       handler.dispose();
     });
 
-    it('should leave llmConnection undefined when not specified', async () => {
+    it('should leave provider undefined when not specified', async () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
         LabelAdd: [{
@@ -473,7 +473,7 @@ describe('PromptHandler', () => {
 
       expect(onPromptsReady).toHaveBeenCalledTimes(1);
       const prompts: PendingPrompt[] = onPromptsReady.mock.calls[0]![0];
-      expect(prompts[0]!.llmConnection).toBeUndefined();
+      expect(prompts[0]!.provider).toBeUndefined();
 
       handler.dispose();
     });

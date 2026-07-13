@@ -206,7 +206,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
           labels: payload.labels,
           permissionMode: payload.permissionMode,
           mentions: references.mentions,
-          llmConnection: action.llmConnection,
+          provider: action.provider,
           model: action.model,
           thinkingLevel: action.thinkingLevel,
           automationName: payload.automationName,

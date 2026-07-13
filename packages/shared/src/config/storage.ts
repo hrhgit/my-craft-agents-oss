@@ -1,6 +1,10 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync, readdirSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { clearAllCraftCredentials, getCredentialManager } from '../credentials/index.ts';
+import {
+  readCraftLlmConnections as readLegacyProviderEntries,
+  writeCraftLlmConnections,
+} from '@earendil-works/pi-coding-agent/host-facade';
 import { getOrCreateLatestSession, type SessionHeader } from '../sessions/index.ts';
 import {
   discoverWorkspacesInDefaultLocation,
@@ -47,16 +51,11 @@ export type {
 // Import for local use
 import type { Workspace } from '@craft-agent/core/types';
 
-// Import LLM connection types
-import type { LlmConnection } from './llm-connections.ts';
 import {
-  readPiCraftLlmConnections,
-  upsertPiCraftLlmConnection,
-  deletePiCraftLlmConnection,
   readPiGlobalProviders,
   readPiGlobalSettings,
   savePiGlobalProvider,
-  deletePiGlobalProvider,
+  setPiGlobalDefault,
   setPiGlobalDefaultThinkingLevel,
   readPiCraftAgentBoolean,
   writePiCraftAgentBoolean,
@@ -65,21 +64,114 @@ import {
   type PiGlobalModel,
   type PiGlobalProvider,
 } from './pi-global-config.ts';
-import type { ModelDefinition } from './models.ts';
+import {
+  DEFAULT_MID_STREAM_BEHAVIOR,
+  normalizeMidStreamBehavior,
+  type MidStreamBehavior,
+} from './midstream-behavior.ts';
 
-function modelSetEquals(a: string[], b: string[]): boolean {
-  const left = new Set(a);
-  const right = new Set(b);
-  if (left.size !== right.size) return false;
-  for (const id of left) {
-    if (!right.has(id)) return false;
+type LegacyStoredConfig = StoredConfig & {
+  defaultLlmConnection?: string;
+  llmConnections?: LegacyProviderEntry[];
+};
+
+interface LegacyProviderEntry {
+  slug: string;
+  name?: string;
+  piAuthProvider?: string;
+  baseUrl?: string;
+  customEndpoint?: { api?: PiGlobalProvider['api'] };
+  models?: Array<string | {
+    id: string;
+    name?: string;
+    contextWindow?: number;
+    supportsThinking?: boolean;
+    supportsImages?: boolean;
+  }>;
+  defaultModel?: string;
+}
+
+function legacyProviderKey(connection: LegacyProviderEntry): string | null {
+  const explicit = connection.piAuthProvider?.trim();
+  if (explicit) return explicit;
+  const slug = connection.slug?.trim();
+  if (!slug) return null;
+  return slug.startsWith('pi-') ? slug.slice(3) || null : slug;
+}
+
+function legacyConnectionModels(connection: LegacyProviderEntry): PiGlobalModel[] | undefined {
+  if (!connection.models?.length) return undefined;
+  return connection.models.map(model => typeof model === 'string'
+    ? { id: model, name: model }
+    : {
+        id: model.id,
+        name: model.name ?? model.id,
+        contextWindow: model.contextWindow,
+        reasoning: model.supportsThinking,
+        input: model.supportsImages ? ['text', 'image'] : ['text'],
+      });
+}
+
+/**
+ * Import retired Craft connection data into Pi's provider/model files.
+ * Existing Pi providers always win, making repeated startup calls idempotent.
+ */
+function migrateLegacyLlmConfiguration(config: LegacyStoredConfig): void {
+  const legacyProviderEntries = readLegacyProviderEntries<LegacyProviderEntry>();
+  const legacyConnections = [
+    ...(Array.isArray(config.llmConnections) ? config.llmConnections : []),
+    ...legacyProviderEntries,
+  ];
+  if (legacyConnections.length === 0 && !config.defaultLlmConnection) return;
+
+  const providers = readPiGlobalProviders();
+  const migratedKeys = new Map<string, string>();
+  for (const connection of legacyConnections) {
+    if (!connection || typeof connection !== 'object') continue;
+    const key = legacyProviderKey(connection);
+    if (!key) continue;
+    migratedKeys.set(connection.slug, key);
+    if (providers[key]) continue;
+
+    const provider: PiGlobalProvider = {
+      ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
+      ...(connection.customEndpoint?.api ? { api: connection.customEndpoint.api } : {}),
+      models: legacyConnectionModels(connection),
+    };
+    savePiGlobalProvider(key, provider);
+    providers[key] = provider;
   }
-  return true;
+
+  const defaultConnection = legacyConnections.find(
+    connection => connection.slug === config.defaultLlmConnection,
+  );
+  const defaultProvider = defaultConnection
+    ? migratedKeys.get(defaultConnection.slug)
+    : config.defaultLlmConnection?.startsWith('pi-')
+      ? config.defaultLlmConnection.slice(3)
+      : undefined;
+  const defaultModel = defaultConnection?.defaultModel
+    ?? (defaultConnection ? legacyConnectionModels(defaultConnection)?.[0]?.id : undefined)
+    ?? (defaultProvider ? providers[defaultProvider]?.models?.[0]?.id : undefined);
+  if (defaultProvider && defaultModel && providers[defaultProvider]) {
+    void setPiGlobalDefault(defaultProvider, defaultModel).catch(error => {
+      debug('[config] Failed to migrate legacy default provider/model:', error);
+    });
+  }
+
+  // Only clear the compatibility collection after every usable entry has been
+  // represented in providers. Invalid entries remain harmlessly ignored.
+  if (legacyProviderEntries.length > 0) {
+    // The host facade serializes this update with Pi's models.json writers.
+    // An empty collection is equivalent to removing the retired metadata.
+    writeCraftLlmConnections([]);
+  }
 }
 
 // Config stored in JSON file (credentials stored in encrypted file, not here)
 export interface StoredConfig {
-  defaultLlmConnection?: string;  // Slug of default connection for new sessions
+  /** Global behavior when a message arrives while a turn is in progress. */
+  midStreamBehavior?: MidStreamBehavior;
   defaultThinkingLevel?: ThinkingLevel;  // App-level default thinking level for new sessions
 
   workspaces: Workspace[];
@@ -99,20 +191,16 @@ export interface StoredConfig {
   keepAwakeWhileRunning?: boolean;  // Prevent screen sleep while sessions are running (default: false)
   // Tool metadata
   richToolDescriptions?: boolean;  // Add intent/action metadata to all tool calls (default: true)
+  // Deprecated local mirrors retained for config compatibility; Pi settings are authoritative.
   // Tools
   browserToolEnabled?: boolean;  // Enable built-in browser tool (default: true). Disable for Playwright/Puppeteer.
   allowRemoteEvaluate?: boolean;  // Allow remote agents to call `browser_tool evaluate` on local browser (default: true).
-  // Prompt caching & context
-  extendedPromptCache?: boolean;  // Use 1h prompt cache TTL instead of 5m (default: false)
   // Pi 扩展集成开关：控制全局 pi 扩展加载与 prompt 自动化委托
   piExtensions?: StoredPiExtensionSettings;
   // Pi 壳模式：Craft 作为 Pi 的薄壳，完全透传 Pi 身份/会话/技能
   piShell?: {
     fullPassthrough?: boolean;  // 完全 Pi 透传：使用 Pi 原生 system prompt，移除 Craft 身份覆盖。默认 true。
   };
-  enable1MContext?: boolean;  // Enable 1M context window for supported models (default: false — opt-in; requires Anthropic Tier 4+)
-  // Token optimization
-  rtkEnabled?: boolean;  // Route Bash commands through rtk to compress tool output (default: false). https://github.com/rtk-ai/rtk
   // Network proxy
   networkProxy?: import('./types.ts').NetworkProxySettings;
   // Windows: path to Git Bash (bash.exe) for the SDK subprocess
@@ -319,13 +407,29 @@ export function loadStoredConfig(): StoredConfig | null {
       return null;
     }
     const config = readJsonFileSync<StoredConfig & {
-      llmConnections?: unknown;
+      defaultLlmConnection?: string;
+      llmConnections?: LegacyProviderEntry[];
       migrationsApplied?: unknown;
     }>(CONFIG_FILE);
 
-    // Retired Craft-only connection storage is tolerated on read but never
-    // exposed or written back. Canonical connections live in Pi models.json.
-    delete config.llmConnections;
+    let legacyMigrationSucceeded = true;
+    try {
+      migrateLegacyLlmConfiguration(config);
+    } catch (migrationError) {
+      legacyMigrationSucceeded = false;
+      debug(
+        '[config] Failed to migrate legacy LLM configuration; preserving it for retry:',
+        migrationError instanceof Error ? migrationError.message : migrationError,
+      );
+    }
+
+    // Retired connection storage is removed only after Pi accepted the
+    // migration. Keeping it on a transient Pi failure prevents a later config
+    // save from discarding the user's provider definitions before retrying.
+    if (legacyMigrationSucceeded) {
+      delete config.defaultLlmConnection;
+      delete config.llmConnections;
+    }
     delete config.migrationsApplied;
 
     // Must have workspaces array
@@ -370,8 +474,17 @@ export function saveConfig(config: StoredConfig): void {
   ensureConfigDir();
 
   // Convert paths to portable form (~ prefix) for cross-machine compatibility
+  const legacyConfig = config as StoredConfig & {
+    defaultLlmConnection?: unknown;
+    llmConnections?: unknown;
+    migrationsApplied?: unknown;
+  };
+  // Successful migrations remove retired fields in loadStoredConfig. If a
+  // migration failed, retain those fields so this save does not erase data that
+  // still needs to be imported on a later launch.
+  const { migrationsApplied: _migrationsApplied, ...currentConfig } = legacyConfig;
   const storageConfig: StoredConfig = {
-    ...config,
+    ...currentConfig,
     workspaces: config.workspaces.map(ws => ({
       ...ws,
       rootPath: toPortablePath(ws.rootPath),
@@ -381,13 +494,20 @@ export function saveConfig(config: StoredConfig): void {
   atomicWriteFileSync(CONFIG_FILE, JSON.stringify(storageConfig, null, 2));
 }
 
-// Legacy updateApiKey() removed - use setupLlmConnection IPC handler instead.
+export function getMidStreamBehavior(): MidStreamBehavior {
+  return normalizeMidStreamBehavior(loadStoredConfig()?.midStreamBehavior)
+    ?? DEFAULT_MID_STREAM_BEHAVIOR;
+}
 
-// Legacy getters/setters removed - use LLM connections instead:
-// - getAuthType/setAuthType -> derive from getDefaultLlmConnection()/getLlmConnection()
-// - getAnthropicBaseUrl/setAnthropicBaseUrl -> use connection.baseUrl
-// - getCustomModel/setCustomModel -> use connection.defaultModel
-
+export function setMidStreamBehavior(value: unknown): boolean {
+  const behavior = normalizeMidStreamBehavior(value);
+  if (!behavior) return false;
+  const config = loadStoredConfig();
+  if (!config) return false;
+  config.midStreamBehavior = behavior;
+  saveConfig(config);
+  return true;
+}
 
 /**
  * Get whether desktop notifications are enabled.
@@ -526,22 +646,28 @@ export function setRichToolDescriptions(enabled: boolean): void {
   saveConfig(config);
 }
 
-/**
- * Get whether extended prompt cache (1h TTL) is enabled.
- * When enabled, the interceptor upgrades cache_control TTL from 5m to 1h.
- * Source of truth: Pi `~/.pi/agent/settings.json.craft.agent.extendedPromptCache`.
- * Defaults to false if not set.
- */
 export function getExtendedPromptCache(): boolean {
   return readPiCraftAgentBoolean('extendedPromptCache', false);
 }
 
-/**
- * Set whether extended prompt cache (1h TTL) is enabled.
- * Persists to Pi `~/.pi/agent/settings.json.craft.agent.extendedPromptCache`.
- */
 export async function setExtendedPromptCache(enabled: boolean): Promise<void> {
   await writePiCraftAgentBoolean('extendedPromptCache', enabled);
+}
+
+export function getEnable1MContext(): boolean {
+  return readPiCraftAgentBoolean('enable1MContext', false);
+}
+
+export async function setEnable1MContext(enabled: boolean): Promise<void> {
+  await writePiCraftAgentBoolean('enable1MContext', enabled);
+}
+
+export function getRtkEnabled(): boolean {
+  return readPiCraftAgentBoolean('rtkEnabled', false);
+}
+
+export async function setRtkEnabled(enabled: boolean): Promise<void> {
+  await writePiCraftAgentBoolean('rtkEnabled', enabled);
 }
 
 /**
@@ -592,7 +718,7 @@ export function setAllowRemoteEvaluate(allowed: boolean): void {
 
 // ============================================================
 // Pi Extensions 集成开关
-// 默认值来自 config-defaults.json (piExtensions.enabled / piExtensions.delegatePromptAutomation)
+// 默认值来自 config-defaults.json (piExtensions.delegatePromptAutomation)
 // ============================================================
 
 function getDefaultPiExtensionSettings(): PiExtensionSettings {
@@ -602,7 +728,7 @@ function getDefaultPiExtensionSettings(): PiExtensionSettings {
 
 /**
  * 获取完整 Pi 扩展设置。
- * 兼容旧配置：若 config.json 里只有 enabled/delegatePromptAutomation，也会补齐新字段。
+ * 兼容旧配置：不再支持的字段会在规范化时被忽略。
  */
 export function getPiExtensionSettings(): PiExtensionSettings {
   const defaults = getDefaultPiExtensionSettings();
@@ -633,21 +759,6 @@ export function updatePiExtensionSettings(patch: StoredPiExtensionSettings): PiE
   config.piExtensions = next;
   saveConfig(config);
   return next;
-}
-
-/**
- * 是否启用全局 pi 扩展加载（~/.pi/agent/extensions/）。
- * 默认 true。为 false 时 pi-agent-server 回退到隔离模式（agentDir 指向 session 临时目录）。
- */
-export function getPiExtensionsEnabled(): boolean {
-  return getPiExtensionSettings().enabled;
-}
-
-/**
- * 设置是否启用全局 pi 扩展加载。
- */
-export function setPiExtensionsEnabled(enabled: boolean): void {
-  updatePiExtensionSettings({ enabled });
 }
 
 /**
@@ -694,46 +805,6 @@ export function getPiShellFullPassthrough(): boolean {
  */
 export async function setPiShellFullPassthrough(enabled: boolean): Promise<void> {
   await writePiShellGuiBoolean('craft', 'piShellFullPassthrough', enabled);
-}
-
-/**
- * Get whether 1M context window is enabled.
- * When disabled, models use 200K context and the interceptor strips the context-1m beta header.
- * Defaults to false — the 1M beta requires Anthropic Tier 4+, and enabling it by default
- * causes 400 "Invalid Request" for lower-tier API keys on large contexts (issue #567).
- * Users opt in via AI Settings → Performance → Extended Context (1M).
- * Source of truth: Pi `~/.pi/agent/settings.json.craft.agent.enable1MContext`.
- */
-export function getEnable1MContext(): boolean {
-  return readPiCraftAgentBoolean('enable1MContext', false);
-}
-
-/**
- * Set whether 1M context window is enabled.
- * Persists to Pi `~/.pi/agent/settings.json.craft.agent.enable1MContext`.
- */
-export async function setEnable1MContext(enabled: boolean): Promise<void> {
-  await writePiCraftAgentBoolean('enable1MContext', enabled);
-}
-
-/**
- * Get whether rtk Bash-output compression is enabled.
- * When enabled, the PreToolUse pipeline rewrites Bash commands to their `rtk` equivalents
- * to reduce token consumption on common dev commands (git, ls, grep, test runners, etc.).
- * Defaults to false — opt-in. Requires the `rtk` binary on PATH or bundled with the app.
- * https://github.com/rtk-ai/rtk
- * Source of truth: Pi `~/.pi/agent/settings.json.craft.agent.rtkEnabled`.
- */
-export function getRtkEnabled(): boolean {
-  return readPiCraftAgentBoolean('rtkEnabled', false);
-}
-
-/**
- * Set whether rtk Bash-output compression is enabled.
- * Persists to Pi `~/.pi/agent/settings.json.craft.agent.rtkEnabled`.
- */
-export async function setRtkEnabled(enabled: boolean): Promise<void> {
-  await writePiCraftAgentBoolean('rtkEnabled', enabled);
 }
 
 /**
@@ -1724,516 +1795,9 @@ export function clearDismissedUpdateVersion(): void {
   saveConfig(config);
 }
 
-// ============================================
-// LLM Connections
-// ============================================
-
-// Re-export types for convenience (imports are at top of file)
-export type {
-  LlmConnection,
-  LlmProviderType,
-  LlmAuthType,
-  LlmConnectionWithStatus,
-} from './llm-connections.ts';
-
-const DERIVED_PI_CONNECTION_CREATED_AT = 0;
-const DEFAULT_CUSTOM_ENDPOINT_API = 'openai-completions';
-const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 200_000;
-
-function piProviderSlug(providerKey: string): string {
-  return `pi-${providerKey}`;
-}
-
-function piProviderKeyFromSlug(slug: string): string | null {
-  if (!slug.startsWith('pi-')) return null;
-  const key = slug.slice('pi-'.length).trim();
-  return key || null;
-}
-
-function providerHasInlineApiKey(provider: PiGlobalProvider): boolean {
-  const value = (provider as PiGlobalProvider & { apiKey?: unknown }).apiKey;
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function providerRequiresExternalApiKey(provider: PiGlobalProvider): boolean {
-  const api = provider.api ?? DEFAULT_CUSTOM_ENDPOINT_API;
-  return !providerHasInlineApiKey(provider)
-    && (
-      provider.authHeader === true
-      || api === 'anthropic-messages'
-      || api === 'google-generative-ai'
-    );
-}
-
-function piModelSupportsImages(model: PiGlobalModel): boolean {
-  return Array.isArray(model.input) && model.input.includes('image');
-}
-
-function piGlobalModelsToConnectionModels(models: PiGlobalModel[] | undefined): ModelDefinition[] {
-  const seen = new Set<string>();
-  return (models ?? [])
-    .filter((model) => typeof model.id === 'string' && model.id.trim().length > 0)
-    .filter((model) => {
-      if (seen.has(model.id)) return false;
-      seen.add(model.id);
-      return true;
-    })
-    .map((model) => ({
-      id: model.id,
-      name: model.name ?? model.id,
-      shortName: model.name ?? model.id,
-      description: '',
-      provider: 'pi' as const,
-      contextWindow: model.contextWindow ?? DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW,
-      ...(model.reasoning !== undefined ? { supportsThinking: model.reasoning } : {}),
-      supportsImages: piModelSupportsImages(model) || undefined,
-    }));
-}
-
-function choosePiProviderDefaultModel(
-  providerKey: string,
-  provider: PiGlobalProvider,
-  settings: ReturnType<typeof readPiGlobalSettings>,
-): string | undefined {
-  const modelIds = (provider.models ?? [])
-    .map(model => model.id)
-    .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
-
-  if (
-    settings.defaultProvider === providerKey
-    && typeof settings.defaultModel === 'string'
-    && modelIds.includes(settings.defaultModel)
-  ) {
-    return settings.defaultModel;
-  }
-
-  return modelIds[0];
-}
-
-function deriveConnectionFromPiProvider(
-  providerKey: string,
-  provider: PiGlobalProvider,
-  settings: ReturnType<typeof readPiGlobalSettings>,
-): LlmConnection {
-  const supportsImages = provider.models?.some(piModelSupportsImages) || undefined;
-  return {
-    slug: piProviderSlug(providerKey),
-    name: providerKey,
-    providerType: 'pi_compat',
-    authType: providerRequiresExternalApiKey(provider) ? 'api_key_with_endpoint' : 'none',
-    createdAt: DERIVED_PI_CONNECTION_CREATED_AT,
-    baseUrl: provider.baseUrl,
-    models: piGlobalModelsToConnectionModels(provider.models),
-    defaultModel: choosePiProviderDefaultModel(providerKey, provider, settings),
-    modelSelectionMode: 'automaticallySyncedFromProvider',
-    piAuthProvider: providerKey,
-    customEndpoint: {
-      api: provider.api ?? DEFAULT_CUSTOM_ENDPOINT_API,
-      ...(supportsImages ? { supportsImages } : {}),
-    },
-  };
-}
-
-function getPiProviderConnections(): LlmConnection[] {
-  const providers = readPiGlobalProviders();
-  const settings = readPiGlobalSettings();
-  return Object.entries(providers).map(([key, provider]) =>
-    deriveConnectionFromPiProvider(key, provider, settings),
-  );
-}
-
-function getMergedLlmConnections(): LlmConnection[] {
-  const merged = new Map<string, LlmConnection>();
-  for (const connection of getPiProviderConnections()) {
-    merged.set(connection.slug, connection);
-  }
-
-  // Legacy Craft-owned entries remain as a compatibility fallback only. Pi
-  // providers win on slug collisions so models.json.providers is authoritative.
-  for (const connection of readPiCraftLlmConnections()) {
-    if (!merged.has(connection.slug)) {
-      merged.set(connection.slug, connection);
-    }
-  }
-
-  return [...merged.values()];
-}
-
-function resolvePiProviderForConnectionSlug(slug: string): { key: string; provider: PiGlobalProvider } | null {
-  const key = piProviderKeyFromSlug(slug);
-  if (!key) return null;
-  const provider = readPiGlobalProviders()[key];
-  return provider ? { key, provider } : null;
-}
-
-function normalizePiModelInput(existing: PiGlobalModel | undefined, supportsImages: boolean | undefined): ('text' | 'image')[] | undefined {
-  if (supportsImages === undefined) return existing?.input;
-  const input = new Set<'text' | 'image'>(existing?.input ?? ['text']);
-  if (supportsImages) {
-    input.add('image');
-  } else {
-    input.delete('image');
-  }
-  if (input.size === 0) input.add('text');
-  return ['text', 'image'].filter(kind => input.has(kind as 'text' | 'image')) as ('text' | 'image')[];
-}
-
-function connectionModelsToPiGlobalModels(
-  models: LlmConnection['models'],
-  existingModels: PiGlobalModel[] | undefined,
-): PiGlobalModel[] | undefined {
-  if (!models) return existingModels;
-
-  const existingById = new Map(
-    (existingModels ?? [])
-      .filter(model => typeof model.id === 'string')
-      .map(model => [model.id, model] as const),
-  );
-
-  return models
-    .map((entry): PiGlobalModel | null => {
-      const id = typeof entry === 'string' ? entry : entry.id;
-      if (!id?.trim()) return null;
-
-      const existing = existingById.get(id);
-      const next: PiGlobalModel = {
-        ...(existing ?? {}),
-        id,
-      };
-
-      if (typeof entry === 'string') {
-        next.name = existing?.name ?? id;
-        return next;
-      }
-
-      next.name = entry.name ?? existing?.name ?? id;
-      if (entry.contextWindow !== undefined) {
-        next.contextWindow = entry.contextWindow;
-      }
-      if (entry.supportsThinking !== undefined) {
-        next.reasoning = entry.supportsThinking;
-      }
-      const input = normalizePiModelInput(existing, entry.supportsImages);
-      if (input) {
-        next.input = input;
-      }
-      return next;
-    })
-    .filter((model): model is PiGlobalModel => model !== null);
-}
-
-function moveDefaultModelFirst(models: PiGlobalModel[] | undefined, defaultModel: string | undefined): PiGlobalModel[] | undefined {
-  if (!models || !defaultModel) return models;
-  const index = models.findIndex(model => model.id === defaultModel);
-  if (index <= 0) return models;
-  const next = [...models];
-  const [model] = next.splice(index, 1);
-  if (model) next.unshift(model);
-  return next;
-}
-
-function updatePiProviderFromConnection(
-  provider: PiGlobalProvider,
-  updated: LlmConnection,
-): PiGlobalProvider {
-  const next: PiGlobalProvider = { ...provider };
-  if (updated.baseUrl !== undefined) {
-    next.baseUrl = updated.baseUrl;
-  }
-  if (updated.customEndpoint?.api) {
-    next.api = updated.customEndpoint.api;
-  }
-  if (updated.models !== undefined) {
-    next.models = connectionModelsToPiGlobalModels(updated.models, provider.models);
-  }
-  next.models = moveDefaultModelFirst(next.models, updated.defaultModel);
-  return next;
-}
-
-function buildUpdatedConnection(
-  existing: LlmConnection,
-  updates: Partial<Omit<LlmConnection, 'slug'>>,
-): LlmConnection {
-  return {
-    // Preserve required fields from existing
-    slug: existing.slug,
-    name: updates.name ?? existing.name,
-    providerType: updates.providerType ?? existing.providerType,
-    type: updates.type ?? existing.type, // Legacy field
-    authType: updates.authType ?? existing.authType,
-    createdAt: updates.createdAt ?? existing.createdAt,
-    // Optional fields from updates or existing
-    baseUrl: updates.baseUrl !== undefined ? updates.baseUrl : existing.baseUrl,
-    models: updates.models !== undefined ? updates.models : existing.models,
-    defaultModel: updates.defaultModel !== undefined ? updates.defaultModel : existing.defaultModel,
-    modelSelectionMode: updates.modelSelectionMode !== undefined ? updates.modelSelectionMode : existing.modelSelectionMode,
-    // Pi auth provider
-    piAuthProvider: updates.piAuthProvider !== undefined ? updates.piAuthProvider : existing.piAuthProvider,
-    // Custom endpoint protocol (Anthropic/OpenAI compatible)
-    customEndpoint: updates.customEndpoint !== undefined ? updates.customEndpoint : existing.customEndpoint,
-    // Mid-stream send behavior (steer vs queue) — read via resolveMidStreamBehavior()
-    midStreamBehavior: updates.midStreamBehavior !== undefined ? updates.midStreamBehavior : existing.midStreamBehavior,
-    // Resolved Anthropic OAuth identity (issue #838) — preserved across unrelated saves
-    oauthAccountUuid: updates.oauthAccountUuid !== undefined ? updates.oauthAccountUuid : existing.oauthAccountUuid,
-    oauthAccountEmail: updates.oauthAccountEmail !== undefined ? updates.oauthAccountEmail : existing.oauthAccountEmail,
-    oauthOrganizationUuid: updates.oauthOrganizationUuid !== undefined ? updates.oauthOrganizationUuid : existing.oauthOrganizationUuid,
-    oauthOrganizationName: updates.oauthOrganizationName !== undefined ? updates.oauthOrganizationName : existing.oauthOrganizationName,
-    oauthProfileVerifiedAt: updates.oauthProfileVerifiedAt !== undefined ? updates.oauthProfileVerifiedAt : existing.oauthProfileVerifiedAt,
-    // Timestamps
-    lastUsedAt: updates.lastUsedAt !== undefined ? updates.lastUsedAt : existing.lastUsedAt,
-  };
-}
-
-/**
- * Ensure default LLM connection is set correctly.
- * Called internally by write operations to fix inconsistent state.
- * This is NOT called on read - reads never modify config.
- *
- * Source of truth for primary connections is Pi
- * `~/.pi/agent/models.json.providers`. `craftConnections` is only retained as
- * a compatibility fallback for legacy/manual entries that are not provider
- * projections.
- *
- * Exported for reuse by the default-connection integrity repair.
- */
-export function ensureDefaultLlmConnection(config: StoredConfig): boolean {
-  const connections = getLlmConnections();
-  if (connections.length === 0) {
-    return false;
-  }
-
-  const defaultExists = connections.some(c => c.slug === config.defaultLlmConnection);
-  if (!config.defaultLlmConnection || !defaultExists) {
-    config.defaultLlmConnection = connections[0]!.slug;
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Get all LLM connections.
- * Returns provider-derived connections from Pi
- * `~/.pi/agent/models.json.providers`, plus legacy Craft-owned connections
- * that do not collide with a provider-derived slug.
- */
-export function getLlmConnections(): LlmConnection[] {
-  return getMergedLlmConnections();
-}
-
-/**
- * Get a specific LLM connection by slug.
- * @param slug - Connection slug
- * @returns Connection or null if not found
- */
-export function getLlmConnection(slug: string): LlmConnection | null {
-  const connections = getLlmConnections();
-  return connections.find(c => c.slug === slug) || null;
-}
-
-/**
- * Add a new LLM connection.
- * @param connection - Connection to add (slug must be unique)
- * @returns true if added, false if slug already exists
- */
-export function addLlmConnection(connection: LlmConnection): boolean {
-  const connections = getLlmConnections();
-
-  // Check for duplicate slug
-  if (connections.some(c => c.slug === connection.slug)) {
-    return false;
-  }
-
-  // Add connection with timestamp
-  const next: LlmConnection = {
-    ...connection,
-    createdAt: connection.createdAt || Date.now(),
-  };
-  upsertPiCraftLlmConnection(next);
-
-  // Ensure default is set after adding first connection
-  const config = loadStoredConfig();
-  if (config) {
-    ensureDefaultLlmConnection(config);
-    saveConfig(config);
-  }
-  return true;
-}
-
-/**
- * Update an existing LLM connection.
- * @param slug - Connection slug to update
- * @param updates - Partial updates to apply (slug is ignored)
- * @returns true if updated, false if not found
- */
-export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConnection, 'slug'>>): boolean {
-  const connections = getLlmConnections();
-  const index = connections.findIndex(c => c.slug === slug);
-  if (index === -1) return false;
-
-  const existing = connections[index]!;
-  const toModelIds = (models?: Array<{ id: string } | string>): string[] =>
-    (models ?? []).map(m => typeof m === 'string' ? m : m.id);
-
-  const updated = buildUpdatedConnection(existing, updates);
-
-  const piProviderEntry = resolvePiProviderForConnectionSlug(slug);
-  if (piProviderEntry) {
-    savePiGlobalProvider(
-      piProviderEntry.key,
-      updatePiProviderFromConnection(piProviderEntry.provider, updated),
-    );
-    return true;
-  }
-
-  upsertPiCraftLlmConnection(updated);
-
-  if (updated.providerType === 'pi') {
-    const beforeModelIds = toModelIds(existing.models);
-    const afterModelIds = toModelIds(updated.models);
-    const changed =
-      existing.defaultModel !== updated.defaultModel ||
-      existing.modelSelectionMode !== updated.modelSelectionMode ||
-      !modelSetEquals(beforeModelIds, afterModelIds);
-
-    if (changed) {
-      const stack = (new Error().stack ?? '').split('\n').slice(2, 7).map(s => s.trim());
-      debug('[storage] updateLlmConnection(pi) changed', {
-        slug,
-        before: {
-          mode: existing.modelSelectionMode,
-          defaultModel: existing.defaultModel,
-          modelCount: beforeModelIds.length,
-          modelsFirst5: beforeModelIds.slice(0, 5),
-        },
-        after: {
-          mode: updated.modelSelectionMode,
-          defaultModel: updated.defaultModel,
-          modelCount: afterModelIds.length,
-          modelsFirst5: afterModelIds.slice(0, 5),
-        },
-        updates: {
-          keys: Object.keys(updates),
-          defaultModel: updates.defaultModel,
-          modelSelectionMode: updates.modelSelectionMode,
-          modelsCount: Array.isArray(updates.models) ? updates.models.length : undefined,
-        },
-        stack,
-      });
-    }
-  }
-
-  return true;
-}
-
-/**
- * Delete an LLM connection.
- * @param slug - Connection slug to delete
- * @returns true if deleted, false if not found
- */
-export function deleteLlmConnection(slug: string): boolean {
-  const connections = getLlmConnections();
-  const existed = connections.some(c => c.slug === slug);
-  if (!existed) return false;
-
-  const piProviderEntry = resolvePiProviderForConnectionSlug(slug);
-  if (piProviderEntry) {
-    deletePiGlobalProvider(piProviderEntry.key).catch((error) => {
-      console.error(`[storage] Failed to delete Pi provider '${piProviderEntry.key}':`, error);
-    });
-  }
-
-  if (!piProviderEntry) {
-    deletePiCraftLlmConnection(slug);
-  }
-
-  // If deleted connection was the default, reset to first remaining or clear
-  const config = loadStoredConfig();
-  if (config && config.defaultLlmConnection === slug) {
-    const remaining = getLlmConnections().filter(c => c.slug !== slug);
-    config.defaultLlmConnection = remaining.length > 0 ? remaining[0]!.slug : undefined;
-    saveConfig(config);
-  }
-
-  // Clean up workspace references to the deleted connection (non-blocking)
-  try {
-    const workspaces = getWorkspaces();
-    for (const ws of workspaces) {
-      const wsConfig = loadWorkspaceConfig(ws.rootPath);
-      if (wsConfig?.defaults?.defaultLlmConnection === slug) {
-        wsConfig.defaults.defaultLlmConnection = undefined;
-        saveWorkspaceConfig(ws.rootPath, wsConfig);
-      }
-    }
-  } catch (error) {
-    console.error('Failed to clean up workspace references:', error);
-  }
-
-  // Clean up stored credentials for this connection (API keys, OAuth tokens)
-  // This is fire-and-forget but we log errors for debugging
-  const credentialManager = getCredentialManager();
-  credentialManager.delete({ type: 'llm_api_key', connectionSlug: slug }).catch((error) => {
-    console.error(`[storage] Failed to delete API key credential for connection '${slug}':`, error);
-  });
-  credentialManager.delete({ type: 'llm_oauth', connectionSlug: slug }).catch((error) => {
-    console.error(`[storage] Failed to delete OAuth credential for connection '${slug}':`, error);
-  });
-
-  return true;
-}
-
-/**
- * Get the default LLM connection slug.
- * @returns Default connection slug, or null if no connections exist
- */
-export function getDefaultLlmConnection(): string | null {
-  const connections = getLlmConnections();
-  if (connections.length === 0) return null;
-
-  const providers = readPiGlobalProviders();
-  const settings = readPiGlobalSettings();
-  if (settings.defaultProvider && providers[settings.defaultProvider]) {
-    const slug = piProviderSlug(settings.defaultProvider);
-    if (connections.some(c => c.slug === slug)) {
-      return slug;
-    }
-  }
-
-  const config = loadStoredConfig();
-  const configDefault = config?.defaultLlmConnection;
-  if (configDefault && connections.some(c => c.slug === configDefault)) {
-    return configDefault;
-  }
-
-  return connections[0]?.slug || null;
-}
-
-/**
- * Set the default LLM connection.
- * @param slug - Connection slug to set as default
- * @returns true if set, false if connection not found
- */
-export function setDefaultLlmConnection(slug: string): boolean {
-  const connections = getLlmConnections();
-  if (connections.length === 0) return false;
-
-  // Verify connection exists
-  if (!connections.some(c => c.slug === slug)) {
-    return false;
-  }
-
-  const config = loadStoredConfig();
-  if (!config) return false;
-
-  config.defaultLlmConnection = slug;
-  saveConfig(config);
-  return true;
-}
-
 /**
  * Get the app-level default thinking level for new sessions.
  * Source of truth: Pi `~/.pi/agent/settings.json.defaultThinkingLevel`.
- * Falls back to bundled config-defaults when unset.
  */
 export function getDefaultThinkingLevel(): ThinkingLevel {
   const piSettings = readPiGlobalSettings();
@@ -2257,21 +1821,6 @@ export async function setDefaultThinkingLevel(level: unknown): Promise<boolean> 
   if (!normalized) return false;
   await setPiGlobalDefaultThinkingLevel(normalized);
   return true;
-}
-
-/**
- * Update the lastUsedAt timestamp for a connection.
- * @param slug - Connection slug
- */
-export function touchLlmConnection(slug: string): void {
-  const piProviderEntry = resolvePiProviderForConnectionSlug(slug);
-  if (piProviderEntry) return;
-
-  const connections = readPiCraftLlmConnections();
-  const connection = connections.find(c => c.slug === slug);
-  if (connection) {
-    upsertPiCraftLlmConnection({ ...connection, lastUsedAt: Date.now() });
-  }
 }
 
 // ============================================

@@ -20,7 +20,6 @@ import openrouterIcon from '@/assets/provider-icons/openrouter.svg'
 import piIcon from '@/assets/provider-icons/pi.svg'
 import vercelIcon from '@/assets/provider-icons/vercel.svg'
 
-import type { LlmProviderType } from '@craft-agent/shared/config/llm-connections'
 
 /**
  * Icon URLs for each provider
@@ -158,7 +157,7 @@ const PI_AUTH_PROVIDER_DOMAINS: Record<string, string> = {
  * @returns Icon URL string or null if no matching icon
  */
 export function getProviderIcon(
-  providerType: LlmProviderType | string,
+  providerType: string,
   baseUrl?: string | null,
   piAuthProvider?: string | null
 ): string | null {

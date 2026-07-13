@@ -129,8 +129,6 @@ import { getSourceCredentialManager, loadSource } from '@craft-agent/shared/sour
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog } from './logger'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
-import { registerPiModelResolver } from '@craft-agent/shared/config'
-import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/config/models-pi'
 import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount, showNotification } from './notifications'
 import { checkForUpdatesOnLaunch, setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './auto-update'
 import type { EventSink } from '@craft-agent/server-core/transport'
@@ -222,12 +220,6 @@ if (isDebugMode) {
     mainLog.info('CLI tools configured:', { uvBinary: process.env.CRAFT_UV, binDir, scriptsDir, bundledUvExists })
   }
 }
-
-// Register Pi model resolver so llm-connections.ts can resolve Pi models
-// without importing @earendil-works/pi-ai (which breaks the Vite renderer build)
-registerPiModelResolver((piAuthProvider) =>
-  piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : getAllPiModels()
-)
 
 // Custom URL scheme for deeplinks (e.g., craftagents://auth-complete)
 // Supports multi-instance dev: CRAFT_DEEPLINK_SCHEME env var (craftagents1, craftagents2, etc.)
@@ -1130,8 +1122,8 @@ app.whenReady().then(async () => {
           const { getCredentialManager } = await import('@craft-agent/shared/credentials')
           const manager = getCredentialManager()
           const [apiKey, oauth] = await Promise.all([
-            manager.getLlmApiKey(slug).catch(() => null),
-            manager.getLlmOAuth(slug).catch(() => null),
+            manager.getProviderApiKey(slug).catch(() => null),
+            manager.getProviderOAuth(slug).catch(() => null),
           ])
           return {
             apiKey: apiKey ?? undefined,
@@ -1544,16 +1536,15 @@ app.whenReady().then(async () => {
 
     // Set Sentry context tags for error grouping (no PII — just config classification).
     // Runs after init so config and auth state are available.
-    // Derives values from the default LLM connection instead of legacy config fields.
+    // Derive values directly from Pi's selected provider and model.
     try {
-      const { getLlmConnection, getDefaultLlmConnection } = await import('@craft-agent/shared/config')
+      const { readPiGlobalProviders, readPiGlobalSettings } = await import('@craft-agent/shared/config')
       const workspaces = getWorkspaces()
-      const defaultConnSlug = getDefaultLlmConnection()
-      const defaultConn = defaultConnSlug ? getLlmConnection(defaultConnSlug) : null
-      Sentry.setTag('authType', defaultConn?.authType ?? 'unknown')
-      Sentry.setTag('providerType', defaultConn?.providerType ?? 'unknown')
-      Sentry.setTag('hasCustomEndpoint', String(!!defaultConn?.baseUrl))
-      Sentry.setTag('model', defaultConn?.defaultModel ?? 'default')
+      const settings = readPiGlobalSettings()
+      const provider = settings.defaultProvider ? readPiGlobalProviders()[settings.defaultProvider] : undefined
+      Sentry.setTag('provider', settings.defaultProvider ?? 'unknown')
+      Sentry.setTag('hasCustomEndpoint', String(!!provider?.baseUrl))
+      Sentry.setTag('model', settings.defaultModel ?? 'default')
       Sentry.setTag('workspaceCount', String(workspaces.length))
     } catch (err) {
       mainLog.warn('Failed to set Sentry context tags:', err)

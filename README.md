@@ -386,16 +386,7 @@ bun run typecheck:all
 
 On Windows, you can also double-click [`start-quick-test.cmd`](./start-quick-test.cmd) from the repo root to launch the portmux-managed Electron hot-reload development build. To switch modes from a terminal, run `start-quick-test.cmd start`, `start-quick-test.cmd server-dev`, or `start-quick-test.cmd webui-dev`.
 
-To launch the complete browser UI development environment on Windows, double-click [`start-webui.cmd`](./start-webui.cmd) or run `portmux start`. It starts the authenticated headless server and Vite WebUI, automatically signs the local browser in, and opens the URL assigned by portmux. The RPC server uses the following port (`WebUI + 1`), and the launcher uses Electron's existing `~/.craft-agent` configuration by default.
-
-For parallel WebUI testing, start each additional instance with a positive instance number:
-
-```powershell
-start-webui.cmd 2
-start-webui.cmd 3
-```
-
-Each instance has a separate `portmux` project identity, so `portmux` allocates its own available WebUI port rather than deriving one from another instance. Its RPC server uses the following port. Instances 2 and higher use isolated, gitignored configuration directories under `.craft-agent/webui-instance-<n>`; set `CRAFT_CONFIG_DIR` explicitly to use a different profile.
+To launch the complete browser UI development environment on Windows, double-click [`start-webui.cmd`](./start-webui.cmd) or run `portmux start`. It starts the authenticated headless server and Vite WebUI, automatically signs the local browser in, and opens the URL assigned by portmux. The RPC server uses the following port (`WebUI + 1`) and the shared `~/.craft-agent` configuration. Double-click `start-webui.cmd` again to open another browser client connected to the same running WebUI; it does not start another backend or create an isolated configuration directory.
 
 Electron, standalone WebUI, RPC development server, and the component playground have separate portmux identities. Start them with `bun run electron:dev`, `bun run webui:dev`, `bun run server:dev`, and `bun run playground:dev`; each listens directly on its own assigned port. Electron, the WebUI headless server, and standalone server modes all use `~/.craft-agent` by default. Set `CRAFT_CONFIG_DIR` when an isolated profile is needed.
 

@@ -25,34 +25,30 @@ import {
   getModelDisplayName,
   getModelShortName,
 } from '@config/models'
-import {
-  isCompatProvider,
-  modelSupportsImages,
-  resolveEffectiveConnectionSlug,
-  type LlmConnectionWithStatus,
-} from '@config/llm-connections'
+import { piProviderModelSupportsImages } from '@craft-agent/shared/config/pi-provider-models'
 import {
   THINKING_LEVELS,
   type ThinkingLevel,
 } from '@craft-agent/shared/agent/thinking-levels'
-import { ConnectionIcon } from '@/components/icons/ConnectionIcon'
+import { ProviderIcon } from '@/components/icons/ProviderIcon'
 import { derivePickerMode } from './picker-mode'
 import {
   formatTokenCount,
-  groupConnectionsByProvider,
+  groupProviders,
+  resolveEffectiveProvider,
   stripPiPrefixForDisplay,
 } from './model-picker-helpers'
 import { useModelVisionToggle } from './useModelVisionToggle'
 
 interface CompactModelSelectorProps {
   currentModel: string
-  currentConnection?: string
-  onModelChange: (model: string, connection?: string) => void
-  onConnectionChange?: (connectionSlug: string) => void
+  currentProvider?: string
+  onModelChange: (model: string, provider?: string) => void
+  onProviderChange?: (providerKey: string) => void
   thinkingLevel?: ThinkingLevel
   onThinkingLevelChange?: (level: ThinkingLevel) => void
   isEmptySession?: boolean
-  connectionUnavailable?: boolean
+  providerUnavailable?: boolean
   contextStatus?: {
     isCompacting?: boolean
     inputTokens?: number
@@ -60,68 +56,68 @@ interface CompactModelSelectorProps {
   }
 }
 
+type ProviderPickerItem = NonNullable<ReturnType<typeof useOptionalAppShellContext>>['piProviders'][number]
+
 export function CompactModelSelector({
   currentModel,
-  currentConnection,
+  currentProvider,
   onModelChange,
-  onConnectionChange,
+  onProviderChange,
   thinkingLevel = 'medium',
   onThinkingLevelChange,
   isEmptySession = false,
-  connectionUnavailable = false,
+  providerUnavailable = false,
   contextStatus,
 }: CompactModelSelectorProps) {
   const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
-  const [expandedConnection, setExpandedConnection] = React.useState<string | null>(null)
+  const [expandedProvider, setExpandedProvider] = React.useState<string | null>(null)
 
   const appShellCtx = useOptionalAppShellContext()
-  const llmConnections = appShellCtx?.llmConnections ?? []
-  const workspaceDefaultConnection = appShellCtx?.workspaceDefaultLlmConnection
+  const providerItems = appShellCtx?.piProviders ?? []
+  const defaultProvider = appShellCtx?.piGlobalSettings.defaultProvider
 
   const toggleVision = useModelVisionToggle()
 
-  const effectiveConnection = resolveEffectiveConnectionSlug(
-    currentConnection,
-    workspaceDefaultConnection,
-    llmConnections,
+  const effectiveProvider = resolveEffectiveProvider(
+    currentProvider,
+    defaultProvider,
+    providerItems,
   )
 
-  const effectiveConnectionDetails = React.useMemo(() => {
-    if (!effectiveConnection) return null
-    return llmConnections.find(c => c.slug === effectiveConnection) ?? null
-  }, [llmConnections, effectiveConnection])
+  const effectiveProviderDetails = React.useMemo(() => {
+    if (!effectiveProvider) return null
+    return providerItems.find(entry => entry.key === effectiveProvider) ?? null
+  }, [providerItems, effectiveProvider])
 
-  const connectionDefaultModel = React.useMemo(() => {
-    const conn = effectiveConnectionDetails
-    if (!conn) return null
-    if (!isCompatProvider(conn.providerType)) return null
-    if (conn.models && conn.models.length > 1) return null
-    return conn.defaultModel ?? null
-  }, [effectiveConnectionDetails])
+  const providerDefaultModel = React.useMemo(() => {
+    const entry = effectiveProviderDetails
+    if (!entry || (entry.provider.models?.length ?? 0) > 1) return null
+    return entry.provider.models?.[0]?.id ?? null
+  }, [effectiveProviderDetails])
 
   const pickerMode = derivePickerMode({
-    connectionUnavailable,
-    connectionDefaultModel,
+    providerUnavailable,
+    providerDefaultModel,
     isEmptySession,
-    connectionCount: llmConnections.length,
+    providerCount: providerItems.length,
   })
 
   const availableModels = React.useMemo(() => {
-    if (connectionUnavailable) return []
-    if (!effectiveConnectionDetails) return ANTHROPIC_MODELS
-    return effectiveConnectionDetails.models || ANTHROPIC_MODELS
-  }, [effectiveConnectionDetails, connectionUnavailable])
+    if (providerUnavailable) return []
+    if (!effectiveProviderDetails) return ANTHROPIC_MODELS
+    return effectiveProviderDetails.provider.models || ANTHROPIC_MODELS
+  }, [effectiveProviderDetails, providerUnavailable])
 
   const currentModelDisplayName = React.useMemo(() => {
-    const modelToDisplay = connectionDefaultModel ?? currentModel
+    const modelToDisplay = providerDefaultModel ?? currentModel
     const model = availableModels.find(m =>
       typeof m === 'string' ? m === modelToDisplay : m.id === modelToDisplay,
     )
     if (!model) return stripPiPrefixForDisplay(getModelDisplayName(modelToDisplay))
     if (typeof model === 'string') return stripPiPrefixForDisplay(model)
     return model.name ?? stripPiPrefixForDisplay(model.id)
-  }, [availableModels, currentModel, connectionDefaultModel])
+  }, [availableModels, currentModel, providerDefaultModel])
 
   const thinkingDisabled = React.useMemo(() => {
     const model = availableModels.find(
@@ -130,39 +126,39 @@ export function CompactModelSelector({
     return typeof model !== 'string' && model?.supportsThinking === false
   }, [availableModels, currentModel])
 
-  const connectionsByProvider = React.useMemo(
-    () => groupConnectionsByProvider(llmConnections),
-    [llmConnections],
+  const providerGroups = React.useMemo(
+    () => groupProviders(providerItems),
+    [providerItems],
   )
 
-  const showConnectionIcon =
-    !!effectiveConnectionDetails &&
-    llmConnections.length > 1 &&
-    storage.get(storage.KEYS.showConnectionIcons, true)
+  const showProviderIcon =
+    !!effectiveProviderDetails &&
+    providerItems.length > 1 &&
+    storage.get(storage.KEYS.showProviderIcons, true)
 
   // Reset accordion state when the drawer closes so re-open shows top-level switcher.
   React.useEffect(() => {
-    if (!open) setExpandedConnection(null)
+    if (!open) setExpandedProvider(null)
   }, [open])
 
   const handlePickFlatModel = React.useCallback(
     (modelId: string) => {
-      onModelChange(modelId, effectiveConnection)
+      onModelChange(modelId, effectiveProvider)
       setOpen(false)
     },
-    [onModelChange, effectiveConnection],
+    [onModelChange, effectiveProvider],
   )
 
   const handlePickSwitcherModel = React.useCallback(
     (connSlug: string, modelId: string) => {
-      const isCurrentConnection = effectiveConnection === connSlug
-      if (!isCurrentConnection && onConnectionChange) {
-        onConnectionChange(connSlug)
+      const isCurrentProvider = effectiveProvider === connSlug
+      if (!isCurrentProvider && onProviderChange) {
+        onProviderChange(connSlug)
       }
       onModelChange(modelId, connSlug)
       setOpen(false)
     },
-    [onModelChange, onConnectionChange, effectiveConnection],
+    [onModelChange, onProviderChange, effectiveProvider],
   )
 
   return (
@@ -170,26 +166,26 @@ export function CompactModelSelector({
       <DrawerTrigger asChild>
         <button
           type="button"
-          aria-label={connectionUnavailable
+          aria-label={providerUnavailable
             ? t('common.unavailable')
             : `${t('common.model')}: ${currentModelDisplayName}`}
           className={cn(
             'h-7 pl-2 pr-2 text-xs font-medium rounded-[6px] flex items-center gap-1.5 shadow-tinted outline-none select-none min-w-[64px] shrink',
-            connectionUnavailable
+            providerUnavailable
               ? 'bg-destructive/10 text-destructive'
               : 'bg-foreground/5 text-foreground/70',
           )}
           style={{ '--shadow-color': 'var(--foreground-rgb)' } as React.CSSProperties}
         >
-          {connectionUnavailable ? (
+          {providerUnavailable ? (
             <>
               <AlertCircle className="h-3.5 w-3.5" />
               <span>{t('common.unavailable')}</span>
             </>
           ) : (
             <>
-              {showConnectionIcon && effectiveConnectionDetails && (
-                <ConnectionIcon connection={effectiveConnectionDetails} size={14} />
+              {showProviderIcon && effectiveProviderDetails && (
+                <ProviderIcon provider={effectiveProviderDetails} size={14} />
               )}
               <span className="truncate min-w-0">{currentModelDisplayName}</span>
               {pickerMode !== 'locked-single' && (
@@ -211,10 +207,10 @@ export function CompactModelSelector({
             <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
               <AlertCircle className="h-8 w-8 text-destructive mb-2" />
               <div className="font-medium text-sm mb-1">
-                {t('chat.connectionUnavailable')}
+                {t('chat.providerUnavailable')}
               </div>
               <div className="text-xs text-muted-foreground mb-3">
-                {t('chat.connectionUnavailableDescription')}
+                {t('chat.providerUnavailableDescription')}
               </div>
               <button
                 type="button"
@@ -227,47 +223,47 @@ export function CompactModelSelector({
                 {t('chat.modelPicker.openAiSettings')}
               </button>
             </div>
-          ) : pickerMode === 'locked-single' && connectionDefaultModel ? (
+          ) : pickerMode === 'locked-single' && providerDefaultModel ? (
             <LockedSingleRow
-              modelId={connectionDefaultModel}
-              connection={effectiveConnectionDetails}
+              modelId={providerDefaultModel}
+              provider={effectiveProviderDetails}
               onToggleVision={toggleVision}
             />
           ) : pickerMode === 'switcher' ? (
-            connectionsByProvider.map(([providerName, connections]) => (
+            providerGroups.map(([providerName, providers]) => (
               <React.Fragment key={providerName}>
                 <div className="px-3 pt-3 pb-1 text-xs font-medium text-foreground/60 uppercase tracking-wide select-none">
                   {providerName}
                 </div>
-                {connections.map(conn => {
-                  const isCurrentConnection = effectiveConnection === conn.slug
-                  const isAuthenticated = conn.isAuthenticated
-                  const isExpanded = expandedConnection === conn.slug
+                {providers.map(conn => {
+                  const isCurrentProvider = effectiveProvider === conn.key
+                  const isAuthenticated = true
+                  const isExpanded = expandedProvider === conn.key
                   return (
-                    <React.Fragment key={conn.slug}>
+                    <React.Fragment key={conn.key}>
                       <button
                         type="button"
                         disabled={!isAuthenticated}
                         onClick={() =>
-                          setExpandedConnection(prev => (prev === conn.slug ? null : conn.slug))
+                          setExpandedProvider(prev => (prev === conn.key ? null : conn.key))
                         }
                         className={cn(
                           'flex items-center gap-2 w-full px-3 py-2 rounded-lg text-left transition-colors',
                           !isAuthenticated && 'opacity-50 cursor-not-allowed',
                           isAuthenticated && 'hover:bg-foreground/5',
-                          isCurrentConnection && !isExpanded && 'bg-foreground/5',
+                          isCurrentProvider && !isExpanded && 'bg-foreground/5',
                         )}
                       >
-                        <ConnectionIcon connection={conn} size={14} />
+                        <ProviderIcon provider={conn} size={14} />
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{conn.name}</div>
+                          <div className="text-sm font-medium truncate">{conn.key}</div>
                           {!isAuthenticated && (
                             <div className="text-xs text-muted-foreground">
                               {t('settings.ai.notAuthenticated')}
                             </div>
                           )}
                         </div>
-                        {isCurrentConnection && (
+                        {isCurrentProvider && (
                           <Check className="h-3 w-3 text-foreground/60 shrink-0" />
                         )}
                         {isAuthenticated && (
@@ -281,20 +277,20 @@ export function CompactModelSelector({
                       </button>
                       {isAuthenticated && isExpanded && (
                         <div className="pl-6 flex flex-col gap-0.5">
-                          {(conn.models || ANTHROPIC_MODELS).map(model => {
+                          {(conn.provider.models || ANTHROPIC_MODELS).map(model => {
                             const modelId = typeof model === 'string' ? model : model.id
                             const modelName = typeof model === 'string'
                               ? stripPiPrefixForDisplay(getModelShortName(model))
                               : (model.name ?? stripPiPrefixForDisplay(model.id))
                             const isSelectedModel =
-                              isCurrentConnection && currentModel === modelId
-                            const showVision = isCompatProvider(conn.providerType)
-                            const visionOn = showVision && modelSupportsImages(conn, modelId)
+                              isCurrentProvider && currentModel === modelId
+                            const showVision = true
+                            const visionOn = showVision && piProviderModelSupportsImages(conn.provider, modelId)
                             return (
                               <DrawerClose asChild key={modelId}>
                                 <button
                                   type="button"
-                                  onClick={() => handlePickSwitcherModel(conn.slug, modelId)}
+                                  onClick={() => handlePickSwitcherModel(conn.key, modelId)}
                                   className={cn(
                                     'flex items-center justify-between w-full px-3 py-2 rounded-lg text-left transition-colors',
                                     isSelectedModel
@@ -310,7 +306,7 @@ export function CompactModelSelector({
                                         onToggle={(e) => {
                                           e.preventDefault()
                                           e.stopPropagation()
-                                          toggleVision(conn.slug, modelId, !visionOn)
+                                          toggleVision(conn.key, modelId, !visionOn)
                                         }}
                                       />
                                     )}
@@ -347,10 +343,10 @@ export function CompactModelSelector({
                     ? (model.description as string)
                     : '')
               const showVision =
-                !!effectiveConnectionDetails &&
-                isCompatProvider(effectiveConnectionDetails.providerType)
+                !!effectiveProviderDetails &&
+                true
               const visionOn =
-                showVision && modelSupportsImages(effectiveConnectionDetails!, modelId)
+                showVision && piProviderModelSupportsImages(effectiveProviderDetails!.provider, modelId)
               return (
                 <DrawerClose asChild key={modelId}>
                   <button
@@ -370,14 +366,14 @@ export function CompactModelSelector({
                       )}
                     </div>
                     <div className="flex items-center gap-1 ml-3 shrink-0">
-                      {showVision && effectiveConnectionDetails && (
+                      {showVision && effectiveProviderDetails && (
                         <VisionToggle
                           visionOn={visionOn}
                           onToggle={(e) => {
                             e.preventDefault()
                             e.stopPropagation()
                             toggleVision(
-                              effectiveConnectionDetails.slug,
+                              effectiveProviderDetails.key,
                               modelId,
                               !visionOn,
                             )
@@ -456,30 +452,30 @@ export function CompactModelSelector({
 
 function LockedSingleRow({
   modelId,
-  connection,
+  provider,
   onToggleVision,
 }: {
   modelId: string
-  connection: LlmConnectionWithStatus | null
-  onToggleVision: (connectionSlug: string, modelId: string, enabled: boolean) => Promise<void>
+  provider: ProviderPickerItem | null
+  onToggleVision: (providerKey: string, modelId: string, enabled: boolean) => Promise<void>
 }) {
   const { t } = useTranslation()
-  const showVision = !!connection && isCompatProvider(connection.providerType)
-  const visionOn = !!(showVision && connection && modelSupportsImages(connection, modelId))
+  const showVision = !!provider
+  const visionOn = !!(showVision && provider && piProviderModelSupportsImages(provider.provider, modelId))
   return (
     <div className="flex items-center justify-between px-3 py-2 rounded-lg opacity-80 select-none">
       <div className="min-w-0">
         <div className="text-sm font-medium truncate">{stripPiPrefixForDisplay(modelId)}</div>
-        <div className="text-xs text-foreground/50">{t('chat.connectionDefault')}</div>
+        <div className="text-xs text-foreground/50">{t('chat.providerDefault')}</div>
       </div>
       <div className="flex items-center gap-1 ml-3 shrink-0">
-        {showVision && connection && (
+        {showVision && provider && (
           <VisionToggle
             visionOn={visionOn}
             onToggle={(e) => {
               e.preventDefault()
               e.stopPropagation()
-              onToggleVision(connection.slug, modelId, !visionOn)
+              onToggleVision(provider.key, modelId, !visionOn)
             }}
           />
         )}
@@ -519,3 +515,10 @@ function VisionToggle({
     </span>
   )
 }
+
+
+
+
+
+
+

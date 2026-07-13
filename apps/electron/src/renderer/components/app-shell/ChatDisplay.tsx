@@ -45,6 +45,7 @@ import { useTheme } from "@/hooks/useTheme"
 import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, LoadedSource, LoadedSkill } from "../../../shared/types"
 import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
+import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
 import type { ExtensionCommandResult } from "@craft-agent/core/types"
 import {
   TurnCard,
@@ -132,15 +133,15 @@ function getTurnKey(turn: Turn): string {
 
 interface ChatDisplayProps {
   session: Session | null
-  onSendMessage: (message: string, attachments?: FileAttachment[], skillSlugs?: string[]) => void
+  onSendMessage: (message: string, attachments?: FileAttachment[], skillSlugs?: string[], midStreamSendIntent?: MidStreamSendIntent) => void
   onOpenFile: (path: string) => void
   onOpenUrl: (url: string) => void
   // Model selection
   currentModel: string
   onModelChange: (model: string, connection?: string) => void
   // Connection selection
-  /** Callback when LLM connection changes */
-  onConnectionChange?: (connectionSlug: string) => void
+  /** Callback when provider changes */
+  onProviderChange?: (providerKey: string) => void
   /** Ref for the input, used for external focus control */
   textareaRef?: React.RefObject<RichTextInputHandle>
   /** When true, disables input (e.g., when agent needs activation) */
@@ -239,7 +240,7 @@ interface ChatDisplayProps {
   /** Label shown as empty state in compact mode (e.g., "Permission Settings") */
   emptyStateLabel?: string
   /** When true, the session's selected connection has been removed - disables send and shows unavailable state */
-  connectionUnavailable?: boolean
+  providerUnavailable?: boolean
 }
 
 import {
@@ -459,7 +460,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onOpenUrl,
   currentModel,
   onModelChange,
-  onConnectionChange,
+  onProviderChange,
   textareaRef: externalTextareaRef,
   disabled = false,
   onRespondToPermission,
@@ -509,7 +510,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   placeholder,
   emptyStateLabel,
   // Connection unavailable
-  connectionUnavailable = false,
+  providerUnavailable = false,
 }, ref) {
   const { t } = useTranslation()
   const activeSessionId = session?.id
@@ -1276,7 +1277,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   // Handle message submission from InputContainer
   // Backend handles interruption and queueing if currently processing
-  const handleSubmit = (message: string, attachments?: FileAttachment[], skillSlugs?: string[]) => {
+  const handleSubmit = (message: string, attachments?: FileAttachment[], skillSlugs?: string[], midStreamSendIntent?: MidStreamSendIntent) => {
     const hasBaseMessage = message.trim().length > 0
     const followUpSection = formatFollowUpSection(pendingFollowUpAnnotations, {
       includeTopSeparator: hasBaseMessage,
@@ -1288,7 +1289,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
     // Force stick-to-bottom when user sends a message
     isStickToBottomRef.current = true
-    onSendMessage(normalizedMessage, attachments, skillSlugs)
+    onSendMessage(normalizedMessage, attachments, skillSlugs, midStreamSendIntent)
 
     // Persist sent marker on follow-up annotations so TurnCard can distinguish
     // sent vs pending follow-ups. If user edits a follow-up later, TurnCard
@@ -1374,7 +1375,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   }) => {
     if (!session) return
 
-    if (isInputDisabled || disableSend || connectionUnavailable) {
+    if (isInputDisabled || disableSend || providerUnavailable) {
       toast.error(t('toast.cannotSendRightNow'), {
         description: 'Sending is currently disabled for this session.',
       })
@@ -1387,7 +1388,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         detail: { sessionId: session.id },
       }))
     }, 0)
-  }, [session, isInputDisabled, disableSend, connectionUnavailable])
+  }, [session, isInputDisabled, disableSend, providerUnavailable])
 
   // Handle stop request from InputContainer
   // silent=true when redirecting (sending new message), silent=false when user clicks Stop button
@@ -1869,7 +1870,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                                 branchFromSessionId: session.id,
                                 name: `Branch of ${session.name || 'Untitled'}`,
                                 // Keep branch on the same backend/provider by inheriting parent session settings.
-                                llmConnection: session.llmConnection,
+                                provider: session.provider,
                                 model: session.model,
                                 permissionMode: session.permissionMode,
                                 workingDirectory: session.workingDirectory,
@@ -2069,11 +2070,11 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               workspaceId,
               workingDirectory,
               onWorkingDirectoryChange,
-              disableSend: disableSend || connectionUnavailable,
-              connectionUnavailable,
+              disableSend: disableSend || providerUnavailable,
+              providerUnavailable,
               isEmptySession: allTurns.length === 0,
-              currentConnection: session.llmConnection,
-              onConnectionChange,
+              currentProvider: session.provider,
+              onProviderChange,
               contextStatus: {
                 isCompacting: projectedRuntimeState?.isCompacting ?? false,
                 inputTokens: session.tokenUsage?.inputTokens,
@@ -2495,3 +2496,4 @@ const MemoizedMessageBubble = React.memo(MessageBubble, (prev, next) => {
     prev.compactMode === next.compactMode
   )
 })
+

@@ -4,7 +4,7 @@
  * Inline display of a single automation action (prompt or webhook).
  * Used within the "Then" section of AutomationInfoPage.
  *
- * Prompt actions surface optional per-action overrides (llmConnection,
+ * Prompt actions surface optional per-action overrides (provider,
  * model, thinkingLevel) as low-emphasis badges below the prompt text.
  */
 
@@ -55,30 +55,27 @@ function WebhookText({ action }: { action: Extract<AutomationAction, { type: 'we
 }
 
 /**
- * Render the per-action override chips (connection / model / thinking level).
+ * Render the per-action override chips (provider / model / thinking level).
  * Each chip is conditional on its field being set on the action.
  *
- * The connection slug is shown verbatim (no display-name resolution) — that
- * would require fetching the workspace's LlmConnection list into the Info
- * page, which isn't justified for a read-only chip. If the slug becomes
- * stale, executePromptAutomation already logs a warning at run time.
+ * The provider key is shown verbatim so it matches Pi's models.json identity.
  */
 function PromptActionBadges({ action, t }: { action: PromptAction; t: (key: string) => string }) {
-  const { llmConnection, model, thinkingLevel } = action
-  if (!llmConnection && !model && !thinkingLevel) return null
+  const { provider, model, thinkingLevel } = action
+  if (!provider && !model && !thinkingLevel) return null
 
   const thinkingDef = thinkingLevel ? THINKING_LEVELS.find((l) => l.id === thinkingLevel) : undefined
   const thinkingLabel = thinkingDef ? t(thinkingDef.nameKey) : thinkingLevel
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-      {llmConnection && (
+      {provider && (
         <Badge
           variant="secondary"
           className="font-mono text-[10px] px-1.5 py-0 font-normal"
-          title={`${t('automations.labelConnection')}: ${llmConnection}`}
+          title={`${t('settings.piProviders.provider')}: ${provider}`}
         >
-          {llmConnection}
+          {provider}
         </Badge>
       )}
       {model && (

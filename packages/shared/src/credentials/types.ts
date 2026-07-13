@@ -7,8 +7,8 @@
  * Credential key format: "{type}::{scope...}"
  *
  * Examples:
- *   - llm_api_key::{connectionSlug}
- *   - llm_oauth::{connectionSlug}
+ *   - llm_api_key::{providerKey}
+ *   - llm_oauth::{providerKey}
  *   - source_oauth::{workspaceId}::{sourceId}
  *   - source_bearer::{workspaceId}::{sourceId}
  *
@@ -17,9 +17,9 @@
 
 /** Types of credentials we store */
 export type CredentialType =
-  // LLM connection credentials (keyed by connection slug)
-  | 'llm_api_key'        // API key for LLM connection
-  | 'llm_oauth'          // OAuth token for LLM connection
+  // legacy provider credentials (keyed by provider key)
+  | 'llm_api_key'        // API key for Pi provider
+  | 'llm_oauth'          // OAuth token for Pi provider
   | 'llm_iam'            // AWS IAM credentials (accessKeyId + secretAccessKey)
   | 'llm_service_account' // GCP service account JSON
   // Workspace credentials
@@ -55,9 +55,9 @@ function isValidCredentialType(type: string): type is CredentialType {
 export interface CredentialId {
   type: CredentialType;
 
-  // LLM connection-scoped format
-  /** LLM connection slug for llm_api_key/llm_oauth credentials */
-  connectionSlug?: string;
+  // legacy provider-scoped format
+  /** provider key for llm_api_key/llm_oauth credentials */
+  providerKey?: string;
 
   // Workspace-scoped format
   /** Workspace ID for workspace-scoped credentials */
@@ -144,7 +144,7 @@ function isMessagingCredential(type: CredentialType): boolean {
   return (MESSAGING_CREDENTIAL_TYPES as readonly string[]).includes(type);
 }
 
-/** LLM connection credential types */
+/** legacy provider credential types */
 const LLM_CREDENTIAL_TYPES = [
   'llm_api_key',
   'llm_oauth',
@@ -157,7 +157,7 @@ function isSourceCredential(type: CredentialType): boolean {
   return (SOURCE_CREDENTIAL_TYPES as readonly string[]).includes(type);
 }
 
-/** Check if type is an LLM connection credential */
+/** Check if type is an legacy provider credential */
 function isLlmCredential(type: CredentialType): boolean {
   return (LLM_CREDENTIAL_TYPES as readonly string[]).includes(type);
 }
@@ -166,11 +166,11 @@ function isLlmCredential(type: CredentialType): boolean {
 export function credentialIdToAccount(id: CredentialId): string {
   const parts: string[] = [id.type];
 
-  // LLM connection-scoped format:
-  // llm_api_key::{connectionSlug}
-  // llm_oauth::{connectionSlug}
-  if (isLlmCredential(id.type) && id.connectionSlug) {
-    parts.push(id.connectionSlug);
+  // legacy provider-scoped format:
+  // llm_api_key::{providerKey}
+  // llm_oauth::{providerKey}
+  if (isLlmCredential(id.type) && id.providerKey) {
+    parts.push(id.providerKey);
     return parts.join(CREDENTIAL_DELIMITER);
   }
 
@@ -240,11 +240,11 @@ export function accountToCredentialId(account: string): CredentialId | null {
 
   const type = typeStr;
 
-  // LLM connection-scoped format:
-  // llm_api_key::{connectionSlug}
-  // llm_oauth::{connectionSlug}
+  // legacy provider-scoped format:
+  // llm_api_key::{providerKey}
+  // llm_oauth::{providerKey}
   if (isLlmCredential(type) && parts.length === 2) {
-    return { type, connectionSlug: parts[1] };
+    return { type, providerKey: parts[1] };
   }
 
   // Workspace-scoped format (no source):

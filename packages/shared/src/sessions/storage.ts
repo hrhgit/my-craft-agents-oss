@@ -442,7 +442,7 @@ export async function createSession(
     permissionMode?: SessionHeader['permissionMode'];
     enabledSourceSlugs?: string[];
     model?: string;
-    llmConnection?: string;
+    provider?: string;
     hidden?: boolean;
     sessionStatus?: SessionHeader['sessionStatus'];
     labels?: string[];
@@ -473,7 +473,7 @@ export async function createSession(
     permissionMode: options?.permissionMode,
     enabledSourceSlugs: options?.enabledSourceSlugs,
     model: options?.model,
-    llmConnection: options?.llmConnection,
+    provider: options?.provider,
     hidden: options?.hidden,
     sessionStatus: options?.sessionStatus,
     labels: options?.labels,
@@ -529,6 +529,19 @@ export function loadSession(workspaceRootPath: string, sessionId: string): Store
   if (existsSync(jsonlPath)) {
     const session = readSessionJsonl(jsonlPath);
     if (session) {
+      const legacy = session as StoredSession & {
+        llmConnection?: string;
+        connectionLocked?: boolean;
+        providerLocked?: boolean;
+      };
+      if (!session.provider && legacy.llmConnection) {
+        session.provider = legacy.llmConnection.startsWith('pi-')
+          ? legacy.llmConnection.slice(3)
+          : legacy.llmConnection;
+      }
+      delete legacy.llmConnection;
+      delete legacy.connectionLocked;
+      delete legacy.providerLocked;
       end();
       return session;
     }
@@ -708,7 +721,7 @@ export async function updateSessionMetadata(
     | 'sharedUrl'
     | 'sharedId'
     | 'model'
-    | 'llmConnection'
+    | 'provider'
     | 'isArchived'
     | 'archivedAt'
   >>
@@ -729,7 +742,7 @@ export async function updateSessionMetadata(
   if ('sharedUrl' in updates) session.sharedUrl = updates.sharedUrl;
   if ('sharedId' in updates) session.sharedId = updates.sharedId;
   if (updates.model !== undefined) session.model = updates.model;
-  if (updates.llmConnection !== undefined) session.llmConnection = updates.llmConnection;
+  if (updates.provider !== undefined) session.provider = updates.provider;
   if (updates.isArchived !== undefined) session.isArchived = updates.isArchived;
   if ('archivedAt' in updates) session.archivedAt = updates.archivedAt;
 

@@ -8,7 +8,7 @@ import { EscapeInterruptProvider } from '@/context/EscapeInterruptContext'
 import { ActionRegistryProvider } from '@/actions/registry'
 import { NavigationProvider } from '@/contexts/NavigationContext'
 import { sessionMetaMapAtom, sessionAtomFamily, type SessionMeta } from '@/atoms/sessions'
-import type { LlmConnectionWithStatus } from '@config/llm-connections'
+import type { PiGlobalProviderForDisplay } from '../../../../shared/types'
 import type { Session } from '../../../../shared/types'
 import { MOBILE_WORKSPACE_ID, MOBILE_WORKSPACE_SLUG, buildMockSession } from './mock-mobile-data'
 
@@ -41,17 +41,17 @@ function HydrateAtoms({ sessions, session, children }: HydrateProps & { children
 }
 
 interface MobileAppShellOverrideProps {
-  llmConnections?: LlmConnectionWithStatus[]
+  piProviders?: PiGlobalProviderForDisplay[]
   children: React.ReactNode
 }
 
 /**
  * Overrides `isCompactMode: true` on the existing AppShell context inherited
  * from PlaygroundAppShellProvider, without rebuilding the full mock value.
- * Optionally injects mock `llmConnections` so demos that exercise the model
+ * Optionally injects mock `providerItems` so demos that exercise the model
  * picker can render real provider/connection rows.
  */
-function MobileAppShellOverride({ llmConnections, children }: MobileAppShellOverrideProps) {
+function MobileAppShellOverride({ piProviders, children }: MobileAppShellOverrideProps) {
   const parent = useOptionalAppShellContext()
   if (!parent) {
     throw new Error('MobilePlaygroundProviders must be rendered inside PlaygroundAppShellProvider')
@@ -62,9 +62,9 @@ function MobileAppShellOverride({ llmConnections, children }: MobileAppShellOver
       isCompactMode: true,
       activeWorkspaceId: MOBILE_WORKSPACE_ID,
       activeWorkspaceSlug: MOBILE_WORKSPACE_SLUG,
-      llmConnections: llmConnections ?? parent.llmConnections,
+      piProviders: piProviders ?? parent.piProviders,
     }),
-    [parent, llmConnections],
+    [parent, piProviders],
   )
   return <AppShellProvider value={value}>{children}</AppShellProvider>
 }
@@ -74,8 +74,8 @@ export interface MobilePlaygroundProvidersProps {
   sessions?: SessionMeta[]
   /** Optional full session to hydrate into `sessionAtomFamily` for ChatDisplay. */
   session?: Session
-  /** Mock LLM connections (overrides the empty default from PlaygroundAppShellProvider). */
-  llmConnections?: LlmConnectionWithStatus[]
+  /** Mock Pi providers for model-picker demos. */
+  piProviders?: PiGlobalProviderForDisplay[]
   children: React.ReactNode
 }
 
@@ -90,7 +90,7 @@ export interface MobilePlaygroundProvidersProps {
 export function MobilePlaygroundProviders({
   sessions,
   session,
-  llmConnections,
+  piProviders,
   children,
 }: MobilePlaygroundProvidersProps) {
   // Fresh store per render — isolates demo state from the playground root.
@@ -116,7 +116,7 @@ export function MobilePlaygroundProviders({
                     isReady
                     isSessionsReady
                   >
-                    <MobileAppShellOverride llmConnections={llmConnections}>
+                    <MobileAppShellOverride piProviders={piProviders}>
                       {children}
                     </MobileAppShellOverride>
                   </NavigationProvider>
@@ -129,3 +129,5 @@ export function MobilePlaygroundProviders({
     </JotaiProvider>
   )
 }
+
+

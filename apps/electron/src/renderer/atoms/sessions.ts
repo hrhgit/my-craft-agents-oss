@@ -53,8 +53,8 @@ export interface SessionMeta {
   isAsyncOperationOngoing?: boolean
   /** Model override for this session */
   model?: string
-  /** LLM connection slug for this session */
-  llmConnection?: string
+  /** Pi provider key for this session */
+  provider?: string
   /** Token usage stats (from JSONL header, available without loading messages) */
   tokenUsage?: {
     inputTokens: number

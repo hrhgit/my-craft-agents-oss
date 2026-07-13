@@ -3,14 +3,11 @@ import type { ModelDefinition } from '../../../../config/models.ts';
 import { getAllPiModels, getPiModelsForAuthProvider, isDeprecatedClaudeOpus46Model } from '../../../../config/models-pi.ts';
 import { getPiProviderBaseUrl } from '../../../../config/models-pi.ts';
 import {
-  getPiGlobalProviderKeyForConnection,
   normalizePiCustomEndpointBaseUrl,
-  readPiGlobalProviders,
   type PiGlobalProvider,
   type PiGlobalModel,
   type PiCustomApi,
 } from '../../../../config/pi-global-config.ts';
-import type { LlmConnection } from '../../../../config/llm-connections.ts';
 
 // ── Copilot model types ────────────────────────────────────────────────
 type RawCopilotModel = {
@@ -235,33 +232,7 @@ async function testAnthropicCompatible(
   }
 }
 
-// ── pi_compat: 从 ~/.pi/agent/models.json 读取连接信息 ─────────────────
-//
-// 重构之后 config.llmConnections 不再含 pi-* 条目，pi_compat 连接的
-// customEndpoint/customModels 改由 ~/.pi/agent/models.json 作为唯一数据源
-// （SoT）。driver 只负责把连接信息透传给 Pi SDK 子进程，不参与实际推理。
-
-/**
- * 从 ~/.pi/agent/models.json 解析 pi_compat 连接对应的 provider。
- *
- * 映射约定（与 pi-global-sync 历史约定一致）：
- *   - slug 形如 `pi-<key>` → provider key = slug 去掉 `pi-` 前缀
- *   - 否则使用 connection.piAuthProvider 作为 provider key
- *
- * 返回 null 表示 pi 文件中没有对应的 provider（调用方回退到 connection 自身字段）。
- */
-function resolvePiCompatProviderEntry(
-  connection: LlmConnection | null | undefined,
-): { key: string; provider: PiGlobalProvider } | null {
-  if (!connection) return null;
-
-  const providerKey = getPiGlobalProviderKeyForConnection(connection);
-  if (!providerKey) return null;
-
-  const providers = readPiGlobalProviders();
-  const provider = providers[providerKey];
-  return provider ? { key: providerKey, provider } : null;
-}
+// Custom endpoint/model data comes directly from Pi's provider registry.
 
 /**
  * 从 PiGlobalProvider 构建 driver runtime 的 customEndpoint 字段。
@@ -281,7 +252,6 @@ function buildCustomEndpointFromPiProvider(
 
 /**
  * 将 pi 文件中的 PiGlobalModel[] 转换为 driver runtime 的 customModels 格式。
- * 与原 connection.models 的映射保持一致：
  *   - 仅当存在 contextWindow 或 supportsImages 覆盖时输出对象形式
  *   - 否则输出裸 id 字符串
  */
@@ -329,41 +299,15 @@ function normalizeRuntimeBaseUrl(
 export const piDriver: ProviderDriver = {
   provider: 'pi',
   buildRuntime: ({ context, providerOptions, resolvedPaths }) => {
-    const piCompatProviderEntry = context.connection?.providerType === 'pi_compat'
-      ? resolvePiCompatProviderEntry(context.connection)
-      : null;
     const inferredPiAuthProvider =
       providerOptions?.piAuthProvider
-      || piCompatProviderEntry?.key
-      || context.connection?.piAuthProvider;
-
-    // pi_compat 连接的 customEndpoint/customModels 从 ~/.pi/agent/models.json 读取
-    // （pi 文件为 SoT）。pi 文件中无对应 provider 时回退到 connection 自身字段，
-    // 保留对旧配置的兼容。
-    const piCompatProvider = piCompatProviderEntry?.provider ?? null;
-
-    const customEndpoint = piCompatProvider
-      ? buildCustomEndpointFromPiProvider(piCompatProvider) ?? context.connection?.customEndpoint
-      : context.connection?.customEndpoint;
-
-    const customModels = piCompatProvider
-      ? piGlobalModelsToCustomModels(piCompatProvider.models)
-      : context.connection?.models?.map(m => {
-        if (typeof m === 'string') return m;
-        const supportsImages = typeof m.supportsImages === 'boolean'
-          ? m.supportsImages
-          : undefined;
-        if (m.contextWindow || supportsImages !== undefined) {
-          return {
-            id: m.id,
-            ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
-            ...(supportsImages !== undefined ? { supportsImages } : {}),
-          };
-        }
-        return m.id;
-      });
-
-    const rawBaseUrl = piCompatProvider?.baseUrl ?? context.connection?.baseUrl;
+      || context.providerKey;
+    const providerConfig = context.providerConfig;
+    const customEndpoint = providerConfig
+      ? buildCustomEndpointFromPiProvider(providerConfig)
+      : undefined;
+    const customModels = piGlobalModelsToCustomModels(providerConfig?.models);
+    const rawBaseUrl = providerConfig?.baseUrl;
     const baseUrl = normalizeRuntimeBaseUrl(rawBaseUrl, customEndpoint?.api);
 
     return ({
@@ -377,13 +321,12 @@ export const piDriver: ProviderDriver = {
     customModels,
   });
   },
-  fetchModels: async ({ connection, credentials, timeoutMs }) => {
+  fetchModels: async ({ providerKey, providerConfig, credentials, timeoutMs }) => {
     // pi_compat 连接的 models 直接从 ~/.pi/agent/models.json 读取（用户手填，
     // 不走自动发现）。pi 文件中无对应 provider 时返回空列表。
-    if (connection.providerType === 'pi_compat') {
-      const entry = resolvePiCompatProviderEntry(connection);
-      const models = entry?.provider.models?.length
-        ? piGlobalModelsToModelDefinitions(entry.provider.models)
+    if (providerConfig.baseUrl) {
+      const models = providerConfig.models?.length
+        ? piGlobalModelsToModelDefinitions(providerConfig.models)
         : [];
       return { models };
     }
@@ -392,26 +335,26 @@ export const piDriver: ProviderDriver = {
     // Uses the GitHub OAuth token (our refreshToken) to exchange for a
     // Copilot API token, then queries GET /models for the live model list.
     const copilotGitHubToken = credentials.oauthRefreshToken || credentials.oauthAccessToken;
-    if (connection.piAuthProvider === 'github-copilot' && copilotGitHubToken) {
+    if (providerKey === 'github-copilot' && copilotGitHubToken) {
       const models = await fetchCopilotModels(copilotGitHubToken, timeoutMs);
       return { models };
     }
 
     // All other Pi providers: use static Pi SDK model registry
-    const models = connection.piAuthProvider
-      ? getPiModelsForAuthProvider(connection.piAuthProvider)
+    const models = providerKey
+      ? getPiModelsForAuthProvider(providerKey)
       : getAllPiModels();
 
     if (models.length === 0) {
       throw new Error(
-        `No Pi models found for provider: ${connection.piAuthProvider ?? 'all'}`,
+        `No Pi models found for provider: ${providerKey || 'all'}`,
       );
     }
 
     return { models };
   },
   testConnection: async (args: DriverTestConnectionArgs): Promise<{ success: boolean; error?: string } | null> => {
-    const piAuthProvider = args.connection?.piAuthProvider;
+    const piAuthProvider = args.providerKey;
     if (!piAuthProvider) {
       // No provider hint — fall back to generic connection validation path
       return null;
@@ -454,5 +397,5 @@ export const piDriver: ProviderDriver = {
     }
     return testAnthropicCompatible(args.apiKey, baseUrl, bareModel, args.timeoutMs);
   },
-  validateStoredConnection: async () => ({ success: true }),
+  validateStoredProvider: async () => ({ success: true }),
 };

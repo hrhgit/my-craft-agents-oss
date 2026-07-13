@@ -58,8 +58,8 @@ export const AGENT_EVENTS: AgentEvent[] = [
 export interface PromptAction {
   type: 'prompt';
   prompt: string;
-  /** LLM connection slug for the created session (falls back to default if not found) */
-  llmConnection?: string;
+  /** Pi provider key for the created session (falls back to default if not found) */
+  provider?: string;
   /** Model ID for the created session (falls back to provider default if invalid) */
   model?: string;
   /**
@@ -250,8 +250,8 @@ export interface PendingPrompt {
   labels?: string[];
   /** Permission mode for the created session (from matcher config) */
   permissionMode?: PermissionMode;
-  /** LLM connection slug for the created session (falls back to default if not found) */
-  llmConnection?: string;
+  /** Pi provider key for the created session (falls back to default if not found) */
+  provider?: string;
   /** Model ID for the created session (falls back to provider default if invalid) */
   model?: string;
   /** Thinking level for the created session (falls back to workspace default when omitted) */

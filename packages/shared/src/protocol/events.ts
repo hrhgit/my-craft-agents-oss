@@ -29,7 +29,6 @@ export interface BroadcastEventMap {
   [RPC_CHANNELS.statuses.CHANGED]: [workspaceId: string]
   [RPC_CHANNELS.automations.CHANGED]: [workspaceId: string]
   [RPC_CHANNELS.skills.CHANGED]: [workspaceId: string, skills: LoadedSkill[]]
-  [RPC_CHANNELS.llmConnections.CHANGED]: []
   [RPC_CHANNELS.permissions.DEFAULTS_CHANGED]: [value: null]
 
   // Pi global config (~/.pi/agent/) change broadcast
