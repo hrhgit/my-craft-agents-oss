@@ -12,6 +12,7 @@ import { BatchSessionMenu } from "./BatchSessionMenu"
 import { CompactSessionMenu } from "./CompactSessionMenu"
 import { SessionStatusIcon } from "./SessionStatusIcon"
 import { SessionBadges } from "./SessionBadges"
+import { ExtensionContributionZone } from "@/components/extensions/ExtensionContributionZone"
 import { getSessionTitle, getSessionPreviewText, highlightMatch, hasUnreadMeta, shortTimeLocale } from "@/utils/session"
 import { useSessionListContext } from "@/context/SessionListContext"
 import { useAppShellContext } from "@/context/AppShellContext"
@@ -246,6 +247,7 @@ export function SessionItem({
             </span>
           )}
           {hasLabels ? <SessionBadges item={item} /> : undefined}
+          <ExtensionContributionZone className="w-auto" sessionId={item.id} surface="session.badge" hydrateRuntime={false} />
         </>
       }
     />

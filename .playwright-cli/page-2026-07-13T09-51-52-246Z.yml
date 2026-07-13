@@ -1,0 +1,180 @@
+- generic [ref=f5e2]:
+  - generic [ref=f5e7]:
+    - generic [ref=f5e9]:
+      - generic [ref=f5e10]:
+        - generic [ref=f5e11]:
+          - button "切换侧栏" [ref=f5e12]
+          - button "Craft 菜单" [ref=f5e15]
+        - generic [ref=f5e18]:
+          - button "返回" [ref=f5e621]
+          - button "前进" [disabled]
+          - button "选择 Workspace" [ref=f5e20] [cursor=pointer]:
+            - generic [ref=f5e21]:
+              - generic [ref=f5e22]: _
+              - generic [ref=f5e23]: _
+            - generic [ref=f5e24]: _chat
+      - generic [ref=f5e27]:
+        - button "添加面板" [ref=f5e28]
+        - button "帮助和文档" [ref=f5e30]
+    - generic [ref=f5e36]:
+      - generic [ref=f5e41]:
+        - button "新建会话" [ref=f5e44]
+        - navigation "Main navigation" [ref=f5e47]:
+          - generic [ref=f5e48]:
+            - button "所有会话 4" [ref=f5e49]:
+              - text: 所有会话
+              - generic [ref=f5e58]: "4"
+            - generic [ref=f5e61]:
+              - generic [ref=f5e63]:
+                - button [ref=f5e64]:
+                  - button "积压 0" [ref=f5e66]:
+                    - text: 积压
+                    - generic [ref=f5e72]: "0"
+                - button [ref=f5e73]:
+                  - button "待办 4" [ref=f5e75]:
+                    - text: 待办
+                    - generic [ref=f5e81]: "4"
+                - button [ref=f5e82]:
+                  - button "待审查 0" [ref=f5e84]:
+                    - text: 待审查
+                    - generic [ref=f5e91]: "0"
+                - button [ref=f5e92]:
+                  - button "完成 0" [ref=f5e94]:
+                    - text: 完成
+                    - generic [ref=f5e101]: "0"
+                - button [ref=f5e102]:
+                  - button "已取消 0" [ref=f5e104]:
+                    - text: 已取消
+                    - generic [ref=f5e111]: "0"
+              - status [ref=f5e112]
+              - generic [ref=f5e115]:
+                - button "已标记 0" [ref=f5e117]:
+                  - text: 已标记
+                  - generic [ref=f5e122]: "0"
+                - button [ref=f5e124]
+          - button [ref=f5e130]
+          - generic [ref=f5e141]:
+            - button "数据源 0" [ref=f5e142]:
+              - text: 数据源
+              - generic [ref=f5e153]: "0"
+            - navigation "Sub navigation" [ref=f5e156]:
+              - button "API 0" [ref=f5e160]:
+                - text: API
+                - generic [ref=f5e165]: "0"
+              - button "MCP 0" [ref=f5e168]:
+                - text: MCP
+                - generic [ref=f5e175]: "0"
+              - button "本地文件夹 0" [ref=f5e178]:
+                - text: 本地文件夹
+                - generic [ref=f5e182]: "0"
+          - button "技能 25" [ref=f5e184]:
+            - text: 技能
+            - generic [ref=f5e188]: "25"
+          - generic [ref=f5e189]:
+            - button "自动化 0" [ref=f5e190]:
+              - text: 自动化
+              - generic [ref=f5e199]: "0"
+            - navigation "Sub navigation" [ref=f5e202]:
+              - button "定时任务 0" [ref=f5e206]:
+                - text: 定时任务
+                - generic [ref=f5e211]: "0"
+              - button "事件触发 0" [ref=f5e214]:
+                - text: 事件触发
+                - generic [ref=f5e222]: "0"
+              - button "智能体 0" [ref=f5e225]:
+                - text: 智能体
+                - generic [ref=f5e230]: "0"
+          - button [active] [ref=f5e234]
+          - button [ref=f5e240]
+      - generic [ref=f5e247]:
+        - heading "设置" [level=1] [ref=f5e624]
+        - generic [ref=f5e627]:
+          - button "应用 通知和更新" [ref=f5e634]:
+            - generic [ref=f5e636]:
+              - generic [ref=f5e637]: 应用
+              - generic [ref=f5e638]: 通知和更新
+          - button "AI 模型、思考、连接" [ref=f5e653]:
+            - generic [ref=f5e655]:
+              - generic [ref=f5e656]: AI
+              - generic [ref=f5e657]: 模型、思考、连接
+          - button "扩展 迁移的 Pi 扩展" [ref=f5e671]:
+            - generic [ref=f5e673]:
+              - generic [ref=f5e674]: 扩展
+              - generic [ref=f5e675]: 迁移的 Pi 扩展
+          - button "外观 主题、字体、工具图标" [ref=f5e693]:
+            - generic [ref=f5e695]:
+              - generic [ref=f5e696]: 外观
+              - generic [ref=f5e697]: 主题、字体、工具图标
+          - button "输入 发送键、拼写检查" [ref=f5e711]:
+            - generic [ref=f5e713]:
+              - generic [ref=f5e714]: 输入
+              - generic [ref=f5e715]: 发送键、拼写检查
+          - button "Workspace 名称、图标、Workspace 根目录" [ref=f5e731]:
+            - generic [ref=f5e733]:
+              - generic [ref=f5e734]: Workspace
+              - generic [ref=f5e735]: 名称、图标、Workspace 根目录
+          - button "权限 探索模式规则" [ref=f5e750]:
+            - generic [ref=f5e752]:
+              - generic [ref=f5e753]: 权限
+              - generic [ref=f5e754]: 探索模式规则
+          - button "标签 管理会话标签" [ref=f5e769]:
+            - generic [ref=f5e771]:
+              - generic [ref=f5e772]: 标签
+              - generic [ref=f5e773]: 管理会话标签
+          - button "Messaging 连接 Telegram、WhatsApp、飞书 / Lark" [ref=f5e787]:
+            - generic [ref=f5e789]:
+              - generic [ref=f5e790]: Messaging
+              - generic [ref=f5e791]: 连接 Telegram、WhatsApp、飞书 / Lark
+          - button "快捷键 键盘快捷键" [ref=f5e805]:
+            - generic [ref=f5e807]:
+              - generic [ref=f5e808]: 快捷键
+              - generic [ref=f5e809]: 键盘快捷键
+          - button "偏好 用户偏好" [ref=f5e825]:
+            - generic [ref=f5e827]:
+              - generic [ref=f5e828]: 偏好
+              - generic [ref=f5e829]: 用户偏好
+      - generic [ref=f5e837]:
+        - generic [ref=f5e838]:
+          - heading "应用" [level=1] [ref=f5e842]
+          - button [ref=f5e844]
+        - generic [ref=f5e854]:
+          - generic [ref=f5e855]:
+            - heading "通知" [level=3] [ref=f5e858]
+            - generic [ref=f5e860]:
+              - generic [ref=f5e861] [cursor=pointer]:
+                - generic [ref=f5e862]: 桌面通知
+                - generic [ref=f5e863]: AI 在聊天中完成工作时发送通知。
+              - switch "桌面通知 AI 在聊天中完成工作时发送通知。" [checked] [ref=f5e864]
+          - generic [ref=f5e865]:
+            - heading "电源" [level=3] [ref=f5e868]
+            - generic [ref=f5e870]:
+              - generic [ref=f5e871] [cursor=pointer]:
+                - generic [ref=f5e872]: 保持屏幕常亮
+                - generic [ref=f5e873]: 会话运行时防止屏幕关闭。
+              - switch "保持屏幕常亮 会话运行时防止屏幕关闭。" [ref=f5e874]
+          - generic [ref=f5e875]:
+            - heading "工具" [level=3] [ref=f5e878]
+            - generic [ref=f5e879]:
+              - generic [ref=f5e880]:
+                - generic [ref=f5e881] [cursor=pointer]:
+                  - generic [ref=f5e882]: 内置浏览器
+                  - generic [ref=f5e883]: 如果使用外部浏览器工具 (如 Playwright、Puppeteer 或浏览器 MCP 服务器) 则禁用。
+                - switch "内置浏览器 如果使用外部浏览器工具 (如 Playwright、Puppeteer 或浏览器 MCP 服务器) 则禁用。" [checked] [ref=f5e884]
+              - generic [ref=f5e886]:
+                - generic [ref=f5e887] [cursor=pointer]:
+                  - generic [ref=f5e888]: 数据源
+                  - generic [ref=f5e889]: 在侧栏和对话中显示数据源，并允许会话使用数据源工具。
+                - switch "数据源 在侧栏和对话中显示数据源，并允许会话使用数据源工具。" [checked] [ref=f5e890]
+          - generic [ref=f5e891]:
+            - heading "网络" [level=3] [ref=f5e894]
+            - generic [ref=f5e896]:
+              - generic [ref=f5e897] [cursor=pointer]:
+                - generic [ref=f5e898]: HTTP 代理
+                - generic [ref=f5e899]: 通过代理服务器路由网络流量。
+              - switch "HTTP 代理 通过代理服务器路由网络流量。" [ref=f5e900]
+          - generic [ref=f5e901]:
+            - heading "关于" [level=3] [ref=f5e904]
+            - generic [ref=f5e906]:
+              - generic [ref=f5e907]: 版本
+              - generic [ref=f5e909]: 0.10.4
+  - region "Notifications alt+T"

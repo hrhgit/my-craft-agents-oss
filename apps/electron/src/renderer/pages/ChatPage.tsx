@@ -13,7 +13,6 @@ import { ChatDisplay, type ChatDisplayHandle } from '@/components/app-shell/Chat
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { SessionMenu } from '@/components/app-shell/SessionMenu'
 import { CompactSessionMenu } from '@/components/app-shell/CompactSessionMenu'
-import { SubagentPanel } from '@/components/extensions/SubagentPanel'
 import { useExtensionStatus } from '@/hooks/useExtensionStatus'
 import { SessionInfoPopover } from '@/components/app-shell/SessionInfoPopover'
 import { RenameDialog } from '@/components/ui/rename-dialog'
@@ -763,8 +762,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             enableCompactModelPicker={!!isCompactMode}
           />
         </div>
-        {/* subagent 活动会话面板：可折叠，仅在有活动会话时显示 */}
-        <SubagentPanel sessionId={sessionId} />
       </div>
       <RenameDialog
         open={renameDialogOpen}

@@ -1,46 +1,146 @@
 # Pi Extensions Development Guide
 
-This guide describes how Pi extensions render widgets inside the Craft shell,
-and the `renderFn` contract that keeps Pi and Craft decoupled.
+Pi extensions can change Craft's GUI without shipping code inside Craft. The extension owns the UI declaration and command handlers; Craft owns rendering, layout, validation, permissions, recovery, and fallback.
 
-> **Theme boundary:** Pi extensions render to a plain `string[]`. They never
-> touch the Craft GUI theme, the DOM, or Electron APIs. For the full theme
-> boundary, see [themes.md](./themes.md).
+## Execution And Trust Boundary
 
-## Execution Model
+Extensions execute in Pi's child process. They cannot access Craft's React tree, `window`, `document`, Electron IPC, credentials, global CSS, or the parent DOM. GUI communication is versioned JSONL through `ExtensionUIContext`.
 
-Pi extensions run inside the `Pi RpcClient` **child process** — a separate
-Node process spawned by the Craft main process. The child process wraps the
-`@earendil-works/pi-coding-agent` SDK and communicates with the main process
-using a line-delimited JSON (JSONL) protocol over stdio.
+Use native contributions for persistent GUI and existing dialog methods for modal interaction:
 
-Because extensions run in the child process, they have **no access** to:
+- `ctx.ui.upsertContribution(definition)` creates or replaces a stable contribution.
+- `ctx.ui.removeContribution(id)` removes one contribution.
+- `ctx.ui.clearContributions()` removes all contributions owned by the current extension runtime.
+- `ctx.ui.select`, `confirm`, `input`, and `editor` request host-owned dialogs.
+- `ctx.ui.notify` requests a host notification.
 
-- The Craft Electron renderer (no `window`, no `document`, no React)
-- `window.electronAPI.*` or any IPC channel
-- The Craft GUI theme object (the 6-color OKLCH palette)
-- Node APIs of the main process
+Always check `ctx.ui.capabilities.contributions`. It is `true` in the Craft RPC host and `false` in TUI/unsupported hosts.
 
-They only see what Pi SDK passes them: the extension context `ctx`, whose `ui`
-facet is a bridged `ExtensionUIContext`.
-
-## Registering a Widget
-
-An extension publishes a widget by calling:
+## Minimal Native GUI
 
 ```ts
-ctx.ui.setWidget(key, renderFn, { placement })
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
+
+export default function (pi: ExtensionAPI) {
+  pi.on('session_start', (_event, ctx) => {
+    if (!ctx.ui.capabilities.contributions) return
+    ctx.ui.upsertContribution({
+      schemaVersion: 1,
+      id: 'build-status',
+      surface: 'composer.above',
+      priority: 20,
+      collapse: 'auto',
+      overflow: 'collapse',
+      content: {
+        type: 'row',
+        gap: 'small',
+        children: [
+          { type: 'icon', name: 'loader', label: 'Building' },
+          { type: 'text', text: 'Building workspace', tone: 'muted' },
+          {
+            type: 'button',
+            label: 'Cancel',
+            action: { kind: 'command', command: 'build-cancel' },
+          },
+        ],
+      },
+    })
+  })
+
+  pi.registerCommand('build-cancel', {
+    description: 'Cancel the current build',
+    handler: async (_args, ctx) => {
+      // Cancel extension-owned work here.
+      ctx.ui.removeContribution('build-status')
+    },
+  })
+}
 ```
 
-## Calling Craft Host Capabilities
+A complete example is distributed with Pi at `examples/extensions/craft-gui.ts`.
 
-Craft-targeted extensions request desktop functionality through Pi's typed
-capability client. Extensions never import Electron APIs or Craft IPC modules.
+## Surfaces
+
+Main conversation surfaces have the highest freedom:
+
+| Surface | Intended use |
+|---|---|
+| `conversation.timeline.before/after` | Session-level content around the timeline |
+| `conversation.turn.before/after/replace` | UI around a target assistant turn |
+| `conversation.message.before/after/replace` | UI attached to a target message |
+| `conversation.tool.before/after/replace` | UI attached to a target tool call |
+| `composer.above/below` | Panels around the input composer |
+| `composer.toolbar/status` | Compact actions and state |
+| `composer.replace` | Full composer replacement, subject to host permission and fallback |
+| `conversation.inline` | Transcript flow content near the active tail |
+| `conversation.overlay` | Host-bounded overlay panel below core dialogs |
+
+Shell surfaces are more constrained so extensions cannot destabilize navigation:
+
+| Surface | Intended use |
+|---|---|
+| `sidebar.header/section/footer` | Sidebar additions |
+| `navigation.item` | Compact command items in navigation |
+| `session.badge` | Compact status attached to a running session |
+| `window.topLeft/topRight` | Compact window-level actions |
+
+For turn/message/tool surfaces, supply a `target` containing the corresponding stable ID. A contribution without a required target is rejected.
+
+## Host-Rendered Primitives
+
+Level 1 contributions use a bounded recursive node tree:
+
+- `text`: `{ type: 'text', text, tone? }`
+- `markdown`: `{ type: 'markdown', markdown }`
+- `icon`: `{ type: 'icon', name, label }`
+- `badge`: `{ type: 'badge', label, tone? }`
+- `divider`: `{ type: 'divider' }`
+- `button`: `{ type: 'button', label, icon?, action, disabled? }`
+- `row` / `stack`: `{ type, children, gap? }`
+
+Buttons may invoke registered extension commands. Do not put executable code, callbacks, HTML, CSS, React components, DOM nodes, or scripts in a contribution; the validator rejects them.
+
+Icon names are deliberately bounded: `activity`, `alert-circle`, `check`, `chevron-right`, `circle`, `clock`, `info`, `loader`, `settings`, `sparkles`, and `x`.
+
+## Layout And Conflict Rules
+
+Extensions express placement intent, never coordinates. Craft owns flex/grid placement, reserved space, viewport adaptation, z-index, focus order, collapse, overflow, and exclusivity.
+
+Optional fields:
+
+| Field | Meaning |
+|---|---|
+| `priority` | Higher values win constrained capacity; range `-1000..1000` |
+| `order` | Stable order after priority |
+| `group` | Related contributions that may be presented together |
+| `collapse` | `never`, `auto`, or `always` |
+| `overflow` | `menu`, `collapse`, or `hide` |
+| `exclusive` | Requests the only visible slot; host selects one deterministic winner |
+
+Craft uses stable tie-breakers: host policy, priority, order, extension ID, contribution ID. Typical visible capacities are three composer panels, four toolbar/status actions, two actions per window corner, and five sidebar sections. Extra items enter a host-owned overflow control. Replace surfaces always have one winner and immediately fall back to built-in Craft UI if it disappears or fails.
+
+Compact hotspots (`composer.toolbar`, `composer.status`, `window.topLeft`, and `window.topRight`) accept only text, icon, badge, button, and shallow row nodes. Markdown, stacks, dividers, deep trees, and text above 512 characters are rejected. Craft also clamps these slots to the top bar/composer height and a bounded width. `collapse: 'never'` raises visibility preference but cannot override host capacity or core controls.
+
+This makes multiple extensions and multiple sandbox UI Apps safe on the same screen: each gets a host-assigned slot, so they cannot overlap the composer, cards, navigation, or window controls.
+
+## Identity, Updates, And Recovery
+
+- IDs are stable within one extension. Calling `upsertContribution` with the same ID replaces it.
+- Pi assigns a monotonically increasing revision per extension runtime.
+- Craft derives `extensionId`, `runtimeId`, and `sessionId` from the trusted route. Extensions cannot forge them.
+- Repeated or stale deltas are ignored.
+- Runtime state synchronization sends a snapshot.
+- Extension reload, runtime close, client disconnect, session replacement, and process failure clear the affected registry scope.
+- Invalid contributions fail independently and never replace core Craft UI.
+
+Publish initial state from `session_start`, update only when state changes, and remove transient UI when work ends. Pi/Craft also clean it on lifecycle boundaries, but explicit removal makes intent clear.
+
+## Actions And Host Capabilities
+
+UI actions should reference commands registered by the same extension. Sensitive desktop functionality is separate from rendering and must use declared host capabilities:
 
 ```ts
-pi.declareCapabilities([
-  { capability: 'files.pick', operations: ['open'] },
-])
+pi.declareCapabilities([{ capability: 'files.pick', operations: ['open'] }])
 
 const result = await ctx.capabilities.invoke<{ paths: string[] }>(
   'files.pick',
@@ -48,192 +148,49 @@ const result = await ctx.capabilities.invoke<{ paths: string[] }>(
   { mode: 'file', extensions: ['md'] },
   { timeoutMs: 30_000, signal: ctx.signal },
 )
-
 if (result.status === 'success') {
-  // Use result.output.paths
+  // Use result.output.paths.
 }
 ```
 
-The initial Electron host providers are:
+Craft owns authorization, routing, timeout, cancellation and audit. Extensions must handle `denied`, `cancelled`, `unsupported`, and `failed` without reaching for private Electron or filesystem APIs.
 
-| Capability | Operation | Input |
-|---|---|---|
-| `system.notification` | `show` | `{ title, body }` |
-| `files.pick` | `open` | `{ title?, mode?, multiple?, extensions? }` |
-| `files.preview` | `read` | `{ path, maxBytes? }` (workspace-bounded, max 2 MiB) |
-| `browser.open` | `navigate` | `{ url, focus? }` |
-| `browser.control` | `back`, `forward`, `focus`, `hide`, `close` | `{ instanceId }` (session-owned instances only) |
-| `browser.operate` | `snapshot`, `click`, `fill`, `type`, `select`, `screenshot`, `wait`, `key`, `scroll`, monitoring | Session-owned browser input; executable page evaluation is excluded |
-| `oauth.flow` | `begin`, `status`, `cancel`, `revoke` | Host-managed flow references only |
-| `credentials.keychain` | `has`, `remove` | Current-workspace source references only |
-| `session.share` | `status`, `publish`, `refresh`, `revoke` | Current session only |
-| `session.transfer` | `export-summary`, `import-summary` | Bounded summary DTO only |
-| `messaging.session` | `status`, `list-bindings`, `pair`, `unbind` | Current session; no bot credentials |
-| `automation.workspace` | `status`, `list`, `set-enabled` | Sanitized summaries and stable IDs |
-| `scheduler.workspace` | `status`, `list`, `set-enabled` | Sanitized scheduler summaries |
-| `webhook.workspace` | `status`, `list`, `set-enabled` | No URL, request body, test, replay, or execution access |
+## Legacy Widgets
 
-The Craft host owns authorization, workspace/session routing, timeout,
-cancellation, audit logging, and platform support. A provider can return
-`denied`, `cancelled`, `unsupported`, or `failed`; extensions must handle these
-statuses without falling back to direct host access. Session and workspace
-identity always come from the host route and cannot be supplied in `input`.
+`ctx.ui.setWidget(key, string[], { placement })` remains a compatibility path. Craft normalizes it into a text contribution. It is intentionally limited and should not be used for new GUI. TUI component factories never cross JSONL.
 
-Host authorization is fail-closed and operation-specific. An extension must
-declare each capability and operation before invoking it; declarations are
-bound to the current session, runtime, and extension and are cleared when the
-runtime exits. Provider registration and declaration alone do not grant
-mutating operations: Host policy can still deny or prompt the user. OAuth token
-reads, page script evaluation, clipboard access, arbitrary file upload, and raw
-webhook execution are not part of the capability policy.
+Migrate legacy widgets by:
 
-Extension UI contributions use the versioned `ExtensionContributionV1` side
-channel. Contributions are declarative text/Markdown/JSON blocks, actions,
-prompts, or inspector panels. React components, DOM nodes, HTML, scripts, and
-executable renderer code are rejected by the Host validator.
+1. Choosing an explicit surface.
+2. Replacing formatted terminal strings with host primitives.
+3. Registering commands for every button action.
+4. Using a stable contribution ID and explicit removal.
+5. Testing multiple extensions, narrow viewport overflow, reset and reconnect snapshot behavior.
 
-| Argument | Type | Description |
-|----------|------|-------------|
-| `key` | `string` | Stable widget identifier (e.g. `'plan-todos'`, `'repo-memory'`). Re-calling with the same `key` replaces the widget; calling with `content === undefined` removes it. |
-| `renderFn` | `(width: number, theme: PiTheme) => string[]` | Pure render function. See [renderFn Contract](#renderfn-contract). |
-| `placement` | `'aboveEditor' \| 'belowEditor'` | Where the widget appears. `'belowEditor'` (default) renders between the editor and the input box. `'aboveEditor'` is reserved. |
+## Sandbox UI Apps
 
-To remove a widget, call `ctx.ui.setWidget(key, undefined)`.
+Arbitrary application UI uses a `sandbox-app` top-level node with self-contained `html`, optional `css` and optional `script`. It runs in an opaque-origin iframe with CSP, a bounded private message channel, session/runtime-scoped storage and explicitly declared `commands`, `theme`, `storage`, and `resize` permissions. Omitted permissions deny all bridge access. It does not receive parent DOM, global CSS, raw Electron IPC, credentials, workers, raw network APIs or unrestricted filesystem access.
 
-## renderFn Contract
+Multiple sandbox apps may run at once. Craft still assigns each app a surface slot and resolves capacity/conflicts; sandbox freedom applies inside the allocated rectangle, not to the host page.
 
-```ts
-type renderFn = (width: number, theme: PiTheme) => string[]
-```
+## Manifest Settings
 
-### Parameters
-
-#### `width: number`
-
-Terminal width in **characters** (columns). Provided by the child process at
-render time. Use it to wrap/align output so the widget fits the available
-horizontal space. Do not assume a fixed width.
-
-#### `theme: PiTheme`
-
-The **Pi TUI theme object** — terminal-oriented colors and text styles. Owned
-and populated by Pi. Use it (not the Craft GUI theme) for any color/style
-decisions inside the render function.
-
-`theme` is supplied by the child process; extension authors should treat it as
-opaque/read-only and only read the documented fields.
-
-### Return Value
-
-A plain `string[]` — **one string per rendered line**.
-
-```ts
-// OK
-return ['☑ step one', '☐ step two', '2 tasks total']
-
-// Wrong — do not return a single multi-line string
-return ['☑ step one\n☐ step two\n2 tasks total']
-```
-
-### Rules
-
-1. **Return only plain strings.** Each array element is one visual line. The
-   child process forwards the array verbatim as `extension_widget.content`.
-
-2. **ANSI escape codes are allowed** for color/style (the Craft renderer
-   downgrades them to plain text). Do **not** emit other control characters
-   (cursor movement, `\r`, `\b`, terminal bell, etc.) — they will not render
-   correctly in the GUI.
-
-3. **Do not depend on the Craft GUI theme.** The 6-color OKLCH palette
-   (`~/.craft-agent/theme.json`) is not visible to extensions. Use the `theme`
-   argument for all color/style decisions.
-
-4. **Do not access the DOM, `window`, or Electron APIs.** Extensions run in the
-   child process; none of these exist there. Any interactive UI (select,
-   editor, confirm) must go through `ctx.ui.*` / `pi.events.emit('remoteui:request')`,
-   which the child process bridges to the renderer.
-
-5. **Keep `renderFn` pure and synchronous.** It must produce the `string[]`
-   from `(width, theme)` alone — no fetches, no IPC, no reads from the Craft
-   config. Side effects will be lost (the renderer only sees the returned
-   array).
-
-## How the `string[]` Reaches the GUI
-
-The end-to-end flow (for reference; extension authors do not need to implement
-any of this):
-
-1. Extension calls `ctx.ui.setWidget(key, renderFn, { placement })`.
-2. The child process's bridged `ExtensionUIContext` (built on Pi SDK's
-   `createHeadlessUIContext`) invokes `renderFn(width, theme)` and resolves it
-   to `string[]`.
-3. The child process emits a JSONL message:
-   `{ type: 'extension_widget', key, content: string[], placement, source }`.
-4. The Craft main process relays the message to the renderer over IPC
-   (`extensions:event` channel).
-5. The renderer's generic `ExtensionWidgetZone` surfaces render each string as
-   a line. Structured Craft features can define a separate versioned custom
-   message protocol instead. **The Pi `theme` object never leaves the child
-   process.**
-
-## Example
-
-```ts
-// A minimal widget that shows a todo list, themed via the Pi TUI theme.
-export function activate(ctx) {
-  ctx.ui.setWidget('my-todos', (width, theme) => {
-    const done = '☑'
-    const pending = '☐'
-    const lines = [
-      `${done} write docs`,
-      `${pending} ship feature`,
-    ]
-    // Respect width: truncate overly long lines.
-    return lines.map(l => l.length > width ? l.slice(0, width - 1) + '…' : l)
-  }, { placement: 'belowEditor' })
-}
-```
+Declare settings under the Craft-target extension entry's `ui.settings`. Supported field types are `boolean`, `string`, `textarea`, `number`, `select`, and `model`. Values live under `extensionConfig.<extension-id>`; Craft rejects unknown keys and invalid values before writing, and reloads extensions only for fields marked `requiresReload`.
 
 ## Common Mistakes
 
-| Mistake | Why it breaks | Do this instead |
-|---------|---------------|-----------------|
-| Returning a multi-line string instead of `string[]` | The renderer treats each element as one line | Split into one element per line |
-| Reading `window.electronAPI.getTheme()` | No `window` in the child process | Use the `theme` argument |
-| Emitting cursor-control ANSI codes | Renderer only supports color/style ANSI | Emit color/style ANSI only, or plain text |
-| Calling `fetch`/IPC inside `renderFn` | `renderFn` must be pure/synchronous | Compute state before calling `setWidget` |
-| Importing Craft GUI theme types | Breaks the decoupling contract | Treat `theme` as the only theme source |
+| Mistake | Correct approach |
+|---|---|
+| Importing Craft React components | Publish serializable primitives |
+| Using absolute positioning or z-index | Pick a surface and let Craft allocate it |
+| Encoding a click callback in JSON | Register a command and reference it |
+| Reusing another extension's command | Actions must target commands owned by this extension |
+| Assuming contribution support in TUI | Check `capabilities.contributions` |
+| Depending on event replay after reconnect | Publish initial state at `session_start`; Craft also requests snapshots |
+| Using `setWidget` for new GUI | Use `upsertContribution` |
 
 ## See Also
 
-- [themes.md](./themes.md) — TUI vs GUI theme boundary and the `string[]` decoupling protocol
-- [skills.md](./skills.md) — Craft workspace skills (separate from Pi extensions)
-
-## Host OAuth and Credential Capabilities
-
-Desktop extensions can request OAuth through `ctx.capabilities` without ever
-receiving OAuth codes or credential values:
-
-```ts
-const flow = await ctx.capabilities.invoke('oauth.flow', 'begin', {
-  sourceSlug: 'github',
-})
-// flow: { flowId, status: 'pending', userAction: 'open_authorization' }
-
-const current = await ctx.capabilities.invoke('oauth.flow', 'status', {
-  flowId: flow.flowId,
-})
-```
-
-`begin` and `revoke` require Host confirmation. The Electron Host opens the
-system browser, owns PKCE/state/callback handling, exchanges the code, and
-writes credentials. Extensions may only receive a flow reference, status,
-safe account label, or stable error code. `complete`, raw authorization URLs,
-OAuth state, codes, tokens, client secrets, and credential values are not part
-of the capability protocol.
-
-`credentials.keychain/has` and `credentials.keychain/remove` operate only on
-source credential references in the active session workspace. They return
-booleans and cannot read or write secret values. Removal requires Host
-confirmation.
+- `docs/architecture/pi-extension-gui.md` in the Craft repository for protocol, layout and migration architecture.
+- [themes.md](./themes.md) for TUI and GUI theme boundaries.
+- [skills.md](./skills.md) for Craft workspace skills, which are separate from Pi extensions.

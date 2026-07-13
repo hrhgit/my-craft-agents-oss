@@ -1,274 +1,186 @@
-/**
- * ExtensionDetailPanel — 扩展次级配置页面
- *
- * 根据 extensionId 渲染对应扩展的 craft GUI 配置字段。
- * 原先散落在 PiExtensionsSettingsPanel 分组卡片中的字段已按扩展归属移入此处。
- */
-import { useMemo } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  SettingsCard,
-  SettingsSection,
-  SettingsSelectRow,
-  SettingsToggle,
-} from '@/components/settings'
-import type { PiExtensionSettings, PiGlobalProviderForDisplay, StoredPiExtensionSettings } from '../../../shared/types'
-import { getModelShortName } from '@config/models'
-
-// ---------------------------------------------------------------------------
-// 模型选项工具
-// ---------------------------------------------------------------------------
-
-function modelOptionsFromProviders(
-  providers: PiGlobalProviderForDisplay[],
-): Array<{ value: string; label: string; description?: string }> {
-  const seen = new Set<string>()
-  const options: Array<{ value: string; label: string; description?: string }> = []
-  for (const entry of providers) {
-    for (const model of entry.provider.models ?? []) {
-      if (seen.has(model.id)) continue
-      seen.add(model.id)
-      options.push({ value: model.id, label: model.name ?? model.id, description: entry.key })
-    }
-  }
-  return options
-}
-
-// ---------------------------------------------------------------------------
-// Detail Panel
-// ---------------------------------------------------------------------------
+import { SettingsCard, SettingsInputRow, SettingsSection, SettingsSelectRow, SettingsTextarea, SettingsToggle } from '@/components/settings'
+import type { PiExtensionCatalogEntry, PiExtensionSettingField, PiExtensionSettingScalar, PiGlobalProviderForDisplay } from '@craft-agent/shared/config'
 
 interface ExtensionDetailPanelProps {
-  extensionId: string
-  settings: PiExtensionSettings
+  extension: PiExtensionCatalogEntry
   providers: PiGlobalProviderForDisplay[]
-  onPatch: (patch: StoredPiExtensionSettings) => Promise<void>
+  onPatch: (key: string, value: PiExtensionSettingScalar) => Promise<void>
   onBack: () => void
 }
 
-export function ExtensionDetailPanel({
-  extensionId,
-  settings,
-  providers,
-  onPatch,
-  onBack,
-}: ExtensionDetailPanelProps) {
-  const { t } = useTranslation()
-  const modelOptions = useMemo(() => modelOptionsFromProviders(providers), [providers])
-
-  const descriptionKey = `settings.extensions.ext.${extensionId}.description`
-  const description = t(descriptionKey)
+export function ExtensionDetailPanel({ extension, providers, onPatch, onBack }: ExtensionDetailPanelProps) {
+  const modelOptions = useMemo(() => providers.flatMap((entry) => (entry.provider.models ?? []).map((model) => ({
+    value: model.id,
+    label: model.name ?? model.id,
+    description: entry.key,
+  }))), [providers])
+  const values = extension.config ?? {}
+  const fields = extension.ui?.settings?.fields ?? []
+  const effectiveValues = Object.assign(Object.fromEntries(fields.filter((field) => field.default !== undefined).map((field) => [field.key, field.default])), values)
+  const sections = buildExtensionSettingSections(extension)
 
   return (
     <div className="space-y-4">
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onBack}
-        className="text-muted-foreground hover:text-foreground -ml-2"
-      >
-        <ArrowLeft className="h-3.5 w-3.5 mr-1" />
-        {t('common.backToList')}
+      <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2 text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="mr-1 size-3.5" />
+        Back to extensions
       </Button>
-
-      <SettingsSection title={extensionId} description={description}>
-        {renderExtensionConfig(extensionId, settings, onPatch, modelOptions, t)}
-      </SettingsSection>
+      {sections.map((section) => section.fields.length > 0 && (
+        <SettingsSection key={section.id} title={section.title} description={section.description}>
+          <SettingsCard>
+            {section.fields.map((field) => isVisible(field, effectiveValues) && (
+              <ExtensionSettingControl
+                key={field.key}
+                field={field}
+                value={effectiveValues[field.key] as PiExtensionSettingScalar | undefined}
+                modelOptions={modelOptions}
+                onChange={(value) => onPatch(field.key, value)}
+              />
+            ))}
+          </SettingsCard>
+        </SettingsSection>
+      ))}
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// 按扩展 id 渲染对应配置字段
-// ---------------------------------------------------------------------------
+function isVisible(field: PiExtensionSettingField, values: Record<string, unknown>): boolean {
+  if (!field.visibleWhen) return true
+  return values[field.visibleWhen.key] === field.visibleWhen.equals
+}
 
-function renderExtensionConfig(
-  extensionId: string,
-  settings: PiExtensionSettings,
-  onPatch: (patch: StoredPiExtensionSettings) => Promise<void>,
-  modelOptions: Array<{ value: string; label: string; description?: string }>,
-  t: ReturnType<typeof useTranslation>['t'],
-): React.ReactNode {
-  switch (extensionId) {
-    case 'subagent':
-      return <SubagentConfig settings={settings} onPatch={onPatch} modelOptions={modelOptions} t={t} />
-    case 'trace-audit':
-      return <TraceAuditConfig settings={settings} onPatch={onPatch} t={t} />
-    case 'yourself':
-      return <YourselfConfig settings={settings} onPatch={onPatch} t={t} />
-    case 'repo-memory':
-      return <RepoMemoryConfig settings={settings} onPatch={onPatch} t={t} />
-    case 'prompt-automation':
-      return <PromptAutomationConfig settings={settings} onPatch={onPatch} t={t} />
-    case 'plan-mode':
-      return <PlanModeConfig settings={settings} onPatch={onPatch} t={t} />
-    default:
-      return null
+export function buildExtensionSettingSections(extension: PiExtensionCatalogEntry): Array<{
+  id: string
+  title: string
+  description?: string
+  fields: PiExtensionSettingField[]
+}> {
+  const schema = extension.ui?.settings
+  const groups = schema?.groups ?? []
+  const fields = schema?.fields ?? []
+  if (groups.length === 0) {
+    return [{
+      id: 'settings',
+      title: extension.ui?.title ?? extension.title,
+      description: extension.ui?.description ?? extension.description,
+      fields,
+    }]
   }
+
+  const groupIds = new Set(groups.map((group) => group.id))
+  const ungroupedFields = fields.filter((field) => !field.group || !groupIds.has(field.group))
+  const sections = groups.map((group) => ({
+    ...group,
+    fields: fields.filter((field) => field.group === group.id),
+  }))
+  if (ungroupedFields.length > 0) {
+    sections.push({
+      id: 'settings',
+      title: extension.ui?.title ?? extension.title,
+      description: extension.ui?.description ?? extension.description,
+      fields: ungroupedFields,
+    })
+  }
+  return sections
 }
 
-// ---------------------------------------------------------------------------
-// 各扩展配置组件
-// ---------------------------------------------------------------------------
-
-type ConfigProps = {
-  settings: PiExtensionSettings
-  onPatch: (patch: StoredPiExtensionSettings) => Promise<void>
-  t: ReturnType<typeof useTranslation>['t']
-}
-
-type ModelConfigProps = ConfigProps & {
+function ExtensionSettingControl({ field, value, modelOptions, onChange }: {
+  field: PiExtensionSettingField
+  value: PiExtensionSettingScalar | undefined
   modelOptions: Array<{ value: string; label: string; description?: string }>
-}
-
-function SubagentConfig({ settings, onPatch, modelOptions, t }: ModelConfigProps) {
-  const modelSelectOptions = useMemo(() => {
-    const fallbackModels = [
-      settings.subagent.reviewModel,
-      'stepfun/step-3.7-flash',
-      'mimo/mimo-v2.5-pro',
-    ].filter((value): value is string => Boolean(value))
-    const seen = new Set(modelOptions.map(option => option.value))
-    const extras = fallbackModels
-      .filter(value => {
-        if (seen.has(value)) return false
-        seen.add(value)
-        return true
-      })
-      .map(value => ({ value, label: getModelShortName(value) }))
-    return [...modelOptions, ...extras]
-  }, [modelOptions, settings.subagent.reviewModel])
-
+  onChange: (value: PiExtensionSettingScalar) => void
+}) {
+  if (field.type === 'boolean') {
+    return <SettingsToggle label={field.label} description={field.description} checked={value === true} onCheckedChange={onChange} />
+  }
+  if (field.type === 'select' || field.type === 'model') {
+    const options = field.type === 'select' ? field.options : modelOptions
+    return <SettingsSelectRow label={field.label} description={field.description} value={typeof value === 'string' ? value : ''} options={options} onValueChange={onChange} />
+  }
+  if (field.type === 'textarea') {
+    return <SettingsTextarea inCard label={field.label} description={field.description} value={typeof value === 'string' ? value : ''} maxLength={field.maxLength} onChange={onChange} />
+  }
+  if (field.type === 'number') {
+    return <NumberExtensionSettingControl field={field} value={typeof value === 'number' ? value : undefined} onChange={onChange} />
+  }
   return (
-    <div className="space-y-3">
-      <SettingsCard>
-        <SettingsToggle
-          label={t('settings.extensions.subagent.reviewEnabled')}
-          description={t('settings.extensions.subagent.reviewEnabledDesc')}
-          checked={settings.subagent.reviewEnabled}
-          onCheckedChange={(reviewEnabled) => onPatch({ subagent: { reviewEnabled } })}
-        />
-        <SettingsSelectRow
-          label={t('settings.extensions.subagent.reviewModel')}
-          description={t('settings.extensions.subagent.reviewModelDesc')}
-          value={settings.subagent.reviewModel}
-          onValueChange={(reviewModel) => onPatch({ subagent: { reviewModel } })}
-          options={modelSelectOptions}
-          disabled={!settings.subagent.reviewEnabled}
-        />
-      </SettingsCard>
-    </div>
+    <SettingsInputRow
+      label={field.label}
+      description={field.description}
+      value={value === undefined ? '' : String(value)}
+      onChange={onChange}
+    />
   )
 }
 
-function TraceAuditConfig({ settings, onPatch, t }: ConfigProps) {
-  return (
-    <div className="space-y-3">
-      <SettingsCard>
-        <SettingsToggle
-          label={t('settings.extensions.traceAudit.reviewSubagent')}
-          description={t('settings.extensions.traceAudit.reviewSubagentDesc')}
-          checked={settings.traceAudit.reviewSubagentEnabled}
-          onCheckedChange={(reviewSubagentEnabled) => onPatch({ traceAudit: { reviewSubagentEnabled } })}
-        />
-        <SettingsToggle
-          label={t('settings.extensions.traceAudit.statusBadge')}
-          description={t('settings.extensions.traceAudit.statusBadgeDesc')}
-          checked={settings.traceAudit.showStatusBadge}
-          onCheckedChange={(showStatusBadge) => onPatch({ traceAudit: { showStatusBadge } })}
-        />
-      </SettingsCard>
-    </div>
-  )
+export function parseExtensionNumberDraft(
+  draft: string,
+  field: Extract<PiExtensionSettingField, { type: 'number' }>,
+): number | null {
+  if (draft.trim() === '') return null
+  const parsed = Number(draft)
+  if (!Number.isFinite(parsed)) return null
+  if (field.min !== undefined && parsed < field.min) return null
+  if (field.max !== undefined && parsed > field.max) return null
+  if (field.step !== undefined && field.step > 0) {
+    const steps = (parsed - (field.min ?? 0)) / field.step
+    const tolerance = 1e-9 * Math.max(1, Math.abs(steps))
+    if (Math.abs(steps - Math.round(steps)) > tolerance) return null
+  }
+  return parsed
 }
 
-function YourselfConfig({ settings, onPatch, t }: ConfigProps) {
-  return (
-    <div className="space-y-3">
-      <SettingsCard>
-        <SettingsToggle
-          label={t('settings.extensions.yourself.statusBadge')}
-          description={t('settings.extensions.yourself.statusBadgeDesc')}
-          checked={settings.yourself.showStatusBadge}
-          onCheckedChange={(showStatusBadge) => onPatch({ yourself: { showStatusBadge } })}
-        />
-      </SettingsCard>
-    </div>
-  )
-}
+function NumberExtensionSettingControl({ field, value, onChange }: {
+  field: Extract<PiExtensionSettingField, { type: 'number' }>
+  value: number | undefined
+  onChange: (value: PiExtensionSettingScalar) => void
+}) {
+  const [draft, setDraft] = useState(value === undefined ? '' : String(value))
+  const [invalid, setInvalid] = useState(false)
 
-function RepoMemoryConfig({ settings, onPatch, t }: ConfigProps) {
-  return (
-    <div className="space-y-3">
-      <SettingsCard>
-        <SettingsToggle
-          label={t('settings.extensions.repoMemory.statusBadge')}
-          description={t('settings.extensions.repoMemory.statusBadgeDesc')}
-          checked={settings.repoMemory.showStatusBadge}
-          onCheckedChange={(showStatusBadge) => onPatch({ repoMemory: { showStatusBadge } })}
-        />
-      </SettingsCard>
-    </div>
-  )
-}
+  useEffect(() => {
+    setDraft(value === undefined ? '' : String(value))
+    setInvalid(false)
+  }, [value])
 
-function PromptAutomationConfig({ settings, onPatch, t }: ConfigProps) {
-  return (
-    <div className="space-y-3">
-      <SettingsCard>
-        <SettingsToggle
-          label={t('settings.extensions.delegatePromptAutomation')}
-          description={t('settings.extensions.delegatePromptAutomationDesc')}
-          checked={settings.delegatePromptAutomation}
-          onCheckedChange={(delegatePromptAutomation) => onPatch({ delegatePromptAutomation })}
-        />
-        <SettingsToggle
-          label={t('settings.extensions.promptAutomation.widget')}
-          description={t('settings.extensions.promptAutomation.widgetDesc')}
-          checked={settings.promptAutomation.widgetVisible}
-          onCheckedChange={(widgetVisible) => onPatch({ promptAutomation: { widgetVisible } })}
-        />
-        <SettingsSelectRow
-          label={t('settings.extensions.promptAutomation.jobScope')}
-          description={t('settings.extensions.promptAutomation.jobScopeDesc')}
-          value={settings.promptAutomation.defaultJobScope}
-          onValueChange={(defaultJobScope) => onPatch({ promptAutomation: { defaultJobScope: defaultJobScope as 'session' | 'workdir' } })}
-          options={[
-            { value: 'session', label: t('settings.extensions.promptAutomation.scopeSession') },
-            { value: 'workdir', label: t('settings.extensions.promptAutomation.scopeWorkdir') },
-          ]}
-        />
-      </SettingsCard>
-    </div>
-  )
-}
+  const commit = () => {
+    const parsed = parseExtensionNumberDraft(draft, field)
+    if (parsed === null) {
+      setInvalid(draft.trim() !== '')
+      if (draft.trim() === '') setDraft(value === undefined ? '' : String(value))
+      return
+    }
+    setInvalid(false)
+    setDraft(String(parsed))
+    if (parsed !== value) onChange(parsed)
+  }
 
-function PlanModeConfig({ settings, onPatch, t }: ConfigProps) {
   return (
-    <div className="space-y-3">
-      <SettingsCard>
-        <SettingsToggle
-          label={t('settings.extensions.planMode.discussionButton')}
-          description={t('settings.extensions.planMode.discussionButtonDesc')}
-          checked={settings.planMode.showDiscussionButton}
-          onCheckedChange={(showDiscussionButton) => onPatch({ planMode: { showDiscussionButton } })}
-        />
-        <SettingsToggle
-          label={t('settings.extensions.planMode.planButton')}
-          description={t('settings.extensions.planMode.planButtonDesc')}
-          checked={settings.planMode.showPlanButton}
-          onCheckedChange={(showPlanButton) => onPatch({ planMode: { showPlanButton } })}
-        />
-        <SettingsToggle
-          label={t('settings.extensions.planMode.specialRendering')}
-          description={t('settings.extensions.planMode.specialRenderingDesc')}
-          checked={settings.planMode.renderPlanMarkdown}
-          onCheckedChange={(renderPlanMarkdown) => onPatch({ planMode: { renderPlanMarkdown } })}
-        />
-      </SettingsCard>
-    </div>
+    <SettingsInputRow
+      label={field.label}
+      description={field.description}
+      type="number"
+      min={field.min}
+      max={field.max}
+      step={field.step}
+      value={draft}
+      error={invalid ? 'Enter a valid value within the allowed range.' : undefined}
+      onChange={(next) => {
+        setDraft(next)
+        setInvalid(false)
+      }}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur()
+        if (event.key === 'Escape') {
+          setDraft(value === undefined ? '' : String(value))
+          setInvalid(false)
+        }
+      }}
+    />
   )
 }
 

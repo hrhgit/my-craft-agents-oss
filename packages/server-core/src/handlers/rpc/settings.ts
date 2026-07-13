@@ -20,6 +20,7 @@ import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '@cr
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
+import { applyExtensionConfigPatch } from './extension-config-patch'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.workspace.SETTINGS_GET,
@@ -55,6 +56,8 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.piExtensions.SET_SETTINGS,
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
   RPC_CHANNELS.piExtensions.GET_CATALOG,
+  RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG,
+  RPC_CHANNELS.piExtensions.RELOAD,
   RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES,
   RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED,
   RPC_CHANNELS.settings.GET_NETWORK_PROXY,
@@ -350,6 +353,23 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     return await getPiExtensionCatalog()
   })
 
+  server.handle(RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG, async (_ctx, patch: import('@craft-agent/shared/config').PiExtensionConfigPatch) => {
+    const { getPiExtensionCatalog, patchPiExtensionConfig } = await import('@craft-agent/shared/config/pi-global-config')
+    const catalog = await getPiExtensionCatalog()
+    const extension = catalog.extensions.find((entry) => entry.id === patch.extensionId)
+    if (!extension) throw new Error(`Unknown extension: ${patch.extensionId}`)
+    return await applyExtensionConfigPatch(
+      extension,
+      patch,
+      patchPiExtensionConfig,
+      (interruptRunning) => deps.sessionManager.requestExtensionReload(interruptRunning),
+    )
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.RELOAD, async (_ctx, payload?: { interruptRunning?: boolean }) => {
+    return await deps.sessionManager.requestExtensionReload(payload?.interruptRunning === true)
+  })
+
   // 逐扩展启停：读写 Pi settings.json 的 extensionConfig.<name>.enabled
   server.handle(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES, async () => {
     const { getPiExtensionCatalog } = await import('@craft-agent/shared/config/pi-global-config')
@@ -364,7 +384,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED, async (_ctx, payload: { name: string; enabled: boolean }) => {
     const { writePiExtensionEnabled } = await import('@craft-agent/shared/config/pi-global-config')
     await writePiExtensionEnabled(payload.name, payload.enabled)
-    await deps.sessionManager.reloadExtensions()
+    return await deps.sessionManager.requestExtensionReload(false)
   })
 
   // ============================================================

@@ -463,10 +463,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // 调用 pi 扩展注册的命令（extension_command_invoke）
   // 由 automation 委托路径触发，转发到对应会话的 PiAgent.sendExtensionCommandInvoke
-  server.handle(RPC_CHANNELS.extensions.COMMAND_INVOKE, async (ctx, sessionId: string, commandId: string, args?: string | Record<string, unknown> | null) => {
+  server.handle(RPC_CHANNELS.extensions.COMMAND_INVOKE, async (ctx, sessionId: string, commandId: string, args?: string | Record<string, unknown> | null, ownerExtensionId?: string) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     const serializedArgs = serializeExtensionCommandArgs(args)
-    return sessionManager.invokeExtensionCommand(sessionId, commandId, serializedArgs)
+    return sessionManager.invokeExtensionCommand(sessionId, commandId, serializedArgs, ownerExtensionId)
   })
 
   // 查询当前会话已注册的 Pi 扩展 slash commands，用于 renderer slash menu 初始快照

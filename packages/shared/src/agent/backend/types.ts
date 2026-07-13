@@ -15,7 +15,7 @@
 import type { AgentEvent, ExtensionCommandResult } from '@craft-agent/core/types';
 import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '../../protocol/pi-projection.ts';
 import type { CapabilityRequestV1, CapabilityResultV1 } from '../../protocol/capabilities.ts';
-import type { ExtensionContributionV1 } from '../../protocol/extension-contributions.ts';
+import type { ExtensionContributionDeltaV1 } from '../../protocol/extension-contributions.ts';
 import type { FileAttachment } from '../../utils/files.ts';
 import type { ThinkingLevel } from '../thinking-levels.ts';
 import type { PermissionMode } from '../mode-manager.ts';
@@ -106,7 +106,8 @@ export type ExtensionBridgeEvent = {
   | { type: 'extension_notify'; message: string; notificationType?: 'info' | 'warning' | 'error'; source?: string }
   | { type: 'extension_status'; key?: string; status: string; source?: string }
   | { type: 'extension_widget'; key: string; content: string[] | undefined; placement?: 'aboveEditor' | 'belowEditor'; source?: string }
-  | { type: 'extension_contribution'; contribution: ExtensionContributionV1 }
+  | { type: 'extension_contribution'; delta: ExtensionContributionDeltaV1 }
+  | { type: 'extension_contributions_runtime_reset' }
   | { type: 'extension_command_registered'; name: string; description?: string; source: string }
   | { type: 'extension_set_title'; title: string }
   | { type: 'extension_set_editor_text'; text: string }
@@ -727,7 +728,7 @@ export interface AgentBackend {
    * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端可不实现。
    * args 为 JSON 字符串。
    */
-  sendExtensionCommandInvoke?(commandId: string, args?: string): Promise<ExtensionCommandResult>;
+  sendExtensionCommandInvoke?(commandId: string, args?: string, ownerExtensionId?: string): Promise<ExtensionCommandResult>;
 
   /** Reload the current Pi runtime's extension set without replacing the session. */
   reloadExtensions?(): Promise<{ reloaded: boolean; deferred: boolean }>;

@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/styled-dropdown"
 import type { SettingsMenuItem } from "../../../shared/menu-schema"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { BrowserTabStrip } from "../browser/BrowserTabStrip"
 import type { Workspace } from "../../../shared/types"
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
@@ -57,6 +57,8 @@ interface TopBarProps {
   onToggleFocusMode: () => void
   onAddSessionPanel: () => void
   onAddBrowserPanel: () => void
+  leftExtensionSlot?: ReactNode
+  rightExtensionSlot?: ReactNode
   /** When true, hides controls that don't apply in compact/mobile layout */
   isCompact?: boolean
 }
@@ -83,6 +85,8 @@ export function TopBar({
   onToggleFocusMode,
   onAddSessionPanel,
   onAddBrowserPanel,
+  leftExtensionSlot,
+  rightExtensionSlot,
   isCompact,
 }: TopBarProps) {
   const { t } = useTranslation()
@@ -166,6 +170,7 @@ export function TopBar({
           onToggleSidebar={onToggleSidebar}
           onToggleFocusMode={onToggleFocusMode}
         />
+        {leftExtensionSlot && <div className="titlebar-no-drag ml-1 flex h-8 max-w-[min(240px,20vw)] min-w-0 items-center">{leftExtensionSlot}</div>}
         </div>
 
         {/* Back / Forward / Workspace selector (moved from center).
@@ -224,6 +229,7 @@ export function TopBar({
       {/* === RIGHT: Browser strip + add + help === */}
       {!isCompact && (
       <div ref={rightSlotRef} className="flex min-w-0 shrink-0 items-center justify-end gap-1" style={{ paddingRight: 12 }}>
+        {rightExtensionSlot && <div className="titlebar-no-drag flex h-8 max-w-[min(240px,20vw)] min-w-0 items-center">{rightExtensionSlot}</div>}
         <div className="min-w-0">
           <BrowserTabStrip activeSessionId={activeSessionId} maxVisibleBadges={maxVisibleBrowserBadges} />
         </div>

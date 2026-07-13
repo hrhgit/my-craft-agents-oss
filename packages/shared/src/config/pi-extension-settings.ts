@@ -31,6 +31,46 @@ export type PiExtensionCategory =
   | 'search'
   | 'other';
 
+export type PiExtensionSettingScalar = string | number | boolean;
+export type PiExtensionSettingField = {
+  key: string;
+  label: string;
+  description?: string;
+  group?: string;
+  requiresReload?: boolean;
+  visibleWhen?: { key: string; equals: PiExtensionSettingScalar };
+} & (
+  | { type: 'boolean'; default: boolean }
+  | { type: 'string' | 'textarea'; default?: string; minLength?: number; maxLength?: number }
+  | { type: 'number'; default?: number; min?: number; max?: number; step?: number }
+  | { type: 'select'; default?: string; options: Array<{ value: string; label: string; description?: string }> }
+  | { type: 'model'; default?: string }
+);
+export interface PiExtensionSettingsSchema {
+  schemaVersion: 1;
+  groups?: Array<{ id: string; title: string; description?: string }>;
+  fields: PiExtensionSettingField[];
+}
+export interface PiExtensionManifestUI {
+  schemaVersion: 1;
+  title?: string;
+  description?: string;
+  category?: PiExtensionCategory;
+  settings?: PiExtensionSettingsSchema;
+}
+export interface PiExtensionConfigPatch {
+  schemaVersion: 1;
+  extensionId: string;
+  set?: Record<string, PiExtensionSettingScalar>;
+  unset?: string[];
+}
+
+export interface PiExtensionConfigPatchResult {
+  config: Record<string, unknown>;
+  requiresReload: boolean;
+  reload?: PiExtensionReloadResult;
+}
+
 /**
  * Pi 返回给 host shell 的扩展展示 DTO。
  * 扩展发现、启停配置和元数据归 Pi；Craft 只消费这个 catalog 渲染设置 UI。
@@ -43,6 +83,7 @@ export interface PiExtensionCatalogEntry {
   description: string;
   category: PiExtensionCategory;
   configurable: boolean;
+  ui?: PiExtensionManifestUI;
   enabled: boolean;
   path: string;
   resolvedPath: string;
@@ -63,6 +104,24 @@ export interface PiExtensionCatalogResult {
   extensions: PiExtensionCatalogEntry[];
   errors: PiExtensionCatalogError[];
 }
+
+export interface PiExtensionReloadActiveSession {
+  sessionId: string;
+  workspaceName: string;
+  title?: string;
+}
+
+export type PiExtensionReloadResult =
+  | {
+      status: 'confirmation_required';
+      activeSessions: PiExtensionReloadActiveSession[];
+    }
+  | {
+      status: 'reloaded';
+      interruptedSessionCount: number;
+      reloadedSessionCount: number;
+      deferredSessionCount: number;
+    };
 
 /**
  * Pi 扩展设置——仅 craft GUI 专属字段。

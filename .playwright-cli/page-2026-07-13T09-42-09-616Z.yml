@@ -1,0 +1,2149 @@
+- generic:
+  - generic:
+    - generic:
+      - generic:
+        - generic:
+          - generic:
+            - generic [ref=f3e10]:
+              - generic [ref=f3e11]:
+                - button [ref=f3e624]
+                - button [ref=f3e625]
+              - generic [ref=f3e18]:
+                - button [disabled]
+                - button [disabled]
+                - button [ref=f3e626] [cursor=pointer]:
+                  - generic [ref=f3e21]:
+                    - generic [ref=f3e22]: _
+                    - generic [ref=f3e23]: _
+                  - generic [ref=f3e24]: _chat
+            - generic:
+              - button
+              - button
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - button: 新建会话
+                        - generic:
+                          - generic:
+                            - navigation "Main navigation":
+                              - generic:
+                                - button:
+                                  - text: 所有会话
+                                  - generic: "4"
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - button:
+                                          - generic:
+                                            - button:
+                                              - text: 积压
+                                              - generic: "0"
+                                        - button:
+                                          - generic:
+                                            - button:
+                                              - text: 待办
+                                              - generic: "4"
+                                        - button:
+                                          - generic:
+                                            - button:
+                                              - text: 待审查
+                                              - generic: "0"
+                                        - button:
+                                          - generic:
+                                            - button:
+                                              - text: 完成
+                                              - generic: "0"
+                                        - button:
+                                          - generic:
+                                            - button:
+                                              - text: 已取消
+                                              - generic: "0"
+                                      - status
+                                      - generic:
+                                        - generic:
+                                          - button:
+                                            - text: 已标记
+                                            - generic: "0"
+                                        - generic:
+                                          - button: 已归档
+                              - generic:
+                                - button: 标签
+                              - generic:
+                                - button:
+                                  - text: 数据源
+                                  - generic: "0"
+                                - generic:
+                                  - generic:
+                                    - navigation:
+                                      - generic:
+                                        - generic:
+                                          - button:
+                                            - text: API
+                                            - generic: "0"
+                                      - generic:
+                                        - generic:
+                                          - button:
+                                            - text: MCP
+                                            - generic: "0"
+                                      - generic:
+                                        - generic:
+                                          - button:
+                                            - text: 本地文件夹
+                                            - generic: "0"
+                              - generic:
+                                - button:
+                                  - text: 技能
+                                  - generic: "25"
+                              - generic:
+                                - button:
+                                  - text: 自动化
+                                  - generic: "0"
+                                - generic:
+                                  - generic:
+                                    - navigation:
+                                      - generic:
+                                        - generic:
+                                          - button:
+                                            - text: 定时任务
+                                            - generic: "0"
+                                      - generic:
+                                        - generic:
+                                          - button:
+                                            - text: 事件触发
+                                            - generic: "0"
+                                      - generic:
+                                        - generic:
+                                          - button:
+                                            - text: 智能体
+                                            - generic: "0"
+                              - generic:
+                                - button: 设置
+                              - generic:
+                                - button [active]: 最新动态
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - heading [level=1]: 所有会话
+                      - generic:
+                        - button
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - listbox:
+                                - generic:
+                                  - generic:
+                                    - button:
+                                      - generic: 昨天
+                                    - generic:
+                                      - generic:
+                                        - option [selected]:
+                                          - generic:
+                                            - generic:
+                                              - generic:
+                                                - button
+                                              - generic: 读取小文本文件
+                                              - generic: 20小时
+                                    - generic:
+                                      - generic:
+                                        - option:
+                                          - generic:
+                                            - generic:
+                                              - generic:
+                                                - button
+                                              - generic: 在线问候
+                                              - generic: 21小时
+                                  - generic:
+                                    - button:
+                                      - generic: 6月 11
+                                    - generic:
+                                      - generic:
+                                        - option:
+                                          - generic:
+                                            - generic:
+                                              - generic:
+                                                - button
+                                              - generic: 何睿骅_AI_Agent实习简历_最终版.docx 帮我改下我的简历，我简历中提到的这些项目分别位于…
+                                              - generic: 1月
+                                  - generic:
+                                    - button:
+                                      - generic: 6月 10
+                                    - generic:
+                                      - generic:
+                                        - option:
+                                          - generic:
+                                            - generic:
+                                              - generic:
+                                                - button
+                                              - generic: 帮我看下我C盘的codex的日志文件，有多大，它可不可以部分清理，比如只清理7天前的？
+                                              - generic: 1月
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - button:
+                              - generic:
+                                - heading [level=1]: 读取小文本文件
+                        - generic:
+                          - button
+                        - generic:
+                          - button
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - generic:
+                                          - generic:
+                                            - generic:
+                                              - generic:
+                                                - generic:
+                                                  - generic:
+                                                    - generic:
+                                                      - paragraph: 请使用工具读取当前目录中的一个小文本文件，只回复文件名。
+                                              - generic:
+                                                - generic:
+                                                  - generic:
+                                                    - button:
+                                                      - generic: "4"
+                                                      - generic: 步骤已完成
+                                                      - generic:
+                                                        - button
+                                                  - generic:
+                                                    - generic:
+                                                      - generic:
+                                                        - button
+                                                        - generic:
+                                                          - generic:
+                                                            - generic:
+                                                              - paragraph:
+                                                                - link:
+                                                                  - /url: config.json
+                                                                  - text: config.json
+                                                        - generic:
+                                                          - generic:
+                                                            - button:
+                                                              - generic: 复制
+                                                            - button:
+                                                              - generic: Markdown
+                                                          - generic:
+                                                            - button
+                                              - generic:
+                                                - generic:
+                                                  - generic:
+                                                    - generic:
+                                                      - paragraph: 请用 pwsh 工具运行 Start-Sleep -Seconds 12，然后只回复完成。
+                                              - generic:
+                                                - generic:
+                                                  - generic:
+                                                    - button:
+                                                      - generic: "1"
+                                                      - generic: 步骤已完成
+                                                      - generic:
+                                                        - button
+                                                  - generic:
+                                                    - generic:
+                                                      - generic:
+                                                        - button
+                                                        - generic:
+                                                          - generic:
+                                                            - generic:
+                                                              - paragraph: 完成
+                                                        - generic:
+                                                          - generic:
+                                                            - button:
+                                                              - generic: 复制
+                                                            - button:
+                                                              - generic: Markdown
+                                                          - generic:
+                                                            - button
+                                              - generic:
+                                                - generic:
+                                                  - generic:
+                                                    - generic:
+                                                      - paragraph: 请用 pwsh 工具运行 Start-Sleep -Seconds 15，然后只回复完成。
+                                              - generic:
+                                                - generic:
+                                                  - generic:
+                                                    - button:
+                                                      - generic: "1"
+                                                      - generic: 步骤已完成
+                                                      - generic:
+                                                        - button
+                                                  - generic:
+                                                    - generic:
+                                                      - generic:
+                                                        - button
+                                                        - generic:
+                                                          - generic:
+                                                            - generic:
+                                                              - paragraph: 完成
+                                                        - generic:
+                                                          - generic:
+                                                            - button:
+                                                              - generic: 复制
+                                                            - button:
+                                                              - generic: Markdown
+                                                          - generic:
+                                                            - button
+                              - generic:
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - button:
+                                        - generic: 待办
+                                  - generic:
+                                    - button:
+                                      - generic: 信息
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - generic:
+                                          - generic:
+                                            - textbox
+                                            - generic: 使用 Shift + Tab 切换探索和执行模式
+                                          - generic:
+                                            - generic:
+                                              - generic:
+                                                - button
+                                                - button:
+                                                  - generic: 执行
+                                                - generic:
+                                                  - button
+                                              - generic:
+                                                - button: gpt-5.6-sol
+                                                - button:
+                                                  - generic: 高
+                                                - button [disabled]
+    - region "Notifications alt+T"
+  - dialog [ref=f3e627]:
+    - heading "Overlay" [level=2] [ref=f3e628]
+    - generic [ref=f3e636]:
+      - heading [level=1] [ref=f3e637]:
+        - text: v0.10.4 — GLM-5 family on
+        - link "z.ai" [ref=f3e638] [cursor=pointer]:
+          - /url: http://z.ai
+        - text: + Pi SDK uplift
+      - heading "Features" [level=2] [ref=f3e639]
+      - list [ref=f3e640]:
+        - listitem [ref=f3e641]:
+          - strong [ref=f3e642]:
+            - text: GLM-5.2 and the GLM-5 family now available on
+            - link "z.ai" [ref=f3e643] [cursor=pointer]:
+              - /url: http://z.ai
+          - text: — the Pi SDK uplift regenerates the model catalog from models.dev, so
+          - link "z.ai" [ref=f3e644] [cursor=pointer]:
+            - /url: http://z.ai
+          - text: "'s GLM-5.2, GLM-5.1, and GLM-5-turbo surface automatically on the existing"
+          - link "z.ai" [ref=f3e645] [cursor=pointer]:
+            - /url: http://z.ai
+          - text: provider, with correct thinking /
+          - code [ref=f3e646]: reasoning_effort
+          - text: handling (fixed upstream). Previously GLM-5.2 was only reachable through a hand-rolled OpenAI-compatible endpoint where reasoning effort misbehaved. (
+          - code [ref=f3e647]: 694d4b1c
+          - text: )
+        - listitem [ref=f3e648]:
+          - strong [ref=f3e649]:
+            - text: Automatic
+            - link "config.json" [ref=f3e650] [cursor=pointer]:
+              - /url: config.json
+            - text: backups on startup
+          - text: — Craft Agent now snapshots
+          - code [ref=f3e651]: config.json
+          - text: on every startup and keeps the newest three backups, so a corrupted or bad config write can be recovered. (
+          - code [ref=f3e652]: a5e62bc8
+          - text: )
+      - heading "Improvements" [level=2] [ref=f3e653]
+      - list [ref=f3e654]:
+        - listitem [ref=f3e655]:
+          - strong [ref=f3e656]:
+            - text: Pi SDK uplifted to 0.79.9 (scope migration to
+            - code [ref=f3e657]: "@earendil-works"
+            - text: )
+          - text: — the three Pi packages (
+          - code [ref=f3e658]: pi-ai
+          - text: ","
+          - code [ref=f3e659]: pi-coding-agent
+          - text: ","
+          - code [ref=f3e660]: pi-agent-core
+          - text: ) move from the now-frozen
+          - code [ref=f3e661]: "@mariozechner/*"
+          - text: scope at 0.73.1 to the rebranded
+          - code [ref=f3e662]: "@earendil-works/*"
+          - text: scope at 0.79.9, across all manifests and the lockfile. Newer models for existing Pi providers (OpenRouter,
+          - link "z.ai" [ref=f3e663] [cursor=pointer]:
+            - /url: http://z.ai
+          - text: ", and others) appear automatically via the regenerated models.dev catalog. GitHub Copilot device-code login now consumes the SDK's structured"
+          - code [ref=f3e664]: onDeviceCode
+          - text: callback in place of a fragile free-text regex. No user-facing API breakage; the full typecheck and targeted Pi test suites pass clean. (
+          - code [ref=f3e665]: 694d4b1c
+          - text: )
+      - heading "Bug Fixes" [level=2] [ref=f3e666]
+      - list [ref=f3e667]:
+        - listitem [ref=f3e668]:
+          - strong [ref=f3e669]: Session titles now follow your chosen language
+          - text: — AI-generated titles read your Appearance → Language setting directly from disk instead of the app's in-memory locale, which could still be on its English fallback when the first title generated. If you haven't picked a language, titles now auto-detect the language you're writing in rather than defaulting to English. Fixes
+          - link "#885" [ref=f3e670] [cursor=pointer]:
+            - /url: https://github.com/craft-ai-agents/craft-agents-oss/issues/885
+          - text: . (
+          - code [ref=f3e671]: 3ed130c0
+          - text: )
+        - listitem [ref=f3e672]:
+          - strong [ref=f3e673]: Auto-update now keeps a diagnostic log
+          - text: — the update lifecycle is recorded to an always-on log at
+          - code [ref=f3e674]: ~/.craft-agent/logs/auto-update.log
+          - text: ", even in release builds where the normal debug log is off. This makes \"the update downloaded but never installed\" reports diagnosable. Partially addresses"
+          - link "#891" [ref=f3e675] [cursor=pointer]:
+            - /url: https://github.com/craft-ai-agents/craft-agents-oss/issues/891
+          - text: (diagnostics only; the ShipIt install hand-off fix is a follow-up). (
+          - code [ref=f3e676]: 0e2005ca
+          - text: )
+        - listitem [ref=f3e677]:
+          - strong [ref=f3e678]: Config backups no longer overwrite an existing same-day backup
+          - text: — the earliest good snapshot from each day is preserved instead of being clobbered by a later same-day startup. (
+          - code [ref=f3e679]: 42c79906
+          - text: )
+      - heading "Breaking Changes" [level=2] [ref=f3e680]
+      - list [ref=f3e681]:
+        - listitem [ref=f3e682]: None.
+      - separator [ref=f3e683]
+      - heading "v0.10.3 — Claude Fable 5" [level=1] [ref=f3e684]
+      - heading "Features" [level=2] [ref=f3e685]
+      - list [ref=f3e686]:
+        - listitem [ref=f3e687]:
+          - strong [ref=f3e688]: Claude Fable 5 is here
+          - text: — Anthropic's most capable widely released model (GA 2026-06-09) is now available in Craft Agent on the Claude Agent SDK path, with a full 1M-token context window. It works across direct Anthropic connections and AWS Bedrock (us/eu/global inference-profile variants), with the model description localized in all 7 languages. Opus 4.8 remains the default — Fable is offered alongside it, not in front of it — and it is added to the Pi → Anthropic auth-bridge preferences below Opus. Because Fable 5 (and the Mythos 5 class) run with adaptive thinking always on and reject an explicit
+          - code [ref=f3e689]: disabled
+          - text: thinking option, the thinking resolver now maps the "off" and minimize-thinking cases to low-effort adaptive thinking for these models; Opus, Sonnet, and Haiku behavior is byte-for-byte unchanged. (
+          - code [ref=f3e690]: 22c7ae99
+          - text: )
+      - heading "Improvements" [level=2] [ref=f3e691]
+      - list [ref=f3e692]:
+        - listitem [ref=f3e693]:
+          - strong [ref=f3e694]: Claude Agent SDK uplifted to 0.3.170
+          - text: —
+          - code [ref=f3e695]: "@anthropic-ai/claude-agent-sdk"
+          - text: moves from 0.3.154 → 0.3.170 (root plus the core and shared peer dependencies, lockfile refreshed). No API breakage; the full typecheck passes clean. (
+          - code [ref=f3e696]: 22c7ae99
+          - text: )
+      - heading "Bug Fixes" [level=2] [ref=f3e697]
+      - list [ref=f3e698]:
+        - listitem [ref=f3e699]: None.
+      - heading "Breaking Changes" [level=2] [ref=f3e700]
+      - list [ref=f3e701]:
+        - listitem [ref=f3e702]: None.
+      - separator [ref=f3e703]
+      - heading "v0.10.2 — Link labels, Anthropic account visibility, and prompt-cache fixes" [level=1] [ref=f3e704]
+      - heading "Features" [level=2] [ref=f3e705]
+      - list [ref=f3e706]:
+        - listitem [ref=f3e707]:
+          - paragraph [ref=f3e708]:
+            - strong [ref=f3e709]: Link label value type
+            - text: — Labels can now carry a
+            - code [ref=f3e710]: link
+            - text: value alongside the existing string/number/date types. A link value renders as a clickable chip (the URL scheme is stripped for display) that opens in your external browser, with a keyboard-accessible "Open link" action in the value popover. The type is threaded through the zod schema, CLI, and agent-prompt layers, and the clickable value appears consistently in the session list, chat display, and chat-input badges. Documented in
+            - code [ref=f3e711]: labels.md
+            - text: with validate/format/resolve tests. (
+            - code [ref=f3e712]: 8aae50ad
+            - text: )
+        - listitem [ref=f3e713]:
+          - paragraph [ref=f3e714]:
+            - strong [ref=f3e715]: Resolved Anthropic account & org shown per OAuth connection
+            - text: — Settings → LLM Connections now displays the real Anthropic identity ("email · org") each Claude OAuth grant resolves to, captured from the token-exchange response and persisted on the connection. When two connections in the same workspace resolve to the
+            - emphasis [ref=f3e716]: same
+            - text: Anthropic account (shared quota — a previously invisible mis-route), an amber warning is surfaced. This also fixes a load-bearing bug where
+            - code [ref=f3e717]: updateLlmConnection
+            - text: rebuilt connections from a hardcoded field allowlist and silently dropped any unlisted field on every save; the identity fields are now preserved with a round-trip test. Fixes
+            - link "#838" [ref=f3e718] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/838
+            - text: . (
+            - code [ref=f3e719]: a4b8868e
+            - text: )
+        - listitem [ref=f3e720]:
+          - paragraph [ref=f3e721]:
+            - strong [ref=f3e722]: Last sent message restored to the input on Stop
+            - text: "— Clicking Stop (an explicit cancel, not a redirect or new send) now copies your last sent message back into the chat input so you can tweak and resend it. It is append-safe: a draft typed while the agent was running is preserved, and the restored text is appended below it. Queued, never-sent messages continue to be handled by the existing restore path. ("
+            - code [ref=f3e723]: cfbe802b
+            - text: )
+      - heading "Improvements" [level=2] [ref=f3e724]
+      - list [ref=f3e725]:
+        - listitem [ref=f3e726]: None.
+      - heading "Bug Fixes" [level=2] [ref=f3e727]
+      - list [ref=f3e728]:
+        - listitem [ref=f3e729]:
+          - paragraph [ref=f3e730]:
+            - strong [ref=f3e731]: Pi prompt-cache no longer busts every turn
+            - text: — The Pi adapter folded volatile context (minute-precision date/time,
+            - code [ref=f3e732]: session_state
+            - text: ", source state) into the system prompt, which pi-ai caches as the prefix ahead of all history — so re-stamping it each turn dropped"
+            - code [ref=f3e733]: cacheRead
+            - text: to 0 every turn (notably with non-Claude models such as DeepSeek V4).
+            - code [ref=f3e734]: PromptBuilder.buildContextParts
+            - text: is now split into
+            - code [ref=f3e735]: buildVolatileContextParts
+            - text: +
+            - code [ref=f3e736]: buildStableContextParts
+            - text: ; the Pi path keeps only stable blocks (workspace capabilities, working directory) in the cached prefix and routes volatile blocks to the user-message tail, mirroring what the Claude path already did. The Claude path stays byte-identical. Fixes
+            - link "#862" [ref=f3e737] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/862
+            - text: . (
+            - code [ref=f3e738]: 80b478e3
+            - text: )
+        - listitem [ref=f3e739]:
+          - paragraph [ref=f3e740]:
+            - strong [ref=f3e741]: Accept-Plan chevron rotates when the dropdown opens
+            - text: — Both Accept-Plan triggers render via Radix
+            - code [ref=f3e742]: asChild
+            - text: ", so"
+            - code [ref=f3e743]: data-state="open"
+            - text: landed on the host
+            - code [ref=f3e744]: <button>
+            - text: ", never on the nested chevron"
+            - code [ref=f3e745]: <svg>
+            - text: — the self-scoped
+            - code [ref=f3e746]: data-[state=open]:rotate-180
+            - text: never fired. The rotation is now scoped to a named group on the button (
+            - code [ref=f3e747]: group/accept
+            - text: +
+            - code [ref=f3e748]: group-data-[state=open]/accept:rotate-180
+            - text: ). Fixes
+            - link "#840" [ref=f3e749] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/840
+            - text: . (
+            - code [ref=f3e750]: f97f483b
+            - text: )
+      - heading "Breaking Changes" [level=2] [ref=f3e751]
+      - list [ref=f3e752]:
+        - listitem [ref=f3e753]: None.
+      - separator [ref=f3e754]
+      - heading "v0.10.1 — Claude Opus 4.8 default, localized session titles, and Apple Silicon–only macOS builds" [level=1] [ref=f3e755]
+      - heading "Features" [level=2] [ref=f3e756]
+      - list [ref=f3e757]:
+        - listitem [ref=f3e758]: None.
+      - heading "Improvements" [level=2] [ref=f3e759]
+      - list [ref=f3e760]:
+        - listitem [ref=f3e761]:
+          - strong [ref=f3e762]: Claude Opus 4.8 is now the default Opus model
+          - text: — Upgraded the Claude Agent SDK to 0.3.154 and set Claude Opus 4.8 as the default Anthropic Opus model, while keeping Opus 4.7 selectable. The deprecated Opus 4.6 is removed from the model pickers. Existing direct-Anthropic Opus 4.7 defaults move to Opus 4.8, and Opus 4.5/4.6 selections migrate to the best available current Opus model. Bedrock mappings, Pi fallback handling, model-migration tests, docs, and UI examples were updated to match. (
+          - code [ref=f3e763]: 0a1357b2
+          - text: )
+      - heading "Bug Fixes" [level=2] [ref=f3e764]
+      - list [ref=f3e765]:
+        - listitem [ref=f3e766]:
+          - paragraph [ref=f3e767]:
+            - strong [ref=f3e768]: Session titles honour the Settings → Appearance language
+            - text: — The main-process i18n instance has no language-detection plugin (there is no
+            - code [ref=f3e769]: localStorage
+            - text: in Node) and was never re-hydrated from disk, so it always sat at the
+            - code [ref=f3e770]: en
+            - text: fallback after restart. Title generation (
+            - code [ref=f3e771]: generateTitle
+            - text: /
+            - code [ref=f3e772]: refreshTitle
+            - text: ) and the system prompt's "Preferred language" line read that main-process language, so they came back in English even when Appearance was set to another language. The chosen UI language is now persisted to an internal, validated
+            - code [ref=f3e773]: uiLanguage
+            - text: field and the main-process i18n is hydrated from it on startup; the renderer also pushes its resolved language to main once on upgrade so the value is learned without re-picking. Partially addresses
+            - link "#815" [ref=f3e774] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/815
+            - text: and
+            - link "#738" [ref=f3e775] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/738
+            - text: . (
+            - code [ref=f3e776]: 4a743ef2
+            - text: )
+        - listitem [ref=f3e777]:
+          - paragraph [ref=f3e778]:
+            - strong [ref=f3e779]: Text-selection highlight stays aligned when scrolling a preview
+            - text: — Selecting text inside a scrollable
+            - code [ref=f3e780]: markdown-preview
+            - text: block (the
+            - code [ref=f3e781]: max-h-[400px] overflow-auto
+            - text: wrapper) and adding a follow-up left the yellow range highlight and its numbered chip anchored to the original coordinates, so they drifted away from the text as the block scrolled. A capture-phase scroll listener now recomputes the overlay geometry on any nested scroll — a coords-only fast path coalesced with
+            - code [ref=f3e782]: requestAnimationFrame
+            - text: ", with a no-op short-circuit when there are no annotations — keeping the highlight pinned to its text. The same fix is mirrored in the viewer's annotation path. ("
+            - code [ref=f3e783]: 14bba50c
+            - text: )
+      - heading "Breaking Changes" [level=2] [ref=f3e784]
+      - list [ref=f3e785]:
+        - listitem [ref=f3e786]:
+          - paragraph [ref=f3e787]:
+            - strong [ref=f3e788]: macOS Intel (x64) builds discontinued — Apple Silicon only
+            - text: — Craft Agents for macOS now ships an Apple Silicon (arm64) build only; Intel-based Macs are no longer supported. The x64
+            - code [ref=f3e789]: .dmg
+            - text: is no longer produced (v0.10.0 was the last release with an Intel build). Apple Silicon (M-series) Macs, Windows, and Linux are unaffected.
+        - listitem [ref=f3e790]:
+          - paragraph [ref=f3e791]:
+            - strong [ref=f3e792]:
+              - text: Legacy
+              - code [ref=f3e793]: language
+              - text: preference field removed
+            - text: — The free-text, user-editable
+            - code [ref=f3e794]: language
+            - text: field in
+            - code [ref=f3e795]: preferences.json
+            - text: is replaced by an internal, validated
+            - code [ref=f3e796]: uiLanguage
+            - text: field driven by Settings → Appearance. Existing config files are tolerated (the schema is passthrough) and the stale
+            - code [ref=f3e797]: language
+            - text: key is scrubbed on read, so no user action is required. The
+            - code [ref=f3e798]: update_user_preferences
+            - text: tool no longer accepts a
+            - code [ref=f3e799]: language
+            - text: argument.
+      - separator [ref=f3e800]
+      - heading [level=1] [ref=f3e801]:
+        - text: v0.10.0 — Remote
+        - code [ref=f3e802]: browser_tool
+        - text: "bridging, per-workspace browser tab isolation, and #824 basic-auth fix"
+      - heading "Features" [level=2] [ref=f3e803]
+      - list [ref=f3e804]:
+        - listitem [ref=f3e805]:
+          - paragraph [ref=f3e806]:
+            - strong [ref=f3e807]:
+              - text: Remote
+              - code [ref=f3e808]: browser_tool
+              - text: bridged into the user's local Electron browser
+            - text: — Agents running on a remote workspace (headless server, docker, WebUI) can now drive the user's local desktop
+            - code [ref=f3e809]: BrowserPaneManager
+            - text: end-to-end. Adds a
+            - code [ref=f3e810]: client:browser:invoke
+            - text: WS capability (advertised on handshake, server invokes client, plain
+            - code [ref=f3e811]: Error
+            - text: with
+            - code [ref=f3e812]: .code
+            - text: preserved through both directions), mirroring how
+            - code [ref=f3e813]: shell.openExternal
+            - text: already works for
+            - code [ref=f3e814]: OPEN_URL
+            - text: . Transport gains
+            - code [ref=f3e815]: hasClientCapability
+            - text: /
+            - code [ref=f3e816]: findClientsWithCapability
+            - text: for routing; Electron gets a new
+            - code [ref=f3e817]: __browser:invoke
+            - text: IPC dispatcher with per-method owner-key authorization, no-manual-window-reuse for remote callers, session-scoped
+            - code [ref=f3e818]: listInstances
+            - text: ", and screenshot"
+            - code [ref=f3e819]: Buffer
+            - text: ↔
+            - code [ref=f3e820]: Uint8Array
+            - text: conversion across the wire.
+            - code [ref=f3e821]: server-core
+            - text: gets a
+            - code [ref=f3e822]: RemoteBrowserPaneManager
+            - text: (session-bound
+            - code [ref=f3e823]: IBPM
+            - text: impl) and
+            - code [ref=f3e824]: SessionManager.getBrowserPaneManagerForSession
+            - text: with capability-aware host-client fallback and per-session pin cleanup on disconnect.
+            - code [ref=f3e825]: uploadFile
+            - text: is blocked over the bridge;
+            - code [ref=f3e826]: evaluate
+            - text: is gated by a local
+            - code [ref=f3e827]: allowRemoteEvaluate
+            - text: setting. The Pi runtime learns friendly error mappings for
+            - code [ref=f3e828]: BROWSER_NO_CAPABLE_CLIENT
+            - text: ","
+            - code [ref=f3e829]: CAPABILITY_UNAVAILABLE
+            - text: ","
+            - code [ref=f3e830]: CLIENT_DISCONNECTED
+            - text: ","
+            - code [ref=f3e831]: CLIENT_REQUEST_TIMEOUT
+            - text: ","
+            - code [ref=f3e832]: BROWSER_INSTANCE_NOT_OWNED
+            - text: ","
+            - code [ref=f3e833]: BROWSER_REMOTE_UPLOAD_NOT_SUPPORTED
+            - text: ", and"
+            - code [ref=f3e834]: BROWSER_REMOTE_EVALUATE_BLOCKED
+            - text: ", and now mirrors Claude's"
+            - code [ref=f3e835]: getBrowserToolEnabled
+            - text: gate so Pi no longer advertises
+            - code [ref=f3e836]: browser_tool
+            - text: when the toggle is off. 27 new tests cover wire packaging, per-method authz, capability introspection, host-client fallback, screenshot round-trip, error-code preservation, and the Pi error-mapping contract. (
+            - code [ref=f3e837]: 1d926c33
+            - text: )
+        - listitem [ref=f3e838]:
+          - paragraph [ref=f3e839]:
+            - strong [ref=f3e840]: Browser tabs isolated per workspace
+            - text: —
+            - code [ref=f3e841]: BrowserPaneManager
+            - text: is process-global and
+            - code [ref=f3e842]: STATE_CHANGED
+            - text: used to broadcast
+            - code [ref=f3e843]: "{ to: 'all' }"
+            - text: ", so a chat in workspace A saw browser tabs and status banners owned by sessions in workspace B. Every"
+            - code [ref=f3e844]: BrowserInstance
+            - text: (and the
+            - code [ref=f3e845]: BrowserInstanceInfo
+            - text: DTO) now carries a nullable
+            - code [ref=f3e846]: workspaceId
+            - text: ;
+            - code [ref=f3e847]: STATE_CHANGED
+            - text: routes to
+            - code [ref=f3e848]: "{ to: 'workspace', workspaceId }"
+            - text: when set (falling back to
+            - code [ref=f3e849]: "{ to: 'all' }"
+            - text: for unbound manual windows); the
+            - code [ref=f3e850]: browserPane.LIST
+            - text: handler filters by
+            - code [ref=f3e851]: ctx.workspaceId
+            - text: ; and the renderer reads a new
+            - code [ref=f3e852]: browserInstancesForWorkspaceAtomFamily
+            - text: keyed by
+            - code [ref=f3e853]: activeWorkspaceId
+            - text: . Windows still run in parallel as real
+            - code [ref=f3e854]: BrowserWindow
+            - text: s — this is a UI visibility filter, not a sandbox.
+            - code [ref=f3e855]: REMOVED
+            - text: /
+            - code [ref=f3e856]: INTERACTED
+            - text: stay broadcast-to-all (id-only payloads, harmless no-op on workspaces that never saw the entry).
+            - code [ref=f3e857]: workspaceId
+            - text: ships optional on the DTO, so old renderers tolerate missing values (treats
+            - code [ref=f3e858]: undefined
+            - text: as
+            - code [ref=f3e859]: "null"
+            - text: → passes the filter, equivalent to today's behavior). 17 new tests across atom filter, BPM stamping, and broadcast/LIST routing. (
+            - code [ref=f3e860]: af817192
+            - text: )
+      - heading "Improvements" [level=2] [ref=f3e861]
+      - list [ref=f3e862]:
+        - listitem [ref=f3e863]:
+          - paragraph [ref=f3e864]:
+            - strong [ref=f3e865]:
+              - code [ref=f3e866]: markdown-preview
+              - text: block documented in the rich-output reference
+            - text: — The
+            - code [ref=f3e867]: markdown-preview
+            - text: block (shipped in v0.9.6) is now covered in
+            - code [ref=f3e868]: apps/online-docs/go-further/rich-output.mdx
+            - text: alongside the existing
+            - code [ref=f3e869]: html-preview
+            - text: /
+            - code [ref=f3e870]: pdf-preview
+            - text: /
+            - code [ref=f3e871]: image-preview
+            - text: entries, so users discovering the block in-chat can find usage examples and the
+            - code [ref=f3e872]: src
+            - text: /
+            - code [ref=f3e873]: items
+            - text: field reference in the docs. (
+            - code [ref=f3e874]: 2d9693b1
+            - text: ","
+            - code [ref=f3e875]: 70c2955f
+            - text: )
+        - listitem [ref=f3e876]:
+          - paragraph [ref=f3e877]:
+            - strong [ref=f3e878]: Browser-bridge wiring is observable from server logs
+            - text: — Three
+            - code [ref=f3e879]: sessionLog.info
+            - text: lines in
+            - code [ref=f3e880]: SessionManager
+            - text: now confirm whether
+            - code [ref=f3e881]: setRpcServer
+            - text: ran at bootstrap and whether the browser-pane-forwarding block executed at agent init. Makes it possible to diagnose remote workspaces that still hit "Browser window controls are not available" from server logs alone, without attaching a debugger. (
+            - code [ref=f3e882]: ad26e61d
+            - text: )
+      - heading "Bug Fixes" [level=2] [ref=f3e883]
+      - list [ref=f3e884]:
+        - listitem [ref=f3e885]:
+          - paragraph [ref=f3e886]:
+            - strong [ref=f3e887]: Renderer accepts both local AND remote workspace ids when filtering tabs
+            - text: "— When connected to a remote workspace, a renderer has two relevant workspace ids:"
+            - code [ref=f3e888]: activeWorkspaceId
+            - text: (the LOCAL Craft Agents window's identity, used for locally-opened manual tabs) and
+            - code [ref=f3e889]: activeWorkspace.remoteServer.remoteWorkspaceId
+            - text: (the REMOTE server's id, used by the remote agent when it stamps tabs through the WS bridge). The first iteration of the workspace-isolation filter only matched
+            - code [ref=f3e890]: activeWorkspaceId
+            - text: ", so tabs stamped with the remote id (which is what every remote agent-opened browser carries) got filtered out — the TopBar tab strip and the toolbar status badge became invisible for remote browsers, and opening one then hiding it left it inaccessible. Replaced the"
+            - code [ref=f3e891]: atomFamily
+            - text: with a plain helper
+            - code [ref=f3e892]: filterInstancesForWorkspace(local, remote)
+            - text: ": tabs match if either id matches (or if"
+            - code [ref=f3e893]: workspaceId
+            - text: is null/undefined for back-compat). (
+            - code [ref=f3e894]: bf8429fa
+            - text: )
+        - listitem [ref=f3e895]:
+          - paragraph [ref=f3e896]:
+            - strong [ref=f3e897]:
+              - code [ref=f3e898]: STATE_CHANGED
+              - text: broadcasts to all clients again; the visibility filter lives in the renderer
+            - text: — The Phase-4 server-side workspace filter (on both
+            - code [ref=f3e899]: STATE_CHANGED
+            - text: routing and the
+            - code [ref=f3e900]: LIST
+            - text: "handler) was wrong for remote-mirror workspaces: a renderer's transport-level"
+            - code [ref=f3e901]: workspaceId
+            - text: is the LOCAL window's identity, while remote-bridged browser tabs carry the REMOTE server's workspace id. The two never match, so
+            - code [ref=f3e902]: STATE_CHANGED
+            - text: targeted at the remote id got dropped by the WS routing layer (no local renderer reports itself as being in the remote workspace) and
+            - code [ref=f3e903]: LIST
+            - text: returned empty for the same reason. Workspace isolation now lives entirely in the renderer (
+            - code [ref=f3e904]: filterInstancesForWorkspace
+            - text: ), which knows both ids via
+            - code [ref=f3e905]: activeWorkspace.remoteServer.remoteWorkspaceId
+            - text: . The handler reverts to
+            - code [ref=f3e906]: "{ to: 'all' }"
+            - text: broadcasts and a full
+            - code [ref=f3e907]: LIST
+            - text: response. Privacy is unchanged — every locally-connected renderer belongs to the same user — and remote tabs finally show up in the TopBar of the workspace that owns them. (
+            - code [ref=f3e908]: f831bb42
+            - text: )
+        - listitem [ref=f3e909]:
+          - paragraph [ref=f3e910]:
+            - strong [ref=f3e911]: No window reuse on the remote-bridge lifecycle path (closes the cross-workspace hijack)
+            - text: — The capability dispatcher correctly set
+            - code [ref=f3e912]: allowReuseManual=false
+            - text: for
+            - code [ref=f3e913]: createForSession
+            - text: but flowed
+            - code [ref=f3e914]: getOrCreateForSession
+            - text: and
+            - code [ref=f3e915]: focusBoundForSession
+            - text: through the public helpers, which default
+            - code [ref=f3e916]: allowReuseManual=true
+            - text: . The remote agent's
+            - code [ref=f3e917]: browser_tool open
+            - text: maps to
+            - code [ref=f3e918]: focusBoundForSession
+            - text: ", so it could adopt an unbound window left behind by a local session — exactly the cross-workspace hijack the"
+            - code [ref=f3e919]: workspaceId
+            - text: filter was meant to block. The
+            - code [ref=f3e920]: workspaceId
+            - text: "filter still helps but it's best-effort: windows created before workspace stamping (or via paths that never set"
+            - code [ref=f3e921]: workspaceId
+            - text: ) have
+            - code [ref=f3e922]: workspaceId=null
+            - text: "and remain universally adoptable. Belt-and-brace fix: every remote lifecycle call now passes"
+            - code [ref=f3e923]: allowReuseManual=false
+            - text: ", so remote sessions always create fresh windows unless they already own one. ("
+            - code [ref=f3e924]: ce3340a1
+            - text: )
+        - listitem [ref=f3e925]:
+          - paragraph [ref=f3e926]:
+            - strong [ref=f3e927]: Unbound-window reuse scoped to the owning workspace (no more "tab moved from workspace A to B")
+            - text: — When a session's turn ends,
+            - code [ref=f3e928]: unbindAllForSession()
+            - text: clears
+            - code [ref=f3e929]: boundSessionId
+            - text: and flips
+            - code [ref=f3e930]: ownerType
+            - text: to
+            - code [ref=f3e931]: "'manual'"
+            - text: so the next turn of the same session can re-bind the window; the
+            - code [ref=f3e932]: workspaceId
+            - text: stamped at creation is preserved.
+            - code [ref=f3e933]: findReusableUnboundInstance()
+            - text: was matching ANY unbound 'manual' window regardless of workspace, so a session in workspace B would happily pick up the leftover window from workspace A —
+            - code [ref=f3e934]: bindSession()
+            - text: would then overwrite
+            - code [ref=f3e935]: workspaceId
+            - text: to B, effectively "moving" the window from A to B and making workspace A's tab strip lose the entry while B's gained it. Reuse is now allowed only when the candidate's
+            - code [ref=f3e936]: workspaceId
+            - text: is null (truly user-opened manual window — adoptable by anyone) or matches the caller's
+            - code [ref=f3e937]: workspaceId
+            - text: . Same-workspace next-turn reuse still works. (
+            - code [ref=f3e938]: ceb24603
+            - text: )
+        - listitem [ref=f3e939]:
+          - paragraph [ref=f3e940]:
+            - strong [ref=f3e941]: TopBar-opened manual windows inherit the workspace they were opened in
+            - text: — The
+            - code [ref=f3e942]: browserPane.CREATE
+            - text: handler created manual windows with
+            - code [ref=f3e943]: workspaceId
+            - text: defaulting to
+            - code [ref=f3e944]: "null"
+            - text: ", which the workspace-isolation filter intentionally treats as \"visible to all workspaces\" — so a TopBar-opened tab leaked into every workspace's tab strip. The renderer that fires"
+            - code [ref=f3e945]: CREATE
+            - text: always has
+            - code [ref=f3e946]: ctx.workspaceId
+            - text: set, so the handler now passes it through to
+            - code [ref=f3e947]: createInstance
+            - text: /
+            - code [ref=f3e948]: createForSession
+            - text: . CLI / agent-harness callers with no workspace context (
+            - code [ref=f3e949]: ctx.workspaceId === null
+            - text: ) still get the broadcast-to-all behavior as a safe fallback. (
+            - code [ref=f3e950]: 7dfcaeac
+            - text: )
+        - listitem [ref=f3e951]:
+          - paragraph [ref=f3e952]:
+            - strong [ref=f3e953]:
+              - code [ref=f3e954]: BrowserInstance
+              - text: projected to a plain snapshot before IPC return
+            - text: — The local
+            - code [ref=f3e955]: BrowserPaneManager.getInstance(id)
+            - text: returns the live
+            - code [ref=f3e956]: BrowserInstance
+            - text: which embeds Electron native references (
+            - code [ref=f3e957]: "window: BrowserWindow"
+            - text: ","
+            - code [ref=f3e958]: "pageView: BrowserView"
+            - text: ", ...). When the"
+            - code [ref=f3e959]: __browser:invoke
+            - text: dispatcher returned that object over IPC, Electron's structured-clone serializer threw
+            - code [ref=f3e960]: An object could not be cloned
+            - text: and the remote agent's logging-side
+            - code [ref=f3e961]: getInstanceAsync
+            - text: call failed. Added
+            - code [ref=f3e962]: toSnapshot(instance)
+            - text: that emits only the
+            - code [ref=f3e963]: IBPM
+            - text: "-declared fields ("
+            - code [ref=f3e964]: ownerType
+            - text: ","
+            - code [ref=f3e965]: ownerSessionId
+            - text: ","
+            - code [ref=f3e966]: isVisible
+            - text: ","
+            - code [ref=f3e967]: title
+            - text: ","
+            - code [ref=f3e968]: currentUrl
+            - text: ) and routed the dispatcher's
+            - code [ref=f3e969]: getInstance
+            - text: branch through it. (
+            - code [ref=f3e970]: 8e2534b5
+            - text: )
+        - listitem [ref=f3e971]:
+          - paragraph [ref=f3e972]:
+            - strong [ref=f3e973]:
+              - code [ref=f3e974]: source_test
+              - text: base64-encodes basic-auth credentials
+            - text: —
+            - code [ref=f3e975]: testApiConnectionWithAuth
+            - text: was interpolating the raw vault value into the
+            - code [ref=f3e976]: Authorization
+            - text: header, so basic-auth sources got
+            - code [ref=f3e977]: "Basic {\"username\":\"...\",\"password\":\"...\"}"
+            - text: and 401'd against every provider. The vault stores
+            - code [ref=f3e978]: source_basic
+            - text: credentials as JSON (written by
+            - code [ref=f3e979]: source_credential_prompt
+            - text: / the WebUI); the runtime path in
+            - code [ref=f3e980]: api-tools.ts
+            - code [ref=f3e981]: buildHeaders
+            - text: already parses and base64-encodes — the validator path was just left out. Now parses the token as JSON when it has
+            - code [ref=f3e982]: username
+            - text: +
+            - code [ref=f3e983]: password
+            - text: ; falls through to pass-through behavior for legacy / hand-edited base64 entries and any non-JSON string, mirroring
+            - code [ref=f3e984]: buildHeaders()
+            - text: . Three regression tests cover the JSON form, the legacy already-encoded form, and a non-JSON garbage token. Fixes
+            - link "#824" [ref=f3e985] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/824
+            - text: . (
+            - code [ref=f3e986]: 96dd7c0d
+            - text: )
+      - heading "Breaking Changes" [level=2] [ref=f3e987]
+      - list [ref=f3e988]:
+        - listitem [ref=f3e989]:
+          - text: None. The
+          - code [ref=f3e990]: workspaceId
+          - text: field on the
+          - code [ref=f3e991]: BrowserInstanceInfo
+          - text: DTO is optional, so older renderers and older agents tolerate missing values (treats
+          - code [ref=f3e992]: undefined
+          - text: as
+          - code [ref=f3e993]: "null"
+          - text: → passes the visibility filter, equivalent to pre-0.10.0 behavior).
+      - separator [ref=f3e994]
+      - 'heading "v0.9.6 — Auto-update window restoration, mid-session credential refresh, and #807/#798/#804 fixes" [level=1] [ref=f3e995]'
+      - heading "Features" [level=2] [ref=f3e996]
+      - list [ref=f3e997]:
+        - listitem [ref=f3e998]:
+          - paragraph [ref=f3e999]:
+            - strong [ref=f3e1000]: Workspace name in window title when multiple windows are open
+            - text: — With one window open the title stays as the app name ("Craft Agents"). Open a second window and each window's title becomes the workspace name it belongs to, so windows are trivial to tell apart in Cmd-Tab, Mission Control, and the Windows taskbar. The renderer's static
+            - code [ref=f3e1001]: <title>
+            - text: is suppressed so it can't clobber the main-process title. (
+            - code [ref=f3e1002]: 5a49b6ca
+            - text: )
+        - listitem [ref=f3e1003]:
+          - paragraph [ref=f3e1004]:
+            - strong [ref=f3e1005]:
+              - text: Inline
+              - code [ref=f3e1006]: markdown-preview
+              - text: block for rendering
+              - code [ref=f3e1007]: .md
+              - text: files
+            - text: — A new
+            - code [ref=f3e1008]: markdown-preview
+            - text: code-block type mirrors
+            - code [ref=f3e1009]: html-preview
+            - text: /
+            - code [ref=f3e1010]: pdf-preview
+            - text: /
+            - code [ref=f3e1011]: image-preview
+            - text: ": reference a"
+            - code [ref=f3e1012]: .md
+            - text: file by absolute path and the chat renders it through the shared Markdown component, with a
+            - code [ref=f3e1013]: disablePreviewBlocks
+            - text: guard that prevents
+            - code [ref=f3e1014]: markdown-preview
+            - text: "-inside-"
+            - code [ref=f3e1015]: markdown-preview
+            - text: recursion without disabling other nested preview blocks. Registered in both
+            - code [ref=f3e1016]: minimal
+            - text: (assistant chat) and
+            - code [ref=f3e1017]: full
+            - text: modes; supports multi-item
+            - code [ref=f3e1018]: items
+            - text: arrays. Partially addresses
+            - link "#807" [ref=f3e1019] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/807
+            - text: . (
+            - code [ref=f3e1020]: 45760a6f
+            - text: )
+      - heading "Improvements" [level=2] [ref=f3e1021]
+      - list [ref=f3e1022]:
+        - listitem [ref=f3e1023]:
+          - paragraph [ref=f3e1024]:
+            - strong [ref=f3e1025]: Online-docs coverage for multi-window titles and auto-update restoration
+            - text: —
+            - code [ref=f3e1026]: apps/online-docs/go-further/workspaces.mdx
+            - text: now documents the new window-title behavior and the auto-update window-state preservation, so users discovering these features in-app can find rationale and edge-case notes in the docs. (
+            - code [ref=f3e1027]: 755a8b77
+            - text: )
+        - listitem [ref=f3e1028]:
+          - paragraph [ref=f3e1029]:
+            - strong [ref=f3e1030]: Online docs introduction polish
+            - text: — Tightened wording in the getting-started introduction (Mintlify dashboard edit). (
+            - code [ref=f3e1031]: 3a5378db
+            - text: )
+        - listitem [ref=f3e1032]:
+          - paragraph [ref=f3e1033]:
+            - strong [ref=f3e1034]: Messaging gateway docs reflect the 0.9.5 fallback fix
+            - text: — Clarifies that
+            - code [ref=f3e1035]: progress
+            - text: and
+            - code [ref=f3e1036]: final_only
+            - text: modes now both fall back to the most recent assistant text when a run ends on a tool call without a non-intermediate
+            - code [ref=f3e1037]: text_complete
+            - text: ", instead of leaving a thinking bubble (progress) or staying silent (final_only). Genuinely empty runs are still silent. ("
+            - code [ref=f3e1038]: 0cfd1ffb
+            - text: )
+      - heading "Bug Fixes" [level=2] [ref=f3e1039]
+      - list [ref=f3e1040]:
+        - listitem [ref=f3e1041]:
+          - paragraph [ref=f3e1042]:
+            - strong [ref=f3e1043]: Multi-window state survives auto-update
+            - text: — electron-updater (Squirrel.Mac) destroys all BrowserWindows between
+            - code [ref=f3e1044]: quitAndInstall
+            - text: and
+            - code [ref=f3e1045]: before-quit
+            - text: firing, so the existing window-state save ran with an empty snapshot and clobbered
+            - code [ref=f3e1046]: ~/.craft-agent/window-state.json
+            - text: with
+            - code [ref=f3e1047]: "{ windows: [] }"
+            - text: . Users lost their multi-window setup every time they accepted an update.
+            - code [ref=f3e1048]: installUpdate
+            - text: now fires a
+            - code [ref=f3e1049]: setBeforeUpdateQuitHook
+            - text: callback that captures and saves window state
+            - emphasis [ref=f3e1050]: while windows still exist
+            - text: ", and the late"
+            - code [ref=f3e1051]: before-quit
+            - text: path adds an empty-snapshot guard so the pre-update save can't be overwritten. (
+            - code [ref=f3e1052]: 3db842e0
+            - text: )
+        - listitem [ref=f3e1053]:
+          - paragraph [ref=f3e1054]:
+            - strong [ref=f3e1055]: API source credentials refresh mid-session
+            - text: — Sources with bearer/header/query/basic auth captured the credential as a static string at tool-creation time. After refreshing an expired token via
+            - code [ref=f3e1056]: source_credential_prompt
+            - text: ", the in-process tool kept sending the stale value (401 until full session restart) even though"
+            - code [ref=f3e1057]: source_test
+            - text: confirmed the new token worked. Non-OAuth API sources now route through a credential getter that reads the vault on every call, mirroring the existing OAuth / renew-endpoint path. OAuth and renew-endpoint sources are untouched — they already have refresh via
+            - code [ref=f3e1058]: TokenRefreshManager
+            - text: . (
+            - code [ref=f3e1059]: 5b6a0588
+            - text: )
+        - listitem [ref=f3e1060]:
+          - paragraph [ref=f3e1061]:
+            - strong [ref=f3e1062]:
+              - text: Stale
+              - code [ref=f3e1063]: source_apikey
+              - text: credential no longer leaks when flipping authType to
+              - code [ref=f3e1064]: "'none'"
+            - text: —
+            - code [ref=f3e1065]: SourceCredentialManager.getCredentialId()
+            - text: maps
+            - code [ref=f3e1066]: "'none'"
+            - text: ","
+            - code [ref=f3e1067]: "'header'"
+            - text: ", and"
+            - code [ref=f3e1068]: "'query'"
+            - text: to the same
+            - code [ref=f3e1069]: source_apikey
+            - text: slot. Flipping a source from a credential-bearing authType to
+            - code [ref=f3e1070]: "'none'"
+            - text: left the stored credential addressable under that slot, where it could later override
+            - code [ref=f3e1071]: defaultHeaders
+            - text: on a rebuild — the bare credential value got sent as a Cookie header instead of the new
+            - code [ref=f3e1072]: defaultHeaders.Cookie
+            - text: value.
+            - code [ref=f3e1073]: saveSourceConfig
+            - text: now best-effort-deletes the
+            - code [ref=f3e1074]: source_apikey
+            - text: slot when the new config is an API source with
+            - code [ref=f3e1075]: authType:'none'
+            - text: . Cleanup never throws and never blocks the config write. (
+            - code [ref=f3e1076]: d0c70f23
+            - text: )
+        - listitem [ref=f3e1077]:
+          - paragraph [ref=f3e1078]:
+            - strong [ref=f3e1079]:
+              - text: Blocked URL schemes now explain
+              - emphasis [ref=f3e1080]: why
+              - text: + DOM
+              - code [ref=f3e1081]: href
+              - text: s are sanitized
+            - text: — When react-markdown's
+            - code [ref=f3e1082]: defaultUrlTransform
+            - text: stripped a
+            - code [ref=f3e1083]: "file:"
+            - text: /
+            - code [ref=f3e1084]: "javascript:"
+            - text: URL to empty, the anchor handler fell back to anchor text and
+            - code [ref=f3e1085]: new URL(text)
+            - text: rejected it as "Invalid URL" — a generic toast with no rationale.
+            - code [ref=f3e1086]: DANGEROUS_SCHEMES
+            - text: is now a
+            - code [ref=f3e1087]: Map<scheme, reason>
+            - text: ", the reason flows through the"
+            - code [ref=f3e1088]: OPEN_URL
+            - text: handlers in both
+            - code [ref=f3e1089]: server-core
+            - text: and the Electron GUI, and the error message now reads e.g.
+            - code [ref=f3e1090]: "URL blocked (file:). file: URLs are blocked because shell.openExternal can launch local executables on Windows…"
+            - text: . The DOM
+            - code [ref=f3e1091]: href
+            - text: attribute is also sanitized through
+            - code [ref=f3e1092]: defaultUrlTransform
+            - text: and set to
+            - code [ref=f3e1093]: undefined
+            - text: for dangerous schemes, closing the middle-click / cmd-click escape route through Electron's
+            - code [ref=f3e1094]: setWindowOpenHandler
+            - text: and
+            - code [ref=f3e1095]: will-navigate
+            - text: . Fixes
+            - link "#807" [ref=f3e1096] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/807
+            - text: (URL handling part). (
+            - code [ref=f3e1097]: 746ebb34
+            - text: )
+        - listitem [ref=f3e1098]:
+          - paragraph [ref=f3e1099]:
+            - strong [ref=f3e1100]:
+              - code [ref=f3e1101]: cache_control
+              - text: 1h TTL ordering bug and over-broad "tool not supported" classifier
+            - text: — Two bugs surfaced together when
+            - code [ref=f3e1102]: extendedPromptCache
+            - text: was enabled on an Anthropic connection at session start. (1)
+            - code [ref=f3e1103]: upgradePromptCacheTtl
+            - text: walked system + messages + top-level
+            - code [ref=f3e1104]: cache_control
+            - text: but skipped
+            - code [ref=f3e1105]: body.tools
+            - text: . Anthropic processes blocks in order
+            - code [ref=f3e1106]: tools → system → messages
+            - text: and rejects requests where
+            - code [ref=f3e1107]: ttl='1h'
+            - text: appears after
+            - code [ref=f3e1108]: ttl='5m'
+            - text: ", so a stale 5m on any tool produced"
+            - code [ref=f3e1109]: "system.0.cache_control.ttl: a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block"
+            - text: . Tools are now walked first in both the upgrade and disabled-strip paths. (2)
+            - code [ref=f3e1110]: parseError
+            - text: misclassified the same 400 as "Model Does Not Support Tools" because the heuristic fired on the API's hint string mentioning
+            - code [ref=f3e1111]: tools
+            - text: . The overly broad pattern is dropped and a final
+            - code [ref=f3e1112]: invalid_request_error / 400
+            - text: branch routes generic Anthropic 400s to
+            - code [ref=f3e1113]: invalid_request
+            - text: instead of
+            - code [ref=f3e1114]: unknown_error
+            - text: . (
+            - code [ref=f3e1115]: 26e6e675
+            - text: )
+        - listitem [ref=f3e1116]:
+          - paragraph [ref=f3e1117]:
+            - strong [ref=f3e1118]: Mobile WebUI send button stays visible when the model name is long
+            - text: — The compact bottom-bar layout had every left-side item as
+            - code [ref=f3e1119]: shrink-0
+            - text: with no overflow guard on the outer row, so a long custom-endpoint model name on a 375 px viewport overflowed the row and pushed the send button off screen.
+            - code [ref=f3e1120]: CompactModelSelector
+            - text: "'s trigger is now shrinkable with a"
+            - code [ref=f3e1121]: min-w-[64px]
+            - text: tap-target floor, and the compact bottom-bar children are wrapped in their own
+            - code [ref=f3e1122]: min-w-0 shrink overflow-hidden
+            - text: group so the model label truncates first and the send button stays anchored to the right. Fixes
+            - link "#798" [ref=f3e1123] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/798
+            - text: . (
+            - code [ref=f3e1124]: 5e95e72e
+            - text: )
+        - listitem [ref=f3e1125]:
+          - paragraph [ref=f3e1126]:
+            - strong [ref=f3e1127]:
+              - text: Headless server auto-retries
+              - code [ref=f3e1128]: source_activated
+              - text: like the Electron renderer did
+            - text: — The
+            - code [ref=f3e1129]: "[<slug> activated]"
+            - text: re-send moved into
+            - code [ref=f3e1130]: SessionManager.processEvent
+            - text: so headless deployments (WebUI, docker server) chain source activations the same way the Electron renderer did. The renderer's
+            - code [ref=f3e1131]: auto_retry
+            - text: effect is removed. A 2 s content-match dedup window keyed on a
+            - code [ref=f3e1132]: "{content, deadlineMs, committed}"
+            - text: slot on
+            - code [ref=f3e1133]: ManagedSession
+            - text: prevents a double-send during a mixed-version rollout (legacy renderer + new server) — first matching
+            - code [ref=f3e1134]: sendMessage
+            - text: (server timer OR legacy RPC) wins and claims the slot, subsequent matches within the window drop. Retry timer + pending slot are cancelled on both session-delete sites (main deleteSession path and the branch-creation rollback path). Fixes
+            - link "#804" [ref=f3e1135] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/804
+            - text: . Co-authored with Guillaume Gay. (
+            - code [ref=f3e1136]: 5cb7b8c1
+            - text: )
+        - listitem [ref=f3e1137]:
+          - paragraph [ref=f3e1138]:
+            - strong [ref=f3e1139]: PR 378 review hardening (markdown / Electron URL handling, source-activation auto-retry guards, deterministic stale-credential cleanup)
+            - text: — Follow-up commit addressing review findings on the URL-safety, auto-retry, and credential-cleanup PRs above; also removes a leaking source-test module mock that was hiding the credential-cleanup regression. (
+            - code [ref=f3e1140]: 42b986e1
+            - text: )
+      - heading "Breaking Changes" [level=2] [ref=f3e1141]
+      - list [ref=f3e1142]:
+        - listitem [ref=f3e1143]: None. All changes are backward-compatible.
+      - separator [ref=f3e1144]
+      - heading "v0.9.5 — Compact-mode UX polish and MCP / branching stability" [level=1] [ref=f3e1145]
+      - heading "Features" [level=2] [ref=f3e1146]
+      - list [ref=f3e1147]:
+        - listitem [ref=f3e1148]:
+          - paragraph [ref=f3e1149]:
+            - strong [ref=f3e1150]: Compact-mode drawer for the session row menu
+            - text: — Session row context menus on compact / mobile layouts now open as a vaul drawer instead of a clipped Radix popover, matching the drawer pattern already used for status, labels, share, and messaging actions. (
+            - code [ref=f3e1151]: a0468049
+            - text: )
+        - listitem [ref=f3e1152]:
+          - paragraph [ref=f3e1153]:
+            - strong [ref=f3e1154]: Drawer-based working-directory selector in compact mode
+            - text: — The working-directory picker switches to a drawer on narrow widths so the path list, recent dirs, and "Choose folder…" action remain reachable without horizontal scroll. The desktop dropdown is unchanged. (
+            - code [ref=f3e1155]: 6e147c03
+            - text: )
+        - listitem [ref=f3e1156]:
+          - paragraph [ref=f3e1157]:
+            - strong [ref=f3e1158]: Expandable chat input on compact layouts
+            - text: — Users can now tap to expand a collapsed chat input on compact / mobile views so longer prompts are easier to compose without leaving the active session. (
+            - code [ref=f3e1159]: 15fe589b
+            - text: )
+        - listitem [ref=f3e1160]:
+          - paragraph [ref=f3e1161]:
+            - strong [ref=f3e1162]: Drawer-based AcceptPlan picker in compact mode
+            - text: — The plan-acceptance UI uses a drawer in compact / mobile layouts so action rows aren't pushed off-screen on narrow widths. (
+            - code [ref=f3e1163]: f8e92a11
+            - text: )
+        - listitem [ref=f3e1164]:
+          - paragraph [ref=f3e1165]:
+            - strong [ref=f3e1166]: Compact model selector in the web UI's mobile / auto-compact view
+            - text: — The web UI's model picker collapses into a compact selector when the shell width crosses the mobile breakpoint, matching the Electron app's container-query behavior. (
+            - code [ref=f3e1167]: 75c7825d
+            - text: )
+      - heading "Improvements" [level=2] [ref=f3e1168]
+      - list [ref=f3e1169]:
+        - listitem [ref=f3e1170]:
+          - paragraph [ref=f3e1171]:
+            - strong [ref=f3e1172]:
+              - text: Shared
+              - code [ref=f3e1173]: useWorkingDirectoryState
+              - text: hook
+            - text: — Path resolution, recent dirs, and folder-picker handling are extracted into a single hook so the desktop dropdown and compact drawer can't drift in behavior. (
+            - code [ref=f3e1174]: aa01895d
+            - text: )
+        - listitem [ref=f3e1175]:
+          - paragraph [ref=f3e1176]:
+            - strong [ref=f3e1177]: Windows RTK install docs
+            - text: — Clarifies the Windows install path in the RTK setup docs so the "RTK not found" detection in Settings → AI → Performance matches what users see on Windows. (
+            - code [ref=f3e1178]: 129c28ff
+            - text: )
+      - heading "Bug Fixes" [level=2] [ref=f3e1179]
+      - list [ref=f3e1180]:
+        - listitem [ref=f3e1181]:
+          - paragraph [ref=f3e1182]:
+            - strong [ref=f3e1183]: Branching on the latest turn no longer drops the last assistant message
+            - text: — The Pi-backed branching path now captures the conversation anchor
+            - emphasis [ref=f3e1184]: after
+            - text: the SDK appends the new entry, so branching off the most recent turn no longer truncates the message that triggered the branch. Fixes
+            - link "#782" [ref=f3e1185] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/782
+            - text: . (
+            - code [ref=f3e1186]: 0988d0d6
+            - text: )
+        - listitem [ref=f3e1187]:
+          - paragraph [ref=f3e1188]:
+            - strong [ref=f3e1189]:
+              - text: Stdio MCP
+              - code [ref=f3e1190]: source_test
+              - text: gives real diagnostics instead of a fake timeout
+            - text: —
+            - code [ref=f3e1191]: source_test
+            - text: for stdio MCP servers now runs a single process with a proper stderr-activity watchdog and surfaces actual startup output, replacing the false "Server startup timeout" that fired for any slow-but-healthy server. Fixes
+            - link "#787" [ref=f3e1192] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/787
+            - text: . (
+            - code [ref=f3e1193]: a7fa0a3a
+            - text: ","
+            - code [ref=f3e1194]: 69d74167
+            - text: )
+        - listitem [ref=f3e1195]:
+          - paragraph [ref=f3e1196]:
+            - strong [ref=f3e1197]:
+              - text: Parallel
+              - code [ref=f3e1198]: source_test
+              - text: calls no longer wedge a session
+            - text: — When a source-activation abort interrupts a turn, sibling
+            - code [ref=f3e1199]: tool_result
+            - text: blocks are now drained before the abort propagates so the SDK doesn't end up with orphaned
+            - code [ref=f3e1200]: tool_use
+            - text: IDs that permanently jam the next turn. Fixes
+            - link "#790" [ref=f3e1201] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/790
+            - text: . (
+            - code [ref=f3e1202]: 58087fbf
+            - text: )
+        - listitem [ref=f3e1203]:
+          - paragraph [ref=f3e1204]:
+            - strong [ref=f3e1205]: AcceptPlan dropdown positioning and compact visibility
+            - text: — The desktop AcceptPlan dropdown is now built on Radix
+            - code [ref=f3e1206]: DropdownMenu
+            - text: ", fixing anchor drift and viewport clipping that could push actions off-screen. The web UI also now actually renders the dropdown in compact / mobile views — previously hidden behind a wider-only branch. ("
+            - code [ref=f3e1207]: 01d062e3
+            - text: ","
+            - code [ref=f3e1208]: d32f390d
+            - text: )
+        - listitem [ref=f3e1209]:
+          - paragraph [ref=f3e1210]:
+            - strong [ref=f3e1211]: Chat view no longer stuck on "Thinking…" when a turn ends on a tool call
+            - text: — Mirrors the messaging-gateway fix on the Electron main UI side. When the Pi agent emits intermediate text plus a tool call and then completes without a non-intermediate
+            - code [ref=f3e1212]: text_complete
+            - text: ","
+            - code [ref=f3e1213]: groupMessagesByTurn
+            - text: now uses the session's
+            - code [ref=f3e1214]: isProcessing=false
+            - text: signal to mark the open turn complete and promote the intermediate text as the response. Pre-fix the chat sat on "Thinking…" forever and the user had to send a follow-up message to unstick it.
+        - listitem [ref=f3e1215]:
+          - paragraph [ref=f3e1216]:
+            - strong [ref=f3e1217]:
+              - text: Messaging gateway delivers the final assistant message in
+              - code [ref=f3e1218]: progress
+              - text: /
+              - code [ref=f3e1219]: final_only
+              - text: modes
+            - text: — Automations whose last action is a tool call (e.g. the agent uses a tool to send the Telegram message and never emits a clean non-intermediate
+            - code [ref=f3e1220]: text_complete
+            - text: ) used to leave
+            - code [ref=f3e1221]: progress
+            - text: frozen on
+            - code [ref=f3e1222]: 💭 thinking…
+            - text: and
+            - code [ref=f3e1223]: final_only
+            - text: silent. The renderer now tracks the most recent assistant text regardless of
+            - code [ref=f3e1224]: isIntermediate
+            - text: and falls back to it on
+            - code [ref=f3e1225]: complete
+            - text: when no clean final arrived; genuinely empty runs still leave the status label in place. Thanks to
+            - link "@nheagy" [ref=f3e1226] [cursor=pointer]:
+              - /url: https://github.com/nheagy
+            - text: for the original PR (
+            - link "#779" [ref=f3e1227] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/pull/779
+            - text: ). (
+            - code [ref=f3e1228]: 13187c2c
+            - text: )
+        - listitem [ref=f3e1229]:
+          - paragraph [ref=f3e1230]:
+            - strong [ref=f3e1231]: SDK Agent subagent activity groups are collapsible again
+            - text: — The activity grouping for SDK Agent subagent runs no longer renders flat; the collapse toggle behavior is restored. (
+            - code [ref=f3e1232]: 774e7ecb
+            - text: )
+      - heading "Breaking Changes" [level=2] [ref=f3e1233]
+      - list [ref=f3e1234]:
+        - listitem [ref=f3e1235]: None. All changes are backward-compatible.
+      - separator [ref=f3e1236]
+      - heading "v0.9.4 — RTK token optimization, compact-session fixes, Codex transport stability" [level=1] [ref=f3e1237]
+      - heading "Features" [level=2] [ref=f3e1238]
+      - list [ref=f3e1239]:
+        - listitem [ref=f3e1240]:
+          - strong [ref=f3e1241]: Optional RTK Bash token compression
+          - text: — Adds opt-in support for
+          - link "RTK" [ref=f3e1242] [cursor=pointer]:
+            - /url: https://github.com/rtk-ai/rtk
+          - text: in Settings → AI → Performance. Craft Agent still shows and permission-checks the original Bash command, but when RTK is installed (
+          - code [ref=f3e1243]: ">=0.23.0"
+          - text: ) and enabled, the execution path is rewritten through
+          - code [ref=f3e1244]: rtk
+          - text: so common development-command output is compressed before it reaches the model. The settings UI now detects missing/outdated installs, offers
+          - strong [ref=f3e1245]: Get RTK
+          - text: +
+          - strong [ref=f3e1246]: Re-check
+          - text: actions, and shows saved-token / efficiency stats once RTK has processed commands. (
+          - code [ref=f3e1247]: 754d254c
+          - text: ","
+          - code [ref=f3e1248]: a96b8706
+          - text: ","
+          - code [ref=f3e1249]: "57452664"
+          - text: )
+      - heading "Improvements" [level=2] [ref=f3e1250]
+      - list [ref=f3e1251]:
+        - listitem [ref=f3e1252]:
+          - paragraph [ref=f3e1253]:
+            - strong [ref=f3e1254]: Backend packaging cleanup after Pi consolidation
+            - text: — Removes stale Copilot/Codex binary packaging entries, import guards, runtime fields, and docblocks that survived the move to the actual two-backend architecture (
+            - code [ref=f3e1255]: ClaudeAgent
+            - text: +
+            - code [ref=f3e1256]: PiAgent
+            - text: ). This trims dead build metadata and makes the codebase less misleading for future backend work. (
+            - code [ref=f3e1257]: a96b8706
+            - text: )
+        - listitem [ref=f3e1258]:
+          - paragraph [ref=f3e1259]:
+            - strong [ref=f3e1260]: OSS README metadata refresh
+            - text: — Adds the Trendshift badge to the OSS README so repository discovery metadata stays current. (
+            - code [ref=f3e1261]: 7feae925
+            - text: )
+      - heading "Bug Fixes" [level=2] [ref=f3e1262]
+      - list [ref=f3e1263]:
+        - listitem [ref=f3e1264]:
+          - paragraph [ref=f3e1265]:
+            - strong [ref=f3e1266]: OpenAI/Codex long-running session instability
+            - text: — Upgrades the Pi SDK stack to
+            - code [ref=f3e1267]: 0.73.1
+            - text: ", picking up the upstream Codex transport fixes: WebSocket setup can fall back to SSE before streaming starts, and cached WebSocket sessions are closed properly during session shutdown. This targets the"
+            - code [ref=f3e1268]: "1011"
+            - text: keepalive timeout,
+            - code [ref=f3e1269]: "1006"
+            - text: disconnect, and certificate-verification failures reported for long-running ChatGPT Plus / Codex OAuth sessions. Fixes
+            - link "#747" [ref=f3e1270] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/747
+            - text: . (
+            - code [ref=f3e1271]: e30762b6
+            - text: )
+        - listitem [ref=f3e1272]:
+          - paragraph [ref=f3e1273]:
+            - strong [ref=f3e1274]: Compact session menu no longer clips nested actions
+            - text: — On narrow/compact layouts, the chat title menu now uses a vaul drawer with iOS-style drill-in panes for Status, Labels, Share, and Messaging instead of Radix nested dropdowns anchored inside the container-query panel. This keeps status and label actions reachable on small widths while leaving the desktop dropdown unchanged. The follow-up review fixes close leaked desktop dropdown state when switching layouts and prevent drawer actions from retargeting if navigation changes the active session while the drawer is open. (
+            - code [ref=f3e1275]: db9f506f
+            - text: ","
+            - code [ref=f3e1276]: "084547e8"
+            - text: )
+        - listitem [ref=f3e1277]:
+          - paragraph [ref=f3e1278]:
+            - strong [ref=f3e1279]: Rapid session-label toggles are race-safe
+            - text: — Extracts shared session-menu behavior into
+            - code [ref=f3e1280]: useSessionMenuActions
+            - text: and moves label toggling to optimistic state that compounds rapid taps, avoids Strict Mode double side effects, and resets correctly when switching sessions. This fixes compact drawer multi-label editing and removes behavior drift between desktop and compact session menus. (
+            - code [ref=f3e1281]: f0c12ed1
+            - text: ","
+            - code [ref=f3e1282]: 88f8d733
+            - text: )
+        - listitem [ref=f3e1283]:
+          - paragraph [ref=f3e1284]:
+            - strong [ref=f3e1285]: Skills “Show in Finder” opens the real skill folder
+            - text: — Skills list, skill detail, and skill menu actions now reveal the authoritative
+            - code [ref=f3e1286]: skill.path
+            - text: directory instead of constructing a synthetic
+            - code [ref=f3e1287]: SKILL.md
+            - text: path, and failures surface via a platform-aware Finder/Explorer toast instead of silently no-oping. Fixes
+            - link "#756" [ref=f3e1288] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/756
+            - text: . (
+            - code [ref=f3e1289]: d44e5691
+            - text: )
+      - heading "Breaking Changes" [level=2] [ref=f3e1290]
+      - list [ref=f3e1291]:
+        - listitem [ref=f3e1292]: None. All changes are backward-compatible.
+      - separator [ref=f3e1293]
+      - heading "v0.9.3 — Mobile/compact UI rework, Manifest provider preset, oversized-tool-result poisoning fix, Telegram auto-reconnect" [level=1] [ref=f3e1294]
+      - heading "Features" [level=2] [ref=f3e1295]
+      - list [ref=f3e1296]:
+        - listitem [ref=f3e1297]:
+          - paragraph [ref=f3e1298]:
+            - strong [ref=f3e1299]: Mobile-first compact mode
+            - text: "— Renderer reworked so the same Electron React tree adapts cleanly to narrow viewports. Primarily targeting the WebUI delivery, but also lights up automatically in the desktop app whenever the shell is resized below 768px wide. Highlights: (a)"
+            - code [ref=f3e1300]: isAutoCompact
+            - text: derived from
+            - code [ref=f3e1301]: "@container/shell"
+            - text: width — single-panel iOS-style drill-in between the navigator (session list / sources / etc.) and the focused content panel; sidebar + right rail auto-hide; layout runs flush to the viewport edges. (b) Mobile-first
+            - code [ref=f3e1302]: AppMenu
+            - text: with a full-screen nav stack (
+            - code [ref=f3e1303]: MobileAppMenu
+            - text: ) extracted from the existing component; desktop branch (
+            - code [ref=f3e1304]: DesktopAppMenu
+            - text: ) keeps the previous behaviour verbatim. (c) Touch-first pickers — workspace switcher, source picker, permission-mode selector, and session-list filter all swap from Radix popovers to vaul
+            - code [ref=f3e1305]: Drawer
+            - text: bottom sheets in compact mode (Radix portals out of the panel container query, so popovers were getting clipped on narrow viewports). (d) Top bar reorganised — workspace pill on the left, action chips collapse,
+            - code [ref=f3e1306]: + new chat
+            - text: FAB pins to the viewport bottom (portalled out of the navigator transform so
+            - code [ref=f3e1307]: "position: fixed"
+            - text: resolves to the viewport, not the transformed ancestor). Existing CSS uses container queries throughout, so the desktop layout (≥768px shell) is structurally unchanged. PR
+            - link "#363" [ref=f3e1308] [cursor=pointer]:
+              - /url: https://github.com/craft-ai-agents/craft-agents/pull/363
+            - text: . (
+            - code [ref=f3e1309]: 83cc0cca
+            - text: ","
+            - code [ref=f3e1310]: 3a63cbe1
+            - text: ","
+            - code [ref=f3e1311]: 1640b181
+            - text: ","
+            - code [ref=f3e1312]: 90e75c7b
+            - text: ","
+            - code [ref=f3e1313]: e6e3247a
+            - text: ","
+            - code [ref=f3e1314]: e24d4062
+            - text: ","
+            - code [ref=f3e1315]: 7f2627ab
+            - text: )
+        - listitem [ref=f3e1316]:
+          - paragraph [ref=f3e1317]:
+            - strong [ref=f3e1318]: Manifest as a default API-key provider preset
+            - text: — Adds
+            - link "Manifest" [ref=f3e1319] [cursor=pointer]:
+              - /url: https://manifest.build
+            - text: (OpenAI-compatible endpoint at
+            - code [ref=f3e1320]: https://app.manifest.build/v1
+            - text: ) to the API-key provider presets alongside HuggingFace, Vercel AI Gateway, and the other OpenAI-compat options. Routes through the same path as the
+            - code [ref=f3e1321]: custom
+            - text: preset (pins
+            - code [ref=f3e1322]: customEndpoint.api='openai-completions'
+            - text: ", skips Pi model discovery, resolves"
+            - code [ref=f3e1323]: piAuthProvider='openai'
+            - text: ); a new
+            - code [ref=f3e1324]: OPENAI_COMPAT_CUSTOM_URL_PRESETS
+            - text: set captures this category so future non-Pi-SDK OpenAI-compat providers can be added with a single entry. Default model field is seeded with
+            - code [ref=f3e1325]: auto
+            - text: to match Manifest's routing model — and
+            - code [ref=f3e1326]: handleBaseUrlChange
+            - text: now seeds the same default when the user
+            - emphasis [ref=f3e1327]: types
+            - text: a
+            - code [ref=f3e1328]: manifest.build
+            - text: URL directly (previously only the click path seeded the model). Connection list shows "Manifest" name + Manifest favicon + branded subtitle.
+            - strong [ref=f3e1329]:
+              - text: "External contributor:"
+              - link "@guillaumegay13" [ref=f3e1330] [cursor=pointer]:
+                - /url: https://github.com/guillaumegay13
+            - text: — originally
+            - link "lukilabs/craft-agents-oss#731" [ref=f3e1331] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/pull/731
+            - text: ", lifted via PR"
+            - link "#367" [ref=f3e1332] [cursor=pointer]:
+              - /url: https://github.com/craft-ai-agents/craft-agents/pull/367
+            - text: with two follow-up review fixes folded in. (
+            - code [ref=f3e1333]: e16d28f1
+            - text: ","
+            - code [ref=f3e1334]: c627480d
+            - text: ","
+            - code [ref=f3e1335]: 4db12f08
+            - text: )
+      - heading "Improvements" [level=2] [ref=f3e1336]
+      - list [ref=f3e1337]:
+        - listitem [ref=f3e1338]:
+          - paragraph [ref=f3e1339]:
+            - strong [ref=f3e1340]:
+              - text: "GHCR + workflow rename:"
+              - code [ref=f3e1341]: lukilabs
+              - text: →
+              - code [ref=f3e1342]: craft-ai-agents
+            - text: — Cuts the GitHub Container Registry image namespace and all workflow/script references over to the new GitHub org. Marketing site GitHub links also updated. No user-visible config change for app users; impacts anyone pulling docker images or referencing the OSS sync scripts. (
+            - code [ref=f3e1343]: 8ee72a47
+            - text: ","
+            - code [ref=f3e1344]: 99dd5e35
+            - text: ","
+            - code [ref=f3e1345]: f040d555
+            - text: )
+        - listitem [ref=f3e1346]:
+          - paragraph [ref=f3e1347]:
+            - strong [ref=f3e1348]: Repo-wide i18n string-scan lint
+            - text: — New
+            - code [ref=f3e1349]: lint:i18n:strings
+            - text: script scans the entire repo for hardcoded English strings that should go through i18n;
+            - code [ref=f3e1350]: lint-i18n-staged.sh
+            - text: was trimmed in the same commit since the per-file scan is now subsumed by the repo-wide one. Helps prevent future strings from skipping the i18n pipeline. (
+            - code [ref=f3e1351]: "013674e0"
+            - text: )
+        - listitem [ref=f3e1352]:
+          - paragraph [ref=f3e1353]:
+            - strong [ref=f3e1354]: Settings icons consistency cleanup
+            - text: —
+            - code [ref=f3e1355]: SettingsIcons.tsx
+            - text: collapsed by ~180 lines to share one icon style across settings sections; small
+            - code [ref=f3e1356]: models-pi.ts
+            - text: touch-up alongside. Contributed by
+            - strong [ref=f3e1357]: Balint Orosz
+            - text: . (
+            - code [ref=f3e1358]: da685016
+            - text: )
+        - listitem [ref=f3e1359]:
+          - paragraph [ref=f3e1360]:
+            - strong [ref=f3e1361]: Messaging access channel routing
+            - text: — 9 messaging access-control channels (
+            - code [ref=f3e1362]: "messaging:access:{getOwners,setOwners,getMode,setMode,getPending,dismissPending,allowPending,setBindingAccess}"
+            - text: +
+            - code [ref=f3e1363]: messaging:pendingChanged
+            - text: ) added to
+            - code [ref=f3e1364]: REMOTE_ELIGIBLE_CHANNELS
+            - text: . They were declared in
+            - code [ref=f3e1365]: channels.ts
+            - text: during the recent Telegram permission-buttons / access-control work but never registered in
+            - code [ref=f3e1366]: routing.ts
+            - text: — the exhaustiveness test was failing on this branch base. (
+            - code [ref=f3e1367]: 9b694d8d
+            - text: )
+      - heading "Bug Fixes" [level=2] [ref=f3e1368]
+      - list [ref=f3e1369]:
+        - listitem [ref=f3e1370]:
+          - paragraph [ref=f3e1371]:
+            - strong [ref=f3e1372]: Session poisoning from oversized tool results
+            - text: — A single
+            - code [ref=f3e1373]: Read
+            - text: of a base64-heavy file could push a session past the model's context window, after which
+            - strong [ref=f3e1374]:
+              - text: every retry returned
+              - code [ref=f3e1375]: invalid_request
+            - text: "and the only \"fix\" was abandoning the session. Two compounding bugs fixed: (a) The"
+            - code [ref=f3e1376]: chars/4
+            - text: token estimator under-counts dense base64 by ~25%, so the existing 15K-token spill threshold fired too late; new
+            - code [ref=f3e1377]: estimateTokensDensityAware()
+            - text: switches to
+            - code [ref=f3e1378]: chars/1.5
+            - text: when ≥70% of a ≥20KB tool result is inside unbroken base64-charset runs (≥100 chars), and
+            - code [ref=f3e1379]: TOKEN_LIMIT
+            - text: is lowered to 12000 for additional headroom. (b) The
+            - code [ref=f3e1380]: invalid_request
+            - text: UX
+            - strong [ref=f3e1381]: actively misled
+            - text: users — the hardcoded fallback advice ("Try removing any attachments / check if images are in supported format") fired regardless of what was sent or what the API said, because both real-error sources are dead on the Claude SDK path (
+            - code [ref=f3e1382]: parseApiErrorFromDebugLog
+            - text: "reads a file the SDK no longer writes; the network interceptor is Pi-only). Now: split overloaded"
+            - code [ref=f3e1383]: ONE_M_CONTEXT_HINTS
+            - text: into 1M-tier-specific (
+            - code [ref=f3e1384]: context-1m
+            - text: /
+            - code [ref=f3e1385]: tier
+            - text: ) and generic context-overflow (
+            - code [ref=f3e1386]: context window
+            - text: /
+            - code [ref=f3e1387]: prompt is too long
+            - text: /…); generic overflows route to a new "Context Window Exceeded" error with
+            - code [ref=f3e1388]: /compact
+            - text: + new-session advice; "remove attachments" hints only fire when the API message actually mentions image/attachment/media/format
+            - strong [ref=f3e1389]: or
+            - text: the just-sent user turn included attachments (new
+            - code [ref=f3e1390]: userTurnHadAttachments
+            - text: field threaded through
+            - code [ref=f3e1391]: ClaudeSdkErrorContext
+            - text: ); when neither error source provides detail, append a pointer to
+            - code [ref=f3e1392]: ~/Library/Logs/@craft-agent/electron/main.log
+            - text: . PR
+            - link "#365" [ref=f3e1393] [cursor=pointer]:
+              - /url: https://github.com/craft-ai-agents/craft-agents/pull/365
+            - text: . (
+            - code [ref=f3e1394]: 636b0b67
+            - text: ","
+            - code [ref=f3e1395]: fad9cbb3
+            - text: )
+        - listitem [ref=f3e1396]:
+          - paragraph [ref=f3e1397]:
+            - strong [ref=f3e1398]: Telegram polling auto-reconnect after failure
+            - text: — When Telegram polling stopped (most commonly a 409 Conflict from two app instances sharing the same bot token),
+            - code [ref=f3e1399]: connected
+            - text: stayed
+            - code [ref=f3e1400]: "false"
+            - text: permanently and every subsequent session event routed via
+            - code [ref=f3e1401]: telegramTopic
+            - text: automations was silently dropped — bindings were created, sessions ran, responses were generated, but nothing ever reached Telegram.
+            - code [ref=f3e1402]: TelegramAdapter
+            - text: now calls
+            - code [ref=f3e1403]: scheduleReconnect()
+            - text: "on any polling failure with exponential backoff: 30s base for 409 (gives the competing process time to exit), 5s for other errors, capped at 5 min."
+            - code [ref=f3e1404]: destroy()
+            - text: cancels any pending timer so intentional shutdowns don't re-enter the loop.
+            - code [ref=f3e1405]: MessagingGateway.onSessionEvent
+            - text: also now logs a
+            - code [ref=f3e1406]: warn
+            - text: (
+            - code [ref=f3e1407]: adapter_not_connected
+            - text: ) instead of silently continuing, so future disconnects surface immediately in
+            - code [ref=f3e1408]: messaging-gateway.log
+            - text: . PR
+            - link "#366" [ref=f3e1409] [cursor=pointer]:
+              - /url: https://github.com/craft-ai-agents/craft-agents/pull/366
+            - text: . (
+            - code [ref=f3e1410]: 28f1082d
+            - text: )
+        - listitem [ref=f3e1411]:
+          - paragraph [ref=f3e1412]:
+            - strong [ref=f3e1413]: WhatsApp voice messages / audio attachments now delivered
+            - text: — WhatsApp worker was silently dropping audio attachments instead of forwarding them to sessions. The worker now emits audio/media attachments correctly. Closes
+            - link "#719" [ref=f3e1414] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/719
+            - text: . (
+            - code [ref=f3e1415]: 84d6d0fd
+            - text: )
+        - listitem [ref=f3e1416]:
+          - paragraph [ref=f3e1417]:
+            - strong [ref=f3e1418]:
+              - code [ref=f3e1419]: source_test
+              - text: forwards OAuth/bearer tokens to the MCP probe
+            - text: — Connection probe was reporting
+            - code [ref=f3e1420]: invalid_token
+            - text: for OAuth MCP sources whose live runtime succeeded with the same source —
+            - code [ref=f3e1421]: source_test
+            - text: "wasn't passing the access token to the probe. Fixed: the access token is now forwarded so the probe matches live-runtime auth. Closes"
+            - link "#720" [ref=f3e1422] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/720
+            - text: . (
+            - code [ref=f3e1423]: 0dd6eeef
+            - text: )
+        - listitem [ref=f3e1424]:
+          - paragraph [ref=f3e1425]:
+            - strong [ref=f3e1426]: Telegram permission buttons idempotent + clear keyboard on resolution
+            - text: — Permission buttons could double-fire on rapid taps; the inline keyboard also persisted after the permission was resolved. Buttons are now idempotent and the keyboard is cleared once the permission is granted/denied. Closes
+            - link "#726" [ref=f3e1427] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/726
+            - text: . (
+            - code [ref=f3e1428]: 9340b2b5
+            - text: )
+        - listitem [ref=f3e1429]:
+          - paragraph [ref=f3e1430]:
+            - strong [ref=f3e1431]:
+              - text: Model picker exposes connection switcher on empty session for single-model
+              - code [ref=f3e1432]: pi_compat
+              - text: default
+            - text: — When a workspace's default connection was a
+            - code [ref=f3e1433]: pi_compat
+            - text: connection with only one model, the model picker hid the connection switcher entirely, making it impossible to switch providers from an empty session. The picker now exposes the connection switcher even in this case. Closes
+            - link "#727" [ref=f3e1434] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/727
+            - text: . (
+            - code [ref=f3e1435]: 7faf9fc4
+            - text: )
+        - listitem [ref=f3e1436]:
+          - paragraph [ref=f3e1437]:
+            - strong [ref=f3e1438]: "Windows build: sparse-checkout cone mode + illegal-character filename rename"
+            - text: "— Two issues blocking Windows CI: (a) sparse-checkout was using non-cone mode, which doesn't apply on Windows; switched to cone mode. (b)"
+            - code [ref=f3e1439]: "Hermes - Anna: thinking.pdf"
+            - text: from the project-evolution archive contained
+            - code [ref=f3e1440]: ":"
+            - text: ", illegal on Windows; renamed. Project-evolution PDFs are also excluded from the Windows checkout entirely. ("
+            - code [ref=f3e1441]: 5cc83b86
+            - text: ","
+            - code [ref=f3e1442]: bf187448
+            - text: ","
+            - code [ref=f3e1443]: "28741005"
+            - text: )
+        - listitem [ref=f3e1444]:
+          - paragraph [ref=f3e1445]:
+            - strong [ref=f3e1446]: Compact-mode polish (multi-commit)
+            - text: "— A series of small fixes uncovered during compact-mode bring-up: React #300 (Maximum update depth) when toggling"
+            - code [ref=f3e1447]: isCompact
+            - text: on resize (
+            - code [ref=f3e1448]: 227f3486
+            - text: ); new-chat FAB pins to viewport bottom via portal so
+            - code [ref=f3e1449]: "position: fixed"
+            - text: resolves correctly, and is hidden when a chat is open (
+            - code [ref=f3e1450]: 406ece09
+            - text: ","
+            - code [ref=f3e1451]: 3ce4ffb3
+            - text: ); PanelHeader title centered across full panel width (
+            - code [ref=f3e1452]: 7d81e6a7
+            - text: ); polish on toggles + topbar sizing for narrow viewports (
+            - code [ref=f3e1453]: 060ae0d1
+            - text: ); compact mobile header controls polish (
+            - code [ref=f3e1454]: 74c52244
+            - text: ).
+        - listitem [ref=f3e1455]:
+          - paragraph [ref=f3e1456]:
+            - strong [ref=f3e1457]: "AppMenu: drop history bridge + Keyboard Shortcuts row in compact"
+            - text: — The menu had a history bridge that rolled back menu navigations on back-button press; removed (
+            - code [ref=f3e1458]: 390d4eeb
+            - text: ). The Keyboard Shortcuts row was also dropped from the mobile menu since it's irrelevant on touch (
+            - code [ref=f3e1459]: b38b1c05
+            - text: ).
+        - listitem [ref=f3e1460]:
+          - paragraph [ref=f3e1461]:
+            - strong [ref=f3e1462]: "Docs: correct path to Mid-stream sends setting"
+            - text: — Documentation referenced an outdated path. Fixed. (
+            - code [ref=f3e1463]: 97f58dec
+            - text: )
+      - heading "Breaking Changes" [level=2] [ref=f3e1464]
+      - list [ref=f3e1465]:
+        - listitem [ref=f3e1466]:
+          - text: None. All changes are backward-compatible. NEW DOCKER IMAGE ->
+          - link "ghcr.io/craft-ai-agents/craft-agents-server" [ref=f3e1467] [cursor=pointer]:
+            - /url: http://ghcr.io/craft-ai-agents/craft-agents-server
+      - heading "Notes" [level=2] [ref=f3e1468]
+      - list [ref=f3e1469]:
+        - listitem [ref=f3e1470]:
+          - paragraph [ref=f3e1471]:
+            - strong [ref=f3e1472]: External contributors in this release
+            - text: ":"
+          - list [ref=f3e1473]:
+            - listitem [ref=f3e1474]:
+              - strong [ref=f3e1475]:
+                - link "@guillaumegay13" [ref=f3e1476] [cursor=pointer]:
+                  - /url: https://github.com/guillaumegay13
+                - text: (Guillaume Gay)
+              - text: — Manifest provider preset (originally
+              - link "lukilabs/craft-agents-oss#731" [ref=f3e1477] [cursor=pointer]:
+                - /url: https://github.com/lukilabs/craft-agents-oss/pull/731
+              - text: ", lifted as"
+              - link "#367" [ref=f3e1478] [cursor=pointer]:
+                - /url: https://github.com/craft-ai-agents/craft-agents/pull/367
+              - text: )
+        - listitem [ref=f3e1479]:
+          - paragraph [ref=f3e1480]:
+            - strong [ref=f3e1481]: Repo namespace migration
+            - text: ": GHCR images and workflow references moved from"
+            - code [ref=f3e1482]: lukilabs
+            - text: →
+            - code [ref=f3e1483]: craft-ai-agents
+            - text: . If you pull
+            - code [ref=f3e1484]: ghcr.io/lukilabs/craft-agents-server
+            - text: ", switch to"
+            - code [ref=f3e1485]: ghcr.io/craft-ai-agents/craft-agents-server
+            - text: . The OSS issue tracker stays at
+            - code [ref=f3e1486]: lukilabs/craft-agents-oss
+            - text: (issues
+            - code [ref=f3e1487]: "#719"
+            - text: ","
+            - code [ref=f3e1488]: "#720"
+            - text: ","
+            - code [ref=f3e1489]: "#726"
+            - text: ","
+            - code [ref=f3e1490]: "#727"
+            - text: linked above).
+        - listitem [ref=f3e1491]:
+          - paragraph [ref=f3e1492]:
+            - strong [ref=f3e1493]: Mobile/compact mode
+            - text: ": triggers automatically when the shell width drops below 768px, regardless of whether you're in the desktop app or WebUI. Resize a desktop window narrower to try it."
+        - listitem [ref=f3e1494]:
+          - paragraph [ref=f3e1495]:
+            - strong [ref=f3e1496]: Token-estimator change
+            - text: ": the new density-aware spill threshold should keep most context-window crashes from happening in the first place. If you previously saw"
+            - code [ref=f3e1497]: "invalid_request: remove attachments"
+            - text: after a
+            - code [ref=f3e1498]: Read
+            - text: of a binary-heavy file without an actual attachment, that error is gone — context overflows now route to a separate "Context Window Exceeded" error pointing to
+            - code [ref=f3e1499]: /compact
+            - text: .
+      - separator [ref=f3e1500]
+      - heading "v0.9.2 — OAuth refresh ordering, Pi system prompt persistence, cross-machine spawn guard, i18n key restore, source_test/streaming/browser hotfixes" [level=1] [ref=f3e1501]
+      - heading "Bug Fixes" [level=2] [ref=f3e1502]
+      - list [ref=f3e1503]:
+        - listitem [ref=f3e1504]:
+          - paragraph [ref=f3e1505]:
+            - strong [ref=f3e1506]: OAuth tokens silently refresh before agent build
+            - text: — On cold sessions,
+            - code [ref=f3e1507]: SessionManager.sendMessage
+            - text: ran
+            - code [ref=f3e1508]: getOrCreateAgent
+            - text: →
+            - code [ref=f3e1509]: buildServersFromSources
+            - text: →
+            - code [ref=f3e1510]: refreshOAuthTokensIfNeeded
+            - text: in that order. The first build saw stale tokens, emitted
+            - code [ref=f3e1511]: AUTH_REQUIRED
+            - text: ", and the wrapper called"
+            - code [ref=f3e1512]: markSourceNeedsReauth
+            - text: — flipping
+            - code [ref=f3e1513]: isAuthenticated=false
+            - text: "on disk. The user saw a brief \"needs auth\" UI flicker before the late refresh restored state. Three coordinated changes: (1) refresh now runs"
+            - emphasis [ref=f3e1514]: before
+            - code [ref=f3e1515]: getOrCreateAgent
+            - text: so its internal cold-session build sees fresh tokens, the old
+            - code [ref=f3e1516]: refreshOAuthTokensIfNeeded
+            - text: (refresh + conditional rebuild) is gone, and a single post-refresh build is the only build per send; (2)
+            - code [ref=f3e1517]: buildServersFromSources
+            - text: reclassifies
+            - code [ref=f3e1518]: AUTH_REQUIRED
+            - text: →
+            - code [ref=f3e1519]: TOKEN_EXPIRED
+            - text: when the credential is merely expired-but-refreshable and skips
+            - code [ref=f3e1520]: markSourceNeedsReauth
+            - text: in that case (prevents flicker if refresh is skipped, e.g. during cooldown); (3)
+            - code [ref=f3e1521]: TokenRefreshManager.ensureFreshToken
+            - text: failure branches now mirror
+            - code [ref=f3e1522]: markSourceNeedsReauth
+            - text: "'s disk write to"
+            - code [ref=f3e1523]: source.config
+            - text: in memory, so
+            - code [ref=f3e1524]: isSourceUsable()
+            - text: returns false and the failed source is excluded from
+            - code [ref=f3e1525]: intendedSlugs
+            - text: by the post-refresh build. Closes
+            - link "#710" [ref=f3e1526] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/710
+            - text: . (
+            - code [ref=f3e1527]: 347820ab
+            - text: )
+        - listitem [ref=f3e1528]:
+          - paragraph [ref=f3e1529]:
+            - strong [ref=f3e1530]: Pi backend silently dropped the Craft system prompt
+            - text: — Pi SDK 0.72.1's
+            - code [ref=f3e1531]: session.prompt()
+            - text: wipes
+            - code [ref=f3e1532]: agent.state.systemPrompt
+            - text: back to
+            - code [ref=f3e1533]: _baseSystemPrompt
+            - text: on every turn (
+            - code [ref=f3e1534]: agent-session.js
+            - text: ~L796), so
+            - code [ref=f3e1535]: pi-agent-server
+            - text: "'s direct assignment was silently dropped — taking preferences/notes,"
+            - code [ref=f3e1536]: <session_state>
+            - text: ","
+            - code [ref=f3e1537]: <sources>
+            - text: ", working directory, and all other Craft-built system-prompt content with it. The Anthropic backend was unaffected because it uses the SDK's"
+            - code [ref=f3e1538]: "append:"
+            - text: option, which the Claude SDK appends verbatim. New
+            - code [ref=f3e1539]: applySystemPromptOverride()
+            - text: helper stamps
+            - strong [ref=f3e1540]: all three
+            - text: SDK private fields (
+            - code [ref=f3e1541]: state.systemPrompt
+            - text: ","
+            - code [ref=f3e1542]: _baseSystemPrompt
+            - text: ","
+            - code [ref=f3e1543]: _rebuildSystemPrompt
+            - text: ) so the prompt survives both per-turn resets and tool-change rebuilds. Pattern matches
+            - link [ref=f3e1544] [cursor=pointer]:
+              - /url: https://github.com/openclaw/openclaw/blob/main/src/agents/pi-embedded-runner/system-prompt.ts
+              - text: OpenClaw's
+              - code [ref=f3e1545]: applySystemPromptOverrideToSession
+            - text: — same SDK, same constraint, validated workaround until upstream exposes a public API. Wired into both call sites that previously did
+            - code [ref=f3e1546]: state.systemPrompt = …
+            - text: ": the per-turn"
+            - code [ref=f3e1547]: prompt
+            - text: handler and the ephemeral
+            - code [ref=f3e1548]: queryLlm
+            - text: session. Regression test asserts all three fields are stamped (catches the original single-field regression and any future drop of one of the writes). Closes
+            - link "#648" [ref=f3e1549] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/648
+            - text: . (
+            - code [ref=f3e1550]: 13f6e63e
+            - text: )
+        - listitem [ref=f3e1551]:
+          - paragraph [ref=f3e1552]:
+            - strong [ref=f3e1553]: SDK spawn guard against stale branch cwd from cross-machine imports
+            - text: — The SDK's
+            - code [ref=f3e1554]: Claude Code native binary not found at …
+            - text: error is a misleading wrapper around
+            - code [ref=f3e1555]: spawn ENOENT
+            - text: ", which fires whenever the subprocess"
+            - code [ref=f3e1556]: cwd
+            - text: is also missing — not just when the binary is missing. Cross-machine session imports preserve
+            - code [ref=f3e1557]: branchInfo.sdkCwd
+            - text: from the source machine, so a
+            - emphasis [ref=f3e1558]: Send to Workspace
+            - text: recipient hits this error on first chat even though the bundle is fine. A pre-spawn guard now catches stale
+            - code [ref=f3e1559]: branchFromSdkCwd
+            - text: in
+            - code [ref=f3e1560]: chatImpl()
+            - text: and routes through the same branch-fallback recovery the post-failure path already uses (parent summary injection preserved). A new
+            - code [ref=f3e1561]: onBranchForkInvalidated
+            - text: callback persists all four fork fields atomically — fixing a pre-existing bug where
+            - code [ref=f3e1562]: onSdkSessionIdCleared
+            - text: only persisted
+            - code [ref=f3e1563]: sdkSessionId
+            - text: ", leaving stale branch fields on disk to reload on next launch. ENOENT classification was lifted out of the"
+            - code [ref=f3e1564]: if (isProcessError)
+            - text: gate (it never fired for the SDK wrapper, which is a
+            - code [ref=f3e1565]: ReferenceError
+            - text: ", not a process-exit error); now it disambiguates"
+            - code [ref=f3e1566]: binary
+            - text: vs
+            - code [ref=f3e1567]: cwd
+            - text: vs
+            - code [ref=f3e1568]: unknown
+            - text: causes, surfaces typed
+            - code [ref=f3e1569]: sdk_binary_missing
+            - text: /
+            - code [ref=f3e1570]: sdk_cwd_missing
+            - text: errors after retry exhaustion, and keeps the 2-second auto-retry for the auto-update bundle-swap window. Helpers extracted to
+            - code [ref=f3e1571]: agent/spawn-helpers.ts
+            - text: for unit testing (34 new tests; existing branching suite extended with v2 callback coverage). (
+            - code [ref=f3e1572]: 12166f4a
+            - text: ","
+            - code [ref=f3e1573]: e40a3801
+            - text: )
+        - listitem [ref=f3e1574]:
+          - paragraph [ref=f3e1575]:
+            - strong [ref=f3e1576]:
+              - code [ref=f3e1577]: source_test
+              - code [ref=f3e1578]: lastTestedAt
+              - text: now persists — UI no longer always shows "Never"
+            - text: — The
+            - code [ref=f3e1579]: source_test
+            - text: handler wrote an ISO string (
+            - code [ref=f3e1580]: new Date().toISOString()
+            - text: ); the Zod validator in
+            - code [ref=f3e1581]: validators.ts
+            - text: enforces
+            - code [ref=f3e1582]: z.number().int().min(0)
+            - text: ", so the string was silently stripped before persist. A second hidden mismatch compounded it:"
+            - code [ref=f3e1583]: session-tools-core/src/types.ts
+            - text: declared
+            - code [ref=f3e1584]: "lastTestedAt?: string"
+            - text: while the canonical shared type already used
+            - code [ref=f3e1585]: number
+            - text: . Fixed by switching the handler to
+            - code [ref=f3e1586]: Date.now()
+            - text: and aligning the local type to
+            - code [ref=f3e1587]: number
+            - text: . Storage, validator, and UI (
+            - code [ref=f3e1588]: formatRelativeTime
+            - text: ) already expected a millisecond timestamp — no other files needed changing. Closes
+            - link "#708" [ref=f3e1589] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/708
+            - text: . (
+            - code [ref=f3e1590]: d4427cac
+            - text: )
+        - listitem [ref=f3e1591]:
+          - paragraph [ref=f3e1592]:
+            - strong [ref=f3e1593]: Assistant response content no longer disappears after completion
+            - text: —
+            - code [ref=f3e1594]: handleTextComplete
+            - text: unconditionally overwrote the streaming-accumulated message content with
+            - code [ref=f3e1595]: event.text
+            - text: from the SDK completion event. If
+            - code [ref=f3e1596]: event.text
+            - text: arrived empty (SDK race condition or intermediate event without text), the message bubble went blank. Now destructures
+            - code [ref=f3e1597]: streaming
+            - text: "from state and applies a fallback chain in both the update-existing and create-new message paths:"
+            - code [ref=f3e1598]: event.text || streaming?.content || existingMsg?.content || ''
+            - text: . Closes
+            - link "#709" [ref=f3e1599] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/709
+            - text: . (
+            - code [ref=f3e1600]: d4427cac
+            - text: )
+        - listitem [ref=f3e1601]:
+          - paragraph [ref=f3e1602]:
+            - strong [ref=f3e1603]: Browser toggle now fully disables system prompt section and prerequisite rule
+            - text: — Three independent sub-problems gated by the same
+            - code [ref=f3e1604]: getBrowserToolEnabled()
+            - text: toggle that was already wired to
+            - code [ref=f3e1605]: session-scoped-tools.ts
+            - text: but nowhere else. (a)
+            - strong [ref=f3e1606]: "System prompt:"
+            - code [ref=f3e1607]: system.ts
+            - text: unconditionally injected the
+            - code [ref=f3e1608]: "## Browser Tools"
+            - text: section and its "calls are blocked until you read
+            - link "browser-tools.md" [ref=f3e1609] [cursor=pointer]:
+              - /url: http://browser-tools.md
+            - text: "\" warning regardless of the setting — now gated. (b)"
+            - strong [ref=f3e1610]: "Prerequisite matcher too broad:"
+            - code [ref=f3e1611]: prerequisite-manager.ts
+            - text: used
+            - code [ref=f3e1612]: isBrowserToolNameOrAlias()
+            - text: which matched any tool named
+            - code [ref=f3e1613]: browser_tool
+            - text: ", including external MCP tools like"
+            - code [ref=f3e1614]: mcp__playwright__browser_tool
+            - text: — narrowed to session-scoped canonical names only (
+            - code [ref=f3e1615]: "'browser_tool'"
+            - text: and
+            - code [ref=f3e1616]: "'mcp__session__browser_tool'"
+            - text: ). (c)
+            - strong [ref=f3e1617]: "Rule always registered:"
+            - text: the prerequisite rule was registered even when the feature was disabled, causing external browser tools to be incorrectly blocked —
+            - code [ref=f3e1618]: getBrowserToolEnabled()
+            - text: check now makes the rule a no-op when the toggle is off. Closes
+            - link "#711" [ref=f3e1619] [cursor=pointer]:
+              - /url: https://github.com/lukilabs/craft-agents-oss/issues/711
+            - text: . (
+            - code [ref=f3e1620]: d4427cac
+            - text: )
+      - heading "Improvements" [level=2] [ref=f3e1621]
+      - list [ref=f3e1622]:
+        - listitem [ref=f3e1623]:
+          - strong [ref=f3e1624]: Spawn-guard defensive cleanup simplified per SOLID/KISS review
+          - text: — Rolled back over-engineering identified after the spawn-ENOENT fix while preserving the load-bearing bits (pre-spawn guard, atomic
+          - code [ref=f3e1625]: onBranchForkInvalidated
+          - text: ", working ENOENT classification,"
+          - code [ref=f3e1626]: .app
+          - text: "-bundle-aware regex). Inlined"
+          - code [ref=f3e1627]: pickFirstExistingDirectory
+          - text: and
+          - code [ref=f3e1628]: probeEnoentPaths
+          - text: ; deleted
+          - code [ref=f3e1629]: classifyEnoentCause
+          - text: — the 4-line directory loop and 2-line probe didn't earn their abstraction at single call sites. Collapsed the
+          - code [ref=f3e1630]: binary|cwd|unknown
+          - text: "trichotomy in the catch block to three plain steps: stale-cwd-with-branch → recovery, first attempt → 2 s retry, retry exhausted → typed error pointed at the more likely cause (removes 5 separate"
+          - code [ref=f3e1631]: enoentCause
+          - text: branches). Dropped the 5-value
+          - code [ref=f3e1632]: reason
+          - text: union on
+          - code [ref=f3e1633]: recoverFromStaleBranchFork
+          - text: to a single
+          - code [ref=f3e1634]: isPreSpawn
+          - text: boolean — status text was the only differentiator. Promoted
+          - code [ref=f3e1635]: lastResolvedCwd
+          - text: /
+          - code [ref=f3e1636]: lastResolvedBinaryPath
+          - text: from instance fields to
+          - code [ref=f3e1637]: chatImpl
+          - text: "-scoped locals (visible to the inner catch via closure) — avoids stale-state risk across"
+          - code [ref=f3e1638]: chat()
+          - text: invocations.
+          - code [ref=f3e1639]: ErrorCode
+          - text: centralized in
+          - code [ref=f3e1640]: "@craft-agent/core/types"
+          - text: via re-export from
+          - code [ref=f3e1641]: errors.ts
+          - text: . Net −206 lines, no behavior change; 608 agent tests + 102 server-core tests pass. (
+          - code [ref=f3e1642]: e40a3801
+          - text: )
+      - heading "Breaking Changes" [level=2] [ref=f3e1643]
+      - list [ref=f3e1644]:
+        - listitem [ref=f3e1645]: None. All fixes are backward-compatible.
+      - heading "Notes" [level=2] [ref=f3e1646]
+      - list [ref=f3e1647]:
+        - listitem [ref=f3e1648]:
+          - text: The OAuth refresh fix changes the order of operations on every send-message — refresh now runs once before any server build instead of after a stale build. If you operate API/MCP sources with custom OAuth flows, the visible behavior change is fewer disk writes per refresh cycle and no transient
+          - code [ref=f3e1649]: needs_auth
+          - text: flicker on cold sessions. No config or migration is required.
+        - listitem [ref=f3e1650]:
+          - text: Cross-machine "Send to Workspace" recipients who previously hit
+          - emphasis [ref=f3e1651]: Claude Code native binary not found at …
+          - text: on first chat in an imported session will now succeed silently — the guard reroutes through the existing branch-fallback recovery and persists clean fork metadata for the next launch.
+    - generic [ref=f3e1654]:
+      - button "全部复制" [ref=f3e1655] [cursor=pointer]
+      - button "关闭 (Esc)" [ref=f3e1659] [cursor=pointer]

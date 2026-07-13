@@ -1,0 +1,243 @@
+- generic [ref=f3e2]:
+  - generic [ref=f3e7]:
+    - generic [ref=f3e9]:
+      - generic [ref=f3e10]:
+        - generic [ref=f3e11]:
+          - button "切换侧栏" [ref=f3e1663]
+          - button "Craft 菜单" [ref=f3e1664]
+        - generic [ref=f3e18]:
+          - button "返回" [ref=f3e1669]
+          - button "前进" [disabled]
+          - button "选择 Workspace" [ref=f3e1665] [cursor=pointer]:
+            - generic [ref=f3e21]:
+              - generic [ref=f3e22]: _
+              - generic [ref=f3e23]: _
+            - generic [ref=f3e24]: _chat
+      - generic [ref=f3e27]:
+        - button "添加面板" [ref=f3e28]
+        - button "帮助和文档" [ref=f3e30]
+    - generic [ref=f3e36]:
+      - generic [ref=f3e41]:
+        - button "新建会话" [ref=f3e44]
+        - navigation "Main navigation" [ref=f3e47]:
+          - generic [ref=f3e48]:
+            - button "所有会话 4" [ref=f3e49]:
+              - text: 所有会话
+              - generic [ref=f3e58]: "4"
+            - generic [ref=f3e61]:
+              - generic [ref=f3e63]:
+                - button [ref=f3e64]:
+                  - button "积压 0" [ref=f3e66]:
+                    - text: 积压
+                    - generic [ref=f3e72]: "0"
+                - button [ref=f3e73]:
+                  - button "待办 4" [ref=f3e75]:
+                    - text: 待办
+                    - generic [ref=f3e81]: "4"
+                - button [ref=f3e82]:
+                  - button "待审查 0" [ref=f3e84]:
+                    - text: 待审查
+                    - generic [ref=f3e91]: "0"
+                - button [ref=f3e92]:
+                  - button "完成 0" [ref=f3e94]:
+                    - text: 完成
+                    - generic [ref=f3e101]: "0"
+                - button [ref=f3e102]:
+                  - button "已取消 0" [ref=f3e104]:
+                    - text: 已取消
+                    - generic [ref=f3e111]: "0"
+              - status [ref=f3e112]
+              - generic [ref=f3e115]:
+                - button "已标记 0" [ref=f3e117]:
+                  - text: 已标记
+                  - generic [ref=f3e122]: "0"
+                - button [ref=f3e124]
+          - button [ref=f3e130]
+          - generic [ref=f3e141]:
+            - button "数据源 0" [ref=f3e142]:
+              - text: 数据源
+              - generic [ref=f3e153]: "0"
+            - navigation "Sub navigation" [ref=f3e156]:
+              - button "API 0" [ref=f3e160]:
+                - text: API
+                - generic [ref=f3e165]: "0"
+              - button "MCP 0" [ref=f3e168]:
+                - text: MCP
+                - generic [ref=f3e175]: "0"
+              - button "本地文件夹 0" [ref=f3e178]:
+                - text: 本地文件夹
+                - generic [ref=f3e182]: "0"
+          - button "技能 25" [ref=f3e184]:
+            - text: 技能
+            - generic [ref=f3e188]: "25"
+          - generic [ref=f3e189]:
+            - button "自动化 0" [ref=f3e190]:
+              - text: 自动化
+              - generic [ref=f3e199]: "0"
+            - navigation "Sub navigation" [ref=f3e202]:
+              - button "定时任务 0" [ref=f3e206]:
+                - text: 定时任务
+                - generic [ref=f3e211]: "0"
+              - button "事件触发 0" [ref=f3e214]:
+                - text: 事件触发
+                - generic [ref=f3e222]: "0"
+              - button "智能体 0" [ref=f3e225]:
+                - text: 智能体
+                - generic [ref=f3e230]: "0"
+          - button [ref=f3e234]
+          - button [ref=f3e240]
+      - generic [ref=f3e250]:
+        - heading "设置" [level=1] [ref=f3e1672]
+        - generic [ref=f3e1675]:
+          - button "应用 通知和更新" [ref=f3e1682]:
+            - generic [ref=f3e1684]:
+              - generic [ref=f3e1685]: 应用
+              - generic [ref=f3e1686]: 通知和更新
+          - button "AI 模型、思考、连接" [ref=f3e1701]:
+            - generic [ref=f3e1703]:
+              - generic [ref=f3e1704]: AI
+              - generic [ref=f3e1705]: 模型、思考、连接
+          - button "扩展 迁移的 Pi 扩展" [ref=f3e1719]:
+            - generic [ref=f3e1721]:
+              - generic [ref=f3e1722]: 扩展
+              - generic [ref=f3e1723]: 迁移的 Pi 扩展
+          - button "外观 主题、字体、工具图标" [ref=f3e1741]:
+            - generic [ref=f3e1743]:
+              - generic [ref=f3e1744]: 外观
+              - generic [ref=f3e1745]: 主题、字体、工具图标
+          - button "输入 发送键、拼写检查" [ref=f3e1759]:
+            - generic [ref=f3e1761]:
+              - generic [ref=f3e1762]: 输入
+              - generic [ref=f3e1763]: 发送键、拼写检查
+          - button "Workspace 名称、图标、Workspace 根目录" [ref=f3e1779]:
+            - generic [ref=f3e1781]:
+              - generic [ref=f3e1782]: Workspace
+              - generic [ref=f3e1783]: 名称、图标、Workspace 根目录
+          - button "权限 探索模式规则" [ref=f3e1798]:
+            - generic [ref=f3e1800]:
+              - generic [ref=f3e1801]: 权限
+              - generic [ref=f3e1802]: 探索模式规则
+          - button "标签 管理会话标签" [ref=f3e1817]:
+            - generic [ref=f3e1819]:
+              - generic [ref=f3e1820]: 标签
+              - generic [ref=f3e1821]: 管理会话标签
+          - button "Messaging 连接 Telegram、WhatsApp、飞书 / Lark" [ref=f3e1835]:
+            - generic [ref=f3e1837]:
+              - generic [ref=f3e1838]: Messaging
+              - generic [ref=f3e1839]: 连接 Telegram、WhatsApp、飞书 / Lark
+          - button "快捷键 键盘快捷键" [ref=f3e1853]:
+            - generic [ref=f3e1855]:
+              - generic [ref=f3e1856]: 快捷键
+              - generic [ref=f3e1857]: 键盘快捷键
+          - button "偏好 用户偏好" [ref=f3e1873]:
+            - generic [ref=f3e1875]:
+              - generic [ref=f3e1876]: 偏好
+              - generic [ref=f3e1877]: 用户偏好
+      - generic [ref=f3e1960]:
+        - generic [ref=f3e1961]:
+          - heading "扩展" [level=1] [ref=f3e1965]
+          - button [ref=f3e1967]
+        - generic [ref=f3e1976]:
+          - generic [ref=f3e1977]:
+            - generic [ref=f3e1979]:
+              - heading "运行时" [level=3] [ref=f3e1980]
+              - paragraph [ref=f3e1981]: 管理活动会话共享的扩展运行时。
+            - generic [ref=f3e1983]:
+              - generic [ref=f3e1984]:
+                - generic [ref=f3e1985]: 重新加载扩展
+                - generic [ref=f3e1986]: 无需重启 Craft 即可重新加载扩展代码和 GUI。
+              - button "重新加载扩展" [ref=f3e1987]
+          - generic [ref=f3e1988]:
+            - generic [ref=f3e1989]:
+              - heading "智能体" [level=3] [ref=f3e1990]
+              - generic [ref=f3e1991]:
+                - generic [ref=f3e1992]:
+                  - generic [ref=f3e1993]:
+                    - generic [ref=f3e1994]: Pi remote
+                    - generic [ref=f3e1995]: Process-level remote service with runtime and session routing.
+                  - switch [checked] [ref=f3e1996]
+                - generic [ref=f3e1998]:
+                  - generic [ref=f3e1999]:
+                    - generic [ref=f3e2000]: Subagent
+                    - generic [ref=f3e2001]: 子智能体管理与命令界面。
+                  - switch [checked] [ref=f3e2002]
+                - generic [ref=f3e2004]:
+                  - generic [ref=f3e2005]:
+                    - generic [ref=f3e2006]: Ambiguity dictionary
+                    - generic [ref=f3e2007]: Reusable clarification terms for ambiguous prompts.
+                  - switch [checked] [ref=f3e2008]
+                - generic [ref=f3e2010]:
+                  - generic [ref=f3e2011]:
+                    - generic [ref=f3e2012]: Auto continue OpenAI errors
+                    - generic [ref=f3e2013]: OpenAI 风格提供商错误的自动重试。
+                  - switch [checked] [ref=f3e2014]
+                - generic [ref=f3e2016]:
+                  - button "Yourself 后台自摘要智能体与状态。" [ref=f3e2017] [cursor=pointer]:
+                    - generic [ref=f3e2018]: Yourself
+                    - generic [ref=f3e2022]: 后台自摘要智能体与状态。
+                  - switch [checked] [ref=f3e2023]
+            - generic [ref=f3e2024]:
+              - heading "界面" [level=3] [ref=f3e2025]
+              - generic [ref=f3e2026]:
+                - generic [ref=f3e2027]:
+                  - generic [ref=f3e2028]:
+                    - generic [ref=f3e2029]: Ask user
+                    - generic [ref=f3e2030]: Frontend question dialogs for extension-driven user input.
+                  - switch [checked] [ref=f3e2031]
+                - generic [ref=f3e2033]:
+                  - generic [ref=f3e2034]:
+                    - generic [ref=f3e2035]: Plan mode
+                    - generic [ref=f3e2036]: 讨论与计划模式命令、小组件和计划渲染。
+                  - switch [checked] [ref=f3e2037]
+            - generic [ref=f3e2038]:
+              - heading "自动化" [level=3] [ref=f3e2039]
+              - generic [ref=f3e2041]:
+                - button "Prompt automation 定时 prompt 任务和自动化小组件。" [ref=f3e2042] [cursor=pointer]:
+                  - generic [ref=f3e2043]: Prompt automation
+                  - generic [ref=f3e2047]: 定时 prompt 任务和自动化小组件。
+                - switch [checked] [ref=f3e2048]
+            - generic [ref=f3e2049]:
+              - heading "记忆" [level=3] [ref=f3e2050]
+              - generic [ref=f3e2052]:
+                - button "Repository memory 后台仓库记忆生成与状态。" [ref=f3e2053] [cursor=pointer]:
+                  - generic [ref=f3e2054]: Repository memory
+                  - generic [ref=f3e2058]: 后台仓库记忆生成与状态。
+                - switch [checked] [ref=f3e2059]
+            - generic [ref=f3e2060]:
+              - heading "搜索" [level=3] [ref=f3e2061]
+              - generic [ref=f3e2063]:
+                - generic [ref=f3e2064]:
+                  - generic [ref=f3e2065]: Browser
+                  - generic [ref=f3e2066]: Browser tools and session integration.
+                - switch [checked] [ref=f3e2067]
+            - generic [ref=f3e2068]:
+              - heading "Shell" [level=3] [ref=f3e2069]
+              - generic [ref=f3e2070]:
+                - generic [ref=f3e2071]:
+                  - generic [ref=f3e2072]:
+                    - generic [ref=f3e2073]: PowerShell preflight
+                    - generic [ref=f3e2074]: PowerShell 命令预检。
+                  - switch [checked] [ref=f3e2075]
+                - generic [ref=f3e2077]:
+                  - generic [ref=f3e2078]:
+                    - generic [ref=f3e2079]: PowerShell UTF-8
+                    - generic [ref=f3e2080]: PowerShell UTF-8 兼容辅助。
+                  - switch [checked] [ref=f3e2081]
+            - generic [ref=f3e2082]:
+              - heading "诊断" [level=3] [ref=f3e2083]
+              - generic [ref=f3e2084]:
+                - generic [ref=f3e2085]:
+                  - generic [ref=f3e2086]:
+                    - generic [ref=f3e2087]: Provider payload capture
+                    - generic [ref=f3e2088]: 提供商请求捕获诊断。
+                  - switch [checked] [ref=f3e2089]
+                - generic [ref=f3e2091]:
+                  - button "Trace audit 后台追踪审查子智能体与审查流程。" [ref=f3e2092] [cursor=pointer]:
+                    - generic [ref=f3e2093]: Trace audit
+                    - generic [ref=f3e2097]: 后台追踪审查子智能体与审查流程。
+                  - switch [checked] [ref=f3e2098]
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=f3e2101]:
+        - button "Close toast" [ref=f3e2102] [cursor=pointer]
+        - generic [ref=f3e2106]: 无法重新加载 Pi 扩展

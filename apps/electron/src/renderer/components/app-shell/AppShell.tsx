@@ -75,6 +75,7 @@ import { PanelStackContainer } from "./PanelStackContainer"
 import { CompactSessionListFilter } from "./CompactSessionListFilter"
 import type { ChatDisplayHandle } from "./ChatDisplay"
 import { LeftSidebar, type LinkItem as LeftSidebarLinkItem } from "./LeftSidebar"
+import { ExtensionContributionZone } from "@/components/extensions/ExtensionContributionZone"
 import { useSessionSelectionStore } from "@/hooks/useSession"
 import { createInitialState } from "@/hooks/useMultiSelect"
 import { ensureSessionMessagesLoadedAtom, sessionAtomFamily } from "@/atoms/sessions"
@@ -2235,6 +2236,8 @@ function AppShellContent({
           onToggleFocusMode={() => setIsSidebarAndNavigatorHidden(prev => !prev)}
           onAddSessionPanel={() => handleNewChat(true)}
           onAddBrowserPanel={() => { void handleNewBrowserWindow() }}
+          leftExtensionSlot={effectiveSessionId ? <ExtensionContributionZone sessionId={effectiveSessionId} surface="window.topLeft" /> : undefined}
+          rightExtensionSlot={effectiveSessionId ? <ExtensionContributionZone sessionId={effectiveSessionId} surface="window.topRight" /> : undefined}
           isCompact={isAutoCompact}
         />
 
@@ -2294,6 +2297,8 @@ function AppShellContent({
                 {/* Primary Nav: All Sessions (▸ Statuses, Flagged, Archived), Labels | Sources, Skills | Settings */}
                 {/* pb-4 provides clearance so the last item scrolls above the mask-fade-bottom gradient */}
                 <div className="flex-1 overflow-y-auto min-h-0 mask-fade-bottom pb-4">
+                {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="sidebar.header" />}
+                {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="navigation.item" />}
                 <LeftSidebar
                   isCollapsed={false}
                   getItemProps={getSidebarItemProps}
@@ -2530,6 +2535,8 @@ function AppShellContent({
                     },
                   ]}
                 />
+                {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="sidebar.section" />}
+                {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="sidebar.footer" />}
                 {/* Agent Tree: Hierarchical list of agents */}
                 {/* Agents section removed */}
                 </div>

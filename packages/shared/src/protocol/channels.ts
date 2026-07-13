@@ -296,6 +296,8 @@ export const RPC_CHANNELS = {
     SET_SETTINGS: 'piExtensions:setSettings',
     UPDATE_SETTINGS: 'piExtensions:updateSettings',
     GET_CATALOG: 'piExtensions:getCatalog',
+    PATCH_EXTENSION_CONFIG: 'piExtensions:patchExtensionConfig',
+    RELOAD: 'piExtensions:reload',
     // 逐扩展启停状态（读写 ~/.pi/agent/settings.json 的 extensions.<name>.enabled）
     GET_EXTENSION_STATES: 'piExtensions:getExtensionStates',
     SET_EXTENSION_ENABLED: 'piExtensions:setExtensionEnabled',

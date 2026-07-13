@@ -300,6 +300,10 @@ export interface TurnCardProps {
   onOpenDetails?: () => void
   /** Callback to open individual activity details in Monaco */
   onOpenActivityDetails?: (activity: ActivityItem) => void
+  /** Host slot for wrapping or replacing a rendered tool activity. */
+  renderActivity?: (activity: ActivityItem, builtIn: React.ReactNode) => React.ReactNode
+  /** Host slot for wrapping or replacing a rendered message response. */
+  renderMessage?: (messageId: string, builtIn: React.ReactNode) => React.ReactNode
   /** Callback to open all edits/writes in multi-file diff view */
   onOpenMultiFileDiff?: () => void
   /** Whether this turn has any Edit or Write activities */
@@ -1199,13 +1203,14 @@ interface ActivityGroupRowProps {
   sessionFolderPath?: string
   /** Display mode: 'detailed' shows all info, 'informative' hides MCP/API names and params */
   displayMode?: 'informative' | 'detailed'
+  renderActivity?: (activity: ActivityItem, builtIn: React.ReactNode) => React.ReactNode
 }
 
 /**
  * Renders a Task subagent with its child activities grouped together.
  * Provides visual containment and collapsible children.
  */
-function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExpandedGroupsChange, onOpenActivityDetails, animationIndex = 0, sessionFolderPath, displayMode = 'detailed' }: ActivityGroupRowProps) {
+function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExpandedGroupsChange, onOpenActivityDetails, animationIndex = 0, sessionFolderPath, displayMode = 'detailed', renderActivity }: ActivityGroupRowProps) {
   // Use local state if no controlled state provided
   const [localExpandedGroups, setLocalExpandedGroups] = useState<Set<string>>(new Set())
   const expandedGroups = externalExpandedGroups ?? localExpandedGroups
@@ -1339,13 +1344,19 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
                   transition={{ delay: idx * 0.02 }}
                   className="ml-[-4px]"
                 >
-                  <ActivityRow
+                  {renderActivity ? renderActivity(child, <ActivityRow
                     activity={child}
                     onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(child) : undefined}
                     isLastChild={idx === group.children.length - 1}
                     sessionFolderPath={sessionFolderPath}
                     displayMode={displayMode}
-                  />
+                  />) : <ActivityRow
+                    activity={child}
+                    onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(child) : undefined}
+                    isLastChild={idx === group.children.length - 1}
+                    sessionFolderPath={sessionFolderPath}
+                    displayMode={displayMode}
+                  />}
                 </motion.div>
               ))}
             </div>
@@ -2776,6 +2787,8 @@ export const TurnCard = React.memo(function TurnCard({
   onPopOut,
   onOpenDetails,
   onOpenActivityDetails,
+  renderActivity,
+  renderMessage,
   onOpenMultiFileDiff,
   hasEditOrWriteActivities,
   todos,
@@ -2901,6 +2914,8 @@ export const TurnCard = React.memo(function TurnCard({
     () => allSortedActivities.filter(a => a.type !== 'plan'),
     [allSortedActivities]
   )
+  const renderMessageNode = (messageId: string | undefined, builtIn: React.ReactNode) =>
+    messageId && renderMessage ? renderMessage(messageId, builtIn) : builtIn
 
   // Check if we have any Task subagents - if so, use grouped view
   const hasTaskSubagents = useMemo(
@@ -3056,6 +3071,7 @@ export const TurnCard = React.memo(function TurnCard({
                           animationIndex={index}
                           sessionFolderPath={sessionFolderPath}
                           displayMode={displayMode}
+                          renderActivity={renderActivity}
                         />
                       ) : (
                         <motion.div
@@ -3068,12 +3084,17 @@ export const TurnCard = React.memo(function TurnCard({
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: hasUserToggled.current ? (index < SIZE_CONFIG.staggeredAnimationLimit ? index * 0.03 : SIZE_CONFIG.staggeredAnimationLimit * 0.03) : 0 }}
                         >
-                          <ActivityRow
+                          {renderActivity ? renderActivity(item, <ActivityRow
                             activity={item}
                             onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(item) : undefined}
                             sessionFolderPath={sessionFolderPath}
                             displayMode={displayMode}
-                          />
+                          />) : <ActivityRow
+                            activity={item}
+                            onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(item) : undefined}
+                            sessionFolderPath={sessionFolderPath}
+                            displayMode={displayMode}
+                          />}
                         </motion.div>
                       )
                     ))
@@ -3091,13 +3112,19 @@ export const TurnCard = React.memo(function TurnCard({
                         // Only animate on user toggle, not initial mount
                         transition={{ delay: hasUserToggled.current ? (index < SIZE_CONFIG.staggeredAnimationLimit ? index * 0.03 : SIZE_CONFIG.staggeredAnimationLimit * 0.03) : 0 }}
                       >
-                        <ActivityRow
+                        {renderActivity ? renderActivity(activity, <ActivityRow
                           activity={activity}
                           onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(activity) : undefined}
                           isLastChild={lastChildSet.has(activity.id)}
                           sessionFolderPath={sessionFolderPath}
                           displayMode={displayMode}
-                        />
+                        />) : <ActivityRow
+                          activity={activity}
+                          onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(activity) : undefined}
+                          isLastChild={lastChildSet.has(activity.id)}
+                          sessionFolderPath={sessionFolderPath}
+                          displayMode={displayMode}
+                        />}
                       </motion.div>
                     ))
                   )}
@@ -3141,7 +3168,7 @@ export const TurnCard = React.memo(function TurnCard({
       {/* Plan Activities - rendered as full ResponseCards, time-sorted with other activities */}
       {planActivities.map((planActivity, index) => (
         <div key={planActivity.id} className={cn("select-text", (hasActivities || index > 0) && "mt-2")}>
-          <ResponseCard
+          {renderMessageNode(planActivity.messageId ?? planActivity.id, <ResponseCard
             text={planActivity.content || ''}
             isStreaming={false}
             sessionId={sessionId}
@@ -3164,7 +3191,7 @@ export const TurnCard = React.memo(function TurnCard({
             hasActiveFollowUpAnnotations={hasActiveFollowUpAnnotations}
             openAnnotationRequest={openAnnotationRequest}
             annotationInteractionMode={annotationInteractionMode}
-          />
+          />)}
         </div>
       ))}
 
@@ -3179,7 +3206,7 @@ export const TurnCard = React.memo(function TurnCard({
               transition={{ duration: 0.3, ease: "easeOut" }}
               className={cn("select-text", hasActivities && "mt-2")}
             >
-              {response.artifact ? <PlanArtifactCard
+              {renderMessageNode(response.messageId, response.artifact ? <PlanArtifactCard
                 artifact={response.artifact}
                 content={response.text}
                 onOpenFile={onOpenFile}
@@ -3222,7 +3249,7 @@ export const TurnCard = React.memo(function TurnCard({
                 hasActiveFollowUpAnnotations={hasActiveFollowUpAnnotations}
                 openAnnotationRequest={openAnnotationRequest}
                 annotationInteractionMode={annotationInteractionMode}
-              />}
+              />)}
             </motion.div>
           )}
         </AnimatePresence>
@@ -3230,7 +3257,7 @@ export const TurnCard = React.memo(function TurnCard({
       {/* Non-animated version for regular app use */}
       {!animateResponse && response && !isBuffering && (
         <div className={cn("select-text", hasActivities && "mt-2")}>
-          {response.artifact ? <PlanArtifactCard
+          {renderMessageNode(response.messageId, response.artifact ? <PlanArtifactCard
             artifact={response.artifact}
             content={response.text}
             onOpenFile={onOpenFile}
@@ -3273,7 +3300,7 @@ export const TurnCard = React.memo(function TurnCard({
             hasActiveFollowUpAnnotations={hasActiveFollowUpAnnotations}
             openAnnotationRequest={openAnnotationRequest}
             annotationInteractionMode={annotationInteractionMode}
-          />}
+          />)}
         </div>
       )}
     </div>

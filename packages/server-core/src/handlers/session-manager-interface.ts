@@ -143,10 +143,14 @@ export interface ISessionManager {
     sessionId: string,
     commandId: string,
     args?: string,
+    ownerExtensionId?: string,
   ): Promise<import('@craft-agent/core/types').ExtensionCommandResult>
 
   /** Reload extensions in all active Pi runtimes; streaming runtimes defer until settled. */
-  reloadExtensions(): Promise<void>
+  reloadExtensions(): Promise<{ reloadedSessionCount: number; deferredSessionCount: number }>
+
+  /** Settings-initiated reload with an explicit confirmation boundary for running sessions. */
+  requestExtensionReload(interruptRunning: boolean): Promise<import('@craft-agent/shared/config').PiExtensionReloadResult>
 
   /**
    * 查询当前会话已注册的 Pi 扩展 slash commands。

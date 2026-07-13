@@ -316,6 +316,8 @@ export const CHANNEL_MAP = {
   setPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.SET_SETTINGS),
   updatePiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS),
   getPiExtensionCatalog: invoke(RPC_CHANNELS.piExtensions.GET_CATALOG),
+  patchPiExtensionConfig: invoke(RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG),
+  reloadPiExtensions: invoke(RPC_CHANNELS.piExtensions.RELOAD),
   getPiExtensionStates: invoke(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES),
   setPiExtensionEnabled: invoke(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED),
 

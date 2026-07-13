@@ -13,29 +13,8 @@ import { AlertTriangle, ChevronRight } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { SettingsCard } from '@/components/settings'
 import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionCategory } from '@craft-agent/shared/config/pi-extension-settings'
-
-/**
- * 拥有 craft GUI 配置页的扩展 id 集合。
- * 只有这些扩展的行可点击进入次级页面。
- * Pi 的 `configurable` 表示扩展有配置概念；这里表示 Craft 当前有详情页。
- */
-export const GUI_CONFIGURABLE_EXTENSIONS = new Set<string>([
-  'plan-mode',
-  'prompt-automation',
-  'repo-memory',
-  'subagent',
-  'trace-audit',
-  'yourself',
-])
-
-export function isExtensionConfigurable(id: string): boolean {
-  return GUI_CONFIGURABLE_EXTENSIONS.has(id)
-}
-
-export function findExtensionsMissingGuiPanel(extensions: PiExtensionCatalogEntry[]): string[] {
-  return extensions
-    .filter((extension) => extension.configurable && !isExtensionConfigurable(extension.id))
-    .map((extension) => extension.id)
+export function isExtensionConfigurable(extension: PiExtensionCatalogEntry): boolean {
+  return extension.configurable && (extension.ui?.settings?.fields.length ?? 0) > 0
 }
 
 /**
@@ -82,11 +61,9 @@ export function ExtensionListPanel({
       .filter((group) => group.entries.length > 0)
   }, [extensions])
 
-  const missingPanels = useMemo(() => findExtensionsMissingGuiPanel(extensions), [extensions])
-
   return (
     <div className="space-y-6">
-      {(errors.length > 0 || missingPanels.length > 0) && (
+      {errors.length > 0 && (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
           <div className="flex items-center gap-2 font-medium">
             <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -97,9 +74,6 @@ export function ExtensionListPanel({
               <li key={`${error.path}:${index}`} className="break-words">
                 {error.path || 'Extension catalog'}: {error.error}
               </li>
-            ))}
-            {missingPanels.map((id) => (
-              <li key={`missing-panel:${id}`}>Configurable extension “{id}” has no Craft settings panel.</li>
             ))}
           </ul>
         </div>
@@ -112,7 +86,7 @@ export function ExtensionListPanel({
           <SettingsCard>
             {entries.map((ext) => {
               const enabled = extensionStates[ext.id] ?? true
-              const configurable = isExtensionConfigurable(ext.id)
+              const configurable = isExtensionConfigurable(ext)
               const descriptionKey = `settings.extensions.ext.${ext.id}.description`
               const translatedDescription = t(descriptionKey)
               const description = translatedDescription === descriptionKey ? ext.description : translatedDescription
@@ -181,6 +155,7 @@ function ExtensionRow({
         </div>
       )}
       <Switch
+        aria-label={`${enabled ? 'Disable' : 'Enable'} ${title || id}`}
         checked={enabled}
         onCheckedChange={onToggle}
         className="ml-4 shrink-0"

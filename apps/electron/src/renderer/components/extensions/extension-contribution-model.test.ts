@@ -2,19 +2,19 @@ import { describe, expect, it } from 'bun:test'
 import { toExtensionBlock } from './extension-contribution-model'
 
 const contribution = {
-  schemaVersion: 1 as const, contributionId: 'widget:status', extensionId: 'ext',
-  sessionId: 'session', runtimeId: 'runtime', kind: 'block' as const,
-  placement: 'below_editor' as const, payload: { format: 'text', content: 'one\ntwo' },
+  schemaVersion: 1 as const,
+  id: 'legacy-widget:status',
+  surface: 'composer.below' as const,
+  content: { type: 'text' as const, text: 'one\ntwo' },
 }
 
 describe('toExtensionBlock', () => {
-  it('maps declarative text blocks and removals', () => {
+  it('maps normalized legacy text widgets', () => {
     expect(toExtensionBlock(contribution)).toEqual({ key: 'status', content: ['one', 'two'], placement: 'belowEditor', source: undefined })
-    expect(toExtensionBlock({ ...contribution, payload: { format: 'text', content: '', removed: true } })?.content).toBeUndefined()
   })
 
-  it('ignores non-widget and executable formats', () => {
-    expect(toExtensionBlock({ ...contribution, contributionId: 'other' })).toBeNull()
-    expect(toExtensionBlock({ ...contribution, payload: { format: 'html', content: '<b>x</b>' } })).toBeNull()
+  it('ignores native and non-text contributions', () => {
+    expect(toExtensionBlock({ ...contribution, id: 'native' })).toBeNull()
+    expect(toExtensionBlock({ ...contribution, content: { type: 'markdown', markdown: '**x**' } })).toBeNull()
   })
 })

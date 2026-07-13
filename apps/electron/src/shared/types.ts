@@ -550,14 +550,16 @@ export interface ElectronAPI {
   setPiExtensionSettings(settings: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   updatePiExtensionSettings(patch: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   getPiExtensionCatalog(): Promise<PiExtensionCatalogResult>
+  patchPiExtensionConfig(patch: import('@craft-agent/shared/config').PiExtensionConfigPatch): Promise<import('@craft-agent/shared/config').PiExtensionConfigPatchResult>
+  reloadPiExtensions(interruptRunning: boolean): Promise<import('@craft-agent/shared/config').PiExtensionReloadResult>
   getPiExtensionStates(): Promise<Record<string, boolean>>
-  setPiExtensionEnabled(name: string, enabled: boolean): Promise<void>
+  setPiExtensionEnabled(name: string, enabled: boolean): Promise<import('@craft-agent/shared/config').PiExtensionReloadResult>
 
   // Pi 扩展事件桥接：监听 extension_* / remoteui_request 事件
   onExtensionEvent(callback: (event: import('@craft-agent/shared/agent/backend/types').ExtensionBridgeEvent) => void): () => void
   // 回复 remoteui:request（payload=null 表示取消）
   sendRemoteUIResponse(sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): Promise<boolean>
-  invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>): Promise<import('@craft-agent/core/types').ExtensionCommandResult>
+  invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>, ownerExtensionId?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult>
   getExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent/backend/types').PiExtensionCommand[]>
   // Pi session tree — list child sessions spawned from the given parent session
   listChildSessions(sessionId: string): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]>

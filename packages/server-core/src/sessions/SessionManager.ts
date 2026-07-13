@@ -24,7 +24,7 @@ import {
   buildPiProjectionSnapshotFromHostProjection,
   PiProjectionBuilder,
 } from '@craft-agent/shared/agent/backend'
-import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDataSourcesEnabled, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
+import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDataSourcesEnabled, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker, SessionShareTransferService } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
@@ -1164,6 +1164,7 @@ function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Sess
 
 export class SessionManager implements ISessionManager {
   private sessions: Map<string, ManagedSession> = new Map()
+  private extensionReloadPromise: Promise<PiExtensionReloadResult> | null = null
   private piProjectionBySession = new Map<string, ConversationProjector>()
   private piProjectionRetiredRuntimeIds = new Map<string, Set<string>>()
   private piProjectionWrites = new Map<string, Promise<void>>()
@@ -6278,7 +6279,7 @@ export class SessionManager implements ISessionManager {
    * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端返回 false。
    * 返回 false 时调用方应回退到原生路径。
    */
-  async invokeExtensionCommand(sessionId: string, commandId: string, args?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult> {
+  async invokeExtensionCommand(sessionId: string, commandId: string, args?: string, ownerExtensionId?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       sessionLog.warn(`[ExtensionBridge] No session for command invocation: ${sessionId}`)
@@ -6290,7 +6291,9 @@ export class SessionManager implements ISessionManager {
         sessionLog.warn(`[ExtensionBridge] Agent does not support sendExtensionCommandInvoke (session: ${sessionId})`)
         return { invoked: false, error: 'The active backend does not support extension commands.' }
       }
-      const result = await agent.sendExtensionCommandInvoke(commandId, args)
+      const result = ownerExtensionId === undefined
+        ? await agent.sendExtensionCommandInvoke(commandId, args)
+        : await agent.sendExtensionCommandInvoke(commandId, args, ownerExtensionId)
       for (const message of result.customMessages ?? []) {
         await this.processEvent(managed, {
           type: 'custom_message',
@@ -6343,14 +6346,71 @@ export class SessionManager implements ISessionManager {
     })
   }
 
-  async reloadExtensions(): Promise<void> {
-    const reloads: Promise<unknown>[] = []
-    for (const managed of this.sessions.values()) {
-      if (managed.agent && typeof managed.agent.reloadExtensions === 'function') {
-        reloads.push(managed.agent.reloadExtensions())
-      }
+  async reloadExtensions(): Promise<{ reloadedSessionCount: number; deferredSessionCount: number }> {
+    const targets = Array.from(this.sessions.values()).filter(
+      (managed) => managed.agent && typeof managed.agent.reloadExtensions === 'function',
+    )
+    const results = await Promise.allSettled(targets.map(async (managed) => ({
+      sessionId: managed.id,
+      result: await managed.agent!.reloadExtensions!(),
+    })))
+    const errors = results.flatMap((result, index) => result.status === 'rejected'
+      ? [`${targets[index]?.id ?? 'unknown session'}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+      : [])
+    if (errors.length > 0) throw new Error(`Failed to reload Pi extensions: ${errors.join('; ')}`)
+
+    let reloadedSessionCount = 0
+    let deferredSessionCount = 0
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue
+      if (result.value.result.reloaded) reloadedSessionCount += 1
+      if (result.value.result.deferred) deferredSessionCount += 1
     }
-    await Promise.allSettled(reloads)
+    return { reloadedSessionCount, deferredSessionCount }
+  }
+
+  private getExtensionReloadActiveSessions(): PiExtensionReloadActiveSession[] {
+    const result: PiExtensionReloadActiveSession[] = []
+    for (const managed of this.sessions.values()) {
+      if (!managed.isProcessing && !this.isPiProjectionProcessing(managed.id)) continue
+      result.push({
+        sessionId: managed.id,
+        workspaceName: managed.workspace.name,
+        title: managed.name || undefined,
+      })
+    }
+    return result
+  }
+
+  async requestExtensionReload(interruptRunning: boolean): Promise<PiExtensionReloadResult> {
+    if (this.extensionReloadPromise) return await this.extensionReloadPromise
+
+    const activeSessions = this.getExtensionReloadActiveSessions()
+    if (activeSessions.length > 0 && !interruptRunning) {
+      return { status: 'confirmation_required', activeSessions }
+    }
+
+    this.extensionReloadPromise = (async () => {
+      const currentActiveSessions = this.getExtensionReloadActiveSessions()
+      if (currentActiveSessions.length > 0 && !interruptRunning) {
+        return { status: 'confirmation_required', activeSessions: currentActiveSessions }
+      }
+      if (interruptRunning) {
+        await Promise.all(currentActiveSessions.map((session) => this.cancelProcessing(session.sessionId, false)))
+      }
+      const summary = await this.reloadExtensions()
+      return {
+        status: 'reloaded',
+        interruptedSessionCount: interruptRunning ? currentActiveSessions.length : 0,
+        ...summary,
+      }
+    })()
+
+    try {
+      return await this.extensionReloadPromise
+    } finally {
+      this.extensionReloadPromise = null
+    }
   }
 
   /**

@@ -3,11 +3,12 @@ import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, File, Image, Load
 import type { PiProjectionState } from '@/atoms/pi-projection'
 import { cn } from '@/lib/utils'
 import { CollapsibleMarkdownProvider, Markdown, StreamingMarkdown } from '@/components/markdown'
-import { ActivityCardsOverlay, PlanArtifactCard, UserMessageBubble, extractOverlayCards, type ActivityItem } from '@craft-agent/ui'
+import { ActivityCardsOverlay, UserMessageBubble, extractOverlayCards, type ActivityItem } from '@craft-agent/ui'
 import type { ExtensionCommandResult } from '@craft-agent/core'
 import type { CredentialResponse } from '../../../shared/types'
 import { MemoizedAuthRequestCard } from '@/components/chat/AuthRequestCard'
 import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, type PiTimelineItem } from './pi-timeline-model'
+import { ExtensionContributionZone, ExtensionReplaceZone } from '@/components/extensions/ExtensionContributionZone'
 
 type PlanAction = (artifactId: string) => Promise<ExtensionCommandResult>
 
@@ -137,9 +138,6 @@ export function PiProjectionTimeline({
   projection,
   onOpenFile,
   onOpenUrl,
-  onExecutePlanArtifact,
-  onExecutePlanArtifactWithCompact,
-  onRefinePlanArtifact,
   onRespondToCredential,
   searchQuery = '',
   currentMatchIndex = 0,
@@ -172,23 +170,13 @@ export function PiProjectionTimeline({
         {pageStart > 0 && <button type="button" className="w-full py-2 text-xs text-muted-foreground hover:text-foreground" onClick={() => setVisibleItemCount(value => value + pageSize)}>Show {Math.min(pageSize, pageStart)} earlier items</button>}
         {visibleItems.map(item => {
           const matchClass = item.id === activeMatchId ? 'ring-2 ring-info ring-offset-2 ring-offset-background rounded-[6px]' : matches.some(match => match.itemId === item.id) ? 'ring-1 ring-info/30 rounded-[6px]' : undefined
-          if (item.type === 'tool') return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={matchClass}><ToolRow item={item} onOpenFile={onOpenFile} onOpenUrl={onOpenUrl} /></div>
+          if (item.type === 'tool') return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={matchClass}>
+            <ExtensionContributionZone sessionId={projection.sessionId} surface="conversation.tool.before" target={{ toolCallId: item.toolCallId }} />
+            <ExtensionReplaceZone sessionId={projection.sessionId} surface="conversation.tool.replace" target={{ toolCallId: item.toolCallId }}><ToolRow item={item} onOpenFile={onOpenFile} onOpenUrl={onOpenUrl} /></ExtensionReplaceZone>
+            <ExtensionContributionZone sessionId={projection.sessionId} surface="conversation.tool.after" target={{ toolCallId: item.toolCallId }} />
+          </div>
           if (item.type === 'attachment') return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={cn('my-3', matchClass)}><AttachmentRef item={item} /></div>
-          if (item.type === 'artifact') {
-            return (
-              <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('my-3', matchClass)}>
-                <PlanArtifactCard
-                  artifact={item.artifact}
-                  content={item.content}
-                  onOpenFile={onOpenFile}
-                  onOpenUrl={onOpenUrl}
-                  onExecute={onExecutePlanArtifact}
-                  onExecuteWithCompact={onExecutePlanArtifactWithCompact}
-                  onRefine={onRefinePlanArtifact}
-                />
-              </div>
-            )
-          }
+          if (item.type === 'artifact') return <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('my-3', matchClass)}><Markdown>{item.content}</Markdown></div>
           if (item.type === 'auth') {
             if (!projection.sessionId) return null
             return (
@@ -205,7 +193,11 @@ export function PiProjectionTimeline({
           if (item.type === 'error') {
             return <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('my-3 flex items-start gap-2 border-l border-destructive/50 py-1 pl-3 text-sm text-destructive', matchClass)}><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{item.message}</span></div>
           }
-          return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={cn(item.contentKind === 'thinking' ? undefined : 'my-3', matchClass)}><ContentBlock item={item} onOpenFile={onOpenFile} onOpenUrl={onOpenUrl} /></div>
+          return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={cn(item.contentKind === 'thinking' ? undefined : 'my-3', matchClass)}>
+            <ExtensionContributionZone sessionId={projection.sessionId} surface="conversation.message.before" target={{ messageId: item.id }} />
+            <ExtensionReplaceZone sessionId={projection.sessionId} surface="conversation.message.replace" target={{ messageId: item.id }}><ContentBlock item={item} onOpenFile={onOpenFile} onOpenUrl={onOpenUrl} /></ExtensionReplaceZone>
+            <ExtensionContributionZone sessionId={projection.sessionId} surface="conversation.message.after" target={{ messageId: item.id }} />
+          </div>
         })}
         {items.length === 0 && <div className="flex h-64 items-center justify-center text-xs text-muted-foreground"><Wrench className="mr-2 h-4 w-4" />Waiting for Pi events</div>}
       </div>

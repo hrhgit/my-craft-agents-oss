@@ -63,7 +63,7 @@ import {
 import { MemoizedAuthRequestCard } from "@/components/chat/AuthRequestCard"
 import { ChatInputZone, type StructuredInputState, type StructuredResponse, type PermissionResponse, type AdminApprovalResponse } from "./input"
 import { ExtensionWidgetZone } from "@/components/extensions/ExtensionWidgetZone"
-import { BackgroundAgentBadges } from "@/components/extensions/BackgroundAgentBadges"
+import { ExtensionContributionZone, ExtensionReplaceZone } from "@/components/extensions/ExtensionContributionZone"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { useBackgroundTasks } from "@/hooks/useBackgroundTasks"
 import { useTurnCardExpansion } from "@/hooks/useTurnCardExpansion"
@@ -1581,7 +1581,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     <div ref={zoneRef} className="flex h-full flex-col min-w-0" data-focus-zone="chat">
       {session ? (
         <div className="flex flex-1 flex-col min-h-0 min-w-0 relative">
-          <BackgroundAgentBadges sessionId={session.id} />
           {/* Content layer */}
           <div className="flex flex-1 flex-col min-h-0 min-w-0 relative z-10">
           {/* === MESSAGES AREA: Scrollable list of message bubbles === */}
@@ -1600,6 +1599,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                 "mx-auto min-w-0",
                 compactMode ? "px-3 py-4 space-y-2" : [CHAT_LAYOUT.containerPadding, CHAT_LAYOUT.messageSpacing]
               )}>
+                <ExtensionContributionZone sessionId={session.id} surface="conversation.timeline.before" />
                 {/* Session-level AnimatePresence: Prevents layout jump when switching sessions */}
                 <AnimatePresence mode={compactMode ? "sync" : "wait"} initial={false}>
                   <motion.div
@@ -1720,6 +1720,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
                           )}
                         >
+                          <ExtensionContributionZone sessionId={session.id} surface="conversation.message.before" target={{ messageId: turn.message.id }} />
+                          <ExtensionReplaceZone sessionId={session.id} surface="conversation.message.replace" target={{ messageId: turn.message.id }}>
                           <MemoizedMessageBubble
                             message={turn.message}
                             onOpenFile={onOpenFile}
@@ -1727,6 +1729,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             sessionId={session?.id}
                             compactMode={compactMode}
                           />
+                          </ExtensionReplaceZone>
+                          <ExtensionContributionZone sessionId={session.id} surface="conversation.message.after" target={{ messageId: turn.message.id }} />
                         </div>
                       )
                     }
@@ -1743,6 +1747,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
                           )}
                         >
+                          <ExtensionContributionZone sessionId={session.id} surface="conversation.message.before" target={{ messageId: turn.message.id }} />
+                          <ExtensionReplaceZone sessionId={session.id} surface="conversation.message.replace" target={{ messageId: turn.message.id }}>
                           <MemoizedMessageBubble
                             message={turn.message}
                             onOpenFile={onOpenFile}
@@ -1755,6 +1761,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                               }
                             } : undefined}
                           />
+                          </ExtensionReplaceZone>
+                          <ExtensionContributionZone sessionId={session.id} surface="conversation.message.after" target={{ messageId: turn.message.id }} />
                         </div>
                       )
                     }
@@ -1774,12 +1782,16 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
                           )}
                         >
+                          <ExtensionContributionZone sessionId={session.id} surface="conversation.message.before" target={{ messageId: turn.message.id }} />
+                          <ExtensionReplaceZone sessionId={session.id} surface="conversation.message.replace" target={{ messageId: turn.message.id }}>
                           <MemoizedAuthRequestCard
                             message={turn.message}
                             sessionId={session.id}
                             onRespondToCredential={onRespondToCredential}
                             isInteractive={isAuthInteractive}
                           />
+                          </ExtensionReplaceZone>
+                          <ExtensionContributionZone sessionId={session.id} surface="conversation.message.after" target={{ messageId: turn.message.id }} />
                         </div>
                       )
                     }
@@ -1835,6 +1847,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
                         )}
                       >
+                      <ExtensionContributionZone sessionId={session.id} surface="conversation.turn.before" target={{ turnId: turn.turnId }} />
+                      <ExtensionReplaceZone sessionId={session.id} surface="conversation.turn.replace" target={{ turnId: turn.turnId }}>
                       <TurnCard
                         sessionId={session.id}
                         sessionFolderPath={session.sessionFolderPath}
@@ -1981,6 +1995,24 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             setOverlayState({ type: 'activity', activity })
                           }
                         }}
+                        renderActivity={(activity, builtIn) => activity.toolUseId ? (
+                          <div className="min-w-0">
+                            <ExtensionContributionZone sessionId={session.id} surface="conversation.tool.before" target={{ toolCallId: activity.toolUseId }} />
+                            <ExtensionReplaceZone sessionId={session.id} surface="conversation.tool.replace" target={{ toolCallId: activity.toolUseId }}>
+                              {builtIn}
+                            </ExtensionReplaceZone>
+                            <ExtensionContributionZone sessionId={session.id} surface="conversation.tool.after" target={{ toolCallId: activity.toolUseId }} />
+                          </div>
+                        ) : builtIn}
+                        renderMessage={(messageId, builtIn) => (
+                          <div className="min-w-0">
+                            <ExtensionContributionZone sessionId={session.id} surface="conversation.message.before" target={{ messageId }} />
+                            <ExtensionReplaceZone sessionId={session.id} surface="conversation.message.replace" target={{ messageId }}>
+                              {builtIn}
+                            </ExtensionReplaceZone>
+                            <ExtensionContributionZone sessionId={session.id} surface="conversation.message.after" target={{ messageId }} />
+                          </div>
+                        )}
                         hasEditOrWriteActivities={turn.activities.some(a =>
                           a.toolName === 'Edit' || a.toolName === 'Write'
                         )}
@@ -1995,6 +2027,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           }
                         }}
                       />
+                      </ExtensionReplaceZone>
+                      <ExtensionContributionZone sessionId={session.id} surface="conversation.turn.after" target={{ turnId: turn.turnId }} />
                       </div>
                     )
                   })}
@@ -2014,6 +2048,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                     />
                   )
                 })()}
+                <ExtensionContributionZone sessionId={session.id} surface="conversation.inline" />
+                <ExtensionContributionZone sessionId={session.id} surface="conversation.timeline.after" />
                 {/* Scroll Anchor: For auto-scroll to bottom */}
                 <div ref={messagesEndRef} />
               </div>
@@ -2021,10 +2057,18 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             </div>
           </div>
 
-          {/* === EXTENSION WIDGET ZONE: pi 扩展 belowEditor widget（编辑器下方、输入框上方） === */}
-          <ExtensionWidgetZone className={CHAT_LAYOUT.maxWidth} sessionId={session.id} />
+          <div className="pointer-events-none absolute inset-x-0 top-2 z-20 mx-auto flex max-h-[45%] w-full max-w-3xl flex-col items-end gap-2 overflow-auto px-4">
+            <ExtensionContributionZone className="pointer-events-auto w-full max-w-lg" sessionId={session.id} surface="conversation.overlay" />
+          </div>
+
+          <div className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto flex w-full min-w-0 flex-col gap-1 px-3 @xs/panel:px-4')}>
+            <ExtensionContributionZone sessionId={session.id} surface="composer.status" />
+            <ExtensionContributionZone sessionId={session.id} surface="composer.toolbar" />
+            <ExtensionContributionZone sessionId={session.id} surface="composer.above" />
+          </div>
 
           {/* === INPUT CONTAINER: FreeForm or Structured Input === */}
+          <ExtensionReplaceZone sessionId={session.id} surface="composer.replace">
           <ChatInputZone
             compactMode={compactMode}
             permissionMode={permissionMode}
@@ -2085,6 +2129,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               onFollowUpIndexClick: handleFollowUpIndexClick,
             }}
           />
+          </ExtensionReplaceZone>
+          <ExtensionWidgetZone className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto')} sessionId={session.id} />
           </div>
         </div>
       ) : null}
@@ -2496,4 +2542,3 @@ const MemoizedMessageBubble = React.memo(MessageBubble, (prev, next) => {
     prev.compactMode === next.compactMode
   )
 })
-

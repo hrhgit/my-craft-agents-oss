@@ -43,6 +43,7 @@ import type {
 import { AbortReason } from './backend/types.ts';
 import { getBackendRuntime } from './backend/internal/driver-types.ts';
 import { SourceActivationDrainController } from './source-activation-drain.ts';
+import type { ExtensionContributionV1 } from '../protocol/extension-contributions.ts';
 
 import type { PermissionMode } from './mode-manager.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
@@ -1078,7 +1079,13 @@ export class PiAgent extends BaseAgent {
     if (this.rpcProcessFailureHandled) return;
     this.rpcProcessFailureHandled = true;
     const failedRuntimeId = this.currentRpcRuntimeId();
-    if (failedRuntimeId) this.config.onHostCapabilityRuntimeReleased?.(failedRuntimeId);
+    if (failedRuntimeId) {
+      this.config.onHostCapabilityRuntimeReleased?.(failedRuntimeId);
+      this.config.onExtensionEvent?.({
+        type: 'extension_contributions_runtime_reset',
+        ...this.extensionEventRoute('pi-runtime', failedRuntimeId),
+      });
+    }
 
     this.debug(`Pi RpcClient lifecycle failure: ${event.type}: ${event.message}`);
     this.writePiRuntimeLog('error', 'lifecycle.failure', {
@@ -1191,6 +1198,33 @@ export class PiAgent extends BaseAgent {
       ? event.extensionId
       : 'pi-extension';
     const route = this.extensionEventRoute(extensionId, event.runtimeId);
+    if ((event as { method: string }).method === 'contribution') {
+      const contributionEvent = event as unknown as {
+        operation: 'upsert' | 'remove' | 'reset' | 'snapshot'
+        revision: number
+        contribution: ExtensionContributionV1
+        contributionId: string
+        contributions: ExtensionContributionV1[]
+      }
+      const base = {
+        schemaVersion: 1 as const,
+        extensionId,
+        sessionId: route.sessionId,
+        runtimeId: route.runtimeId,
+        revision: contributionEvent.revision,
+      }
+      return {
+        type: 'extension_contribution',
+        delta: contributionEvent.operation === 'upsert'
+          ? { ...base, operation: 'upsert', contribution: contributionEvent.contribution }
+          : contributionEvent.operation === 'remove'
+            ? { ...base, operation: 'remove', contributionId: contributionEvent.contributionId }
+            : contributionEvent.operation === 'snapshot'
+              ? { ...base, operation: 'snapshot', contributions: contributionEvent.contributions }
+              : { ...base, operation: 'reset' },
+        ...route,
+      }
+    }
     if (event.method === 'notify') {
       return {
         type: 'extension_notify',
@@ -1989,11 +2023,11 @@ export class PiAgent extends BaseAgent {
    * 调用扩展注册的命令。
    * Uses Pi's typed `invoke_extension_command` RPC and returns the command ack.
    */
-  async sendExtensionCommandInvoke(commandId: string, args?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult> {
+  async sendExtensionCommandInvoke(commandId: string, args?: string, ownerExtensionId?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult> {
     try {
       const client = await this.ensureRpcClient();
       this.requirePiRpcCommand('invoke_extension_command', 'extension command invocation');
-      const result = await client.invokeExtensionCommandResult(commandId, args);
+      const result = await client.invokeExtensionCommandResult(commandId, args, ownerExtensionId);
       if (!result.invoked && result.error) {
         this.debug(`[sendExtensionCommandInvoke] Pi extension command "${commandId}" was not invoked: ${result.error}`);
       }
@@ -2035,6 +2069,9 @@ export class PiAgent extends BaseAgent {
   async listExtensionCommands(): Promise<PiExtensionCommand[]> {
     try {
       const client = await this.ensureRpcClient();
+      // getState maps to get_runtime_state for a runtime handle. Pi emits the
+      // current contribution snapshots before returning that state response.
+      await client.getState();
       this.requirePiRpcCommand('get_commands', 'extension command listing');
       const commands = await client.getCommands();
       return commands
@@ -2042,7 +2079,7 @@ export class PiAgent extends BaseAgent {
         .map(command => ({
           name: command.name,
           description: command.description,
-          source: command.sourceInfo?.source ?? 'extension',
+          source: command.extensionId ?? command.sourceInfo?.source ?? 'extension',
           path: command.sourceInfo?.path,
         }));
     } catch (error) {
@@ -2565,7 +2602,13 @@ export class PiAgent extends BaseAgent {
   private async stopRpcClient(): Promise<void> {
     const client = this.rpcClient;
     const runtimeId = this.currentRpcRuntimeId();
-    if (runtimeId) this.config.onHostCapabilityRuntimeReleased?.(runtimeId);
+    if (runtimeId) {
+      this.config.onHostCapabilityRuntimeReleased?.(runtimeId);
+      this.config.onExtensionEvent?.({
+        type: 'extension_contributions_runtime_reset',
+        ...this.extensionEventRoute('pi-runtime', runtimeId),
+      });
+    }
     const hostLease = this.rpcHostLease;
     this.unsubscribePiEvent?.();
     this.unsubscribePiEvent = null;

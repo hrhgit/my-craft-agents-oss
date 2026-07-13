@@ -149,7 +149,14 @@ export interface SettingsInputRowProps {
   /** Placeholder text */
   placeholder?: string
   /** Input type */
-  type?: 'text' | 'password' | 'email' | 'url'
+  type?: 'text' | 'password' | 'email' | 'url' | 'number'
+  /** Numeric input constraints */
+  min?: number
+  max?: number
+  step?: number
+  /** Input lifecycle handlers */
+  onBlur?: React.FocusEventHandler<HTMLInputElement>
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>
   /** Disabled state */
   disabled?: boolean
   /** Error message */
@@ -167,6 +174,11 @@ export function SettingsInputRow({
   onChange,
   placeholder,
   type = 'text',
+  min,
+  max,
+  step,
+  onBlur,
+  onKeyDown,
   disabled,
   error,
   className,
@@ -199,8 +211,13 @@ export function SettingsInputRow({
         <Input
           id={id}
           type={type}
+          min={min}
+          max={max}
+          step={step}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          onKeyDown={onKeyDown}
           placeholder={placeholder}
           disabled={disabled}
           className="w-[200px] bg-muted/50 border-0 shadow-none focus-visible:ring-0 focus-visible:outline-none focus-visible:bg-transparent"

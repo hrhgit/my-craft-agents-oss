@@ -11,7 +11,7 @@
  *   → 此桥接层 → versioned contribution/eventSink → RPC_CHANNELS.extensions.EVENT → 渲染进程
  */
 
-import { RPC_CHANNELS, type ExtensionContributionV1, validateExtensionContributionV1 } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type ExtensionContributionDeltaV1, validateExtensionContributionDeltaV1 } from '@craft-agent/shared/protocol'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
 import type { EventSink } from '@craft-agent/server-core/transport'
 
@@ -35,6 +35,7 @@ export function createExtensionEventForwarder(
   workspaceId: string,
   sessionId?: string,
 ): (event: ExtensionBridgeEvent) => void {
+  const legacyRevisions = new Map<string, number>()
   return (event: ExtensionBridgeEvent) => {
     if (!eventSink) return
 
@@ -43,24 +44,45 @@ export function createExtensionEventForwarder(
       event = { ...event, sessionId }
     }
 
+    if (event.type === 'extension_contribution') {
+      if (validateExtensionContributionDeltaV1(event.delta) !== null) return
+      eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, event)
+      return
+    }
+
     if (event.type === 'extension_widget' && sessionId) {
-      const contribution: ExtensionContributionV1 = {
+      // Legacy widgets use a synthetic owner so their adapter-local revisions
+      // cannot collide with native revisions from the same extension runtime.
+      const legacyExtensionId = `${event.extensionId}:legacy-widget`
+      const revisionKey = `${event.runtimeId}\0${legacyExtensionId}`
+      const revision = (legacyRevisions.get(revisionKey) ?? 0) + 1
+      legacyRevisions.set(revisionKey, revision)
+      const delta: ExtensionContributionDeltaV1 = {
         schemaVersion: 1,
-        contributionId: `widget:${event.key}`,
-        extensionId: event.extensionId,
+        extensionId: legacyExtensionId,
         sessionId,
         runtimeId: event.runtimeId,
-        kind: 'block',
-        placement: event.placement === 'aboveEditor' ? 'above_editor' : 'below_editor',
-        payload: { format: 'text', content: event.content?.join('\n') ?? '', removed: event.content === undefined, source: event.source },
+        revision,
+        ...(event.content === undefined || event.content.length === 0
+          ? { operation: 'remove', contributionId: `legacy-widget:${event.key}` }
+          : {
+              operation: 'upsert',
+              contribution: {
+                schemaVersion: 1,
+                id: `legacy-widget:${event.key}`,
+                surface: event.placement === 'belowEditor' ? 'composer.below' : 'composer.above',
+                content: { type: 'text', text: event.content.join('\n') },
+                group: event.source,
+              },
+            }),
       }
-      if (validateExtensionContributionV1(contribution) === null) {
+      if (validateExtensionContributionDeltaV1(delta) === null) {
         eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, {
           type: 'extension_contribution',
           extensionId: event.extensionId,
           runtimeId: event.runtimeId,
           sessionId,
-          contribution,
+          delta,
         })
         return
       }

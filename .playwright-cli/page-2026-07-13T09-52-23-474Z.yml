@@ -1,0 +1,239 @@
+- generic [ref=f5e2]:
+  - generic [ref=f5e7]:
+    - generic [ref=f5e9]:
+      - generic [ref=f5e10]:
+        - generic [ref=f5e11]:
+          - button "切换侧栏" [ref=f5e12]
+          - button "Craft 菜单" [ref=f5e15]
+        - generic [ref=f5e18]:
+          - button "返回" [ref=f5e621]
+          - button "前进" [disabled]
+          - button "选择 Workspace" [ref=f5e20] [cursor=pointer]:
+            - generic [ref=f5e21]:
+              - generic [ref=f5e22]: _
+              - generic [ref=f5e23]: _
+            - generic [ref=f5e24]: _chat
+      - generic [ref=f5e27]:
+        - button "添加面板" [ref=f5e28]
+        - button "帮助和文档" [ref=f5e30]
+    - generic [ref=f5e36]:
+      - generic [ref=f5e41]:
+        - button "新建会话" [ref=f5e44]
+        - navigation "Main navigation" [ref=f5e47]:
+          - generic [ref=f5e48]:
+            - button "所有会话 4" [ref=f5e49]:
+              - text: 所有会话
+              - generic [ref=f5e58]: "4"
+            - generic [ref=f5e61]:
+              - generic [ref=f5e63]:
+                - button [ref=f5e64]:
+                  - button "积压 0" [ref=f5e66]:
+                    - text: 积压
+                    - generic [ref=f5e72]: "0"
+                - button [ref=f5e73]:
+                  - button "待办 4" [ref=f5e75]:
+                    - text: 待办
+                    - generic [ref=f5e81]: "4"
+                - button [ref=f5e82]:
+                  - button "待审查 0" [ref=f5e84]:
+                    - text: 待审查
+                    - generic [ref=f5e91]: "0"
+                - button [ref=f5e92]:
+                  - button "完成 0" [ref=f5e94]:
+                    - text: 完成
+                    - generic [ref=f5e101]: "0"
+                - button [ref=f5e102]:
+                  - button "已取消 0" [ref=f5e104]:
+                    - text: 已取消
+                    - generic [ref=f5e111]: "0"
+              - status [ref=f5e112]
+              - generic [ref=f5e115]:
+                - button "已标记 0" [ref=f5e117]:
+                  - text: 已标记
+                  - generic [ref=f5e122]: "0"
+                - button [ref=f5e124]
+          - button [ref=f5e130]
+          - generic [ref=f5e141]:
+            - button "数据源 0" [ref=f5e142]:
+              - text: 数据源
+              - generic [ref=f5e153]: "0"
+            - navigation "Sub navigation" [ref=f5e156]:
+              - button "API 0" [ref=f5e160]:
+                - text: API
+                - generic [ref=f5e165]: "0"
+              - button "MCP 0" [ref=f5e168]:
+                - text: MCP
+                - generic [ref=f5e175]: "0"
+              - button "本地文件夹 0" [ref=f5e178]:
+                - text: 本地文件夹
+                - generic [ref=f5e182]: "0"
+          - button "技能 25" [ref=f5e184]:
+            - text: 技能
+            - generic [ref=f5e188]: "25"
+          - generic [ref=f5e189]:
+            - button "自动化 0" [ref=f5e190]:
+              - text: 自动化
+              - generic [ref=f5e199]: "0"
+            - navigation "Sub navigation" [ref=f5e202]:
+              - button "定时任务 0" [ref=f5e206]:
+                - text: 定时任务
+                - generic [ref=f5e211]: "0"
+              - button "事件触发 0" [ref=f5e214]:
+                - text: 事件触发
+                - generic [ref=f5e222]: "0"
+              - button "智能体 0" [ref=f5e225]:
+                - text: 智能体
+                - generic [ref=f5e230]: "0"
+          - button [ref=f5e234]
+          - button [ref=f5e240]
+      - generic [ref=f5e247]:
+        - heading "设置" [level=1] [ref=f5e624]
+        - generic [ref=f5e627]:
+          - button "应用 通知和更新" [ref=f5e634]:
+            - generic [ref=f5e636]:
+              - generic [ref=f5e637]: 应用
+              - generic [ref=f5e638]: 通知和更新
+          - button "AI 模型、思考、连接" [ref=f5e653]:
+            - generic [ref=f5e655]:
+              - generic [ref=f5e656]: AI
+              - generic [ref=f5e657]: 模型、思考、连接
+          - button "扩展 迁移的 Pi 扩展" [active] [ref=f5e671]:
+            - generic [ref=f5e673]:
+              - generic [ref=f5e674]: 扩展
+              - generic [ref=f5e675]: 迁移的 Pi 扩展
+          - button "外观 主题、字体、工具图标" [ref=f5e693]:
+            - generic [ref=f5e695]:
+              - generic [ref=f5e696]: 外观
+              - generic [ref=f5e697]: 主题、字体、工具图标
+          - button "输入 发送键、拼写检查" [ref=f5e711]:
+            - generic [ref=f5e713]:
+              - generic [ref=f5e714]: 输入
+              - generic [ref=f5e715]: 发送键、拼写检查
+          - button "Workspace 名称、图标、Workspace 根目录" [ref=f5e731]:
+            - generic [ref=f5e733]:
+              - generic [ref=f5e734]: Workspace
+              - generic [ref=f5e735]: 名称、图标、Workspace 根目录
+          - button "权限 探索模式规则" [ref=f5e750]:
+            - generic [ref=f5e752]:
+              - generic [ref=f5e753]: 权限
+              - generic [ref=f5e754]: 探索模式规则
+          - button "标签 管理会话标签" [ref=f5e769]:
+            - generic [ref=f5e771]:
+              - generic [ref=f5e772]: 标签
+              - generic [ref=f5e773]: 管理会话标签
+          - button "Messaging 连接 Telegram、WhatsApp、飞书 / Lark" [ref=f5e787]:
+            - generic [ref=f5e789]:
+              - generic [ref=f5e790]: Messaging
+              - generic [ref=f5e791]: 连接 Telegram、WhatsApp、飞书 / Lark
+          - button "快捷键 键盘快捷键" [ref=f5e805]:
+            - generic [ref=f5e807]:
+              - generic [ref=f5e808]: 快捷键
+              - generic [ref=f5e809]: 键盘快捷键
+          - button "偏好 用户偏好" [ref=f5e825]:
+            - generic [ref=f5e827]:
+              - generic [ref=f5e828]: 偏好
+              - generic [ref=f5e829]: 用户偏好
+      - generic [ref=f5e912]:
+        - generic [ref=f5e913]:
+          - heading "扩展" [level=1] [ref=f5e917]
+          - button [ref=f5e919]
+        - generic [ref=f5e928]:
+          - generic [ref=f5e929]:
+            - generic [ref=f5e931]:
+              - heading "运行时" [level=3] [ref=f5e932]
+              - paragraph [ref=f5e933]: 管理活动会话共享的扩展运行时。
+            - generic [ref=f5e935]:
+              - generic [ref=f5e936]:
+                - generic [ref=f5e937]: 重新加载扩展
+                - generic [ref=f5e938]: 无需重启 Craft 即可重新加载扩展代码和 GUI。
+              - button "重新加载扩展" [ref=f5e939]
+          - generic [ref=f5e940]:
+            - generic [ref=f5e941]:
+              - heading "智能体" [level=3] [ref=f5e942]
+              - generic [ref=f5e943]:
+                - generic [ref=f5e944]:
+                  - generic [ref=f5e945]:
+                    - generic [ref=f5e946]: Pi remote
+                    - generic [ref=f5e947]: Process-level remote service with runtime and session routing.
+                  - switch [checked] [ref=f5e948]
+                - generic [ref=f5e950]:
+                  - generic [ref=f5e951]:
+                    - generic [ref=f5e952]: Subagent
+                    - generic [ref=f5e953]: 子智能体管理与命令界面。
+                  - switch [checked] [ref=f5e954]
+                - generic [ref=f5e956]:
+                  - generic [ref=f5e957]:
+                    - generic [ref=f5e958]: Ambiguity dictionary
+                    - generic [ref=f5e959]: Reusable clarification terms for ambiguous prompts.
+                  - switch [checked] [ref=f5e960]
+                - generic [ref=f5e962]:
+                  - generic [ref=f5e963]:
+                    - generic [ref=f5e964]: Auto continue OpenAI errors
+                    - generic [ref=f5e965]: OpenAI 风格提供商错误的自动重试。
+                  - switch [checked] [ref=f5e966]
+                - generic [ref=f5e968]:
+                  - button "Yourself 后台自摘要智能体与状态。" [ref=f5e969] [cursor=pointer]:
+                    - generic [ref=f5e970]: Yourself
+                    - generic [ref=f5e974]: 后台自摘要智能体与状态。
+                  - switch [checked] [ref=f5e975]
+            - generic [ref=f5e976]:
+              - heading "界面" [level=3] [ref=f5e977]
+              - generic [ref=f5e978]:
+                - generic [ref=f5e979]:
+                  - generic [ref=f5e980]:
+                    - generic [ref=f5e981]: Ask user
+                    - generic [ref=f5e982]: Frontend question dialogs for extension-driven user input.
+                  - switch [checked] [ref=f5e983]
+                - generic [ref=f5e985]:
+                  - generic [ref=f5e986]:
+                    - generic [ref=f5e987]: Plan mode
+                    - generic [ref=f5e988]: 讨论与计划模式命令、小组件和计划渲染。
+                  - switch [checked] [ref=f5e989]
+            - generic [ref=f5e990]:
+              - heading "自动化" [level=3] [ref=f5e991]
+              - generic [ref=f5e993]:
+                - button "Prompt automation 定时 prompt 任务和自动化小组件。" [ref=f5e994] [cursor=pointer]:
+                  - generic [ref=f5e995]: Prompt automation
+                  - generic [ref=f5e999]: 定时 prompt 任务和自动化小组件。
+                - switch [checked] [ref=f5e1000]
+            - generic [ref=f5e1001]:
+              - heading "记忆" [level=3] [ref=f5e1002]
+              - generic [ref=f5e1004]:
+                - button "Repository memory 后台仓库记忆生成与状态。" [ref=f5e1005] [cursor=pointer]:
+                  - generic [ref=f5e1006]: Repository memory
+                  - generic [ref=f5e1010]: 后台仓库记忆生成与状态。
+                - switch [checked] [ref=f5e1011]
+            - generic [ref=f5e1012]:
+              - heading "搜索" [level=3] [ref=f5e1013]
+              - generic [ref=f5e1015]:
+                - generic [ref=f5e1016]:
+                  - generic [ref=f5e1017]: Browser
+                  - generic [ref=f5e1018]: Browser tools and session integration.
+                - switch [checked] [ref=f5e1019]
+            - generic [ref=f5e1020]:
+              - heading "Shell" [level=3] [ref=f5e1021]
+              - generic [ref=f5e1022]:
+                - generic [ref=f5e1023]:
+                  - generic [ref=f5e1024]:
+                    - generic [ref=f5e1025]: PowerShell preflight
+                    - generic [ref=f5e1026]: PowerShell 命令预检。
+                  - switch [checked] [ref=f5e1027]
+                - generic [ref=f5e1029]:
+                  - generic [ref=f5e1030]:
+                    - generic [ref=f5e1031]: PowerShell UTF-8
+                    - generic [ref=f5e1032]: PowerShell UTF-8 兼容辅助。
+                  - switch [checked] [ref=f5e1033]
+            - generic [ref=f5e1034]:
+              - heading "诊断" [level=3] [ref=f5e1035]
+              - generic [ref=f5e1036]:
+                - generic [ref=f5e1037]:
+                  - generic [ref=f5e1038]:
+                    - generic [ref=f5e1039]: Provider payload capture
+                    - generic [ref=f5e1040]: 提供商请求捕获诊断。
+                  - switch [checked] [ref=f5e1041]
+                - generic [ref=f5e1043]:
+                  - button "Trace audit 后台追踪审查子智能体与审查流程。" [ref=f5e1044] [cursor=pointer]:
+                    - generic [ref=f5e1045]: Trace audit
+                    - generic [ref=f5e1049]: 后台追踪审查子智能体与审查流程。
+                  - switch [checked] [ref=f5e1050]
+  - region "Notifications alt+T"

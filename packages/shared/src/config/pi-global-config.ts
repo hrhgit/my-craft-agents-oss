@@ -7,6 +7,7 @@
  */
 
 import { existsSync, mkdirSync, watch, type FSWatcher } from 'fs';
+import { DefaultPackageManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import {
   deleteGlobalApiKey as deletePiHostGlobalApiKey,
   deleteGlobalProvider as deletePiHostGlobalProvider,
@@ -14,7 +15,6 @@ import {
   hasGlobalProviderAuth as hasPiHostGlobalProviderAuth,
   maskApiKey as maskPiHostApiKey,
   migrateGlobalProviderApiKeysToAuth as migratePiHostGlobalProviderApiKeysToAuth,
-  getExtensions as getPiHostExtensions,
   readCraftAgentSettings as readPiHostCraftAgentSettings,
   readExtensionConfig as readPiHostExtensionConfig,
   readExtensionNamespace as readPiHostExtensionNamespace,
@@ -36,7 +36,7 @@ import {
   writeCraftAgentSettingsBulk as writePiHostCraftAgentSettingsBulk,
   type HostGlobalProvider,
 } from '@earendil-works/pi-coding-agent/host-facade';
-import type { PiExtensionCatalogEntry, PiExtensionCatalogResult } from './pi-extension-settings.ts';
+import type { PiExtensionCatalogEntry, PiExtensionCatalogResult, PiExtensionConfigPatch, PiExtensionSettingField, PiExtensionSettingScalar } from './pi-extension-settings.ts';
 import type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
 import { PI_AGENT_DIR } from './paths';
 
@@ -553,29 +553,109 @@ export async function writePiExtensionConcurrency(name: string, concurrency: num
  * Craft 只把结果作为设置 UI 的展示 DTO。
  */
 export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: string } = {}): Promise<PiExtensionCatalogResult> {
-  const result = await getPiHostExtensions(options);
-  return {
-    extensions: result.extensions
-      .filter((extension) => extension.target === 'craft')
-      .map((extension): PiExtensionCatalogEntry => ({
-        id: extension.id,
-        target: extension.target,
-        loaded: extension.loaded,
-        title: extension.title,
-        description: extension.description,
-        category: extension.category,
-        configurable: extension.configurable,
-        enabled: extension.enabled,
-        path: extension.path,
-        resolvedPath: extension.resolvedPath,
-        commands: extension.commands,
-        tools: extension.tools,
-        flags: extension.flags,
-        shortcuts: extension.shortcuts,
-        config: extension.config as Record<string, unknown> | undefined,
-      })),
-    errors: result.errors.filter((error) => error.target === 'craft'),
-  };
+  const cwd = options.cwd ?? process.cwd();
+  const agentDir = options.agentDir ?? PI_AGENT_DIR;
+  try {
+    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const packageManager = new DefaultPackageManager({
+      cwd,
+      agentDir,
+      settingsManager,
+      extensionTarget: 'craft',
+    });
+    const result = await packageManager.resolve();
+    return {
+      // PackageManager deliberately retains disabled resources. Loading the
+      // runtime (and the host facade catalog built on it) filters them out.
+      extensions: result.extensions
+        .filter((resource) => resource.metadata.extensionId)
+        .map((resource): PiExtensionCatalogEntry => {
+          const id = resource.metadata.extensionId!;
+          const ui = resource.metadata.extensionUI as PiExtensionCatalogEntry['ui'];
+          const config = settingsManager.getExtensionConfig(id) as Record<string, unknown> | undefined;
+          return {
+            id,
+            target: 'craft',
+            loaded: false,
+            title: ui?.title ?? id,
+            description: ui?.description ?? '',
+            category: ui?.category ?? 'other',
+            configurable: (ui?.settings?.fields.length ?? 0) > 0,
+            ui,
+            enabled: config?.enabled === undefined ? true : config.enabled !== false,
+            path: resource.path,
+            resolvedPath: resource.path,
+            commands: [],
+            tools: [],
+            flags: [],
+            shortcuts: [],
+            config,
+          };
+        }),
+      errors: [],
+    };
+  } catch (error) {
+    return {
+      extensions: [],
+      errors: [{ path: '', error: error instanceof Error ? error.message : String(error), target: 'craft' }],
+    };
+  }
+}
+
+function validateSettingValue(field: PiExtensionSettingField, value: PiExtensionSettingScalar): string | null {
+  if (field.type === 'boolean') return typeof value === 'boolean' ? null : `${field.key} must be boolean`;
+  if (field.type === 'number') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return `${field.key} must be a finite number`;
+    if (field.min !== undefined && value < field.min) return `${field.key} must be at least ${field.min}`;
+    if (field.max !== undefined && value > field.max) return `${field.key} must be at most ${field.max}`;
+    return null;
+  }
+  if (typeof value !== 'string') return `${field.key} must be a string`;
+  if ((field.type === 'string' || field.type === 'textarea') && field.minLength !== undefined && value.length < field.minLength) return `${field.key} is too short`;
+  if ((field.type === 'string' || field.type === 'textarea') && field.maxLength !== undefined && value.length > field.maxLength) return `${field.key} is too long`;
+  if (field.type === 'select' && !field.options.some((option) => option.value === value)) return `${field.key} must use a declared option`;
+  return null;
+}
+
+export function validatePiExtensionConfigPatch(entry: PiExtensionCatalogEntry, patch: PiExtensionConfigPatch): { requiresReload: boolean } {
+  if (patch.schemaVersion !== 1 || patch.extensionId !== entry.id) throw new Error('Extension config patch identity is invalid');
+  const fields = new Map((entry.ui?.settings?.fields ?? []).map((field) => [field.key, field]));
+  const touched = [...Object.keys(patch.set ?? {}), ...(patch.unset ?? [])];
+  if (new Set(touched).size !== touched.length) throw new Error('Extension config patch contains duplicate keys');
+  let requiresReload = false;
+  for (const key of touched) {
+    const field = fields.get(key);
+    if (!field) throw new Error(`Unknown extension setting: ${key}`);
+    requiresReload ||= field.requiresReload === true;
+    if (patch.set && key in patch.set) {
+      const error = validateSettingValue(field, patch.set[key]!);
+      if (error) throw new Error(error);
+    }
+  }
+  return { requiresReload };
+}
+
+export async function patchPiExtensionConfig(
+  entry: PiExtensionCatalogEntry,
+  patch: PiExtensionConfigPatch,
+  options: { cwd?: string; agentDir?: string } = {},
+): Promise<{ config: Record<string, unknown>; requiresReload: boolean }> {
+  const { requiresReload } = validatePiExtensionConfigPatch(entry, patch);
+  const settingsManager = SettingsManager.create(options.cwd ?? process.cwd(), options.agentDir ?? PI_AGENT_DIR);
+  const config = { ...(settingsManager.getExtensionConfig(patch.extensionId) as Record<string, unknown> | undefined) };
+  for (const [key, value] of Object.entries(patch.set ?? {})) config[key] = value;
+  for (const key of patch.unset ?? []) delete config[key];
+
+  // The host facade patch helper currently returns before its SettingsManager
+  // flushes, which hides asynchronous write errors. Flush and drain explicitly
+  // so the RPC rejects when persistence failed.
+  settingsManager.replaceExtensionConfig(patch.extensionId, config);
+  await settingsManager.flush();
+  const errors = settingsManager.drainErrors();
+  if (errors.length > 0) {
+    throw new Error(errors.map((item) => item.error.message).join('; '));
+  }
+  return { config, requiresReload };
 }
 
 // ===== Shell GUI 命名空间（shellGui.<name>.*）=====
