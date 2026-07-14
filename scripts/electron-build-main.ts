@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "bun";
-import { existsSync, readFileSync, statSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, statSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import {
   copySessionServer,
@@ -12,18 +12,26 @@ import {
   type BuildConfig,
   type Platform,
 } from "./build/common.ts";
+import { assertNoUiValidationProductionInputs, assertNoUiValidationProductionRuntime, isUiValidationBuildEnabled } from "./build/ui-validation-boundary.ts";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
 const DIST_DIR = join(ROOT_DIR, "apps/electron/dist");
 const OUTPUT_FILE = join(DIST_DIR, "main.cjs");
+const MAIN_METAFILE = join(DIST_DIR, ".main-build-meta.json");
+const UI_VALIDATION_BUILD_MARKER = join(DIST_DIR, ".ui-validation-build.json");
 const WORKSPACE_SERVER_OUTPUT = join(DIST_DIR, "workspace-server.mjs");
+const WORKSPACE_SERVER_METAFILE = join(DIST_DIR, ".workspace-server-build-meta.json");
 const SESSION_TOOLS_CORE_DIR = join(ROOT_DIR, "packages/session-tools-core");
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
 const WA_WORKER_DIR = join(ROOT_DIR, "packages/messaging-whatsapp-worker");
 const WA_WORKER_SOURCE = join(WA_WORKER_DIR, "src/worker.ts");
 const WA_WORKER_OUTPUT = join(WA_WORKER_DIR, "dist/worker.cjs");
+
+// A marker is valid only after the complete validation build finishes in the
+// source launcher. Any standalone, production, or interrupted rebuild clears it.
+rmSync(UI_VALIDATION_BUILD_MARKER, { force: true });
 
 // Load .env file if it exists
 function loadEnvFile(): void {
@@ -165,6 +173,7 @@ function verifySessionToolsCore(): void {
 // Build the Session MCP Server (provides session-scoped tools for Codex sessions)
 async function buildSessionServer(): Promise<void> {
   console.log("📋 Building Session MCP Server...");
+  const uiValidationBuild = isUiValidationBuildEnabled();
 
   // Ensure dist directory exists
   const distDir = join(SESSION_SERVER_DIR, "dist");
@@ -179,6 +188,9 @@ async function buildSessionServer(): Promise<void> {
       "--outfile", SESSION_SERVER_OUTPUT,
       "--target", "node",
       "--format", "cjs",
+      "--minify-syntax",
+      "--define", `process.env.CRAFT_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
+      "--define", `process.env.CRAFT_UI_TEST_HOST=\"${uiValidationBuild ? '1' : '0'}\"`,
     ],
     cwd: ROOT_DIR,
     stdout: "inherit",
@@ -190,6 +202,9 @@ async function buildSessionServer(): Promise<void> {
   if (exitCode !== 0) {
     console.error("❌ Session server build failed with exit code", exitCode);
     process.exit(exitCode);
+  }
+  if (!uiValidationBuild) {
+    assertNoUiValidationProductionRuntime(readFileSync(SESSION_SERVER_OUTPUT, "utf8"), "session-mcp-server/index.js");
   }
 
   // Verify output exists
@@ -254,7 +269,7 @@ async function buildWhatsAppWorker(): Promise<void> {
   console.log("✅ WhatsApp worker built successfully");
 }
 
-async function buildWorkspaceServer(): Promise<void> {
+async function buildWorkspaceServer(uiValidationBuild: boolean): Promise<void> {
   console.log("🧩 Building workspace server subprocess bundle...");
 
   const proc = spawn({
@@ -267,6 +282,10 @@ async function buildWorkspaceServer(): Promise<void> {
       "--target=node20",
       "--outfile=apps/electron/dist/workspace-server.mjs",
       "--external:electron",
+      `--define:process.env.CRAFT_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
+      `--metafile=${WORKSPACE_SERVER_METAFILE}`,
+      ...(!uiValidationBuild ? ["--minify-syntax"] : []),
+      ...(!uiValidationBuild ? ["--alias:@craft-agent/shared/protocol=./packages/shared/src/protocol/production.ts"] : []),
     ],
     cwd: ROOT_DIR,
     stdout: "inherit",
@@ -275,13 +294,27 @@ async function buildWorkspaceServer(): Promise<void> {
 
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
+    rmSync(WORKSPACE_SERVER_METAFILE, { force: true });
     console.error("❌ Workspace server build failed with exit code", exitCode);
     process.exit(exitCode);
+  }
+
+  try {
+    const metadata = JSON.parse(readFileSync(WORKSPACE_SERVER_METAFILE, "utf-8")) as { inputs?: Record<string, unknown> };
+    if (!uiValidationBuild) {
+      assertNoUiValidationProductionInputs(Object.keys(metadata.inputs ?? {}), "Electron workspace server bundle");
+    }
+  } finally {
+    rmSync(WORKSPACE_SERVER_METAFILE, { force: true });
   }
 
   if (!existsSync(WORKSPACE_SERVER_OUTPUT)) {
     console.error("❌ Workspace server output not found at", WORKSPACE_SERVER_OUTPUT);
     process.exit(1);
+  }
+
+  if (!uiValidationBuild) {
+    assertNoUiValidationProductionRuntime(readFileSync(WORKSPACE_SERVER_OUTPUT, "utf-8"), "Electron workspace server bundle");
   }
 
   console.log("✅ Workspace server subprocess bundle built successfully");
@@ -313,9 +346,9 @@ async function main(): Promise<void> {
 
   // Build workspace server bundle used by Electron to keep agent runtime out of
   // the main process in packaged builds.
-  await buildWorkspaceServer();
-
   const buildDefines = getBuildDefines();
+  const uiValidationBuild = isUiValidationBuildEnabled();
+  await buildWorkspaceServer(uiValidationBuild);
 
   console.log("🔨 Building main process...");
 
@@ -331,6 +364,10 @@ async function main(): Promise<void> {
       "--define:import.meta.resolve=__craft_import_meta_resolve",
       "--banner:js=const __craft_import_meta_url = require('url').pathToFileURL(__filename).href; const __craft_import_meta_resolve = (specifier) => require('url').pathToFileURL(require.resolve(specifier)).href;",
       "--external:electron",
+      `--define:__CRAFT_UI_VALIDATION_BUILD__=${uiValidationBuild}`,
+      `--define:process.env.CRAFT_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
+      `--metafile=${MAIN_METAFILE}`,
+      ...(!uiValidationBuild ? ["--minify-syntax"] : []),
       // Replace grammY's bundled polyfills (node-fetch@2 + abort-controller@3)
       // with native Node globals. esbuild otherwise renames the polyfill's
       // `class AbortSignal` to `_AbortSignal` to dodge collision with the
@@ -338,6 +375,7 @@ async function main(): Promise<void> {
       // fails every Telegram API call with a TypeError.
       "--alias:node-fetch=./apps/electron/src/main/shims/node-fetch.cjs",
       "--alias:abort-controller=./apps/electron/src/main/shims/abort-controller.cjs",
+      ...(!uiValidationBuild ? ["--alias:@craft-agent/shared/protocol=./packages/shared/src/protocol/production.ts"] : []),
       ...buildDefines,
     ],
     cwd: ROOT_DIR,
@@ -350,6 +388,15 @@ async function main(): Promise<void> {
   if (exitCode !== 0) {
     console.error("❌ esbuild failed with exit code", exitCode);
     process.exit(exitCode);
+  }
+
+  try {
+    const metadata = JSON.parse(readFileSync(MAIN_METAFILE, "utf-8")) as { inputs?: Record<string, unknown> };
+    if (!uiValidationBuild) {
+      assertNoUiValidationProductionInputs(Object.keys(metadata.inputs ?? {}), "Electron main bundle");
+    }
+  } finally {
+    rmSync(MAIN_METAFILE, { force: true });
   }
 
   // Wait for file to stabilize
@@ -368,6 +415,10 @@ async function main(): Promise<void> {
   if (!verification.valid) {
     console.error("❌ Build verification failed:", verification.error);
     process.exit(1);
+  }
+
+  if (!uiValidationBuild) {
+    assertNoUiValidationProductionRuntime(readFileSync(OUTPUT_FILE, "utf-8"), "Electron main bundle");
   }
 
   console.log("✅ Build complete and verified");

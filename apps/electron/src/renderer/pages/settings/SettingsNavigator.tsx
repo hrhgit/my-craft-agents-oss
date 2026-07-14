@@ -89,6 +89,7 @@ function SettingsItemRow({ item, isSelected, isFirst, onSelect }: SettingsItemRo
         </div>
         {/* Main content button */}
         <button
+          data-craft-semantic-id={`settings.${item.id}`}
           type="button"
           onClick={onSelect}
           className={cn(

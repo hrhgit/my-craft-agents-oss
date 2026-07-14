@@ -78,6 +78,7 @@ import {
   ATTACHMENT_SINGLE_FILE_LIMIT_BYTES,
 } from '@craft-agent/shared/utils/attachment-limits'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
+import { useUiSemanticNode } from '@/ui-validation/react'
 import { hasOpenOverlay } from '@/lib/overlay-detection'
 import { ToolbarStatusSlot } from './ToolbarStatusSlot'
 import { shouldHandleScopedInputEvent } from './input-event-guards'
@@ -1404,6 +1405,33 @@ export function FreeFormInput({
   }, [followUpLayoutKey])
 
   const hasContent = input.trim() || attachments.length > 0 || followUpItems.length > 0
+  const semanticSessionId = sessionId?.replace(/[^A-Za-z0-9._:-]/g, '_')
+  const inputSemanticProps = useUiSemanticNode(semanticSessionId ? {
+    id: `composer.${semanticSessionId}.input`,
+    role: 'textbox',
+    name: t('chatInput.placeholder.typeMessage'),
+    value: input,
+    sensitive: true,
+    state: { disabled, readonly: disabled },
+    actions: ['click', 'fill', 'clear', 'focus'],
+    physicalActions: ['click', 'fill', 'press', 'shortcut', 'clipboard', 'ime', 'rich-text'],
+    invoke: (action, payload) => {
+      if (action === 'focus' || action === 'click') return richInputRef.current?.focus()
+      handleInputChange(action === 'clear' ? '' : payload.value ?? '')
+    },
+  } : null)
+  const sendSemanticProps = useUiSemanticNode(semanticSessionId ? {
+    id: `composer.${semanticSessionId}.${isProcessing ? 'stop' : 'send'}`,
+    role: 'button',
+    name: isProcessing ? t('chat.stopResponse') : t('shortcuts.sendMessage'),
+    state: { disabled: isProcessing ? false : !hasContent || disabled || disableSend, busy: isProcessing },
+    actions: isProcessing ? ['click', 'stop'] : ['click', 'submit'],
+    physicalActions: ['click', 'press'],
+    invoke: action => {
+      if (action === 'stop' || (action === 'click' && isProcessing)) handleStop(false)
+      else submitMessage()
+    },
+  } : null)
 
   // Pre-flight image-support check: warn when staged images would be silently
   // stripped by Pi SDK because the active custom-endpoint model is text-only.
@@ -1564,6 +1592,8 @@ export function FreeFormInput({
             user clicks / hovers the collapsed bar to expand it back. */}
         {!isCollapsedInCompact && (
         <RichTextInput
+          {...inputSemanticProps}
+          data-craft-ui-interactions="shortcut clipboard ime rich-text"
           ref={richInputRef}
           value={input}
           onChange={handleInputChange}
@@ -2282,6 +2312,7 @@ export function FreeFormInput({
           {/* 6. Send/Stop Button - Always show stop when processing */}
           {isProcessing ? (
             <Button
+              {...sendSemanticProps}
               type="button"
               size="icon"
               variant="secondary"
@@ -2293,6 +2324,7 @@ export function FreeFormInput({
             </Button>
           ) : (
             <Button
+              {...sendSemanticProps}
               type="submit"
               size="icon"
               aria-label={t('shortcuts.sendMessage')}

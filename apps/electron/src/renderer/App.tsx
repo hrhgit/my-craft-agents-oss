@@ -85,6 +85,7 @@ import {
 } from '@craft-agent/ui'
 import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
+import { useUiValidationStateBridge } from '@/ui-validation/state-bridge'
 import { useStaleSessionRecovery } from '@/hooks/useStaleSessionRecovery'
 import { usePiProjectionSync, type PiProjectionEventApplied } from '@/hooks/usePiProjectionSync'
 import { TransportConnectionBanner, shouldShowTransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
@@ -1748,6 +1749,16 @@ export default function App() {
 
   const connectionState = useTransportConnectionState()
   const showTransportConnectionBanner = shouldShowTransportConnectionBanner(connectionState)
+
+  useUiValidationStateBridge({
+    appState,
+    sessionsLoaded,
+    sessionLoadError,
+    splashHidden,
+    workspaceId: windowWorkspaceId,
+    workspaceTransitioning: workspaceTransitionQueueRef.current?.isRunning === true,
+    transport: connectionState,
+  })
 
   const handleReconnectTransport = useCallback(() => {
     void window.electronAPI.reconnectTransport().catch((error) => {

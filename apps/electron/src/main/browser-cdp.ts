@@ -21,6 +21,9 @@ export interface AccessibilityNode {
   focused?: boolean
   checked?: boolean
   disabled?: boolean
+  bounds?: ElementBox
+  hit?: boolean
+  obscuredBy?: string
 }
 
 export interface AccessibilitySnapshot {
@@ -52,6 +55,36 @@ export interface ViewportMetrics {
   scrollY: number
 }
 
+export interface UiBusinessSemanticSnapshot {
+  schemaVersion: 1
+  revision: number
+  nodes: Array<{
+    id: string
+    role: string
+    name: string
+    description?: string
+    value?: string
+    state?: Record<string, boolean | 'mixed' | undefined>
+    actions: string[]
+    actionModes?: { semantic?: string[]; physical?: string[] }
+    domSelector: string
+    bounds?: ElementBox
+    hit?: boolean
+    obscuredBy?: string
+  }>
+  truncated: boolean
+}
+
+export interface SemanticInteractionCheck {
+  selector: string
+  count: number
+  visible: boolean
+  focused: boolean
+  hit: boolean
+  obscuredBy?: string
+  bounds?: ElementBox
+}
+
 // Roles that are typically interactive or contain meaningful content
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'textbox', 'searchbox', 'combobox',
@@ -63,7 +96,7 @@ const INTERACTIVE_ROLES = new Set([
 
 const CONTENT_ROLES = new Set([
   'heading', 'img', 'table', 'list', 'listitem',
-  'paragraph', 'blockquote', 'article', 'main',
+  'paragraph', 'statictext', 'blockquote', 'article', 'main',
   'navigation', 'complementary', 'contentinfo', 'banner',
   'form', 'region', 'alert', 'dialog', 'alertdialog',
   'status', 'progressbar', 'meter', 'timer',
@@ -89,22 +122,30 @@ function summarizeTopCounts(map: Map<string, number>, maxEntries = 8): string {
 }
 
 const CDP_IDLE_DETACH_MS = 5_000
+const DEFAULT_CDP_COMMAND_TIMEOUT_MS = 15_000
 
 export class BrowserCDP {
-  private webContents: WebContents
+  protected webContents: WebContents
   private attached = false
   private detachListenerRegistered = false
   private idleDetachTimer: ReturnType<typeof setTimeout> | null = null
+  private inFlightCommands = 0
+  private readonly commandTimeoutMs: number
   // Map from "@eN" refs to backend node IDs for the current snapshot.
-  private refMap: Map<string, number> = new Map()
+  protected refMap: Map<string, number> = new Map()
   // Map from "@eN" refs to semantic details captured during snapshot.
-  private refDetails: Map<string, { role: string; name: string }> = new Map()
+  protected refDetails: Map<string, { role: string; name: string }> = new Map()
   // Stable mapping for backend DOM nodes across snapshots.
   private backendNodeRefMap: Map<number, string> = new Map()
   private nextRefCounter = 0
 
-  constructor(webContents: WebContents) {
+  constructor(webContents: WebContents, options: { commandTimeoutMs?: number } = {}) {
     this.webContents = webContents
+    const commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_CDP_COMMAND_TIMEOUT_MS
+    if (!Number.isFinite(commandTimeoutMs) || commandTimeoutMs < 1 || commandTimeoutMs > 120_000) {
+      throw new Error('CDP command timeout must be between 1 and 120000ms.')
+    }
+    this.commandTimeoutMs = commandTimeoutMs
   }
 
   private async ensureAttached(): Promise<void> {
@@ -154,17 +195,35 @@ export class BrowserCDP {
     }
   }
 
-  private async send(method: string, params?: Record<string, unknown>): Promise<any> {
+  protected async send(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<any> {
     await this.ensureAttached()
+    this.inFlightCommands += 1
+    if (this.idleDetachTimer) {
+      clearTimeout(this.idleDetachTimer)
+      this.idleDetachTimer = null
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
     try {
-      return await this.webContents.debugger.sendCommand(method, params)
+      const command = this.webContents.debugger.sendCommand(method, params, sessionId)
+      return await Promise.race([
+        command,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            timedOut = true
+            reject(new Error(`CDP command ${method} timed out after ${this.commandTimeoutMs}ms.`))
+          }, this.commandTimeoutMs)
+        }),
+      ])
     } finally {
-      // Keep detach countdown tied to completed calls so we do not detach mid-flight.
-      this.resetIdleDetachTimer()
+      if (timeout) clearTimeout(timeout)
+      if (timedOut) this.detach()
+      this.inFlightCommands -= 1
+      if (this.inFlightCommands === 0 && this.attached) this.resetIdleDetachTimer()
     }
   }
 
-  private allocateRef(backendDOMNodeId?: number): string {
+  protected allocateRef(backendDOMNodeId?: number): string {
     if (backendDOMNodeId !== undefined) {
       const existing = this.backendNodeRefMap.get(backendDOMNodeId)
       if (existing) {
@@ -350,17 +409,89 @@ export class BrowserCDP {
     }
   }
 
+  /** Source adapters may enrich opaque AX refs without exposing backend ids publicly. */
+  protected backendNodeIdForRef(ref: string): number | undefined {
+    return this.targetForRef(ref)?.backendNodeId
+  }
+
+  /** Resolve an opaque ref to its owning CDP target without exposing it publicly. */
+  protected targetForRef(ref: string): { backendNodeId: number; sessionId?: string } | undefined {
+    const backendNodeId = this.refMap.get(ref)
+    return backendNodeId === undefined ? undefined : { backendNodeId }
+  }
+
+  /**
+   * Wait for an accessibility condition without polling or fixed sleeps.
+   * The current tree is checked first, then CDP AX mutation events trigger
+   * bounded re-reads until the predicate matches.
+   */
+  async waitForAccessibilitySnapshot(
+    predicate: (snapshot: AccessibilitySnapshot) => boolean,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<AccessibilitySnapshot> {
+    const initial = await this.getAccessibilitySnapshot()
+    if (predicate(initial)) return initial
+
+    await this.ensureAttached()
+    await this.webContents.debugger.sendCommand('Accessibility.enable')
+    if (this.idleDetachTimer) {
+      clearTimeout(this.idleDetachTimer)
+      this.idleDetachTimer = null
+    }
+
+    return await new Promise<AccessibilitySnapshot>((resolve, reject) => {
+      let reading = false
+      let finished = false
+      const timeoutMs = Math.min(Math.max(options.timeoutMs ?? 15_000, 1), 120_000)
+
+      const cleanup = () => {
+        if (finished) return
+        finished = true
+        clearTimeout(timeout)
+        this.webContents.debugger.removeListener('message', onMessage)
+        options.signal?.removeEventListener('abort', onAbort)
+        void this.webContents.debugger.sendCommand('Accessibility.disable').catch(() => undefined)
+        this.resetIdleDetachTimer()
+      }
+      const onAbort = () => {
+        cleanup()
+        reject(new Error('Accessibility wait aborted.'))
+      }
+      const onMessage = (_event: Electron.Event, method: string) => {
+        if (finished || reading || (method !== 'Accessibility.nodesUpdated' && method !== 'Accessibility.loadComplete')) return
+        reading = true
+        void this.getAccessibilitySnapshot().then((snapshot) => {
+          if (predicate(snapshot)) {
+            cleanup()
+            resolve(snapshot)
+          }
+        }).catch((error) => {
+          cleanup()
+          reject(error)
+        }).finally(() => { reading = false })
+      }
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error(`Accessibility condition was not met within ${timeoutMs}ms.`))
+      }, timeoutMs)
+
+      this.webContents.debugger.on('message', onMessage)
+      if (options.signal?.aborted) onAbort()
+      else options.signal?.addEventListener('abort', onAbort, { once: true })
+    })
+  }
+
   // ---------------------------------------------------------------------------
   // Screenshot Annotation Helpers
   // ---------------------------------------------------------------------------
 
   async getElementGeometry(ref: string): Promise<ElementGeometry> {
-    const backendNodeId = this.refMap.get(ref)
-    if (!backendNodeId) {
+    const target = this.targetForRef(ref)
+    if (!target) {
       throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
     }
 
-    const { model } = await this.send('DOM.getBoxModel', { backendNodeId })
+    const { model } = await this.send('DOM.getBoxModel', { backendNodeId: target.backendNodeId }, target.sessionId)
     const content = model.content as number[]
 
     const xs = [content[0], content[2], content[4], content[6]]
@@ -757,6 +888,35 @@ export class BrowserCDP {
     }
   }
 
+  async replaceTextElement(ref: string, text: string): Promise<ElementGeometry> {
+    const target = this.targetForRef(ref)
+    if (!target) throw new Error(`Element ${ref} not found. Run browser_snapshot first.`)
+    await this.send('DOM.focus', { backendNodeId: target.backendNodeId }, target.sessionId)
+    const modifier = process.platform === 'darwin' ? 4 : 2
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: modifier })
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: modifier })
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace' })
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace' })
+    await this.send('Input.insertText', { text })
+    return await this.getElementGeometry(ref)
+  }
+
+  async composeTextElement(ref: string, text: string): Promise<ElementGeometry> {
+    const target = this.targetForRef(ref)
+    if (!target) throw new Error(`Element ${ref} not found. Run browser_snapshot first.`)
+    await this.send('DOM.focus', { backendNodeId: target.backendNodeId }, target.sessionId)
+    await this.send('Input.imeSetComposition', {
+      text,
+      selectionStart: text.length,
+      selectionEnd: text.length,
+      replacementStart: 0,
+      replacementEnd: 0,
+    })
+    await this.send('Input.insertText', { text })
+    await this.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 })
+    return await this.getElementGeometry(ref)
+  }
+
   async setClipboard(text: string): Promise<void> {
     await this.send('Runtime.evaluate', {
       expression: `navigator.clipboard.writeText(${JSON.stringify(text)})`,
@@ -775,20 +935,20 @@ export class BrowserCDP {
   }
 
   async clickElement(ref: string): Promise<ElementGeometry> {
-    const backendNodeId = this.refMap.get(ref)
-    if (!backendNodeId) {
+    const target = this.targetForRef(ref)
+    if (!target) {
       throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
     }
 
     try {
       // Resolve node to get objectId
-      const { object } = await this.send('DOM.resolveNode', { backendNodeId })
+      const { object } = await this.send('DOM.resolveNode', { backendNodeId: target.backendNodeId }, target.sessionId)
 
       // Scroll element into view first
       await this.send('Runtime.callFunctionOn', {
         objectId: object.objectId,
         functionDeclaration: 'function() { this.scrollIntoViewIfNeeded(); }',
-      })
+      }, target.sessionId)
 
       // Get element box model after scroll for up-to-date click coordinates
       const geometry = await this.getElementGeometry(ref)
@@ -806,24 +966,23 @@ export class BrowserCDP {
   }
 
   async fillElement(ref: string, value: string): Promise<ElementGeometry> {
-    const backendNodeId = this.refMap.get(ref)
-    if (!backendNodeId) {
+    const target = this.targetForRef(ref)
+    if (!target) {
       throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
     }
 
     try {
       // Focus the element first
-      await this.send('DOM.focus', { backendNodeId })
+      await this.send('DOM.focus', { backendNodeId: target.backendNodeId }, target.sessionId)
 
-      // Clear existing content
-      const { object } = await this.send('DOM.resolveNode', { backendNodeId })
-      await this.send('Runtime.callFunctionOn', {
-        objectId: object.objectId,
-        functionDeclaration: `function() {
-          this.value = '';
-          this.dispatchEvent(new Event('input', { bubbles: true }));
-        }`,
-      })
+      // Clear with trusted keyboard input. Do not mutate value or dispatch
+      // synthetic DOM events: renderer-verified must exercise the component's
+      // real input path.
+      const modifier = process.platform === 'darwin' ? 4 : 2
+      await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: modifier })
+      await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: modifier })
+      await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace' })
+      await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace' })
 
       // Type the new value character by character for realistic input
       for (const char of value) {
@@ -837,14 +996,6 @@ export class BrowserCDP {
         })
       }
 
-      // Dispatch change event
-      await this.send('Runtime.callFunctionOn', {
-        objectId: object.objectId,
-        functionDeclaration: `function() {
-          this.dispatchEvent(new Event('change', { bubbles: true }));
-        }`,
-      })
-
       return await this.getElementGeometry(ref)
     } catch (err) {
       mainLog.error(`[browser-cdp] Fill failed for ${ref}:`, err)
@@ -853,13 +1004,13 @@ export class BrowserCDP {
   }
 
   async selectOption(ref: string, value: string): Promise<ElementGeometry> {
-    const backendNodeId = this.refMap.get(ref)
-    if (!backendNodeId) {
+    const target = this.targetForRef(ref)
+    if (!target) {
       throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
     }
 
     try {
-      const { object } = await this.send('DOM.resolveNode', { backendNodeId })
+      const { object } = await this.send('DOM.resolveNode', { backendNodeId: target.backendNodeId }, target.sessionId)
       const result = await this.send('Runtime.callFunctionOn', {
         objectId: object.objectId,
         returnByValue: true,
@@ -1011,7 +1162,7 @@ export class BrowserCDP {
           }
         }`,
         arguments: [{ value }],
-      })
+      }, target.sessionId)
 
       const details = result?.result?.value as {
         ok?: boolean
@@ -1041,16 +1192,16 @@ export class BrowserCDP {
   }
 
   async setFileInputFiles(ref: string, filePaths: string[]): Promise<ElementGeometry> {
-    const backendNodeId = this.refMap.get(ref)
-    if (!backendNodeId) {
+    const target = this.targetForRef(ref)
+    if (!target) {
       throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
     }
 
     try {
       await this.send('DOM.setFileInputFiles', {
         files: filePaths,
-        backendNodeId,
-      })
+        backendNodeId: target.backendNodeId,
+      }, target.sessionId)
 
       return await this.getElementGeometry(ref)
     } catch (err) {

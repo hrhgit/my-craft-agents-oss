@@ -428,6 +428,7 @@ async function main(): Promise<void> {
     alias: MAIN_PROCESS_ALIAS,
     define: {
       ...MAIN_PROCESS_IMPORT_META_DEFINES,
+      __CRAFT_UI_VALIDATION_BUILD__: "true",
       ...oauthDefines,
     },
     banner: { js: MAIN_PROCESS_IMPORT_META_BANNER },
@@ -443,6 +444,7 @@ async function main(): Promise<void> {
     format: "cjs",
     outfile: join(ROOT_DIR, "apps/electron/dist/bootstrap-preload.cjs"),
     external: ["electron"],
+    define: { __CRAFT_UI_VALIDATION_BUILD__: "true" },
     logLevel: "info",
   });
   esbuildContexts.push(preloadContext);

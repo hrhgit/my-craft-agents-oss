@@ -19,6 +19,7 @@ import {
 import { builtinModules } from 'module';
 import { join, dirname, relative, resolve, sep } from 'path';
 import { createHash } from 'crypto';
+import { assertNoUiValidationProductionRuntime } from './ui-validation-boundary';
 
 export type Platform = 'darwin' | 'win32' | 'linux';
 export type Arch = 'x64' | 'arm64';
@@ -1022,13 +1023,14 @@ export function buildMcpServers(config: BuildConfig): void {
   mkdirSync(join(sessionDir, 'dist'), { recursive: true });
 
   execSync(
-    `bun build ${join(sessionDir, 'src', 'index.ts')} --outfile ${sessionOut} --target node --format cjs`,
+    `bun build ${join(sessionDir, 'src', 'index.ts')} --outfile ${sessionOut} --target node --format cjs --minify-syntax --define process.env.CRAFT_UI_VALIDATION_BUILD=\\\"0\\\" --define process.env.CRAFT_UI_TEST_HOST=\\\"0\\\"`,
     { cwd: rootDir, stdio: 'inherit', shell: true }
   );
 
   if (!existsSync(sessionOut)) {
     throw new Error(`Session MCP server output not found at ${sessionOut}`);
   }
+  assertNoUiValidationProductionRuntime(readFileSync(sessionOut, 'utf8'), 'session-mcp-server/index.js');
 }
 
 /**
@@ -1069,6 +1071,8 @@ export async function buildElectronApp(config: BuildConfig): Promise<void> {
   const { rootDir } = config;
 
   console.log('Building Electron app...');
+  // Packaging must never inherit an opt-in source-development validation build.
+  process.env.CRAFT_UI_VALIDATION_BUILD = '0';
   await $`cd ${rootDir} && bun run electron:build`;
 }
 

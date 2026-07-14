@@ -46,8 +46,9 @@ const DropdownMenuTrigger = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Trigger> & {
     /** Auto-mirror hover:* classes to data-[state=open]:* while menu is open. Default: true */
     autoMirrorHoverToOpen?: boolean
+    semanticId?: string
   }
->(({ className, autoMirrorHoverToOpen = true, asChild, children, ...props }, ref) => {
+>(({ className, autoMirrorHoverToOpen = true, asChild, children, semanticId, ...props }, ref) => {
   const triggerClassName = cn(
     "select-none",
     autoMirrorHoverToOpen ? mirrorHoverToOpenStateClasses(className) : className
@@ -61,6 +62,7 @@ const DropdownMenuTrigger = React.forwardRef<
       <DropdownMenuPrimitive.Trigger
         ref={ref}
         data-slot="dropdown-menu-trigger"
+        data-craft-semantic-id={semanticId}
         asChild
         {...props}
       >
@@ -75,6 +77,7 @@ const DropdownMenuTrigger = React.forwardRef<
     <DropdownMenuPrimitive.Trigger
       ref={ref}
       data-slot="dropdown-menu-trigger"
+      data-craft-semantic-id={semanticId}
       asChild={asChild}
       className={triggerClassName}
       {...props}
@@ -117,14 +120,17 @@ function DropdownMenuItem({
   className,
   inset,
   variant = "default",
+  semanticId,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & {
   inset?: boolean
   variant?: "default" | "destructive"
+  semanticId?: string
 }) {
   return (
     <DropdownMenuPrimitive.Item
       data-slot="dropdown-menu-item"
+      data-craft-semantic-id={semanticId}
       data-inset={inset}
       data-variant={variant}
       className={cn(

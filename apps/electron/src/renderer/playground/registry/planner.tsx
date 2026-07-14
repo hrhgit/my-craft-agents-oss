@@ -892,6 +892,10 @@ function PlannerBoard() {
                     <div
                       key={row.key}
                       data-row-key={row.key}
+                      data-craft-semantic-id={`planner.task.${task.id}`}
+                      data-craft-ui-interactions="drag"
+                      role="listitem"
+                      aria-label={task.title}
                       ref={(el) => {
                         if (el) rowRefs.current.set(row.key, el)
                         else rowRefs.current.delete(row.key)

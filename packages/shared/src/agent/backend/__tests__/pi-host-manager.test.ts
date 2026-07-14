@@ -21,6 +21,7 @@ function capabilities(protocolVersion = 3): RpcCapabilities {
       hostToolResults: 'content',
       extensionCommandResult: true,
       extensionHostCapabilities: true,
+      extensionUiValidation: true,
       secondaryLlmQuery: true,
       childSessionListing: true,
       multiRuntime: protocolVersion >= 3,
@@ -33,7 +34,7 @@ function capabilities(protocolVersion = 3): RpcCapabilities {
   };
 }
 
-function createFakeClient(protocolVersion = 3) {
+function createFakeClient(protocolVersion = 3, startupEvent?: Parameters<RpcClientEventListener>[0]) {
   let listener: RpcClientEventListener | undefined;
   const close = mock(async () => undefined);
   const runtime = {
@@ -46,7 +47,10 @@ function createFakeClient(protocolVersion = 3) {
     },
     close,
   } as unknown as PiRuntimeHandle;
-  const openRuntime = mock(async (_options: RpcRuntimeOpenOptions) => runtime);
+  const openRuntime = mock(async (_options: RpcRuntimeOpenOptions) => {
+    if (startupEvent) listener?.(startupEvent);
+    return runtime;
+  });
   const stop = mock(async () => undefined);
   const client = {
     start: mock(async () => undefined),
@@ -112,6 +116,27 @@ describe('PiHostManager process-level sharing', () => {
     })).rejects.toBeInstanceOf(PiHostProtocolError);
     expect(fake.openRuntime).not.toHaveBeenCalled();
     expect(fake.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('captures runtime events emitted while a startup extension is opening', async () => {
+    const startupEvent = {
+      type: 'extension_ui_validation',
+      runtimeId: 'runtime-a',
+      extensionId: 'example',
+      delta: { schemaVersion: 1, revision: 1, operation: 'upsert', definition: {} },
+    } as Parameters<RpcClientEventListener>[0];
+    const fake = createFakeClient(3, startupEvent);
+    const manager = new PiHostManager({ createClient: () => fake.client });
+
+    const lease = await manager.acquire({
+      key: 'startup-events',
+      client: {},
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft' },
+    });
+
+    expect(lease.startupEvents).toEqual([startupEvent]);
+    await lease.release();
+    await manager.dispose();
   });
 
   it('creates a fresh host after the current host exits', async () => {

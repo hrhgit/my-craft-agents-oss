@@ -28,4 +28,8 @@ export const PRELOAD_LOCAL_CHANNELS = {
   SESSION_TRANSFER_TO_REMOTE_WORKSPACE: 'session:transferToRemoteWorkspace',
   /** invoke → sync a language change to main (persist + rebuild native menu). */
   I18N_CHANGE_LANGUAGE: 'i18n:changeLanguage',
+  /** send -> publish a validated development-only UI state batch. */
+  UI_VALIDATION_STATE_PUBLISH: '__ui-validation:state-publish',
+  /** send -> mark all validation scopes for this renderer disposed. */
+  UI_VALIDATION_STATE_DISPOSE: '__ui-validation:state-dispose',
 } as const

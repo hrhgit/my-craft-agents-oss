@@ -11,7 +11,12 @@
  *   → 此桥接层 → versioned contribution/eventSink → RPC_CHANNELS.extensions.EVENT → 渲染进程
  */
 
-import { RPC_CHANNELS, type ExtensionContributionDeltaV1, validateExtensionContributionDeltaV1 } from '@craft-agent/shared/protocol'
+import {
+  RPC_CHANNELS,
+  type ExtensionContributionDeltaV1,
+  validateExtensionContributionDeltaV1,
+  validateExtensionUIValidationDeltaV1,
+} from '@craft-agent/shared/protocol'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
 import type { EventSink } from '@craft-agent/server-core/transport'
 
@@ -53,6 +58,24 @@ export function createExtensionEventForwarder(
     if (event.type === 'extension_contribution') {
       if (validateExtensionContributionDeltaV1(event.delta) !== null) return
       eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, event)
+      return
+    }
+
+    if (event.type === 'extension_ui_validation') {
+      // Validation is a development-only adjunct. Route identity always comes
+      // from the host-owned extension runtime, never from the declaration.
+      const delta = {
+        ...event.delta,
+        extensionId: event.extensionId,
+        runtimeId: event.runtimeId,
+        ...(sessionId ? { sessionId } : {}),
+      }
+      if (validateExtensionUIValidationDeltaV1(delta) !== null) return
+      eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, {
+        ...event,
+        sessionId: delta.sessionId,
+        delta,
+      })
       return
     }
 

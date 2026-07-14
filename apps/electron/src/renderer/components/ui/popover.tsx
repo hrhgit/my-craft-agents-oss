@@ -2,6 +2,7 @@ import * as React from "react"
 import * as PopoverPrimitive from "@radix-ui/react-popover"
 
 import { cn } from "@/lib/utils"
+import { uiValidationAttributes, type UiValidationPrimitiveProps } from "./ui-validation"
 
 function Popover({
   ...props
@@ -10,9 +11,11 @@ function Popover({
 }
 
 function PopoverTrigger({
+  semanticId,
+  uiInteractions,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Trigger>) {
-  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
+}: React.ComponentProps<typeof PopoverPrimitive.Trigger> & UiValidationPrimitiveProps) {
+  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...uiValidationAttributes(semanticId, uiInteractions)} {...props} />
 }
 
 function PopoverContent({
@@ -20,12 +23,15 @@ function PopoverContent({
   align = "center",
   sideOffset = 4,
   collisionPadding = 20,
+  semanticId,
+  uiInteractions,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+}: React.ComponentProps<typeof PopoverPrimitive.Content> & UiValidationPrimitiveProps) {
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
         data-slot="popover-content"
+        {...uiValidationAttributes(semanticId, uiInteractions)}
         align={align}
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}

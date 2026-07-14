@@ -41,6 +41,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .codex-install-jobs/
 session_mgr.diff
 output/playwright/
+output/craft-ui*/
+output/.craft-ui-check/
 
 # IntelliJ based IDEs
 .idea

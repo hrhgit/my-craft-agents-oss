@@ -119,6 +119,10 @@ interface SortableListProps<T extends SortableItemData> {
   showOverlay?: boolean
   /** Additional className for the list container */
   className?: string
+  /** Stable list identity used to derive item identities for UI validation. */
+  semanticId?: string
+  /** Override the stable semantic identity for an item. */
+  getItemSemanticId?: (item: T) => string
 }
 
 // ============================================================
@@ -132,6 +136,8 @@ export function SortableList<T extends SortableItemData>({
   renderOverlay,
   showOverlay = true,
   className,
+  semanticId,
+  getItemSemanticId,
 }: SortableListProps<T>) {
   const [activeId, setActiveId] = React.useState<string | null>(null)
 
@@ -180,13 +186,14 @@ export function SortableList<T extends SortableItemData>({
       measuring={measuringConfig}
     >
       <SortableContext items={items} strategy={verticalListSortingStrategy}>
-        <div className={className}>
+        <div className={className} data-slot="sortable-list" data-craft-semantic-id={semanticId} role="list">
           {items.map(item => (
             <SortableItemWrapper
               key={item.id}
               id={item.id}
               isDragActive={activeId === item.id}
               hideWhileDragging={showOverlay}
+              semanticId={getItemSemanticId?.(item) ?? (semanticId ? `${semanticId}.item.${semanticPart(item.id)}` : undefined)}
             >
               {renderItem(item, activeId === item.id)}
             </SortableItemWrapper>
@@ -226,9 +233,10 @@ interface SortableItemWrapperProps {
   isDragActive: boolean
   hideWhileDragging: boolean
   children: React.ReactNode
+  semanticId?: string
 }
 
-function SortableItemWrapper({ id, isDragActive, hideWhileDragging, children }: SortableItemWrapperProps) {
+function SortableItemWrapper({ id, isDragActive, hideWhileDragging, children, semanticId }: SortableItemWrapperProps) {
   const {
     attributes,
     listeners,
@@ -249,6 +257,9 @@ function SortableItemWrapper({ id, isDragActive, hideWhileDragging, children }: 
   return (
     <div
       ref={setNodeRef}
+      data-slot="sortable-item"
+      data-craft-semantic-id={semanticId}
+      data-craft-ui-interactions="drag"
       style={style}
       {...attributes}
       {...listeners}
@@ -256,6 +267,16 @@ function SortableItemWrapper({ id, isDragActive, hideWhileDragging, children }: 
       {children}
     </div>
   )
+}
+
+function semanticPart(value: string): string {
+  const readable = value.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, 100) || 'item'
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `${readable}.${(hash >>> 0).toString(36)}`
 }
 
 export { arrayMove } from '@dnd-kit/sortable'

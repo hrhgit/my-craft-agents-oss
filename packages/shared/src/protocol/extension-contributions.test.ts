@@ -44,6 +44,10 @@ describe('ExtensionContributionV1', () => {
       schemaVersion: 1, id: 'sandbox', surface: 'conversation.timeline.before', content: sandbox,
     })).toBeNull()
     expect(validateExtensionContributionV1({
+      schemaVersion: 1, id: 'validation-sandbox', surface: 'conversation.timeline.before',
+      content: { ...sandbox, permissions: ['validation'] },
+    })).toBeNull()
+    expect(validateExtensionContributionV1({
       schemaVersion: 1, id: 'nested-sandbox', surface: 'conversation.timeline.before',
       content: { type: 'stack', children: [sandbox] },
     })).toContain('top-level')

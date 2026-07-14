@@ -74,6 +74,7 @@ describe('PiAgent GlobalHost recovery', () => {
         hostToolResults: 'content',
         extensionCommandResult: true,
         extensionHostCapabilities: true,
+        extensionUiValidation: true,
         secondaryLlmQuery: true,
         childSessionListing: true,
         multiRuntime: true,
@@ -120,7 +121,7 @@ describe('PiAgent GlobalHost recovery', () => {
 
     expect(startRpcClient).toHaveBeenCalledTimes(1);
     expect(releaseCrashedRuntime).toHaveBeenCalledTimes(1);
-    expect(invokeExtensionCommandResult).toHaveBeenCalledWith('plan-mode', 'discussion');
+    expect(invokeExtensionCommandResult).toHaveBeenCalledWith('plan-mode', 'discussion', undefined);
     expect(prompt).not.toHaveBeenCalled();
 
     agent.destroy();

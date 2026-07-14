@@ -10,6 +10,7 @@ import { join, parse as parsePath } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { BrowserView, BrowserWindow, app, ipcMain, nativeTheme, session, shell, type Session as ElectronSession } from 'electron'
+import { observeWebRequests } from './web-request-observer-hub'
 import { mainLog } from './logger'
 import type { WindowManager } from './window-manager'
 import { BrowserCDP, type AccessibilitySnapshot, type ElementGeometry } from './browser-cdp'
@@ -3137,17 +3138,14 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     if (this.partitionObserversInitialized) return
     this.partitionObserversInitialized = true
 
-    ses.webRequest.onBeforeRequest((details, callback) => {
+    observeWebRequests(ses, { beforeRequest: (details) => {
       const wcId = details.webContentsId
       if (typeof wcId === 'number' && wcId > 0) {
         const current = this.inFlightRequestsByWebContentsId.get(wcId) ?? 0
         this.inFlightRequestsByWebContentsId.set(wcId, current + 1)
         this.lastNetworkActivityByWebContentsId.set(wcId, Date.now())
       }
-      callback({})
-    })
-
-    ses.webRequest.onCompleted((details) => {
+    }, completed: (details) => {
       const wcId = details.webContentsId
       if (typeof wcId !== 'number' || wcId <= 0) return
 
@@ -3166,9 +3164,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         resourceType: String(details.resourceType ?? 'unknown'),
         ok: (details.statusCode ?? 0) >= 200 && (details.statusCode ?? 0) < 400,
       })
-    })
-
-    ses.webRequest.onErrorOccurred((details) => {
+    }, errorOccurred: (details) => {
       const wcId = details.webContentsId
       if (typeof wcId !== 'number' || wcId <= 0) return
 
@@ -3187,7 +3183,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         resourceType: String(details.resourceType ?? 'unknown'),
         ok: false,
       })
-    })
+    } })
 
     ses.on('will-download', (_event, item, webContents) => {
       const wcId = webContents?.id

@@ -15,10 +15,21 @@ import type { WsRpcClient } from '@craft-agent/server-core/transport/client'
 import { errorMessage } from '@craft-agent/shared/utils/text'
 import { waitForInitialConnection } from './connection'
 
+if (__CRAFT_UI_VALIDATION_BUILD__) {
+  Object.defineProperty(window, '__CRAFT_EXTENSION_UI_VALIDATION__', {
+    value: Object.freeze({ schemaVersion: 1, available: true }),
+    configurable: false,
+    enumerable: false,
+  })
+}
+
 // Lazy-load the Electron App after window.electronAPI is set up.
 // This prevents any Electron component from accessing window.electronAPI
 // before the web adapter is ready.
 const ElectronApp = lazy(() => import('@/App'))
+const ScenarioAppShellHost = __CRAFT_UI_VALIDATION_BUILD__
+  ? lazy(() => import('@/ui-validation/app-shell-scenario-service').then(module => ({ default: module.ScenarioAppShellHost })))
+  : null
 
 type Phase = 'loading' | 'error' | 'ready'
 
@@ -116,6 +127,24 @@ export default function App() {
 
       // 4. Set window.electronAPI — must happen before any Electron component mounts
       ;(window as any).electronAPI = api
+      if (__CRAFT_UI_VALIDATION_BUILD__) {
+        const validationHost = window.__craftUiValidation as typeof window.__craftUiValidation & {
+          publishState?: (batch: import('@/../shared/ui-validation-state-bridge').UiValidationRendererStateBatch) => void
+          dispose?: () => void
+        }
+        if (validationHost?.publishState) {
+          api.uiValidation = {
+            publishState: batch => validationHost.publishState?.(batch),
+            dispose: () => validationHost.dispose?.(),
+          }
+        }
+        const semanticBridge = await import('@/ui-validation/bridge')
+        semanticBridge.installUiSemanticBridge()
+        if (new URLSearchParams(window.location.search).get('__craftUiScenarioHost') === '1') {
+          const scenarioBridge = await import('@/ui-validation/app-shell-scenario-service')
+          scenarioBridge.installAppShellScenarioBridge()
+        }
+      }
 
       // 5. Connect the WebSocket client
       client.connect()
@@ -144,9 +173,12 @@ export default function App() {
   if (phase === 'loading') return <LoadingScreen />
   if (phase === 'error') return <ErrorScreen message={error} onRetry={initialize} />
 
+  const validationScenarioHost = __CRAFT_UI_VALIDATION_BUILD__
+    && new URLSearchParams(window.location.search).get('__craftUiScenarioHost') === '1'
+
   return (
     <Suspense fallback={<LoadingScreen />}>
-      <ElectronApp />
+      {validationScenarioHost && ScenarioAppShellHost ? <ScenarioAppShellHost /> : <ElectronApp />}
     </Suspense>
   )
 }

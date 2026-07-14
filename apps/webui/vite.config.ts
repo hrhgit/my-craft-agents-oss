@@ -2,13 +2,18 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
+import { isUiValidationBuildEnabled, uiValidationProductionBoundaryPlugin } from '../../scripts/build/ui-validation-boundary'
 
 const requestedPort = Number.parseInt(process.env.CRAFT_WEBUI_PORT ?? process.env.PORT ?? '5175', 10)
 const webuiPort = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
   ? requestedPort
   : 5175
 
-export default defineConfig({
+export default defineConfig(({ command }) => {
+  const uiValidationBuild = isUiValidationBuildEnabled(command)
+  const disabledValidationDir = resolve(__dirname, '../electron/src/renderer/ui-validation-disabled')
+
+  return {
   plugins: [
     react({
       babel: {
@@ -19,13 +24,16 @@ export default defineConfig({
       },
     }),
     tailwindcss(),
+    uiValidationProductionBoundaryPlugin(uiValidationBuild),
   ],
   root: resolve(__dirname, 'src'),
   base: './',
   build: {
     outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,
-    sourcemap: true,
+    // Validation builds keep maps for source-development diagnostics. Normal
+    // WebUI artifacts must not publish source-only validation modules in maps.
+    sourcemap: uiValidationBuild,
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'src/index.html'),
@@ -41,6 +49,15 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      ...(!uiValidationBuild ? {
+        '@craft-agent/shared/protocol': resolve(__dirname, '../../packages/shared/src/protocol/production.ts'),
+        '@/ui-validation/bridge': resolve(disabledValidationDir, 'bridge.ts'),
+        '@/ui-validation/state-bridge': resolve(disabledValidationDir, 'state-bridge.ts'),
+        '@/ui-validation/react': resolve(disabledValidationDir, 'react.ts'),
+        '@/ui-validation/app-shell-scenario-service': resolve(disabledValidationDir, 'app-shell-scenario-service.tsx'),
+        '@/components/extensions/extension-validation-store': resolve(disabledValidationDir, 'extension-validation-store.ts'),
+        './extension-validation-store': resolve(disabledValidationDir, 'extension-validation-store.ts'),
+      } : {}),
       // Reuse the Electron renderer's components, hooks, pages, etc.
       '@': resolve(__dirname, '../electron/src/renderer'),
       // Web-specific overrides
@@ -78,6 +95,7 @@ export default defineConfig({
   define: {
     // Flag to detect web UI context in shared code
     'import.meta.env.IS_WEBUI': 'true',
+    __CRAFT_UI_VALIDATION_BUILD__: JSON.stringify(uiValidationBuild),
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'jotai'],
@@ -110,4 +128,5 @@ export default defineConfig({
       }
     })(),
   },
+  }
 })

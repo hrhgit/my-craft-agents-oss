@@ -544,6 +544,172 @@ For extensions targeting both Pi and Craft, check `ctx.ui.capabilities.contribut
 
 Craft GUI extensions must remain readable, operable, and verifiable through Craft's source-development UI validation framework. This is an authoring requirement for extension GUI, not an optional test-only convention.
 
+Validation protocol V1 is an optional development capability. It never makes the extension GUI loadable and it is not a substitute for `upsertContribution()`. A production host, Pi TUI, headless host, or an older linked Pi SDK can expose no validation API at all; the extension must continue normally in that case.
+
+### Capability Detection
+
+Current Pi SDK versions expose the development capability directly on `ctx.ui.validation`. Treat `available: false` and a missing value from an older host as the same safe no-op condition:
+
+```typescript
+const validation = ctx.ui.validation;
+if (!validation?.available || !validation.protocolVersions.includes(1)) {
+  // Normal extension behavior continues. Do not emit private RPC events.
+  return;
+}
+```
+
+The host enables this RPC channel only for a source-development Test Host. Pi TUI, production Craft, headless hosts, and older SDKs keep it disabled and all methods degrade safely. Never infer validation support from `ctx.hasUI`, `capabilities.contributions`, Electron, or a development environment variable.
+
+### Validation Definition V1
+
+Publish one definition per independently testable contribution. Re-publish the same stable `id` when its signals, disabled actions, or semantic snapshot change. Craft applies monotonically increasing runtime revisions and clears definitions on runtime reset, reload, disconnect, or process failure.
+
+```typescript
+type ValidationDefinitionV1 = {
+  schemaVersion: 1;
+  id: string;
+  contributionId: string;
+  verificationLevel: "semantic" | "physical";
+  readyWhen?: string[];
+  signals?: Array<{
+    id: string;
+    label: string;
+    status: "pending" | "busy" | "ready" | "error";
+    detail?: string;
+  }>;
+  actions?: Array<{
+    id: string;
+    label: string;
+    command: string;
+    inputSchema?: Record<string, unknown>;
+    disabled?: boolean;
+  }>;
+  scenarios?: Array<{
+    id: string;
+    label: string;
+    command: string;
+    inputSchema?: Record<string, unknown>;
+    teardownCommand?: string;
+    teardownInputSchema?: Record<string, unknown>;
+  }>;
+  snapshot?: SemanticNodeV1;
+};
+
+type SemanticNodeV1 = {
+  id: string;
+  role: string;
+  label?: string;
+  state?: Record<string, string | number | boolean | null>;
+  children?: SemanticNodeV1[];
+};
+```
+
+Example:
+
+```typescript
+validation.upsertDefinition({
+  schemaVersion: 1,
+  id: "build-status.contract",
+  contributionId: "build-status",
+  verificationLevel: "semantic",
+  readyWhen: ["build.ready"],
+  signals: [
+    { id: "build.ready", label: "Build status loaded", status: state.phase === "loading" ? "busy" : "ready" },
+  ],
+  actions: [
+    {
+      id: "refresh",
+      label: "Refresh build",
+      command: "build-status:refresh",
+      inputSchema: { type: "object", additionalProperties: false },
+      disabled: state.phase === "loading",
+    },
+  ],
+  scenarios: [
+    {
+      id: "failed-build",
+      label: "Failed build",
+      command: "build-status:test-failed-build",
+      inputSchema: {
+        type: "object",
+        properties: { message: { type: "string", maxLength: 200 } },
+        additionalProperties: false,
+      },
+      teardownCommand: "build-status:test-reset",
+      teardownInputSchema: { type: "object", additionalProperties: false },
+    },
+  ],
+  snapshot: {
+    id: "build-status",
+    role: "region",
+    label: "Build status",
+    state: { phase: state.phase },
+    children: [{ id: "refresh", role: "button", label: "Refresh build", state: { disabled: state.phase === "loading" } }],
+  },
+});
+
+// Replace dynamic readiness/snapshot fields without redeclaring actions.
+validation.updateState("build-status.contract", {
+  readyWhen: ["build.ready"],
+  signals: [{ id: "build.ready", label: "Build status loaded", status: "ready" }],
+});
+
+// On teardown (runtime disposal also clears definitions automatically):
+validation.removeDefinition("build-status.contract");
+
+// Or clear every validation definition owned by this extension runtime:
+validation.clearDefinitions();
+```
+
+Action, scenario setup, and scenario teardown command values must be registered by the same extension. Craft passes the trusted extension owner into Pi's command registry and rejects cross-extension command names even when another extension declares them. Actions must use the same production command handlers as visible controls. A scenario command is development-only setup: it may select fixtures or feed typed events through the extension's production reducer, but it must not evaluate code, mutate Craft renderer state, query private DOM, write real user data, or invent a state that production cannot reach. Declare `teardownCommand` whenever setup changes persistent extension state; teardown must be idempotent and restore the state captured before setup. The development host can refuse all scenario commands outside an isolated validation profile.
+
+Sandbox contributions receive the same methods through `window.craft.validation`: `publish`, `updateState`, `clear`, and `clearAll`. The API is present but reports `available: false` unless both the sandbox contribution requests the `validation` permission and Craft is running under the source-development Test Host. A sandbox validation route keeps a synthetic renderer identity, while command execution remains bound to the trusted owning Pi extension.
+
+Definitions are bounded: at most 64 signals, 64 actions, 32 scenarios, 256 semantic nodes, and eight semantic tree levels. IDs must be stable and unique in their local collection. `readyWhen` may reference only declared signal IDs. Input schemas and state must be JSON-serializable and bounded. Unknown fields or protocol versions fail closed for validation only; they do not remove the contribution.
+
+### Sandbox App Bridge
+
+A sandbox app must request the separate `validation` permission in addition to any production permissions it needs:
+
+```typescript
+content: {
+  type: "sandbox-app",
+  appId: "build-dashboard",
+  title: "Build dashboard",
+  html,
+  script,
+  permissions: ["commands", "validation"],
+}
+```
+
+Add that permission only after the host-side validation capability check succeeds. When validation is unavailable, publish the same sandbox contribution without `validation`; older contribution V1 hosts reject unknown permissions by design.
+
+The iframe receives `window.craft.validation`:
+
+```typescript
+const { capabilities } = window.craft.validation;
+if (capabilities.available && capabilities.protocolVersions.includes(1)) {
+  await window.craft.validation.publish(definition);
+  await window.craft.validation.updateState(definition.id, {
+    readyWhen: ["build.ready"],
+    signals: [{ id: "build.ready", label: "Build ready", status: "ready" }],
+  });
+  // Remove one definition, or clear all definitions owned by this sandbox app:
+  await window.craft.validation.clear(definition.id);
+  await window.craft.validation.clearAll();
+}
+```
+
+The bridge is enabled only when both conditions hold: the app requested `validation`, and the source-development host advertised validation V1. Otherwise `capabilities.available` is false and publish/update/clear calls are rejected. Messages use the iframe's private nonce-bound `MessageChannel`, existing size and rate limits, and the same shared validator as host-rendered definitions. Sandbox definitions receive a synthetic registry owner so their revisions cannot collide with backend-published definitions. Closing, reloading, timing out, encountering a message-channel error, or failing the iframe resets its definitions.
+
+The sandbox bridge accepts semantic definitions only. It exposes no DOM query, JavaScript evaluation, coordinate injection, direct scenario state setter, Electron IPC, filesystem, credentials, or network access. Scenario setup remains an extension-owned command and should re-enter the sandbox through normal `initialState` or production state events.
+
+### Host Behavior and Compatibility
+
+Craft validates at every available boundary: Pi owns the runtime revision; the server replaces payload route identity with the host-owned session/runtime/extension identity; the renderer rejects stale revisions and clears a failed runtime; command dispatch verifies extension ownership. Invalid validation is isolated from normal GUI rendering.
+
+WebUI and Electron share the renderer registry and sandbox protocol. Pi TUI and headless hosts do not support Craft validation. Extension packages should ship one normal GUI implementation and conditionally add validation metadata, not fork their UI by host.
+
 Host-rendered contributions inherit baseline semantics from Craft's primitives. Extension authors must still:
 
 - Use stable contribution and target IDs that do not depend on display text, array position, or rendered DOM structure.
@@ -575,6 +741,14 @@ Before publishing a Craft GUI extension, verify:
 12. Ready, busy, completion, and failure transitions are observable without fixed sleeps.
 13. Registered scenarios use typed, production-valid state primitives and cannot mutate arbitrary renderer internals.
 14. Fast semantic validation and representative real renderer interaction both pass at their declared verification level.
+
+The repository's `craft-gui.ts` example is the executable reference. Its E2E creates an explicit temporary clone source, loads the real Pi extension, creates a real Craft session, runs the declared count scenario and command action, physically clicks the host-rendered button, performs the platform-native window check, captures evidence, and tears the scenario down:
+
+```bash
+bun run test:ui-validation:extension
+```
+
+Passing this flow proves `scenario-verified` and `renderer-verified` on every supported source surface, plus `native-verified` where the native driver is available. `UNSUPPORTED` is the only valid result when a platform has no native adapter; never replace it with a manual step or report a lower-level action as native verification.
 
 For sandbox apps, also verify:
 

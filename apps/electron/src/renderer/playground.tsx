@@ -17,6 +17,16 @@ import { EscapeInterruptProvider } from './context/EscapeInterruptContext'
 import { PlaygroundAppShellProvider } from './playground/PlaygroundAppShellProvider'
 import './index.css'
 
+if (__CRAFT_UI_VALIDATION_BUILD__) {
+  void Promise.all([
+    import('./ui-validation/app-shell-scenario-service'),
+    import('./ui-validation/bridge'),
+  ]).then(([scenarioBridge, semanticBridge]) => {
+    scenarioBridge.installAppShellScenarioBridge()
+    semanticBridge.installUiSemanticBridge()
+  })
+}
+
 // Initialize i18n before any React rendering. `useTranslation()` reads from
 // the shared global instance, so we don't need an <I18nextProvider>.
 setupI18n([initReactI18next])

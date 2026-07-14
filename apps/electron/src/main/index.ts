@@ -135,6 +135,11 @@ import type { EventSink } from '@craft-agent/server-core/transport'
 import { validateGitBashPath, checkVCRedistInstalled } from '@craft-agent/server-core/services'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
 import { spawnWorkspaceServer, type SpawnedWorkspaceServer } from './workspace-server-spawner'
+if (__CRAFT_UI_VALIDATION_BUILD__ && process.env.CRAFT_UI_TEST_HOST === '1' && !app.isPackaged && process.env.NODE_ENV !== 'production') {
+  const isolatedElectronData = process.env.CRAFT_UI_ELECTRON_USER_DATA_DIR
+  if (!isolatedElectronData) throw new Error('CRAFT_UI_ELECTRON_USER_DATA_DIR is required for UI validation runs.')
+  app.setPath('userData', isolatedElectronData)
+}
 
 // Initialize electron-log for renderer process support
 log.initialize()
@@ -243,6 +248,7 @@ function disposeCapabilityOAuthFlows(): void {
 }
 let moduleSink: EventSink | null = null
 let moduleClientResolver: ((webContentsId: number) => string | undefined) | null = null
+let uiTestHost: { url: string; close(): Promise<void> } | null = null
 let workspaceServer: SpawnedWorkspaceServer | null = null
 
 // Messaging gateway: the bootstrap handle is created once sessionManager is
@@ -563,6 +569,14 @@ app.whenReady().then(async () => {
         mainLog.info(message, context)
       }
     })
+
+    if (__CRAFT_UI_VALIDATION_BUILD__) {
+      const { installUiValidationStateBridge } = await import('./ui-validation.dev')
+      installUiValidationStateBridge({
+        enabled: process.env.CRAFT_UI_TEST_HOST === '1',
+        isPackaged: app.isPackaged,
+      })
+    }
 
     // Dialog bridge — preload capability handlers use ipcRenderer.invoke to
     // call main-process-only dialog APIs (dialog, BrowserWindow).
@@ -1508,6 +1522,54 @@ app.whenReady().then(async () => {
       await createInitialWindows()
     }
 
+    // Development-only, authenticated UI validation control plane. The host
+    // itself enforces the packaged/production guard before binding loopback.
+    if (__CRAFT_UI_VALIDATION_BUILD__ && !isHeadless && process.env.CRAFT_UI_TEST_HOST === '1') {
+      const { loadRendererTarget, startUiTestHost, resolveUiValidationRoute } = await import('./ui-validation.dev')
+      uiTestHost = await startUiTestHost({
+        isPackaged: app.isPackaged,
+        windowManager,
+        runtimeLogPath: join(CONFIG_DIR, 'logs', 'runtime.log'),
+        shutdown: () => app.quit(),
+        openRoute: async (params, target) => {
+          const resolvedRoute = resolveUiValidationRoute(params, String(target.webContentsId))
+          if (resolvedRoute.route.surface === 'workspace-picker') {
+            const window = windowManager!.getWindowByWebContentsId(target.webContentsId)
+            if (!window || window.isDestroyed()) throw new Error('Target window is no longer available.')
+            if (!windowManager!.updateWindowWorkspace(target.webContentsId, '')) {
+              throw new Error('Target window is not managed by Craft.')
+            }
+            const targetUrl = new URL(window.webContents.getURL())
+            targetUrl.pathname = targetUrl.pathname.replace(/[^/]*$/, 'index.html')
+            targetUrl.search = ''
+            targetUrl.hash = ''
+            await loadRendererTarget(window, targetUrl.toString())
+            return {
+              route: resolvedRoute.route,
+              ready: resolvedRoute.ready,
+              dependencies: resolvedRoute.dependencies,
+            }
+          }
+          if (!resolvedRoute.deepLinkRoute) throw new Error('Resolved route has no renderer target.')
+          const url = `craftagents://${resolvedRoute.deepLinkRoute}`
+          const result = await handleDeepLink(
+            url,
+            windowManager!,
+            moduleSink ?? undefined,
+            moduleClientResolver ?? undefined,
+          )
+          if (!result.success) throw new Error(result.error ?? 'Route navigation failed.')
+          return {
+            ...result,
+            route: resolvedRoute.route,
+            ready: resolvedRoute.ready,
+            dependencies: resolvedRoute.dependencies,
+          }
+        },
+      })
+      mainLog.info('[ui-validation] Test Host ready', { url: uiTestHost?.url })
+    }
+
     // Run credential health check at startup to detect issues early
     // (corruption, machine migration, missing credentials for default connection)
     // Skip in thin-client mode — credentials are managed by the remote server.
@@ -1639,6 +1701,16 @@ app.on('before-quit', async (event) => {
 
   // Ensure Cmd+Q/app quit bypasses layered window close interception (Cmd+W behavior).
   windowManager?.setAppQuitting(true)
+
+  if (uiTestHost) {
+    const host = uiTestHost
+    uiTestHost = null
+    try {
+      await host.close()
+    } catch (error) {
+      mainLog.warn('[ui-validation] Failed to close Test Host', error)
+    }
+  }
 
   if (windowManager) {
     const windows = windowManager.getWindowStates()

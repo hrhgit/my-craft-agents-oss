@@ -2,6 +2,7 @@ import * as React from 'react'
 import { AlertTriangle, RotateCw } from 'lucide-react'
 import type { ExtensionUINode } from '@craft-agent/shared/protocol'
 import { cn } from '@/lib/utils'
+import { extensionValidationStore } from './extension-validation-store'
 
 type SandboxNode = Extract<ExtensionUINode, { type: 'sandbox-app' }>
 
@@ -21,6 +22,9 @@ type SandboxMessage = {
   key?: unknown
   value?: unknown
   height?: unknown
+  definition?: unknown
+  definitionId?: unknown
+  state?: unknown
 }
 
 const STORAGE_PREFIX = 'craft.extensionSandbox.v1'
@@ -28,6 +32,17 @@ const MAX_MESSAGE_BYTES = 32_768
 const MAX_STORAGE_BYTES = 65_536
 const RATE_WINDOW_MS = 10_000
 const RATE_LIMIT = 120
+const sandboxValidationRevisions = new Map<string, number>()
+const sandboxValidationLeases = new Map<string, symbol>()
+
+type DevelopmentValidationHost = { schemaVersion: 1; available: true }
+
+export function isSandboxValidationBridgeEnabled(node: SandboxNode, host?: DevelopmentValidationHost | null): boolean {
+  const advertised = host ?? (typeof window === 'undefined' ? null : (window as unknown as {
+    __CRAFT_EXTENSION_UI_VALIDATION__?: DevelopmentValidationHost
+  }).__CRAFT_EXTENSION_UI_VALIDATION__ ?? null)
+  return advertised?.schemaVersion === 1 && advertised.available === true && node.permissions?.includes('validation') === true
+}
 
 export function isAcceptableSandboxMessage(value: unknown): value is SandboxMessage {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
@@ -44,6 +59,7 @@ function escapeClosingTag(value: string, tag: 'script' | 'style'): string {
 }
 
 function buildSandboxDocument(node: SandboxNode, nonce: string): string {
+  const initialStateRevision = encodeURIComponent(JSON.stringify(node.initialState ?? null))
   const bootstrap = `(() => {
     let port;
     let sequence = 0;
@@ -63,6 +79,7 @@ function buildSandboxDocument(node: SandboxNode, nonce: string): string {
         }, 15000);
       });
     };
+    let validationCapabilities = Object.freeze({ available: false, protocolVersions: [], verificationLevels: [], scenarios: false, sandboxBridge: false });
     Object.defineProperty(window, 'craft', { configurable: false, writable: false, value: Object.freeze({
       ready,
       invokeCommand: (command, args) => request('command.invoke', { command, args }),
@@ -73,11 +90,24 @@ function buildSandboxDocument(node: SandboxNode, nonce: string): string {
         set: (key, value) => request('storage.set', { key, value }),
         delete: (key) => request('storage.delete', { key }),
       }),
+      validation: Object.freeze({
+        get capabilities() { return validationCapabilities; },
+        publish: (definition) => request('validation.upsert', { definition }),
+        updateState: (definitionId, state) => request('validation.updateState', { definitionId, state }),
+        clear: (definitionId) => request('validation.remove', { definitionId }),
+        clearAll: () => request('validation.reset'),
+      }),
     }) });
     const acceptInit = event => {
-      if (event.source !== parent || event.data?.type !== 'craft:sandbox-init' || event.data?.nonce !== ${JSON.stringify(nonce)} || !event.ports[0]) return;
+      if (event.source !== parent || event.data?.nonce !== ${JSON.stringify(nonce)}) return;
+      if (event.data?.type === 'craft:sandbox-probe') {
+        parent.postMessage({ type: 'craft:sandbox-bootstrap-ready', nonce: ${JSON.stringify(nonce)} }, '*');
+        return;
+      }
+      if (event.data?.type !== 'craft:sandbox-init' || !event.ports[0]) return;
       window.removeEventListener('message', acceptInit);
       port = event.ports[0];
+      validationCapabilities = Object.freeze(event.data.validationCapabilities || validationCapabilities);
       port.onmessage = responseEvent => {
         const response = responseEvent.data;
         if (response?.type === 'response' && pending.has(response.requestId)) {
@@ -93,9 +123,10 @@ function buildSandboxDocument(node: SandboxNode, nonce: string): string {
       window.dispatchEvent(new CustomEvent('craftready', { detail: event.data }));
     };
     window.addEventListener('message', acceptInit);
+    parent.postMessage({ type: 'craft:sandbox-bootstrap-ready', nonce: ${JSON.stringify(nonce)} }, '*');
   })();`
   const csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; worker-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; navigate-to 'none'"
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${escapeClosingTag(node.css ?? '', 'style')}</style><script>${escapeClosingTag(bootstrap, 'script')}</script></head><body>${node.html}<script>${escapeClosingTag(node.script ?? '', 'script')}</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="craft-initial-state-revision" content="${initialStateRevision}"><style>${escapeClosingTag(node.css ?? '', 'style')}</style><script>${escapeClosingTag(bootstrap, 'script')}</script></head><body>${node.html}<script>${escapeClosingTag(node.script ?? '', 'script')}</script></body></html>`
 }
 
 function readTheme(): Record<string, string> {
@@ -126,14 +157,56 @@ function saveStorage(extensionId: string, runtimeId: string, sessionId: string, 
 export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStatusChange }: SandboxAppHostProps) {
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null)
   const channelRef = React.useRef<MessageChannel | null>(null)
-  const loadedDocumentRef = React.useRef(false)
+  const initializedNonceRef = React.useRef<string | null>(null)
   const [nonce, setNonce] = React.useState(() => crypto.randomUUID())
   const [status, setStatus] = React.useState<'loading' | 'ready' | 'error'>('loading')
   const minHeight = node.minHeight ?? 120
   const maxHeight = node.maxHeight ?? 720
   const [height, setHeight] = React.useState(node.preferredHeight ?? minHeight)
-  const permissions = React.useMemo(() => new Set(node.permissions ?? []), [node.permissions])
-  const srcDoc = React.useMemo(() => buildSandboxDocument(node, nonce), [node, nonce])
+  const documentKey = JSON.stringify({
+    appId: node.appId,
+    html: node.html,
+    css: node.css,
+    script: node.script,
+    initialState: node.initialState,
+    minHeight: node.minHeight,
+    maxHeight: node.maxHeight,
+    preferredHeight: node.preferredHeight,
+    permissions: node.permissions,
+  })
+  const permissions = React.useMemo(() => new Set(node.permissions ?? []), [documentKey])
+  const validationEnabled = isSandboxValidationBridgeEnabled(node)
+  const srcDoc = React.useMemo(() => buildSandboxDocument(node, nonce), [documentKey, nonce])
+  const sandboxExtensionId = `${extensionId}:sandbox:${node.appId}`
+  const validationOwnerKey = `${sessionId}\0${runtimeId}\0${sandboxExtensionId}`
+  const nextValidationRevision = React.useCallback(() => {
+    const revision = (sandboxValidationRevisions.get(validationOwnerKey) ?? 0) + 1
+    sandboxValidationRevisions.set(validationOwnerKey, revision)
+    return revision
+  }, [validationOwnerKey])
+  const resetValidation = React.useCallback(() => {
+    if (!sandboxValidationRevisions.has(validationOwnerKey)) return
+    extensionValidationStore.apply({
+      schemaVersion: 1,
+      extensionId: sandboxExtensionId,
+      sessionId,
+      runtimeId,
+      revision: nextValidationRevision(),
+      operation: 'reset',
+    })
+  }, [nextValidationRevision, runtimeId, sandboxExtensionId, sessionId, validationOwnerKey])
+
+  React.useEffect(() => {
+    const lease = Symbol(validationOwnerKey)
+    sandboxValidationLeases.set(validationOwnerKey, lease)
+    return () => {
+      window.setTimeout(() => {
+        if (sandboxValidationLeases.get(validationOwnerKey) !== lease) return
+        resetValidation()
+        sandboxValidationLeases.delete(validationOwnerKey)
+      }, 0)
+    }
+  }, [documentKey, resetValidation, validationOwnerKey])
 
   React.useEffect(() => {
     setStatus('loading')
@@ -141,26 +214,21 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStat
     channelRef.current?.port1.close()
     channelRef.current?.port2.close()
     channelRef.current = null
-    loadedDocumentRef.current = false
-  }, [extensionId, node, nonce, onStatusChange, runtimeId, sessionId])
+    initializedNonceRef.current = null
+  }, [documentKey, extensionId, nonce, onStatusChange, runtimeId, sessionId])
 
   React.useEffect(() => {
     setHeight(node.preferredHeight ?? minHeight)
   }, [minHeight, node.preferredHeight])
 
-  const handleLoad = React.useCallback(() => {
+  const initializeChannel = React.useCallback(() => {
     const frame = iframeRef.current
     if (!frame?.contentWindow) return
-    if (loadedDocumentRef.current) {
-      channelRef.current?.port1.close()
-      channelRef.current?.port2.close()
-      setStatus('error')
-      onStatusChange?.('error')
-      return
-    }
-    loadedDocumentRef.current = true
+    if (initializedNonceRef.current === nonce) return
+    initializedNonceRef.current = nonce
     channelRef.current?.port1.close()
     channelRef.current?.port2.close()
+    resetValidation()
     const channel = new MessageChannel()
     channelRef.current = channel
     const timestamps: number[] = []
@@ -215,7 +283,60 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStat
           return respond(requestId, false, undefined, error instanceof Error ? error.message : String(error))
         }
       }
+      if (message.type === 'validation.upsert') {
+        if (!validationEnabled || !permissions.has('validation')) return respond(requestId, false, undefined, 'Validation bridge is unavailable')
+        const accepted = extensionValidationStore.apply({
+          schemaVersion: 1,
+          extensionId: sandboxExtensionId,
+          sessionId,
+          runtimeId,
+          revision: nextValidationRevision(),
+          operation: 'upsert',
+          definition: message.definition as never,
+        }, { commandOwnerExtensionId: extensionId })
+        return accepted ? respond(requestId, true, true) : respond(requestId, false, undefined, 'Validation definition was rejected')
+      }
+      if (message.type === 'validation.updateState') {
+        if (!validationEnabled || !permissions.has('validation') || typeof message.definitionId !== 'string') return respond(requestId, false, undefined, 'Validation bridge is unavailable')
+        const accepted = extensionValidationStore.updateState({
+          extensionId: sandboxExtensionId,
+          commandOwnerExtensionId: extensionId,
+          sessionId,
+          runtimeId,
+        }, message.definitionId, nextValidationRevision(), message.state as never)
+        return accepted ? respond(requestId, true, true) : respond(requestId, false, undefined, 'Validation state was rejected')
+      }
+      if (message.type === 'validation.remove') {
+        if (!validationEnabled || !permissions.has('validation') || typeof message.definitionId !== 'string') return respond(requestId, false, undefined, 'Validation bridge is unavailable')
+        const accepted = extensionValidationStore.apply({
+          schemaVersion: 1,
+          extensionId: sandboxExtensionId,
+          sessionId,
+          runtimeId,
+          revision: nextValidationRevision(),
+          operation: 'remove',
+          definitionId: message.definitionId,
+        }, { commandOwnerExtensionId: extensionId })
+        return accepted ? respond(requestId, true, true) : respond(requestId, false, undefined, 'Validation definition was rejected')
+      }
+      if (message.type === 'validation.reset') {
+        if (!validationEnabled || !permissions.has('validation')) return respond(requestId, false, undefined, 'Validation bridge is unavailable')
+        const accepted = extensionValidationStore.apply({
+          schemaVersion: 1,
+          extensionId: sandboxExtensionId,
+          sessionId,
+          runtimeId,
+          revision: nextValidationRevision(),
+          operation: 'reset',
+        }, { commandOwnerExtensionId: extensionId })
+        return accepted ? respond(requestId, true, true) : respond(requestId, false, undefined, 'Validation definitions could not be cleared')
+      }
       respond(requestId, false, undefined, 'Unsupported sandbox request')
+    }
+    channel.port1.onmessageerror = () => {
+      setStatus('error')
+      onStatusChange?.('error')
+      resetValidation()
     }
     channel.port1.start()
     frame.contentWindow.postMessage({
@@ -228,13 +349,37 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStat
       initialState: node.initialState,
       permissions: [...permissions],
       theme: permissions.has('theme') ? readTheme() : undefined,
+      validationCapabilities: validationEnabled ? {
+        schemaVersion: 1,
+        available: true,
+        protocolVersions: [1],
+        verificationLevels: ['semantic', 'physical'],
+        scenarios: true,
+        sandboxBridge: true,
+      } : { schemaVersion: 1, available: false, protocolVersions: [], verificationLevels: [], scenarios: false, sandboxBridge: false },
     }, '*', [channel.port2])
-  }, [extensionId, maxHeight, minHeight, node.appId, node.initialState, nonce, onStatusChange, permissions, runtimeId, sessionId])
+  }, [documentKey, extensionId, maxHeight, minHeight, nextValidationRevision, node.appId, nonce, onStatusChange, permissions, resetValidation, runtimeId, sandboxExtensionId, sessionId, validationEnabled])
+
+  React.useEffect(() => {
+    const handleBootstrapReady = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return
+      if (event.data?.type !== 'craft:sandbox-bootstrap-ready' || event.data?.nonce !== nonce) return
+      initializeChannel()
+    }
+    window.addEventListener('message', handleBootstrapReady)
+    iframeRef.current?.contentWindow?.postMessage({ type: 'craft:sandbox-probe', nonce }, '*')
+    return () => window.removeEventListener('message', handleBootstrapReady)
+  }, [initializeChannel, nonce])
+
+  const handleLoad = React.useCallback(() => {
+    iframeRef.current?.contentWindow?.postMessage({ type: 'craft:sandbox-probe', nonce }, '*')
+  }, [nonce])
 
   React.useEffect(() => {
     const timeout = window.setTimeout(() => setStatus(current => {
       if (current !== 'loading') return current
       onStatusChange?.('error')
+      resetValidation()
       return 'error'
     }), 5000)
     return () => {
@@ -242,8 +387,9 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStat
       channelRef.current?.port1.close()
       channelRef.current?.port2.close()
       channelRef.current = null
+      initializedNonceRef.current = null
     }
-  }, [extensionId, node, nonce, onStatusChange, runtimeId, sessionId])
+  }, [documentKey, extensionId, nonce, onStatusChange, runtimeId, sessionId])
 
   return (
     <div className="relative min-w-0 overflow-hidden border border-border/70 bg-background" data-sandbox-app={node.appId}>

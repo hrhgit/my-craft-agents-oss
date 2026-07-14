@@ -37,6 +37,7 @@ import type { RpcClient } from '@craft-agent/server-core/transport'
 import type { RemoteServerConfig } from '@craft-agent/core/types'
 import type { ElectronAPI } from '../shared/types'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
+import type { UiValidationRendererStateBatch } from '../shared/ui-validation-state-bridge'
 
 // ---------------------------------------------------------------------------
 // Client interface — common surface for both RoutedClient and WsRpcClient
@@ -216,6 +217,15 @@ const api = buildClientApi(client, CHANNEL_MAP, (ch) => client.isChannelAvailabl
 
 ;(api as any).getRuntimeEnvironment = (): 'electron' | 'web' => 'electron'
 
+if (__CRAFT_UI_VALIDATION_BUILD__ && process.env.CRAFT_UI_TEST_HOST === '1' && process.env.NODE_ENV !== 'production') {
+  ;(api as ElectronAPI).uiValidation = {
+    publishState: (batch: UiValidationRendererStateBatch) => {
+      ipcRenderer.send(PRELOAD_LOCAL_CHANNELS.UI_VALIDATION_STATE_PUBLISH, batch)
+    },
+    dispose: () => ipcRenderer.send(PRELOAD_LOCAL_CHANNELS.UI_VALIDATION_STATE_DISPOSE),
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Transport connection state logging (for remote connections)
 // ---------------------------------------------------------------------------
@@ -372,6 +382,12 @@ client.onConnectionStateChanged((state) => {
   workspaceRuntimeDegraded: process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED === '1',
   workspaceRuntimeDegradedReason: process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED_REASON,
 })
+
+// This flag is the only renderer-side source of Test Host authority. The main
+// process rejects this environment combination in packaged/production builds.
+if (__CRAFT_UI_VALIDATION_BUILD__ && process.env.CRAFT_UI_TEST_HOST === '1' && process.env.NODE_ENV !== 'production') {
+  ;(api as ElectronAPI).uiValidationTestHost = Object.freeze({ schemaVersion: 1, enabled: true })
+}
 
 // i18n: sync language changes to main process (for native menus/dialogs)
 ;(api as ElectronAPI).changeLanguage = (lang: string) => ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.I18N_CHANGE_LANGUAGE, lang)

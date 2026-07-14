@@ -103,7 +103,7 @@ export function TransportConnectionBanner({
           <p className="text-xs opacity-90 truncate">{copy.description}</p>
         </div>
         {copy.showRetry && (
-          <Button size="sm" variant="outline" onClick={onRetry} className="shrink-0 h-7">
+          <Button semanticId="transport.retry" size="sm" variant="outline" onClick={onRetry} className="shrink-0 h-7">
             {t('common.retry')}
           </Button>
         )}

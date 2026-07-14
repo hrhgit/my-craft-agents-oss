@@ -43,3 +43,74 @@ jobs:
 
       - name: Run validation suite
         run: bun run validate:ci
+
+  ui-validation-webui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Chromium
+        run: |
+          bunx playwright-core install --with-deps chromium
+          echo "CRAFT_UI_BROWSER_EXECUTABLE=$(node -e \"process.stdout.write(require('playwright-core').chromium.executablePath())\")" >> "$GITHUB_ENV"
+
+      - name: Run WebUI validation smoke
+        run: bun run test:ui-validation:stability
+        env:
+          CRAFT_UI_STABILITY_SURFACES: webui
+          CRAFT_UI_STABILITY_ITERATIONS: "1"
+
+      - name: Upload WebUI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft-ui-webui-evidence
+          path: output/craft-ui
+          if-no-files-found: warn
+
+  ui-validation-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Electron and native validation
+        run: bun run test:ui-validation:electron
+
+      - name: Run renderer recovery validation
+        run: bun run test:ui-validation:recovery
+        env:
+          CRAFT_UI_SKIP_BUILD: "1"
+
+      - name: Upload Electron evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft-ui-windows-evidence
+          path: output/craft-ui
+          if-no-files-found: warn

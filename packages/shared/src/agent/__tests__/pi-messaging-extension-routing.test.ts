@@ -15,6 +15,13 @@ describe('Pi messaging extension routing contract', () => {
     expect(source).toContain('process.env.CRAFT_BROWSER_EXTENSION_PATH, process.env.CRAFT_MESSAGING_EXTENSION_PATH')
   })
 
+  it('binds shared runtimes and host reuse to the configured Pi agent directory', () => {
+    expect(source).toContain("import { PI_AGENT_DIR } from '../config/paths.ts'")
+    expect(source).toContain('key: `${nodePath}\\u0000${cliPath}\\u0000${PI_AGENT_DIR}`')
+    expect(source).toContain('agentDir: PI_AGENT_DIR')
+    expect(source).not.toContain('process.env.PI_AGENT_DIR')
+  })
+
   it('does not dual-register the legacy Host proxy tools', () => {
     expect(source).toContain("d.name !== 'mcp__session__list_messaging_channels'")
     expect(source).toContain("d.name !== 'mcp__session__unbind_messaging_channel'")

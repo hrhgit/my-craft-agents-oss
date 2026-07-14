@@ -61,6 +61,8 @@ export interface RichTextInputProps extends Omit<React.HTMLAttributes<HTMLDivEle
   onPaste?: (e: React.ClipboardEvent) => void
   /** Called when pasted text exceeds line threshold - should create file attachment */
   onLongTextPaste?: (text: string) => void
+  /** Stable identity for agent-operated UI validation. */
+  semanticId?: string
 }
 
 export interface RichTextInputHandle {
@@ -512,6 +514,7 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
       onInput,
       onPaste,
       onLongTextPaste,
+      semanticId,
       ...restProps
     },
     forwardedRef
@@ -784,6 +787,9 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
       <div className="relative">
         <div
           ref={divRef}
+          data-slot="rich-text-input"
+          data-craft-semantic-id={semanticId}
+          data-craft-ui-interactions="shortcut clipboard ime rich-text"
           contentEditable={!disabled}
           suppressContentEditableWarning
           tabIndex={disabled ? -1 : 0}

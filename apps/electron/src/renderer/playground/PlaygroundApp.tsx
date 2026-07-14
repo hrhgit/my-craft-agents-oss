@@ -20,6 +20,14 @@ import { getCategories, getComponentById, type ComponentVariant } from './regist
 const SELECTED_STORAGE_KEY = 'playground-selected-component'
 const VARIANTS_SIDEBAR_KEY = 'playground-variants-sidebar-open'
 
+function requestedScenario(): { componentId: string | null; variant: string | null } {
+  const query = new URLSearchParams(window.location.search)
+  return {
+    componentId: query.get('scenario') ?? query.get('component'),
+    variant: query.get('variant'),
+  }
+}
+
 const FALLBACK_THEME_OPTIONS = [
   { value: 'default', label: 'Default' },
   { value: 'catppuccin', label: 'Catppuccin' },
@@ -48,8 +56,10 @@ export function PlaygroundApp() {
     setPreviewColorTheme,
     activeWorkspaceId,
   } = useTheme()
+  const scenario = React.useMemo(requestedScenario, [])
   const [presetThemes, setPresetThemes] = React.useState<PresetTheme[]>([])
   const [selectedId, setSelectedId] = React.useState<string | null>(() => {
+    if (scenario.componentId && getComponentById(scenario.componentId)) return scenario.componentId
     // Try to restore from localStorage
     try {
       const stored = localStorage.getItem(SELECTED_STORAGE_KEY)
@@ -152,10 +162,13 @@ export function PlaygroundApp() {
       for (const prop of selectedComponent.props) {
         defaults[prop.name] = prop.defaultValue
       }
-      setProps(defaults)
-      setSelectedVariant(null)
+      const requestedVariant = scenario.componentId === selectedComponent.id
+        ? selectedComponent.variants?.find(variant => variant.name === scenario.variant)
+        : undefined
+      setProps(requestedVariant ? { ...defaults, ...requestedVariant.props } : defaults)
+      setSelectedVariant(requestedVariant?.name ?? null)
     }
-  }, [selectedComponent])
+  }, [scenario.componentId, scenario.variant, selectedComponent])
 
   const handleVariantSelect = (variant: ComponentVariant) => {
     if (selectedComponent) {
@@ -241,13 +254,21 @@ export function PlaygroundApp() {
 
         {/* Content area - full height preview */}
         {selectedComponent ? (
-          <ComponentPreview
-            component={selectedComponent}
-            props={props}
-          />
+          <section
+            className="contents"
+            role="region"
+            aria-label={`Scenario: ${selectedComponent.id}${selectedVariant ? ` / ${selectedVariant}` : ''}`}
+            data-ui-scenario-ready="true"
+            data-ui-scenario-id={selectedComponent.id}
+          >
+            <ComponentPreview
+              component={selectedComponent}
+              props={props}
+            />
+          </section>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            Select a component from the sidebar
+          <div className="flex-1 flex items-center justify-center text-muted-foreground" role={scenario.componentId ? 'alert' : undefined}>
+            {scenario.componentId ? `Unknown scenario: ${scenario.componentId}` : 'Select a component from the sidebar'}
           </div>
         )}
 

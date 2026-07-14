@@ -3,6 +3,7 @@ import * as ContextMenuPrimitive from "@radix-ui/react-context-menu"
 import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { uiValidationAttributes, type UiValidationPrimitiveProps } from "./ui-validation"
 
 // Context for keyboard shortcut registration and menu control
 type ShortcutHandler = () => void
@@ -26,10 +27,12 @@ function ContextMenu({
 }
 
 function ContextMenuTrigger({
+  semanticId,
+  uiInteractions,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Trigger>) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.Trigger> & UiValidationPrimitiveProps) {
   return (
-    <ContextMenuPrimitive.Trigger data-slot="context-menu-trigger" {...props} />
+    <ContextMenuPrimitive.Trigger data-slot="context-menu-trigger" {...uiValidationAttributes(semanticId, uiInteractions)} {...props} />
   )
 }
 
@@ -70,13 +73,16 @@ function ContextMenuSubTrigger({
   className,
   inset,
   children,
+  semanticId,
+  uiInteractions,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.SubTrigger> & {
   inset?: boolean
-}) {
+} & UiValidationPrimitiveProps) {
   return (
     <ContextMenuPrimitive.SubTrigger
       data-slot="context-menu-sub-trigger"
+      {...uiValidationAttributes(semanticId, uiInteractions)}
       data-inset={inset}
       className={cn(
         "focus:bg-foreground/5 data-[state=open]:bg-foreground/5 [&>svg:not([class*='text-'])]:text-muted-foreground flex cursor-default items-center rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[inset]:pl-8 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
@@ -110,8 +116,10 @@ function ContextMenuContent({
   className,
   onKeyDown,
   children,
+  semanticId,
+  uiInteractions,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.Content> & UiValidationPrimitiveProps) {
   const shortcutRegistry = React.useRef<Map<string, ShortcutHandler>>(new Map())
   const contentRef = React.useRef<HTMLDivElement>(null)
 
@@ -150,6 +158,7 @@ function ContextMenuContent({
       <ContextMenuPrimitive.Content
         ref={contentRef}
         data-slot="context-menu-content"
+        {...uiValidationAttributes(semanticId, uiInteractions)}
         onKeyDown={handleKeyDown}
         className={cn(
           "popover-styled data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-dropdown max-h-(--radix-context-menu-content-available-height) min-w-[8rem] origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto p-1",
@@ -172,12 +181,14 @@ function ContextMenuItem({
   shortcut,
   children,
   onClick,
+  semanticId,
+  uiInteractions,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Item> & {
   inset?: boolean
   variant?: "default" | "destructive"
   shortcut?: string
-}) {
+} & UiValidationPrimitiveProps) {
   const shortcutContext = React.useContext(ContextMenuShortcutContext)
 
   React.useEffect(() => {
@@ -198,6 +209,7 @@ function ContextMenuItem({
   return (
     <ContextMenuPrimitive.Item
       data-slot="context-menu-item"
+      {...uiValidationAttributes(semanticId, uiInteractions)}
       data-inset={inset}
       data-variant={variant}
       onClick={onClick}
@@ -217,11 +229,14 @@ function ContextMenuCheckboxItem({
   className,
   children,
   checked,
+  semanticId,
+  uiInteractions,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.CheckboxItem>) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.CheckboxItem> & UiValidationPrimitiveProps) {
   return (
     <ContextMenuPrimitive.CheckboxItem
       data-slot="context-menu-checkbox-item"
+      {...uiValidationAttributes(semanticId, uiInteractions)}
       className={cn(
         "focus:bg-foreground/5 relative flex cursor-default items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
@@ -242,11 +257,14 @@ function ContextMenuCheckboxItem({
 function ContextMenuRadioItem({
   className,
   children,
+  semanticId,
+  uiInteractions,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.RadioItem>) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.RadioItem> & UiValidationPrimitiveProps) {
   return (
     <ContextMenuPrimitive.RadioItem
       data-slot="context-menu-radio-item"
+      {...uiValidationAttributes(semanticId, uiInteractions)}
       className={cn(
         "focus:bg-foreground/5 relative flex cursor-default items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className

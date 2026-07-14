@@ -12,7 +12,7 @@ import * as React from 'react'
 import { AppShellProvider, type AppShellContextType } from '../context/AppShellContext'
 import type { Workspace } from '../../shared/types'
 
-const PLAYGROUND_WORKSPACE: Workspace = {
+export const PLAYGROUND_WORKSPACE: Workspace = {
   id: 'playground-workspace',
   name: 'Playground',
   slug: 'playground',
@@ -29,7 +29,7 @@ function logCall(method: string) {
 // Build a minimal value that satisfies the type. Most callbacks are no-ops;
 // only `workspaces` and `activeWorkspaceId` carry real data so
 // `useActiveWorkspace()` resolves to the playground workspace.
-const playgroundValue: AppShellContextType = {
+export const playgroundAppShellContext: AppShellContextType = {
   workspaces: [PLAYGROUND_WORKSPACE],
   activeWorkspaceId: PLAYGROUND_WORKSPACE.id,
   activeWorkspaceSlug: PLAYGROUND_WORKSPACE.slug,
@@ -69,5 +69,9 @@ const playgroundValue: AppShellContextType = {
 }
 
 export function PlaygroundAppShellProvider({ children }: { children: React.ReactNode }) {
-  return <AppShellProvider value={playgroundValue}>{children}</AppShellProvider>
+  return <AppShellProvider value={playgroundAppShellContext}>{children}</AppShellProvider>
+}
+
+export function createPlaygroundAppShellContext(overrides: Partial<AppShellContextType> = {}): AppShellContextType {
+  return { ...playgroundAppShellContext, ...overrides }
 }

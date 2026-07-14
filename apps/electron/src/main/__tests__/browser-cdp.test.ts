@@ -5,7 +5,7 @@
  * element interaction, and CDP lifecycle management.
  */
 
-import { describe, it, expect, beforeEach, mock } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach, jest, mock } from 'bun:test'
 
 // Mock logger before import
 mock.module('../logger', () => {
@@ -54,6 +54,8 @@ function createMockWebContents(sendCommandImpl?: (method: string, params?: any) 
 // ============================================================================
 
 describe('BrowserCDP', () => {
+  afterEach(() => jest.useRealTimers())
+
   describe('ensureAttached', () => {
     it('attaches debugger on first call', async () => {
       const wc = createMockWebContents()
@@ -104,6 +106,14 @@ describe('BrowserCDP', () => {
         (call: any[]) => call[0] === 'detach'
       )
       expect(detachCalls.length).toBe(1)
+    })
+
+    it('bounds a hung debugger command and detaches the unusable session', async () => {
+      const wc = createMockWebContents(async () => await new Promise(() => {}))
+      const cdp = new BrowserCDP(wc as any, { commandTimeoutMs: 10 })
+
+      await expect(cdp.getAccessibilitySnapshot()).rejects.toThrow('Accessibility.getFullAXTree timed out')
+      expect(wc.debugger.detach).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -370,10 +380,10 @@ describe('BrowserCDP', () => {
       await cdp.fillElement('@e1', 'ab')
 
       expect(sentCommands).toContain('DOM.focus')
-      expect(sentCommands).toContain('Runtime.callFunctionOn')
-      // Two characters typed: 2 keyDown + 2 keyUp = 4 key events
+      expect(sentCommands).not.toContain('Runtime.callFunctionOn')
+      // Select-all, Backspace, then two characters: four keyDown/keyUp pairs.
       const keyEvents = sentCommands.filter(c => c === 'Input.dispatchKeyEvent')
-      expect(keyEvents.length).toBe(4)
+      expect(keyEvents.length).toBe(8)
     })
   })
 
@@ -465,6 +475,29 @@ describe('BrowserCDP', () => {
   })
 
   describe('detach', () => {
+    it('does not idle-detach while a CDP command is still in flight', async () => {
+      jest.useFakeTimers()
+      let resolveLongCommand!: (value: { nodes: never[] }) => void
+      let calls = 0
+      const wc = createMockWebContents(async () => {
+        calls += 1
+        if (calls === 1) return { nodes: [] }
+        return await new Promise(resolve => { resolveLongCommand = resolve })
+      })
+      const cdp = new BrowserCDP(wc as any)
+
+      await cdp.getAccessibilitySnapshot()
+      const pending = cdp.getAccessibilitySnapshot()
+      await Promise.resolve()
+      jest.advanceTimersByTime(6_000)
+      expect(wc.debugger.detach).not.toHaveBeenCalled()
+
+      resolveLongCommand({ nodes: [] })
+      await pending
+      jest.advanceTimersByTime(5_000)
+      expect(wc.debugger.detach).toHaveBeenCalledTimes(1)
+    })
+
     it('detaches debugger', async () => {
       const wc = createMockWebContents()
       const cdp = new BrowserCDP(wc as any)

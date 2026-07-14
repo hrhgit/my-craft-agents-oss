@@ -6,6 +6,35 @@ import type { EventSink } from '@craft-agent/server-core/transport'
 const route = { extensionId: 'example', runtimeId: 'runtime', sessionId: 'session' }
 
 describe('Pi extension contribution bridge', () => {
+  it('validates extension UI contracts and replaces untrusted route identity', () => {
+    const payloads: unknown[] = []
+    const sink = ((...args: Parameters<EventSink>) => { payloads.push(args[2]) }) as EventSink
+    const forward = createExtensionEventForwarder(sink, 'workspace', 'trusted-session')
+    forward({
+      type: 'extension_ui_validation', ...route,
+      delta: {
+        schemaVersion: 1, extensionId: 'spoofed', sessionId: 'spoofed', runtimeId: 'spoofed', revision: 1,
+        operation: 'upsert', definition: {
+          schemaVersion: 1, id: 'status.contract', contributionId: 'status', verificationLevel: 'semantic',
+          signals: [{ id: 'ready', label: 'Ready', status: 'ready' }], readyWhen: ['ready'],
+        },
+      },
+    })
+    expect(payloads[0]).toMatchObject({
+      type: 'extension_ui_validation', sessionId: 'trusted-session',
+      delta: { extensionId: 'example', runtimeId: 'runtime', sessionId: 'trusted-session' },
+    })
+
+    forward({
+      type: 'extension_ui_validation', ...route,
+      delta: {
+        schemaVersion: 1, ...route, revision: 2, operation: 'upsert',
+        definition: { schemaVersion: 1, id: '', contributionId: 'status', verificationLevel: 'semantic' },
+      },
+    } as ExtensionBridgeEvent)
+    expect(payloads).toHaveLength(1)
+  })
+
   it('forwards valid native deltas and rejects invalid payloads', () => {
     const payloads: unknown[] = []
     const sink = ((...args: Parameters<EventSink>) => { payloads.push(args[2]) }) as EventSink

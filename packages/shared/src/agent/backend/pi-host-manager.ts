@@ -14,6 +14,7 @@ export interface PiHostLease {
   client: PiRpcClient;
   runtime: PiRuntimeHandle;
   capabilities: RpcCapabilities;
+  startupEvents: RpcClientEvent[];
   release(): Promise<void>;
 }
 
@@ -30,6 +31,7 @@ interface HostRecord {
   capabilities?: RpcCapabilities;
   runtimeCount: number;
   runtimes: Map<string, { handle: PiRuntimeHandle; refCount: number }>;
+  pendingStartupEvents: Map<string, RpcClientEvent[]>;
   idleTimer?: ReturnType<typeof setTimeout>;
   unsubscribeLifecycle?: () => void;
 }
@@ -88,8 +90,19 @@ export class PiHostManager {
 
     const requestedRuntimeId = options.runtime.runtimeId;
     let runtimeRecord = requestedRuntimeId ? record.runtimes.get(requestedRuntimeId) : undefined;
+    let startupEvents: RpcClientEvent[] = [];
     if (!runtimeRecord) {
-      const handle = await record.client.openRuntime(options.runtime);
+      const captureId = requestedRuntimeId;
+      if (captureId) record.pendingStartupEvents.set(captureId, startupEvents);
+      let handle: PiRuntimeHandle;
+      try {
+        handle = await record.client.openRuntime(options.runtime);
+      } finally {
+        if (captureId) {
+          startupEvents = record.pendingStartupEvents.get(captureId) ?? startupEvents;
+          record.pendingStartupEvents.delete(captureId);
+        }
+      }
       runtimeRecord = { handle, refCount: 0 };
       record.runtimes.set(handle.runtimeId, runtimeRecord);
     }
@@ -107,6 +120,7 @@ export class PiHostManager {
       client: record.client,
       runtime,
       capabilities,
+      startupEvents,
       release: async () => {
         if (released) return;
         released = true;
@@ -143,6 +157,7 @@ export class PiHostManager {
       ready: Promise.resolve(undefined as never),
       runtimeCount: 0,
       runtimes: new Map(),
+      pendingStartupEvents: new Map(),
     };
     this.log('info', 'host.start', record, { cwd: options.cwd, cliPath: options.cliPath });
     record.unsubscribeLifecycle = client.onClientEvent((event) => this.handleLifecycle(record, event));
@@ -160,6 +175,10 @@ export class PiHostManager {
   }
 
   private handleLifecycle(record: HostRecord, event: RpcClientEvent): void {
+    const runtimeId = 'runtimeId' in event && typeof event.runtimeId === 'string' ? event.runtimeId : undefined;
+    const startupEvents = runtimeId ? record.pendingStartupEvents.get(runtimeId) : undefined;
+    if (startupEvents && startupEvents.length < 256) startupEvents.push(event);
+
     if (event.type === 'background_task_event') {
       const statusEvent = event.task.status === 'queued'
         ? 'task.queued'

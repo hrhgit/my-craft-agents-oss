@@ -37,14 +37,16 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean
+  semanticId?: string
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, semanticId, ...props }, ref) => {
     const Comp = asChild ? Slot : "button"
     return (
       <Comp
         data-slot="button"
+        data-craft-semantic-id={semanticId}
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
         {...props}

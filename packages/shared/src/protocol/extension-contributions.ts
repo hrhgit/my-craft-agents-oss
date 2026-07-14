@@ -32,7 +32,7 @@ export type ExtensionUINode =
       minHeight?: number
       maxHeight?: number
       preferredHeight?: number
-      permissions?: Array<'commands' | 'theme' | 'storage' | 'resize'>
+      permissions?: Array<'commands' | 'theme' | 'storage' | 'resize' | 'validation'>
     }
   | { type: 'row' | 'stack'; children: ExtensionUINode[]; gap?: 'none' | 'small' | 'medium' }
 
@@ -121,8 +121,8 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
     const preferred = typeof node.preferredHeight === 'number' ? node.preferredHeight : min
     if (min > max || preferred < min || preferred > max) return 'sandbox height bounds are inconsistent'
     if (node.permissions !== undefined) {
-      if (!Array.isArray(node.permissions) || node.permissions.length > 4 || new Set(node.permissions).size !== node.permissions.length) return 'sandbox permissions must be a unique bounded array'
-      if (node.permissions.some(permission => !['commands', 'theme', 'storage', 'resize'].includes(String(permission)))) return 'Unsupported sandbox permission'
+      if (!Array.isArray(node.permissions) || node.permissions.length > 5 || new Set(node.permissions).size !== node.permissions.length) return 'sandbox permissions must be a unique bounded array'
+      if (node.permissions.some(permission => !['commands', 'theme', 'storage', 'resize', 'validation'].includes(String(permission)))) return 'Unsupported sandbox permission'
     }
     if (node.initialState !== undefined) {
       try {

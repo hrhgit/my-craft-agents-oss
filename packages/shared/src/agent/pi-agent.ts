@@ -17,6 +17,7 @@ import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import { createSanitizedEnv } from '../utils/env.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
+import { PI_AGENT_DIR } from '../config/paths.ts';
 import {
   RpcClient as PiRpcClient,
   type PiRuntimeHandle,
@@ -44,6 +45,7 @@ import { AbortReason } from './backend/types.ts';
 import { getBackendRuntime } from './backend/internal/driver-types.ts';
 import { SourceActivationDrainController } from './source-activation-drain.ts';
 import type { ExtensionContributionV1 } from '../protocol/extension-contributions.ts';
+import type { ExtensionUIValidationDeltaV1 } from '../protocol/extension-ui-validation.ts';
 import {
   validateExtensionInteractionRequestV1,
   validateExtensionInteractionResponseV1,
@@ -156,12 +158,16 @@ const SETTLED_EXTENSION_INTERACTION_TTL_MS = 5 * 60_000;
 const MAX_SETTLED_EXTENSION_INTERACTIONS = 512;
 
 function craftRpcUiCapabilities() {
+  const validationEnabled = process.env.CRAFT_UI_VALIDATION_BUILD === '1'
+    && process.env.CRAFT_UI_TEST_HOST === '1'
+    && process.env.NODE_ENV !== 'production';
   return {
     kind: 'craft' as const,
     dialogs: true,
     widgets: true,
     editorControl: true,
     contributions: true,
+    ...(validationEnabled ? { validation: true } : {}),
     interactionSchemas: [1],
   };
 }
@@ -665,11 +671,12 @@ export class PiAgent extends BaseAgent {
           : undefined;
         const runtimeId = this.config.session?.craftId ?? `runtime-${Date.now()}`;
         const lease = await piHostManager.acquire({
-          key: `${nodePath}\u0000${cliPath}\u0000${process.env.PI_AGENT_DIR ?? 'default'}`,
+          key: `${nodePath}\u0000${cliPath}\u0000${PI_AGENT_DIR}`,
           client: clientOptions,
           runtime: {
             runtimeId,
             cwd,
+            agentDir: PI_AGENT_DIR,
             extensionTarget: 'craft',
             extensionPaths: this.getCraftExtensionPaths(),
             sessionDir,
@@ -752,6 +759,7 @@ export class PiAgent extends BaseAgent {
       this.rpcClient = rpcClient;
       this.unsubscribePiEvent = rpcClient.onEvent((event) => this.handlePiEvent(event as unknown as Record<string, unknown>));
       this.unsubscribePiClientEvent = rpcClient.onClientEvent((event) => this.handlePiClientEvent(event));
+      for (const event of this.rpcHostLease?.startupEvents ?? []) this.handlePiClientEvent(event);
     }
 
     if (this.rpcClient !== rpcClient) throw new Error('Pi RpcClient startup was superseded');
@@ -1056,6 +1064,27 @@ export class PiAgent extends BaseAgent {
     if (event.type === 'extension_ui_request') {
       const bridgeEvent = this.mapExtensionUiRequest(event);
       if (bridgeEvent) this.config.onExtensionEvent?.(bridgeEvent);
+      return;
+    }
+
+    if ((event as unknown as { type?: string }).type === 'extension_ui_validation') {
+      const validation = event as unknown as {
+        extensionId: string;
+        runtimeId?: string;
+        delta: Record<string, unknown> & { schemaVersion: 1; revision: number; operation: string };
+      };
+      if (typeof validation.extensionId !== 'string' || !validation.delta || validation.delta.schemaVersion !== 1) return;
+      const route = this.extensionEventRoute(validation.extensionId, validation.runtimeId);
+      this.config.onExtensionEvent?.({
+        type: 'extension_ui_validation',
+        ...route,
+        delta: {
+          ...validation.delta,
+          extensionId: route.extensionId,
+          runtimeId: route.runtimeId,
+          sessionId: route.sessionId,
+        } as ExtensionUIValidationDeltaV1,
+      });
       return;
     }
 

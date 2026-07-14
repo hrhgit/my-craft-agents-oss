@@ -2,6 +2,7 @@ import * as React from 'react'
 import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
 import type { ExtensionUISurface } from '@craft-agent/shared/protocol'
 import { ContributionStore, SurfaceLayoutManager } from './extension-contribution-store'
+import { extensionValidationStore } from './extension-validation-store'
 
 export const extensionContributionStore = new ContributionStore()
 export const extensionSurfaceLayout = new SurfaceLayoutManager()
@@ -14,9 +15,11 @@ function ensureHostSubscription(): void {
   if (typeof subscribe !== 'function') return
   hostSubscription = subscribe((event: ExtensionBridgeEvent) => {
     if (event.type === 'extension_contribution') extensionContributionStore.apply(event.delta)
+    if (event.type === 'extension_ui_validation') extensionValidationStore.apply(event.delta)
     if (event.type === 'extension_contributions_runtime_reset') {
       refreshedSessions.delete(event.sessionId)
       extensionContributionStore.resetRuntime(event.sessionId, event.runtimeId)
+      extensionValidationStore.resetRuntime(event.sessionId, event.runtimeId)
     }
   })
 }

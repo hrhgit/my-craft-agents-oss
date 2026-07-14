@@ -17,6 +17,7 @@ import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '../../protocol
 import type { CapabilityRequestV1, CapabilityResultV1 } from '../../protocol/capabilities.ts';
 import type { ExtensionContributionDeltaV1 } from '../../protocol/extension-contributions.ts';
 import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1, ExtensionInteractionBridgeSettledV1 } from '../../protocol/extension-interactions.ts';
+import type { ExtensionUIValidationDeltaV1 } from '../../protocol/extension-ui-validation.ts';
 import type { FileAttachment } from '../../utils/files.ts';
 import type { ThinkingLevel } from '../thinking-levels.ts';
 import type { PermissionMode } from '../mode-manager.ts';
@@ -108,6 +109,7 @@ export type ExtensionBridgeEvent = {
   | { type: 'extension_status'; key?: string; status: string; source?: string }
   | { type: 'extension_widget'; key: string; content: string[] | undefined; placement?: 'aboveEditor' | 'belowEditor'; source?: string }
   | { type: 'extension_contribution'; delta: ExtensionContributionDeltaV1 }
+  | { type: 'extension_ui_validation'; delta: ExtensionUIValidationDeltaV1 }
   | { type: 'extension_contributions_runtime_reset' }
   | ExtensionInteractionBridgeRequestV1
   | ExtensionInteractionBridgeCancelV1

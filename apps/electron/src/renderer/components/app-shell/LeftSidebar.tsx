@@ -151,6 +151,7 @@ export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, i
   return (
     <div className={cn("flex flex-col select-none", !isNested && "py-1")}>
       <NavWrapper
+        data-craft-semantic-id={isNested ? undefined : 'navigation.main'}
         className={cn(
           "grid gap-0.5",
           isNested ? "pl-5 pr-0 relative" : "px-2"
@@ -299,6 +300,7 @@ const SidebarButton = React.forwardRef<HTMLButtonElement, SidebarButtonProps & R
     const { ref: _itemRef, ...itemButtonProps } = itemProps || { ref: undefined }
     return (
       <button
+        data-craft-semantic-id={`navigation.${link.id.replace(/[^A-Za-z0-9._-]/g, '_')}`}
         {...itemButtonProps}
         // Spread Radix props (data-state, onContextMenu, onPointerDown, etc.)
         {...radixProps}

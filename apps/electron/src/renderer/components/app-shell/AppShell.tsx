@@ -1466,6 +1466,7 @@ function AppShellContent({
                         <ContextMenu modal={true}>
                           <ContextMenuTrigger asChild>
                             <Button
+                              semanticId="app.new-session"
                               variant="ghost"
                               onClick={(e) => handleNewChat(e.metaKey || e.ctrlKey)}
                               className="w-full justify-start gap-2 py-[7px] px-2 text-[13px] font-normal rounded-[6px] shadow-minimal bg-background"

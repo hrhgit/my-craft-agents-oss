@@ -212,6 +212,8 @@ import type {
 } from '@craft-agent/shared/protocol'
 
 export interface ElectronAPI {
+  /** Development-only agent UI validation bridge. Absent in production builds. */
+  uiValidation?: import('./ui-validation-state-bridge').UiValidationRendererBridgeApi
   // Session management
   getSessions(): Promise<Session[]>
   getUnreadSummary(): Promise<UnreadSummary>
@@ -543,6 +545,8 @@ export interface ElectronAPI {
   sendRemoteUIResponse(sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): Promise<boolean>
   invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>, ownerExtensionId?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult>
   getExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent/backend/types').PiExtensionCommand[]>
+  /** Preload-authenticated, source-build-only capability. Never true in packaged/production builds. */
+  uiValidationTestHost?: { readonly schemaVersion: 1; readonly enabled: true }
   // Pi session tree — list child sessions spawned from the given parent session
   listChildSessions(sessionId: string): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]>
 

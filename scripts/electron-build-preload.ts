@@ -7,8 +7,9 @@
  */
 
 import { spawn } from "bun";
-import { existsSync, statSync, mkdirSync } from "fs";
+import { existsSync, statSync, mkdirSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
+import { assertNoUiValidationProductionInputs, assertNoUiValidationProductionRuntime, isUiValidationBuildEnabled } from "./build/ui-validation-boundary.ts";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const DIST_DIR = join(ROOT_DIR, "apps/electron/dist");
@@ -83,6 +84,8 @@ async function verifyJsFile(filePath: string): Promise<{ valid: boolean; error?:
 }
 
 async function buildEntry(entry: string, outfile: string): Promise<number> {
+  const uiValidationBuild = isUiValidationBuildEnabled();
+  const metafile = join(DIST_DIR, `.${outfile.split('/').at(-1)}.meta.json`);
   const proc = spawn({
     cmd: [
       "bun", "run", "esbuild",
@@ -92,13 +95,29 @@ async function buildEntry(entry: string, outfile: string): Promise<number> {
       "--format=cjs",
       `--outfile=${outfile}`,
       "--external:electron",
+      `--define:__CRAFT_UI_VALIDATION_BUILD__=${uiValidationBuild}`,
+      `--define:process.env.CRAFT_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
+      `--metafile=${metafile}`,
+      ...(!uiValidationBuild ? ["--minify-syntax"] : []),
+      ...(!uiValidationBuild ? ["--alias:@craft-agent/shared/protocol=./packages/shared/src/protocol/production.ts"] : []),
     ],
     cwd: ROOT_DIR,
     stdout: "inherit",
     stderr: "inherit",
   });
 
-  return proc.exited;
+  const exitCode = await proc.exited;
+  if (exitCode === 0) {
+    try {
+      const metadata = JSON.parse(readFileSync(metafile, "utf-8")) as { inputs?: Record<string, unknown> };
+      if (!uiValidationBuild) {
+        assertNoUiValidationProductionInputs(Object.keys(metadata.inputs ?? {}), outfile);
+      }
+    } finally {
+      rmSync(metafile, { force: true });
+    }
+  }
+  return exitCode;
 }
 
 async function main(): Promise<void> {
@@ -135,6 +154,9 @@ async function main(): Promise<void> {
     if (!verification.valid) {
       console.error(`❌ ${output.label} verification failed:`, verification.error);
       process.exit(1);
+    }
+    if (!isUiValidationBuildEnabled()) {
+      assertNoUiValidationProductionRuntime(readFileSync(outputPath, "utf-8"), output.label);
     }
   }
 

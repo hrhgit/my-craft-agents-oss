@@ -255,6 +255,8 @@ export function RemoteUIComposer({
           {question.kind === 'editor' && (
             <textarea
               ref={editorRef}
+              data-craft-semantic-id={`remote-ui.${request.requestId.replace(/[^A-Za-z0-9._:-]/g, '_')}.editor`}
+              data-craft-ui-interactions="shortcut clipboard ime rich-text"
               value={draft.text}
               onChange={event => updateDraft(draft => ({ ...draft, text: event.target.value }))}
               onKeyDown={handleTextareaEnter}

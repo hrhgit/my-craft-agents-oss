@@ -37,9 +37,14 @@ function getWindowsBackgroundMaterial(): 'mica' | 'acrylic' | undefined {
 }
 
 
-interface ManagedWindow {
+export type ManagedWindowRole = 'main' | 'child-session'
+
+export interface ManagedWindow {
   window: BrowserWindow
   workspaceId: string
+  role: ManagedWindowRole
+  sessionId?: string
+  parentWebContentsId?: number
   /** If set, this window's title is pinned to this string (e.g. child session name) */
   customTitle?: string
 }
@@ -59,6 +64,10 @@ export interface CreateWindowOptions {
   height?: number
   /** Custom window title — overrides the workspace-name title policy */
   customTitle?: string
+  /** Stable lifecycle role used for deterministic window selection. */
+  role?: ManagedWindowRole
+  sessionId?: string
+  parentWebContentsId?: number
 }
 
 /** Options for creating a child session window (pi session tree branch) */
@@ -221,7 +230,10 @@ export class WindowManager {
    * @param options - Window creation options
    */
   createWindow(options: CreateWindowOptions): BrowserWindow {
-    const { workspaceId, focused = false, initialDeepLink, restoreUrl, customTitle } = options
+    const {
+      workspaceId, focused = false, initialDeepLink, restoreUrl, customTitle,
+      role = 'main', sessionId, parentWebContentsId,
+    } = options
 
     // Load platform-specific app icon
     // In packaged app, resources are at dist/resources/ (same level as __dirname)
@@ -338,7 +350,12 @@ export class WindowManager {
     // Store the window mapping BEFORE loadURL — bootstrap preload uses
     // __get-workspace-id (via sendSync) which reads this map during eval.
     const webContentsId = window.webContents.id
-    this.windows.set(webContentsId, { window, workspaceId, customTitle })
+    this.windows.set(webContentsId, {
+      window, workspaceId, role,
+      ...(sessionId ? { sessionId } : {}),
+      ...(parentWebContentsId != null ? { parentWebContentsId } : {}),
+      ...(customTitle ? { customTitle } : {}),
+    })
 
     // Apply window-title policy now that the map size reflects this window —
     // covers both the new window and any existing windows that should switch
@@ -401,7 +418,10 @@ export class WindowManager {
     // In dev mode, retry the Vite dev server (it may not be ready yet) instead of falling back
     // to file:// which doesn't exist during development.
     let failLoadRetries = 0
-    window.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
+      // Chromium reports ERR_ABORTED when an intentional navigation supersedes an in-flight one.
+      // Reloading index.html here would abort the new target and create a navigation loop.
+      if (!isMainFrame || errorCode === -3) return
       windowLog.warn('Failed to load renderer:', errorCode, errorDescription)
       if (VITE_DEV_SERVER_URL && failLoadRetries < 5) {
         failLoadRetries++
@@ -595,6 +615,9 @@ export class WindowManager {
       width,
       height,
       customTitle: title || sessionId,
+      role: 'child-session',
+      sessionId,
+      ...(parentWebContentsId != null ? { parentWebContentsId } : {}),
     })
 
     // F11: Auto-close the child window when its renderer process crashes,
@@ -765,7 +788,15 @@ export class WindowManager {
    */
   registerWindow(window: BrowserWindow, workspaceId: string): void {
     const webContentsId = window.webContents.id
-    this.windows.set(webContentsId, { window, workspaceId })
+    const existing = this.windows.get(webContentsId)
+    this.windows.set(webContentsId, {
+      window,
+      workspaceId,
+      role: existing?.role ?? 'main',
+      ...(existing?.sessionId ? { sessionId: existing.sessionId } : {}),
+      ...(existing?.parentWebContentsId != null ? { parentWebContentsId: existing.parentWebContentsId } : {}),
+      ...(existing?.customTitle ? { customTitle: existing.customTitle } : {}),
+    })
     // Re-apply window-title policy after re-registration (e.g. post-refresh).
     this.refreshWindowTitles()
     windowLog.info(`Registered window ${webContentsId} for workspace ${workspaceId}`)

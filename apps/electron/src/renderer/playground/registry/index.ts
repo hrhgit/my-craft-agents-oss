@@ -18,10 +18,12 @@ import { containerTransitionsComponents } from './container-transitions'
 import { apiKeyInputComponents } from './api-key-input'
 import { messagingComponents } from './messaging'
 import { imageSupportComponents } from './image-support'
+import { appShellScenarioComponents } from './app-shell-scenarios'
 
 export * from './types'
 
 export const componentRegistry: ComponentEntry[] = [
+  ...appShellScenarioComponents,
   ...apiKeyInputComponents,
   ...onboardingComponents,
   ...turnCardComponents,
