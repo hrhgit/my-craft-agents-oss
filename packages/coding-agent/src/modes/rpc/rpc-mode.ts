@@ -34,6 +34,7 @@ import type {
 	ExtensionUIContext,
 	ExtensionUIContribution,
 	ExtensionUIDialogOptions,
+	ExtensionUIValidationDefinitionV1,
 	ExtensionWidgetOptions,
 	HostCapabilityInvokeOptions,
 	HostCapabilityResult,
@@ -79,6 +80,8 @@ import type {
 	RpcExtensionUICancel,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcExtensionUIValidationDeltaV1,
+	RpcExtensionUIValidationEvent,
 	RpcHostToolDefinition,
 	RpcHostUICapabilities,
 	RpcLLMQueryRequest,
@@ -108,6 +111,8 @@ export type {
 	RpcExtensionUICancel,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcExtensionUIValidationDeltaV1,
+	RpcExtensionUIValidationEvent,
 	RpcHostToolDefinition,
 	RpcHostUICapabilities,
 	RpcLLMQueryRequest,
@@ -120,6 +125,12 @@ export type {
 	RpcToolPermissionResponse,
 	RpcToolResultContent,
 } from "./rpc-types.ts";
+
+type RpcExtensionUIValidationEmission = RpcExtensionUIValidationDeltaV1 extends infer T
+	? T extends unknown
+		? Omit<T, "schemaVersion" | "revision">
+		: never
+	: never;
 
 function extractAssistantText(message: AssistantMessage): string {
 	return message.content
@@ -258,6 +269,7 @@ function createRpcCapabilities(): RpcCapabilities {
 			hostToolResults: "content",
 			extensionCommandResult: true,
 			extensionHostCapabilities: true,
+			extensionUiValidation: true,
 			secondaryLlmQuery: true,
 			childSessionListing: true,
 			multiRuntime: true,
@@ -323,6 +335,7 @@ const NO_RPC_HOST_UI: RpcHostUICapabilities = {
 	widgets: false,
 	editorControl: false,
 	contributions: false,
+	validation: false,
 	interactionSchemas: [],
 };
 
@@ -335,13 +348,23 @@ function normalizeRpcHostUICapabilities(value: unknown): RpcHostUICapabilities {
 	const interactionSchemas = candidate.interactionSchemas;
 	if (
 		Object.keys(candidate).some(
-			(key) => !["kind", "dialogs", "widgets", "editorControl", "contributions", "interactionSchemas"].includes(key),
+			(key) =>
+				![
+					"kind",
+					"dialogs",
+					"widgets",
+					"editorControl",
+					"contributions",
+					"validation",
+					"interactionSchemas",
+				].includes(key),
 		) ||
 		(candidate.kind !== "craft" && candidate.kind !== "none") ||
 		typeof candidate.dialogs !== "boolean" ||
 		typeof candidate.widgets !== "boolean" ||
 		typeof candidate.editorControl !== "boolean" ||
 		typeof candidate.contributions !== "boolean" ||
+		(candidate.validation !== undefined && typeof candidate.validation !== "boolean") ||
 		!Array.isArray(interactionSchemas) ||
 		interactionSchemas.some((schema) => !Number.isInteger(schema) || schema < 1)
 	) {
@@ -354,6 +377,7 @@ function normalizeRpcHostUICapabilities(value: unknown): RpcHostUICapabilities {
 			candidate.widgets ||
 			candidate.editorControl ||
 			candidate.contributions ||
+			candidate.validation ||
 			schemas.length > 0)
 	) {
 		throw new Error('RPC host UI kind "none" cannot declare UI features');
@@ -364,6 +388,7 @@ function normalizeRpcHostUICapabilities(value: unknown): RpcHostUICapabilities {
 		widgets: candidate.widgets as boolean,
 		editorControl: candidate.editorControl as boolean,
 		contributions: candidate.contributions as boolean,
+		validation: candidate.validation === true,
 		interactionSchemas: Array.from(new Set(schemas)).filter((schema) => schema === 1),
 	};
 }
@@ -456,6 +481,8 @@ export async function runRpcMode(
 	};
 	const contributionRevisions = new Map<string, number>();
 	const activeContributions = new Map<string, Map<string, ExtensionUIContribution>>();
+	const validationRevisions = new Map<string, number>();
+	const activeValidationDefinitions = new Map<string, Map<string, ExtensionUIValidationDefinitionV1>>();
 	const nextContributionRevision = (binding: RuntimeBinding, extensionId: string): number => {
 		const key = `${binding.runtimeId}\0${extensionId}`;
 		const revision = (contributionRevisions.get(key) ?? 0) + 1;
@@ -494,6 +521,37 @@ export async function runRpcMode(
 			);
 		}
 	};
+	const nextValidationRevision = (binding: RuntimeBinding, extensionId: string): number => {
+		const key = `${binding.runtimeId}\0${extensionId}`;
+		const revision = (validationRevisions.get(key) ?? 0) + 1;
+		validationRevisions.set(key, revision);
+		return revision;
+	};
+	const emitValidation = (
+		binding: RuntimeBinding,
+		extensionId: string,
+		delta: RpcExtensionUIValidationEmission,
+	): void => {
+		output(
+			{
+				type: "extension_ui_validation",
+				extensionId,
+				delta: { schemaVersion: 1, revision: nextValidationRevision(binding, extensionId), ...delta },
+			} as RpcExtensionUIValidationEvent,
+			binding,
+		);
+	};
+	const emitValidationSnapshots = (binding: RuntimeBinding): void => {
+		if (!binding.uiCapabilities.validation) return;
+		const prefix = `${binding.runtimeId}\0`;
+		for (const [key, definitions] of activeValidationDefinitions) {
+			if (!key.startsWith(prefix)) continue;
+			emitValidation(binding, key.slice(prefix.length), {
+				operation: "snapshot",
+				definitions: Array.from(definitions.values()),
+			});
+		}
+	};
 	const resetRuntimeContributions = (binding: RuntimeBinding): void => {
 		const prefix = `${binding.runtimeId}\0`;
 		for (const key of contributionRevisions.keys()) {
@@ -501,6 +559,12 @@ export async function runRpcMode(
 			const extensionId = key.slice(prefix.length);
 			emitContributionReset(binding, extensionId);
 			activeContributions.delete(key);
+		}
+		for (const key of validationRevisions.keys()) {
+			if (!key.startsWith(prefix)) continue;
+			const extensionId = key.slice(prefix.length);
+			if (binding.uiCapabilities.validation) emitValidation(binding, extensionId, { operation: "reset" });
+			activeValidationDefinitions.delete(key);
 		}
 	};
 	const broadcast = (obj: object): void => {
@@ -1057,6 +1121,37 @@ export async function runRpcMode(
 			editorControl: binding.uiCapabilities.editorControl,
 			contributions: binding.uiCapabilities.contributions,
 			interactionSchemas: binding.uiCapabilities.interactionSchemas,
+		},
+		validation: {
+			available: binding.uiCapabilities.validation === true,
+			protocolVersions: binding.uiCapabilities.validation ? [1] : [],
+			upsertDefinition(definition): void {
+				if (!binding.uiCapabilities.validation) return;
+				const ownerKey = `${binding.runtimeId}\0${extensionId}`;
+				const definitions = activeValidationDefinitions.get(ownerKey) ?? new Map();
+				definitions.set(definition.id, definition);
+				activeValidationDefinitions.set(ownerKey, definitions);
+				emitValidation(binding, extensionId, { operation: "upsert", definition });
+			},
+			updateState(definitionId, state): void {
+				if (!binding.uiCapabilities.validation) return;
+				const definitions = activeValidationDefinitions.get(`${binding.runtimeId}\0${extensionId}`);
+				const current = definitions?.get(definitionId);
+				if (!definitions || !current) throw new Error(`Unknown UI validation definition: ${definitionId}`);
+				const definition: ExtensionUIValidationDefinitionV1 = { ...current, ...state };
+				definitions.set(definitionId, definition);
+				emitValidation(binding, extensionId, { operation: "upsert", definition });
+			},
+			removeDefinition(definitionId): void {
+				if (!binding.uiCapabilities.validation) return;
+				activeValidationDefinitions.get(`${binding.runtimeId}\0${extensionId}`)?.delete(definitionId);
+				emitValidation(binding, extensionId, { operation: "remove", definitionId });
+			},
+			clearDefinitions(): void {
+				if (!binding.uiCapabilities.validation) return;
+				activeValidationDefinitions.delete(`${binding.runtimeId}\0${extensionId}`);
+				emitValidation(binding, extensionId, { operation: "reset" });
+			},
 		},
 		upsertContribution(contribution): void {
 			if (!binding.uiCapabilities.contributions) return;
@@ -1812,6 +1907,7 @@ export async function runRpcMode(
 
 		if (command.type === "get_runtime_state") {
 			emitContributionSnapshots(binding);
+			emitValidationSnapshots(binding);
 			return success(id, "get_runtime_state", {
 				runtime: runtimeSummary(binding),
 				state: sessionState(binding.session),

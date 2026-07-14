@@ -11,6 +11,7 @@
 - Added `/network-reset` to clear in-process network routing state and restart the sidecar without starting a new session.
 - Added extension activation stages so extensions can load at startup, before the first model request, or lazily.
 - Added extension target declarations so Pi and Craft hosts can load only compatible extensions.
+- Added the development-only `ctx.ui.validation` contract for extensions to publish host-validated UI readiness, actions, scenarios, and semantic state over RPC.
 
 ### Changed
 

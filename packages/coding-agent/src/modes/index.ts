@@ -38,6 +38,8 @@ export {
 	type RpcExtensionHostCapabilityProgress,
 	type RpcExtensionHostCapabilityRequest,
 	type RpcExtensionHostCapabilityResponse,
+	type RpcExtensionUIValidationDeltaV1,
+	type RpcExtensionUIValidationEvent,
 	type RpcHostToolDefinition,
 	type RpcHostToolResult,
 	type RpcHostUICapabilities,

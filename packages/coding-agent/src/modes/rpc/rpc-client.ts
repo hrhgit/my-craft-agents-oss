@@ -39,6 +39,7 @@ import type {
 	RpcExtensionUICancel,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcExtensionUIValidationEvent,
 	RpcHostToolDefinition,
 	RpcHostToolResult,
 	RpcLLMQueryRequest,
@@ -144,6 +145,7 @@ export type RpcClientEvent =
 	| RpcExtensionHostCapabilityDeclaration
 	| RpcExtensionHostCapabilityRequest
 	| RpcExtensionHostCapabilityCancel
+	| RpcExtensionUIValidationEvent
 	| RpcExtensionErrorEvent
 	| RpcProcessLifecycleEvent
 	| RpcToolPermissionRequest

@@ -57,7 +57,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 Create `~/.pi/agent/extensions/my-extension.ts`:
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
@@ -2130,6 +2130,132 @@ If a slot renderer is not defined or throws:
 ## Custom UI
 
 Extensions can interact with users via `ctx.ui` methods and customize how messages/tools render.
+
+### Host-mediated UI validation
+
+Extensions that publish GUI contributions should also publish a development-only validation contract through
+`ctx.ui.validation`. This lets an embedding host such as Craft create deterministic scenarios, wait for readiness,
+invoke extension-owned commands, and collect semantic/physical/native evidence without giving the extension or the
+test agent access to the host DOM, Playwright, CDP, Electron internals, or arbitrary JavaScript evaluation.
+
+Always capability-check first. Pi keeps the API available in every mode, but `available` is false unless the host has
+explicitly enabled its source-development validation control plane. Normal TUI, print, packaged, and unsupported hosts
+must continue to work without emitting validation state.
+
+```typescript
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function example(pi: ExtensionAPI) {
+  const contributionId = "example.status";
+  let count = 0;
+  let countBeforeScenario: number | undefined;
+
+  const publish = (ctx: ExtensionContext) => {
+    if (ctx.ui.capabilities.contributions) {
+      ctx.ui.upsertContribution({
+        schemaVersion: 1,
+        id: contributionId,
+        surface: "composer.above",
+        content: {
+          type: "button",
+          label: `Updated ${count} time(s)`,
+          action: { kind: "command", command: "example-update" },
+        },
+      });
+    }
+
+    if (!ctx.ui.validation.available) return;
+    ctx.ui.validation.upsertDefinition({
+      schemaVersion: 1,
+      id: "example.contract",
+      contributionId,
+      verificationLevel: "semantic",
+      readyWhen: ["panel.ready"],
+      signals: [{ id: "panel.ready", label: "Panel ready", status: "ready" }],
+      actions: [{
+        id: "update",
+        label: "Update",
+        command: "example-update",
+        inputSchema: { type: "object", additionalProperties: false },
+      }],
+      scenarios: [{
+        id: "count",
+        label: "Show deterministic count",
+        command: "example-scenario-count",
+        inputSchema: {
+          type: "object",
+          required: ["count"],
+          properties: { count: { type: "number" } },
+          additionalProperties: false,
+        },
+        teardownCommand: "example-scenario-reset",
+        teardownInputSchema: { type: "object", additionalProperties: false },
+      }],
+      snapshot: { id: "status", role: "button", label: "Update", state: { count } },
+    });
+  };
+
+  pi.on("session_start", (_event, ctx) => publish(ctx));
+  pi.on("session_shutdown", (_event, ctx) => {
+    ctx.ui.removeContribution(contributionId);
+    ctx.ui.validation.clearDefinitions();
+  });
+  pi.registerCommand("example-update", {
+    description: "Update the example contribution",
+    handler: async (_args, ctx) => { count += 1; publish(ctx); },
+  });
+  pi.registerCommand("example-scenario-count", {
+    description: "Set up deterministic validation state",
+    handler: async (args, ctx) => {
+      const input = JSON.parse(args || "{}") as { count?: unknown };
+      if (typeof input.count !== "number" || !Number.isFinite(input.count)) throw new Error("count is required");
+      countBeforeScenario ??= count;
+      count = input.count;
+      publish(ctx);
+    },
+  });
+  pi.registerCommand("example-scenario-reset", {
+    description: "Restore state after validation",
+    handler: async (_args, ctx) => {
+      count = countBeforeScenario ?? 0;
+      countBeforeScenario = undefined;
+      publish(ctx);
+    },
+  });
+}
+```
+
+The complete runnable version is
+[`examples/extensions/craft-gui.ts`](../examples/extensions/craft-gui.ts).
+
+#### Contract rules
+
+- `id` and `contributionId` are stable extension-owned identifiers. Re-publishing the same definition replaces its
+  current declaration; use `updateState()` when only readiness signals or snapshot state changed.
+- Every action and scenario must name a command registered by the same extension. The host injects extension,
+  runtime, and session identity and rejects command ownership mismatches.
+- `inputSchema` and `teardownInputSchema` must be bounded JSON schemas. Scenarios establish states that the real
+  extension can reach; they must not mutate host state, parent DOM, or renderer internals.
+- `readyWhen` contains signal ids. Publish `pending`, `busy`, `ready`, or `error` signals so the host can use event-based
+  waits instead of fixed sleeps.
+- Setup must be deterministic for the same input. Teardown must be idempotent and restore pre-scenario state.
+- Call `removeDefinition()` when one contract disappears and `clearDefinitions()` during runtime shutdown or reload.
+- Host-rendered contributions are automatically included in the host semantic snapshot. Definitions add extension
+  readiness, command-backed actions, scenarios, and extension-specific semantic state; do not duplicate host DOM.
+- Sandboxed contributions use the same declaration API. Sandbox code cannot access the parent DOM, raw CDP,
+  Playwright, arbitrary host state, or unrestricted scripting. Unsupported hosts keep `available === false`.
+
+#### Verification levels
+
+`verificationLevel: "semantic"` declares that the extension can be scenario-verified through its real commands and
+state. The embedding host is responsible for higher levels:
+
+- **scenario-verified**: real contribution/component, controlled dependencies, extension-owned commands.
+- **renderer-verified**: the host sends physical pointer/keyboard/IME/clipboard/drag input to the real renderer.
+- **native-verified**: the host additionally verifies Electron windows, menus, dialogs, or platform-native UI.
+
+An extension must not report renderer/native success itself. It declares capabilities and state; the host driver owns
+the evidence and final level.
 
 **For custom components, see [tui.md](tui.md)** which has copy-paste patterns for:
 - Selection dialogs (SelectList)

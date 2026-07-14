@@ -241,7 +241,8 @@ export type ExtensionUINode =
 			minHeight?: number;
 			maxHeight?: number;
 			preferredHeight?: number;
-			permissions?: Array<"commands" | "theme" | "storage" | "resize">;
+			/** `validation` is a source-development capability and is rejected by hosts that do not advertise it. */
+			permissions?: Array<"commands" | "theme" | "storage" | "resize" | "validation">;
 	  }
 	| { type: "row" | "stack"; children: ExtensionUINode[]; gap?: "none" | "small" | "medium" };
 
@@ -257,6 +258,72 @@ export interface ExtensionUIContribution {
 	overflow?: "menu" | "collapse" | "hide";
 	exclusive?: boolean;
 	target?: { turnId?: string; messageId?: string; toolCallId?: string };
+}
+
+export type ExtensionUIValidationStatus = "pending" | "busy" | "ready" | "error";
+export type ExtensionUIVerificationLevel = "semantic" | "physical";
+
+export interface ExtensionUIValidationSignalV1 {
+	id: string;
+	label: string;
+	status: ExtensionUIValidationStatus;
+	detail?: string;
+}
+
+export interface ExtensionUIValidationActionV1 {
+	id: string;
+	label: string;
+	command: string;
+	inputSchema?: Record<string, unknown>;
+	disabled?: boolean;
+}
+
+export interface ExtensionUIValidationScenarioV1 {
+	id: string;
+	label: string;
+	command: string;
+	inputSchema?: Record<string, unknown>;
+	/** Optional command that restores state established by the setup command. */
+	teardownCommand?: string;
+	teardownInputSchema?: Record<string, unknown>;
+}
+
+export interface ExtensionUISemanticNodeV1 {
+	id: string;
+	role: string;
+	label?: string;
+	state?: Record<string, string | number | boolean | null>;
+	children?: ExtensionUISemanticNodeV1[];
+}
+
+/** A bounded, serializable validation contract owned by one host-rendered contribution. */
+export interface ExtensionUIValidationDefinitionV1 {
+	schemaVersion: 1;
+	id: string;
+	contributionId: string;
+	verificationLevel: ExtensionUIVerificationLevel;
+	readyWhen?: string[];
+	signals?: ExtensionUIValidationSignalV1[];
+	actions?: ExtensionUIValidationActionV1[];
+	scenarios?: ExtensionUIValidationScenarioV1[];
+	snapshot?: ExtensionUISemanticNodeV1;
+}
+
+/** Dynamic fields that may be replaced without redeclaring commands or scenarios. */
+export interface ExtensionUIValidationStateV1 {
+	readyWhen?: string[];
+	signals?: ExtensionUIValidationSignalV1[];
+	snapshot?: ExtensionUISemanticNodeV1;
+}
+
+export interface ExtensionUIValidationContext {
+	/** False unless an embedding host explicitly enables the development-only validation protocol. */
+	readonly available: boolean;
+	readonly protocolVersions: readonly number[];
+	upsertDefinition(definition: ExtensionUIValidationDefinitionV1): void;
+	updateState(definitionId: string, state: ExtensionUIValidationStateV1): void;
+	removeDefinition(definitionId: string): void;
+	clearDefinitions(): void;
 }
 
 /** Raw terminal input listener for extensions. */
@@ -281,6 +348,8 @@ export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: Keybindi
 export interface ExtensionUIContext {
 	/** Explicit host UI surface; extensions must not infer this from hasUI. */
 	readonly capabilities: ExtensionUICapabilities;
+	/** Development-only, host-mediated UI validation declarations. */
+	readonly validation: ExtensionUIValidationContext;
 	/** Create or replace a host-rendered GUI contribution with the same stable id. */
 	upsertContribution(contribution: ExtensionUIContribution): void;
 	/** Remove one host-rendered GUI contribution. */

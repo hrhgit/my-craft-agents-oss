@@ -10,6 +10,8 @@ export type {
 	RpcExtensionUICancel,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcExtensionUIValidationDeltaV1,
+	RpcExtensionUIValidationEvent,
 	RpcHostToolResult,
 	RpcHostUICapabilities,
 	RpcRuntimeOpenOptions,

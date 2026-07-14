@@ -15,6 +15,7 @@ import type {
 	ExtensionInteractionRequestV1,
 	ExtensionInteractionResponseV1,
 	ExtensionUIContribution,
+	ExtensionUIValidationDefinitionV1,
 } from "../../core/extensions/types.ts";
 import type { GlobalBackgroundTaskSnapshot } from "../../core/global-background-tasks.ts";
 import type {
@@ -109,7 +110,25 @@ export interface RpcHostUICapabilities {
 	widgets: boolean;
 	editorControl: boolean;
 	contributions: boolean;
+	/** Development-only extension UI validation declarations. Omitted and false both disable the channel. */
+	validation?: boolean;
 	interactionSchemas: number[];
+}
+
+export type RpcExtensionUIValidationDeltaV1 = {
+	schemaVersion: 1;
+	revision: number;
+} & (
+	| { operation: "upsert"; definition: ExtensionUIValidationDefinitionV1 }
+	| { operation: "remove"; definitionId: string }
+	| { operation: "reset" }
+	| { operation: "snapshot"; definitions: ExtensionUIValidationDefinitionV1[] }
+);
+
+export interface RpcExtensionUIValidationEvent extends RpcEnvelope {
+	type: "extension_ui_validation";
+	extensionId: string;
+	delta: RpcExtensionUIValidationDeltaV1;
 }
 
 export interface RpcRuntimeOpenOptions {
@@ -301,6 +320,7 @@ export interface RpcCapabilities {
 		hostToolResults: "text" | "content";
 		extensionCommandResult: boolean;
 		extensionHostCapabilities: boolean;
+		extensionUiValidation: boolean;
 		secondaryLlmQuery: boolean;
 		childSessionListing: boolean;
 		multiRuntime: boolean;
