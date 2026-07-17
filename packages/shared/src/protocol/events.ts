@@ -12,6 +12,7 @@ import type {
   UnreadSummary,
   UpdateInfo,
   BrowserInstanceInfo,
+  BrowserHostDockNavigationCommand,
   DeepLinkNavigation,
 } from './dto'
 import type { PiProjectionEventV1 } from './pi-projection'
@@ -22,12 +23,14 @@ export interface BroadcastEventMap {
   [RPC_CHANNELS.sessions.PI_PROJECTION_EVENT]: [event: PiProjectionEventV1]
   [RPC_CHANNELS.sessions.UNREAD_SUMMARY_CHANGED]: [summary: UnreadSummary]
   [RPC_CHANNELS.sessions.FILES_CHANGED]: [sessionId: string]
+  [RPC_CHANNELS.fs.WORKSPACE_CHANGED]: [workspaceId: string]
 
   // Domain change broadcasts (global via broadcastToAll)
   [RPC_CHANNELS.sources.CHANGED]: [workspaceId: string, sources: LoadedSource[]]
   [RPC_CHANNELS.automations.CHANGED]: [workspaceId: string]
   [RPC_CHANNELS.skills.CHANGED]: [workspaceId: string, skills: LoadedSkill[]]
   [RPC_CHANNELS.permissions.DEFAULTS_CHANGED]: [value: null]
+  [RPC_CHANNELS.workspaces.REMOTE_UPDATED]: [data: { workspaceId: string }]
 
   // Pi global config (~/.pi/agent/) change broadcast
   [RPC_CHANNELS.pi.GLOBAL_CHANGED]: []
@@ -54,6 +57,7 @@ export interface BroadcastEventMap {
   [RPC_CHANNELS.browserPane.STATE_CHANGED]: [info: BrowserInstanceInfo]
   [RPC_CHANNELS.browserPane.REMOVED]: [id: string]
   [RPC_CHANNELS.browserPane.INTERACTED]: [id: string]
+  [RPC_CHANNELS.browserPane.HOST_DOCK_NAVIGATION]: [command: BrowserHostDockNavigationCommand]
 
   // Navigation events (per-window)
   [RPC_CHANNELS.notification.NAVIGATE]: [data: { workspaceId: string; sessionId: string }]

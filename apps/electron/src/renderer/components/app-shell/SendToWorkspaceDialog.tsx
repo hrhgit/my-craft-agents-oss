@@ -103,7 +103,11 @@ export function SendToWorkspaceDialog({
 
     // Fire parallel checks
     for (const ws of remoteWorkspaces) {
-      window.electronAPI.testRemoteConnection(ws.remoteServer!.url, ws.remoteServer!.token)
+      window.electronAPI.testRemoteConnection(
+        ws.remoteServer!.url,
+        ws.remoteServer!.token,
+        ws.remoteServer!.allowInsecureTls,
+      )
         .then(result => {
           if (abort.signal.aborted) return
           setRemoteHealthMap(prev => new Map(prev).set(ws.id, result.ok ? 'ok' : 'error'))

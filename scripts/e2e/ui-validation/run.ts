@@ -40,7 +40,7 @@ interface NativeMenuSnapshotResult {
 
 const manifest = await startCraftUiRun({
   surface: 'electron',
-  profileMode: 'isolated',
+  profileMode: 'fixture',
   waitMs: 180_000,
 })
 
@@ -269,8 +269,11 @@ try {
   if (!dragSnapshot.ok) throw new Error(dragSnapshot.error.message)
   const draggable = Object.values(dragSnapshot.result.regions).flat()
     .filter(node => node.semanticId?.startsWith('planner.task.') && node.bounds && node.actions.includes('drag'))
-  if (draggable.length < 2) throw new Error('Planner scenario did not expose two typed draggable task rows.')
-  const [dragSource, dragDestination] = draggable
+  if (draggable.length < 3) throw new Error('Planner scenario did not expose three typed draggable task rows.')
+  // Cross a complete intervening row so the physical simulation clears the
+  // sortable collision threshold instead of depending on adjacent-row jitter.
+  const dragSource = draggable[0]
+  const dragDestination = draggable[2]
   const destination = dragDestination!.bounds!
   const dragged = await requestCraftUiHost({
     ...manifest,

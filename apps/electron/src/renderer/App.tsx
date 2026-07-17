@@ -37,7 +37,15 @@ import { coerceInputText } from './lib/input-text'
 import { getPiAgentEndHandoff } from './lib/pi-projection-handoff'
 import { getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
 import { formatSessionLoadFailure, shouldTreatSessionLoadFailureAsTransportFallback } from './lib/session-load'
-import { assertWorkspaceSessionBatch, LatestTaskQueue } from './lib/workspace-transition'
+import {
+  assertWorkspaceSessionBatch,
+  flushWorkspaceLayoutBeforeTransition,
+  LatestTaskQueue,
+  resolveWorkspaceTransitionCommit,
+  waitForRendererCommit,
+  type WorkspaceTransitionState,
+} from './lib/workspace-transition'
+import { createSplashDismissal } from './lib/splash-readiness'
 import {
   removePiUserOverlayCarrier,
   settlePiUserOverlayCarrier,
@@ -286,6 +294,7 @@ export default function App() {
   // Window's workspace ID — shared atom so Root/ThemeProvider stays in sync on switch
   const [windowWorkspaceId, setWindowWorkspaceId] = useAtom(windowWorkspaceIdAtom)
   const [workspaceSwitchDestination, setWorkspaceSwitchDestination] = useState<WorkspaceSwitchDestination | null>(null)
+  const [workspaceTransition, setWorkspaceTransition] = useState<WorkspaceTransitionState | null>(null)
   const windowWorkspaceIdRef = useRef(windowWorkspaceId)
   const transportWorkspaceIdRef = useRef(windowWorkspaceId)
   const workspacesRef = useRef(workspaces)
@@ -354,6 +363,7 @@ export default function App() {
   const sessionLoadFlightRef = useRef<{ workspaceId: string; promise: Promise<void> } | null>(null)
   const [splashExiting, setSplashExiting] = useState(false)
   const [splashHidden, setSplashHidden] = useState(false)
+  const splashDismissalRef = useRef<ReturnType<typeof createSplashDismissal> | null>(null)
 
   // Notifications enabled state (from app settings)
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
@@ -367,14 +377,21 @@ export default function App() {
 
   // Trigger splash exit animation when fully ready
   useEffect(() => {
-    if (isFullyReady && !splashExiting) {
-      setSplashExiting(true)
+    if (!isFullyReady) return
+
+    setSplashExiting(true)
+    const dismissal = createSplashDismissal(() => setSplashHidden(true))
+    splashDismissalRef.current = dismissal
+    return () => {
+      dismissal.cancel()
+      if (splashDismissalRef.current === dismissal) splashDismissalRef.current = null
     }
-  }, [isFullyReady, splashExiting])
+  }, [isFullyReady])
 
   // Handler for when splash exit animation completes
   const handleSplashExitComplete = useCallback(() => {
-    setSplashHidden(true)
+    if (splashDismissalRef.current) splashDismissalRef.current.complete()
+    else setSplashHidden(true)
   }, [])
 
   // Apply theme via hook (injects CSS variables)
@@ -1756,7 +1773,7 @@ export default function App() {
     sessionLoadError,
     splashHidden,
     workspaceId: windowWorkspaceId,
-    workspaceTransitioning: workspaceTransitionQueueRef.current?.isRunning === true,
+    workspaceTransitioning: workspaceTransition !== null,
     transport: connectionState,
   })
 
@@ -1823,6 +1840,21 @@ export default function App() {
       // Capture one stable baseline for the entire coalesced transition series.
       // Intermediate transport targets never become renderer workspace state.
       if (!workspaceTransitionRollbackRef.current) {
+        setWorkspaceTransition({
+          sourceWorkspaceId: activeWorkspaceId,
+          targetWorkspaceId: workspaceId,
+        })
+        await waitForRendererCommit()
+
+        try {
+          if (activeWorkspaceId) {
+            await flushWorkspaceLayoutBeforeTransition(activeWorkspaceId)
+          }
+        } catch (error) {
+          setWorkspaceTransition(null)
+          throw error
+        }
+
         const previousPanelStack = store.get(panelStackAtom)
         const previousFocusedPanelId = store.get(focusedPanelIdAtom)
         const previousSessionMetaMap = store.get(sessionMetaMapAtom)
@@ -1847,7 +1879,11 @@ export default function App() {
         store.set(sessionIdsAtom, [])
         setSessionsLoaded(false)
         setSessionLoadError(null)
-        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        await waitForRendererCommit()
+      } else {
+        setWorkspaceTransition(previous => previous
+          ? { ...previous, targetWorkspaceId: workspaceId }
+          : { sourceWorkspaceId: activeWorkspaceId, targetWorkspaceId: workspaceId })
       }
 
       try {
@@ -1871,6 +1907,7 @@ export default function App() {
         workspaceTransitionRollbackRef.current?.()
         workspaceTransitionRollbackRef.current = null
         workspaceTransitionBaselineIdRef.current = null
+        setWorkspaceTransition(null)
         throw error
       }
 
@@ -1879,28 +1916,43 @@ export default function App() {
       if (transitionQueue.hasPending) return
 
       // Commit renderer state only for the final target.
-      const rendererWorkspaceChanged = workspaceId !== windowWorkspaceIdRef.current
+      const transitionCommit = resolveWorkspaceTransitionCommit(
+        workspaceTransitionBaselineIdRef.current,
+        windowWorkspaceIdRef.current,
+        workspaceId,
+      )
+      const { rendererWorkspaceChanged } = transitionCommit
+      if (transitionCommit.restoreBaseline) {
+        workspaceTransitionRollbackRef.current?.()
+      }
       setWorkspaceSwitchDestination(destination)
       windowWorkspaceIdRef.current = workspaceId
       setWindowWorkspaceId(workspaceId)
 
       // Clear workspace-scoped transient state.
-      setPendingPermissions(new Map())
-      setPendingCredentials(new Map())
-      setSessionOptions(new Map())
-      sessionDraftsRef.current.clear()
-      store.set(sourcesAtom, [])
-      store.set(skillsAtom, [])
+      if (rendererWorkspaceChanged) {
+        setPendingPermissions(new Map())
+        setPendingCredentials(new Map())
+        setSessionOptions(new Map())
+        sessionDraftsRef.current.clear()
+        store.set(sourcesAtom, [])
+        store.set(skillsAtom, [])
+      }
 
       // Complete the transition only after the target workspace's session
       // response has passed the ownership check and committed atomically.
       await loadSessionsFromServer(workspaceId)
-      if (!rendererWorkspaceChanged && destination === 'allSessions') {
-        navigate(routes.view.allSessions())
+      if (!rendererWorkspaceChanged) {
+        if (destination === 'allSessions') {
+          navigate(routes.view.allSessions())
+        } else if (typeof destination === 'object') {
+          navigate(routes.view.allSessions(destination.sessionId))
+        }
         setWorkspaceSwitchDestination(null)
       }
       workspaceTransitionRollbackRef.current = null
       workspaceTransitionBaselineIdRef.current = null
+      setWorkspaceTransition(null)
 
       // Note: NavigationContext detects the workspaceId change and handles
       // panel restoration from the stored workspace URL (or defaults to allSessions).
@@ -1916,9 +1968,13 @@ export default function App() {
   }, [workspaces, handleSelectWorkspace])
 
   // Handle workspace refresh (e.g., after icon upload)
-  const handleRefreshWorkspaces = useCallback(() => {
-    window.electronAPI.getWorkspaces().then(setWorkspaces)
+  const handleRefreshWorkspaces = useCallback(async () => {
+    setWorkspaces(await window.electronAPI.getWorkspaces())
   }, [])
+
+  useEffect(() => window.electronAPI.onWorkspaceRemoteServerUpdated(() => {
+    void handleRefreshWorkspaces()
+  }), [handleRefreshWorkspaces])
 
   // Handle cancel during onboarding
   const handleOnboardingCancel = useCallback(() => {
@@ -1934,6 +1990,8 @@ export default function App() {
     // and useSession(id) hook for individual sessions. This prevents memory leaks.
     workspaces,
     activeWorkspaceId: windowWorkspaceId,
+    workspaceTransition,
+    sessionsLoaded,
     activeWorkspaceSlug: windowWorkspaceSlug,
     piProviders,
     piGlobalSettings,
@@ -1974,6 +2032,8 @@ export default function App() {
     // NOTE: sessions removed to prevent memory leaks - components use atoms instead
     workspaces,
     windowWorkspaceId,
+    workspaceTransition,
+    sessionsLoaded,
     windowWorkspaceSlug,
     piProviders,
     piGlobalSettings,

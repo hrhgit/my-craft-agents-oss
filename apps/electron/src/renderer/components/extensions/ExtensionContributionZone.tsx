@@ -94,6 +94,26 @@ function ExtensionIcon({ name, label }: { name: ExtensionUIIconName; label: stri
   return <Icon className={cn('size-4 shrink-0', name === 'loader' && 'animate-spin')} aria-label={label} />
 }
 
+export function ExtensionContributionContent({
+  node,
+  sessionId,
+  extensionId,
+  runtimeId,
+  className,
+}: {
+  node: ExtensionUINode
+  sessionId: string
+  extensionId: string
+  runtimeId: string
+  className?: string
+}) {
+  return (
+    <div className={cn('min-h-0 min-w-0', className)}>
+      <ExtensionNode node={node} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} />
+    </div>
+  )
+}
+
 function ExtensionNode({ node, sessionId, extensionId, runtimeId }: { node: ExtensionUINode; sessionId: string; extensionId: string; runtimeId: string }) {
   if (node.type === 'text') return <span className={cn('break-words text-sm', node.tone === 'muted' && 'text-muted-foreground', node.tone === 'success' && 'text-emerald-600', node.tone === 'warning' && 'text-amber-600', node.tone === 'danger' && 'text-destructive')}>{node.text}</span>
   if (node.type === 'markdown') return <div className="max-w-none break-words"><Markdown>{node.markdown}</Markdown></div>

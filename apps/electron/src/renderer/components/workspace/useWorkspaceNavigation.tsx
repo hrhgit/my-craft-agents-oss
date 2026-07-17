@@ -9,6 +9,7 @@ import { useTransportConnectionState } from '@/hooks/useTransportConnectionState
 import { useWorkspaceIcons } from '@/hooks/useWorkspaceIcon'
 import { waitForTransportConnected } from '@/lib/transport-wait'
 import type { Workspace } from '../../../shared/types'
+import type { RemoteServerConfig } from '../../../shared/types'
 import { WorkspaceCreationScreen } from './WorkspaceCreationScreen'
 import type { WorkspaceSwitchDestination } from '@/contexts/navigation-history'
 
@@ -35,6 +36,7 @@ export interface WorkspaceNavigationModel {
   items: WorkspaceNavigationItem[]
   activeWorkspaceId: string | null
   selectWorkspace: (workspaceId: string) => Promise<void>
+  selectSession: (workspaceId: string, sessionId: string) => Promise<void>
   openWorkspaceInNewWindow: (workspaceId: string) => Promise<void>
   removeWorkspace: (workspace: Workspace) => Promise<void>
   openCreation: () => void
@@ -48,7 +50,7 @@ interface UseWorkspaceNavigationOptions {
   workspaceUnreadMap: Record<string, boolean>
   workspaceProcessingMap: Record<string, boolean>
   onSelectWorkspace: WorkspaceSelectHandler
-  onRefreshWorkspaces?: () => void
+  onRefreshWorkspaces?: () => void | Promise<void>
 }
 
 export function useWorkspaceNavigation({
@@ -85,7 +87,11 @@ export function useWorkspaceNavigation({
     })
 
     for (const workspace of remoteWorkspaces) {
-      window.electronAPI.testRemoteConnection(workspace.remoteServer!.url, workspace.remoteServer!.token)
+      window.electronAPI.testRemoteConnection(
+        workspace.remoteServer!.url,
+        workspace.remoteServer!.token,
+        workspace.remoteServer!.allowInsecureTls,
+      )
         .then(result => {
           if (abort.signal.aborted) return
           setRemoteHealthMap(previous => new Map(previous).set(workspace.id, result.ok ? 'ok' : 'error'))
@@ -140,6 +146,20 @@ export function useWorkspaceNavigation({
     await Promise.resolve(onSelectWorkspace(workspaceId, false, 'allSessions'))
   }, [isDisconnected, onSelectWorkspace, setFullscreenOverlayOpen, workspaces])
 
+  const selectSession = React.useCallback(async (workspaceId: string, sessionId: string) => {
+    const workspace = workspaces.find(item => item.id === workspaceId)
+    if (!workspace) return
+    if (isDisconnected(workspace)) {
+      if (workspace.remoteServer) {
+        setReconnectTarget(workspace)
+        setShowCreationScreen(true)
+        setFullscreenOverlayOpen(true)
+      }
+      return
+    }
+    await Promise.resolve(onSelectWorkspace(workspaceId, false, { sessionId }))
+  }, [isDisconnected, onSelectWorkspace, setFullscreenOverlayOpen, workspaces])
+
   const openWorkspaceInNewWindow = React.useCallback(async (workspaceId: string) => {
     await Promise.resolve(onSelectWorkspace(workspaceId, true, 'restore'))
   }, [onSelectWorkspace])
@@ -164,18 +184,21 @@ export function useWorkspaceNavigation({
 
   const handleReconnectWorkspace = React.useCallback(async (
     workspaceId: string,
-    remoteServer: { url: string; token: string; remoteWorkspaceId: string },
+    remoteServer: RemoteServerConfig,
   ) => {
     await window.electronAPI.updateWorkspaceRemoteServer(workspaceId, remoteServer)
     if (workspaceId === activeWorkspaceId) {
-      await window.electronAPI.reconnectTransport()
+      // SWITCH_WORKSPACE reads the just-saved config and makes RoutedClient
+      // replace the immutable WsRpcClient instead of reconnecting the old one.
+      await window.electronAPI.switchWorkspace(workspaceId)
     } else {
       await Promise.resolve(onSelectWorkspace(workspaceId, false, 'allSessions'))
     }
     await waitForTransportConnected(window.electronAPI)
+    await Promise.resolve(onRefreshWorkspaces?.())
     closeCreation()
     toast.success(t('toast.workspaceReconnected'))
-  }, [activeWorkspaceId, closeCreation, onSelectWorkspace, t])
+  }, [activeWorkspaceId, closeCreation, onRefreshWorkspaces, onSelectWorkspace, t])
 
   const items = React.useMemo<WorkspaceNavigationItem[]>(() => workspaces.map(workspace => ({
     workspace,
@@ -206,6 +229,7 @@ export function useWorkspaceNavigation({
     items,
     activeWorkspaceId,
     selectWorkspace,
+    selectSession,
     openWorkspaceInNewWindow,
     removeWorkspace,
     openCreation,

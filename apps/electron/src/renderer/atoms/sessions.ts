@@ -11,7 +11,7 @@
 import { atom } from 'jotai'
 import type { Getter, Setter } from 'jotai/vanilla'
 import { atomFamily } from 'jotai-family'
-import type { Session, Message } from '../../shared/types'
+import type { ElectronAPI, Session, Message } from '../../shared/types'
 
 /**
  * Session metadata for list display (lightweight, no messages)
@@ -549,9 +549,14 @@ async function loadSessionMessages(
   get: Getter,
   set: Setter,
   sessionId: string,
-  options?: { force?: boolean },
+  options?: {
+    force?: boolean
+    api?: Pick<ElectronAPI, 'getSessionMessages'>
+    cacheKey?: string
+  },
 ): Promise<Session | null> {
   const force = options?.force ?? false
+  const loadingKey = options?.cacheKey ?? sessionId
 
   if (force) {
     const nextLoadedSessions = new Set(get(loadedSessionsAtom))
@@ -559,7 +564,7 @@ async function loadSessionMessages(
     set(loadedSessionsAtom, nextLoadedSessions)
 
     // Clear any stale in-flight request so the caller gets a fresh fetch.
-    sessionLoadingPromises.delete(sessionId)
+    sessionLoadingPromises.delete(loadingKey)
   } else {
     const loadedSessions = get(loadedSessionsAtom)
 
@@ -570,7 +575,7 @@ async function loadSessionMessages(
   }
 
   // Check if already loading - return existing promise to deduplicate concurrent calls
-  const existingPromise = sessionLoadingPromises.get(sessionId)
+  const existingPromise = sessionLoadingPromises.get(loadingKey)
   if (existingPromise) {
     return existingPromise
   }
@@ -578,7 +583,7 @@ async function loadSessionMessages(
   // Create the loading promise with all the fetch and update logic
   const loadPromise = (async (): Promise<Session | null> => {
     // Fetch messages from main process
-    const loadedSession = await window.electronAPI.getSessionMessages(sessionId)
+    const loadedSession = await (options?.api ?? window.electronAPI).getSessionMessages(sessionId)
     if (!loadedSession) {
       return get(sessionAtomFamily(sessionId))
     }
@@ -643,20 +648,29 @@ async function loadSessionMessages(
   })()
 
   // Cache the promise before awaiting
-  sessionLoadingPromises.set(sessionId, loadPromise)
+  sessionLoadingPromises.set(loadingKey, loadPromise)
 
   try {
     return await loadPromise
   } finally {
     // Always clean up the cache, whether success or failure
-    sessionLoadingPromises.delete(sessionId)
+    sessionLoadingPromises.delete(loadingKey)
   }
 }
 
 export const ensureSessionMessagesLoadedAtom = atom(
   null,
-  async (get, set, sessionId: string): Promise<Session | null> => {
-    return loadSessionMessages(get, set, sessionId)
+  async (
+    get,
+    set,
+    request: string | {
+      sessionId: string
+      api: Pick<ElectronAPI, 'getSessionMessages'>
+      cacheKey: string
+    },
+  ): Promise<Session | null> => {
+    if (typeof request === 'string') return loadSessionMessages(get, set, request)
+    return loadSessionMessages(get, set, request.sessionId, request)
   }
 )
 

@@ -26,7 +26,7 @@ let manifest: CraftUiRunManifest | undefined
 try {
   manifest = await startCraftUiRun({
     surface: 'electron',
-    profileMode: 'isolated',
+    profileMode: 'fixture',
     waitMs: 180_000,
     ...(process.env.CRAFT_UI_SKIP_BUILD === '1' ? { extraEnv: { CRAFT_UI_SKIP_BUILD: '1' } } : {}),
   })

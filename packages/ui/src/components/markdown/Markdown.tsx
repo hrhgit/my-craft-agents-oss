@@ -1,7 +1,6 @@
 import * as React from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
-import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import 'katex/dist/katex.min.css'
@@ -25,6 +24,11 @@ import { useCollapsibleMarkdown } from './CollapsibleMarkdownContext'
 import { wrapWithSafeProxy } from './safe-components'
 import { MARKDOWN_MATH_OPTIONS } from './math-options'
 import { markdownUrlTransform } from './url-transform'
+import {
+  inheritMarkdownRawHtmlPolicy,
+  markdownPreviewBlockAllowsRawHtml,
+  markdownRawHtmlPolicy,
+} from './raw-html-policy'
 
 /**
  * Names of preview-block code-fence types that recursive `Markdown` callers
@@ -96,6 +100,11 @@ export interface MarkdownProps {
    * Default behavior (prop omitted): all preview blocks are registered.
    */
   disablePreviewBlocks?: ReadonlySet<DisablablePreviewBlock>
+  /**
+   * Render raw HTML embedded in markdown. Disable for untrusted documents.
+   * @default true
+   */
+  allowRawHtml?: boolean
 }
 
 /** Context for collapsible sections */
@@ -133,8 +142,11 @@ function createComponents(
   firstMermaidCodeRef?: React.RefObject<string | null>,
   hideFirstMermaidExpand: boolean = true,
   disablePreviewBlocks?: ReadonlySet<DisablablePreviewBlock>,
+  allowRawHtml = true,
 ): Partial<Components> {
-  const isPreviewEnabled = (name: DisablablePreviewBlock) => !disablePreviewBlocks?.has(name)
+  const isPreviewEnabled = (name: DisablablePreviewBlock) =>
+    !disablePreviewBlocks?.has(name)
+    && markdownPreviewBlockAllowsRawHtml(name, allowRawHtml)
   let blockIndex = 0
   const wrapBlock = (
     blockType: string,
@@ -307,7 +319,13 @@ function createComponents(
             return wrapBlock(
               'markdown-preview',
               code,
-              <MarkdownDocBlock code={code} className="my-2" onUrlClick={onUrlClick} onFileClick={onFileClick} />,
+              <MarkdownDocBlock
+                code={code}
+                className="my-2"
+                onUrlClick={onUrlClick}
+                onFileClick={onFileClick}
+                allowRawHtml={inheritMarkdownRawHtmlPolicy(allowRawHtml)}
+              />,
               props.node?.position,
             )
           }
@@ -445,7 +463,13 @@ function createComponents(
           return wrapBlock(
             'markdown-preview',
             code,
-            <MarkdownDocBlock code={code} className="my-2" onUrlClick={onUrlClick} onFileClick={onFileClick} />,
+            <MarkdownDocBlock
+              code={code}
+              className="my-2"
+              onUrlClick={onUrlClick}
+              onFileClick={onFileClick}
+              allowRawHtml={inheritMarkdownRawHtmlPolicy(allowRawHtml)}
+            />,
             props.node?.position,
           )
         }
@@ -573,6 +597,7 @@ export function Markdown({
   collapsible = false,
   hideFirstMermaidExpand = true,
   disablePreviewBlocks,
+  allowRawHtml = true,
 }: MarkdownProps) {
   // Get collapsible context if enabled
   const collapsibleContext = useCollapsibleMarkdown()
@@ -591,8 +616,8 @@ export function Markdown({
   }
 
   const components = React.useMemo(
-    () => wrapWithSafeProxy(createComponents(mode, onUrlClick, onFileClick, collapsible ? collapsibleContext : null, firstMermaidCodeRef, hideFirstMermaidExpand, disablePreviewBlocks)),
-    [mode, onUrlClick, onFileClick, collapsible, collapsibleContext, hideFirstMermaidExpand, disablePreviewBlocks]
+    () => wrapWithSafeProxy(createComponents(mode, onUrlClick, onFileClick, collapsible ? collapsibleContext : null, firstMermaidCodeRef, hideFirstMermaidExpand, disablePreviewBlocks, allowRawHtml)),
+    [mode, onUrlClick, onFileClick, collapsible, collapsibleContext, hideFirstMermaidExpand, disablePreviewBlocks, allowRawHtml]
   )
 
   // Preprocess to convert raw URLs and file paths to markdown links
@@ -616,12 +641,17 @@ export function Markdown({
     },
     [collapsible]
   )
+  const rawHtmlPolicy = React.useMemo(
+    () => markdownRawHtmlPolicy(allowRawHtml),
+    [allowRawHtml],
+  )
 
   return (
     <div className={cn('markdown-content', className)}>
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={[rehypeKatex, rehypeRaw]}
+        rehypePlugins={[rehypeKatex, ...rawHtmlPolicy.rehypePlugins]}
+        skipHtml={rawHtmlPolicy.skipHtml}
         components={components}
         urlTransform={markdownUrlTransform}
       >
@@ -646,6 +676,7 @@ export const MemoizedMarkdown = React.memo(
         prevProps.id === nextProps.id &&
         prevProps.children === nextProps.children &&
         prevProps.mode === nextProps.mode &&
+        prevProps.allowRawHtml === nextProps.allowRawHtml &&
         prevProps.disablePreviewBlocks === nextProps.disablePreviewBlocks
       )
     }
@@ -653,6 +684,7 @@ export const MemoizedMarkdown = React.memo(
     return (
       prevProps.children === nextProps.children &&
       prevProps.mode === nextProps.mode &&
+      prevProps.allowRawHtml === nextProps.allowRawHtml &&
       prevProps.disablePreviewBlocks === nextProps.disablePreviewBlocks
     )
   }

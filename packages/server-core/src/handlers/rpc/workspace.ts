@@ -65,9 +65,10 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   })
 
   // Update remote server config for an existing workspace (reconnect flow)
-  server.handle(RPC_CHANNELS.workspaces.UPDATE_REMOTE, async (_ctx, workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => {
+  server.handle(RPC_CHANNELS.workspaces.UPDATE_REMOTE, async (ctx, workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => {
     updateWorkspaceRemoteServer(workspaceId, remoteServer)
     deps.platform.logger.info(`Updated remote server for workspace ${workspaceId}: ${remoteServer.url}`)
+    pushTyped(server, RPC_CHANNELS.workspaces.REMOTE_UPDATED, { to: 'all', exclude: ctx.clientId }, { workspaceId })
     return { success: true }
   })
 
@@ -94,9 +95,6 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     const end = perf.start('ipc.switchWorkspace', { workspaceId })
     const workspace = getWorkspaceOrThrow(workspaceId)
 
-    // Keep WS push routing in sync (works for both GUI and headless)
-    await server.updateClientWorkspace?.(ctx.clientId, workspaceId)
-
     if (windowManager) {
       const wcId = ctx.webContentsId!
 
@@ -104,7 +102,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
       const oldWorkspaceId = windowManager.getWorkspaceForWindow(wcId)
 
       // Update the window's workspace mapping
-      const updated = windowManager.updateWindowWorkspace(wcId, workspaceId)
+      const updated = await windowManager.updateWindowWorkspace(wcId, workspaceId)
 
       // If update failed, the window may have been re-created (e.g., after refresh)
       // Try to register it
@@ -125,6 +123,11 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
         }
       }
     }
+
+    // Commit push routing only after the desktop window has flushed and
+    // redocked every auxiliary. A failed close handshake leaves both the
+    // renderer and transport on the original workspace.
+    await server.updateClientWorkspace?.(ctx.clientId, workspaceId)
 
     // Set up ConfigWatcher for the new workspace
     sessionManager.setupConfigWatcher(workspace.rootPath, workspaceId)

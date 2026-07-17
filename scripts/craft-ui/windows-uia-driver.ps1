@@ -53,6 +53,7 @@ function Convert-Element($element, $maxNodes) {
       role = if ($null -ne $controlType) { [string]$controlType.ProgrammaticName.Replace('ControlType.', '') } else { '' }
       name = [string]$element.Current.Name
       automationId = [string]$element.Current.AutomationId
+      nativeWindowHandle = [long]$element.Current.NativeWindowHandle
       enabled = [bool]$element.Current.IsEnabled
       focused = [bool]$element.Current.HasKeyboardFocus
       bounds = Convert-Bounds $rect

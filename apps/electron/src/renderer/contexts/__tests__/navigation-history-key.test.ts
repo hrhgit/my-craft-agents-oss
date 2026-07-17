@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch } from '../navigation-history'
+import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch, shouldNavigateToInitialDefault } from '../navigation-history'
 
 describe('buildSemanticHistoryKey', () => {
   it('changes when focused panel index changes even if routes are identical', () => {
@@ -9,14 +9,12 @@ describe('buildSemanticHistoryKey', () => {
       workspaceSlug: 'ws',
       panelRoutes,
       focusedPanelIndex: 0,
-      sidebarParam: '',
     })
 
     const keyB = buildSemanticHistoryKey({
       workspaceSlug: 'ws',
       panelRoutes,
       focusedPanelIndex: 1,
-      sidebarParam: '',
     })
 
     expect(keyA).not.toBe(keyB)
@@ -27,7 +25,6 @@ describe('buildSemanticHistoryKey', () => {
       workspaceSlug: 'ws',
       panelRoutes: ['allSessions/session/s1', 'sources/source/github'],
       focusedPanelIndex: 1,
-      sidebarParam: 'files',
     }
 
     const keyA = buildSemanticHistoryKey(input)
@@ -64,6 +61,24 @@ describe('canRunInitialRestore', () => {
   })
 })
 
+describe('shouldNavigateToInitialDefault', () => {
+  it('does not replace coordinator-owned auxiliary content with a default conversation', () => {
+    expect(shouldNavigateToInitialDefault(new URLSearchParams({
+      layoutWindowId: 'aux:detached-browser',
+      focused: 'true',
+    }))).toBe(false)
+  })
+
+  it('keeps the normal empty-window fallback and honors explicit navigation', () => {
+    expect(shouldNavigateToInitialDefault(new URLSearchParams())).toBe(true)
+    expect(shouldNavigateToInitialDefault(new URLSearchParams({
+      layoutWindowId: 'standalone:5',
+      layoutReadOnly: '1',
+    }))).toBe(true)
+    expect(shouldNavigateToInitialDefault(new URLSearchParams({ route: 'sources' }))).toBe(false)
+  })
+})
+
 describe('resolveWorkspaceSwitchSearch', () => {
   it('opens all sessions for an explicit workspace-list switch', () => {
     expect(resolveWorkspaceSwitchSearch({
@@ -71,6 +86,14 @@ describe('resolveWorkspaceSwitchSearch', () => {
       savedSearch: '?ws=target&route=sources',
       workspaceSlug: 'target',
     })).toBe('?ws=target&route=allSessions')
+  })
+
+  it('opens a requested session for a one-click cross-workspace switch', () => {
+    expect(resolveWorkspaceSwitchSearch({
+      destination: { sessionId: 'session-2' },
+      savedSearch: '?ws=target&route=settings',
+      workspaceSlug: 'target',
+    })).toBe('?ws=target&route=allSessions%2Fsession%2Fsession-2')
   })
 
   it('preserves saved navigation for history-driven workspace restoration', () => {

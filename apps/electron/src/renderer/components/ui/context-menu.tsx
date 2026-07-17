@@ -4,6 +4,7 @@ import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { uiValidationAttributes, type UiValidationPrimitiveProps } from "./ui-validation"
+import { useDismissibleRootState } from "@/context/DismissibleLayerContext"
 
 // Context for keyboard shortcut registration and menu control
 type ShortcutHandler = () => void
@@ -14,14 +15,14 @@ const ContextMenuShortcutContext = React.createContext<{
 } | null>(null)
 
 function ContextMenu({
-  onOpenChange,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
+  const state = useDismissibleRootState(props, 'radix-popover', 20)
   return (
     <ContextMenuPrimitive.Root
       data-slot="context-menu"
-      onOpenChange={onOpenChange}
       {...props}
+      {...state}
     />
   )
 }

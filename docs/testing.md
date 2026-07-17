@@ -51,8 +51,12 @@ The frozen clock virtualizes the registered application `timer`, `debounce`, `re
 
 `craft-ui` is source-only and is excluded from production/package module graphs. It exposes a versioned JSON control plane; callers do not use Playwright, CDP, selectors, renderer evaluation, or Electron objects directly.
 
+Cold starts and explicitly requested UI waits allow up to 10 minutes; the default cold-start budget is 10 minutes, ordinary host operations default to 2 minutes, and adapter-level waits default to 1 minute.
+
+For Electron UI work, this CLI is also the primary AI-operated validation surface. Use it to explore the real changed workflow instead of relying only on a prewritten smoke script: start a fixture run, inspect the capability catalog and current snapshot, choose targets from that snapshot, execute a bounded action sequence, then capture evidence. The fixed E2E suites below are regression coverage and do not replace this interactive check.
+
 ```bash
-bun run craft-ui -- start --surface electron --profile isolated --json
+bun run craft-ui -- start --surface electron --profile fixture --json
 bun run craft-ui -- status --json
 bun run craft-ui -- capabilities list --kind route --json
 bun run craft-ui -- capabilities describe --kind scenario --id session.streaming --json
@@ -63,11 +67,67 @@ bun run craft-ui -- evidence --params '{"label":"manual-check"}' --json
 bun run craft-ui -- stop --json
 ```
 
+An agent may build a broader disposable data scene before launch. The schema is available without starting the app, so callers do not need to inspect implementation source:
+
+```bash
+bun run craft-ui -- fixture schema --json
+bun run craft-ui -- start --surface electron --profile fixture --fixture ./fixture.json --json
+```
+
+Fixture V1 declares one or more workspaces, workspace-root files, sessions, conversation messages, session sidecar files, and the initially active workspace/session. For example:
+
+```json
+{
+  "version": 1,
+  "active": { "workspaceId": "docs", "sessionId": "review-readme" },
+  "workspaces": [{
+    "id": "docs",
+    "name": "Documentation",
+    "files": [{ "path": "README.md", "content": "# Documentation\n" }],
+    "sessions": [{
+      "id": "review-readme",
+      "name": "Review README",
+      "messages": [
+        { "role": "user", "content": "Review the README structure." },
+        { "role": "assistant", "content": "The setup section needs an example." }
+      ],
+      "files": [{ "path": "plans/review.md", "content": "# Review plan\n" }]
+    }]
+  }]
+}
+```
+
+Workspace files are materialized under the real disposable workspace root. Session files are materialized under the normal Craft sidecar and must start with `attachments/`, `data/`, `downloads/`, `long_responses/`, or `plans/`. Conversation history is written through the canonical Pi session projection rather than a renderer mock. The validator bounds counts and bytes, rejects duplicate identities and paths, and prevents path escape or Windows-unsafe names. The entire profile is removed by `craft-ui stop`.
+
+The usual interactive loop keeps the run id returned by `start` and passes it to subsequent commands:
+
+```bash
+bun run craft-ui -- start --surface electron --profile fixture --json
+bun run craft-ui -- capabilities list --kind action --run <run-id> --json
+bun run craft-ui -- snapshot --run <run-id> --json
+bun run craft-ui -- action --run <run-id> \
+  --params '{"revision":<revision>,"target":{"ref":"<ref>"},"action":"click","mode":"physical"}' --json
+bun run craft-ui -- evidence --run <run-id> --params '{"label":"changed-workflow"}' --json
+bun run craft-ui -- stop --run <run-id> --json
+```
+
+Use Electron background mode when validation must not take over the active desktop:
+
+```bash
+bun run craft-ui -- start --surface electron --profile fixture --window-mode background --json
+```
+
+The run starts real source-development Electron windows with renderer background throttling disabled and keeps every managed window minimized. Semantic actions, renderer snapshots and waits, CDP-backed physical input, renderer screenshots, and background-safe Windows UIA patterns remain available. A native background snapshot advertises only operations that do not require a foreground window: `Invoke`, `Value`, and `SelectionItem` patterns plus window minimize/close. Coordinate mouse fallback, focus, restore, maximize, and native dialogs return `UNSUPPORTED` instead of restoring or focusing the window. `status.windowMode` and `status.nativeDriver.windowMode` report the active contract. WebUI runs do not accept this option because they have no Electron window lifecycle.
+
+For native Electron behavior, use the same run through either `snapshot --params '{"scope":"native"}'` or `request ui.native --params '{"operation":"snapshot"}'`, then send a `ui.action` request with `{"mode":"native","target":{"kind":"native","ref":"<native-ref>"},"action":"focus"}` or another action advertised by the native snapshot. In foreground mode, snapshots, actions, and native dialogs share the selected-window readiness boundary: the host reveals the window, matches its process-local UIA root by native handle or by title and DPI-scaled bounds, and only then returns `native-verified`. Background mode instead requires a minimized, UIA-verified selected window and filters each snapshot to background-safe actions. In `status.nativeDriver`, `available` means that the platform adapter exists; `ready` means the selected window has satisfied the active foreground or background contract. Native references and revisions must be refreshed after the window or dialog changes.
+
 `start` returns only after both the application state and its semantic UI are ready. Route, session, transport, extension, and native waits are event-driven. Do not add fixed sleeps to validation flows.
 
 Use `capabilities list` before composing a flow and `capabilities describe` to obtain the bounded input schema, supported surfaces, modes, and expected verification level for one route, scenario, or action. The catalog is protocol V1 data and never exposes Playwright, CDP, selectors, JavaScript evaluation, or renderer state. Its `runtimeDiscovery.extensionDefinitions` entry also describes the dynamic extension discovery call. Read extension identities from the `scope: "extension"` entries returned by `status`, then call `snapshot --params '{"target":{"kind":"extension","sessionId":"...","extensionId":"..."}}'`. The result contains the host-validated readiness signals, actions, scenarios, and input schemas contributed by that running extension; callers do not inspect extension or renderer source.
 
-Use `isolated` unless real configuration is required. Clone mode requires both source paths explicitly and redirects every write into temporary directories:
+`fixture` is the default profile. Without `--fixture`, it sets `setupDeferred` and opens the normal application on a populated product-release conversation. The preset contains three disposable workspaces: a product launch with code, release files, multiple sessions, a tool-call transcript, and plan data; customer research with Markdown/CSV/JSON inputs and analysis sessions; and support operations with runbooks, incident/ticket files, triage sessions, and unread state. A custom `--fixture` replaces that preset with the declared real data scene. Fixture profiles contain no provider credentials or live endpoints; use registered typed scenarios for transient loading, streaming, approval, extension, permission, and error states.
+
+Use `isolated` only for onboarding and pristine-profile behavior. When real provider or user configuration is required, clone mode requires both source paths explicitly and redirects every write into temporary directories:
 
 ```bash
 bun run craft-ui -- start --surface electron --profile clone \

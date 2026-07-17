@@ -35,6 +35,7 @@ import { ItemNavigator } from '../overlay/ItemNavigator'
 import { usePlatform } from '../../context/PlatformContext'
 import { useTranslation } from 'react-i18next'
 import { Markdown } from './Markdown'
+import { inheritMarkdownRawHtmlPolicy } from './raw-html-policy'
 import {
   parseMarkdownPreviewSpec,
   normalizePreviewItems,
@@ -63,9 +64,10 @@ export interface MarkdownDocBlockProps {
   className?: string
   onUrlClick?: (url: string) => void
   onFileClick?: (path: string) => void
+  allowRawHtml: boolean
 }
 
-export function MarkdownDocBlock({ code, className, onUrlClick, onFileClick }: MarkdownDocBlockProps) {
+export function MarkdownDocBlock({ code, className, onUrlClick, onFileClick, allowRawHtml }: MarkdownDocBlockProps) {
   const { t } = useTranslation()
   const { onReadFile } = usePlatform()
 
@@ -159,6 +161,7 @@ export function MarkdownDocBlock({ code, className, onUrlClick, onFileClick }: M
             <Markdown
               mode="minimal"
               disablePreviewBlocks={DISABLE_INNER_MARKDOWN_PREVIEW}
+              allowRawHtml={inheritMarkdownRawHtmlPolicy(allowRawHtml)}
               onUrlClick={onUrlClick}
               onFileClick={onFileClick}
             >

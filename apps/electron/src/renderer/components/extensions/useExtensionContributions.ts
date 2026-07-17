@@ -3,11 +3,13 @@ import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/typ
 import type { ExtensionUISurface } from '@craft-agent/shared/protocol'
 import { ContributionStore, SurfaceLayoutManager } from './extension-contribution-store'
 import { extensionValidationStore } from './extension-validation-store'
+import { useOptionalAppShellContext } from '@/context/AppShellContext'
 
 export const extensionContributionStore = new ContributionStore()
 export const extensionSurfaceLayout = new SurfaceLayoutManager()
 let hostSubscription: (() => void) | undefined
 const refreshedSessions = new Set<string>()
+const refreshKey = (sessionId: string, workspaceId?: string | null) => `${workspaceId ?? ''}\0${sessionId}`
 
 function ensureHostSubscription(): void {
   if (hostSubscription || typeof window === 'undefined') return
@@ -17,8 +19,9 @@ function ensureHostSubscription(): void {
     if (event.type === 'extension_contribution') extensionContributionStore.apply(event.delta)
     if (event.type === 'extension_ui_validation') extensionValidationStore.apply(event.delta)
     if (event.type === 'extension_contributions_runtime_reset') {
-      refreshedSessions.delete(event.sessionId)
-      extensionContributionStore.resetRuntime(event.sessionId, event.runtimeId)
+      refreshedSessions.delete(refreshKey(event.sessionId, event.workspaceId))
+      refreshedSessions.delete(refreshKey(event.sessionId))
+      extensionContributionStore.resetRuntime(event.sessionId, event.runtimeId, event.workspaceId)
       extensionValidationStore.resetRuntime(event.sessionId, event.runtimeId)
     }
   })
@@ -29,8 +32,15 @@ export function useExtensionContributions(
   surface: ExtensionUISurface,
   target?: { turnId?: string; messageId?: string; toolCallId?: string },
   hydrateRuntime = true,
+  workspaceId?: string | null,
 ) {
   ensureHostSubscription()
+  const appShell = useOptionalAppShellContext()
+  const activeWorkspace = appShell?.workspaces.find(workspace => workspace.id === appShell.activeWorkspaceId)
+  const activeContributionWorkspaceId = activeWorkspace?.remoteServer?.remoteWorkspaceId
+    ?? appShell?.activeWorkspaceId
+    ?? undefined
+  const resolvedWorkspaceId = workspaceId === undefined ? activeContributionWorkspaceId : workspaceId
   const hasTarget = target !== undefined
   const targetTurnId = target?.turnId
   const targetMessageId = target?.messageId
@@ -42,13 +52,17 @@ export function useExtensionContributions(
   )
   React.useEffect(() => {
     if (!hydrateRuntime) return
-    if (refreshedSessions.has(sessionId)) return
-    refreshedSessions.add(sessionId)
-    void window.electronAPI?.getExtensionCommands?.(sessionId).catch(() => refreshedSessions.delete(sessionId))
-  }, [hydrateRuntime, sessionId, version])
+    const key = refreshKey(sessionId, resolvedWorkspaceId)
+    if (refreshedSessions.has(key)) return
+    refreshedSessions.add(key)
+    void window.electronAPI?.getExtensionCommands?.(sessionId).catch(() => refreshedSessions.delete(key))
+  }, [hydrateRuntime, resolvedWorkspaceId, sessionId, version])
   return React.useMemo(() => {
     void version
-    const items = extensionContributionStore.list(sessionId, surface).filter(item => {
+    const surfaceItems = surface === 'workspace.content'
+      ? extensionContributionStore.listWorkspaceContent(sessionId, resolvedWorkspaceId)
+      : extensionContributionStore.list(sessionId, surface, resolvedWorkspaceId)
+    const items = surfaceItems.filter(item => {
       if (!hasTarget) return item.contribution.target === undefined
       const ownTarget = item.contribution.target
       if (!ownTarget) return false
@@ -57,5 +71,5 @@ export function useExtensionContributions(
         && (targetToolCallId === undefined || ownTarget.toolCallId === targetToolCallId)
     })
     return extensionSurfaceLayout.resolve(surface, items)
-  }, [hasTarget, sessionId, surface, targetMessageId, targetToolCallId, targetTurnId, version])
+  }, [hasTarget, resolvedWorkspaceId, sessionId, surface, targetMessageId, targetToolCallId, targetTurnId, version])
 }

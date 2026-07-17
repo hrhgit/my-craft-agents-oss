@@ -1,4 +1,5 @@
 import { ElectronUiDriverError } from './electron-surface-driver'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@craft-agent/shared/ui-validation'
 
 interface RendererNavigationWebContents {
   getURL(): string
@@ -37,9 +38,9 @@ export async function loadRendererTarget(
   targetUrl: string,
   options: { timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<void> {
-  const timeoutMs = options.timeoutMs ?? 15_000
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
-    throw new ElectronUiDriverError('INVALID_REQUEST', 'Renderer navigation timeout must be between 1 and 120000ms.')
+  const timeoutMs = options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > UI_VALIDATION_MAX_WAIT_MS) {
+    throw new ElectronUiDriverError('INVALID_REQUEST', `Renderer navigation timeout must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}ms.`)
   }
   if (window.isDestroyed() || window.webContents.isDestroyed()) {
     throw new ElectronUiDriverError('WINDOW_GONE', 'Renderer window no longer exists.')

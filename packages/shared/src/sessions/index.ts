@@ -38,6 +38,7 @@ export {
   getSessionPlansPath,
   getPiNativeSessionDir,
   getPiNativeSessionFilePath,
+  ensureSharedPiTreeSessionFile,
   ensureAttachmentsDir,
   // ID generation
   generateSessionId,

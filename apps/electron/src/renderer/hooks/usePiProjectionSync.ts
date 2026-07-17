@@ -7,6 +7,7 @@ import {
 } from '@/atoms/pi-projection'
 import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
 import type { PiProjectionState } from '@/atoms/pi-projection'
+import { useWorkspaceElectronApi } from '@/context/WorkspaceElectronApiContext'
 
 export type PiProjectionEventApplied = (
   event: PiProjectionEventV1,
@@ -20,6 +21,7 @@ export function usePiProjectionSync(
   onEventApplied?: PiProjectionEventApplied,
 ): void {
   const store = useStore()
+  const electronApi = useWorkspaceElectronApi()
   const recovering = useRef(new Map<string, Promise<void>>())
   const onEventAppliedRef = useRef(onEventApplied)
   onEventAppliedRef.current = onEventApplied
@@ -28,7 +30,7 @@ export function usePiProjectionSync(
     const recover = (sessionId: string): Promise<void> => {
       const existing = recovering.current.get(sessionId)
       if (existing) return existing
-      const request = window.electronAPI.getPiProjectionSnapshot(sessionId)
+      const request = electronApi.getPiProjectionSnapshot(sessionId)
         .then((snapshot) => {
           if (snapshot) store.set(applyPiProjectionSnapshotAtom, snapshot)
         })
@@ -42,7 +44,7 @@ export function usePiProjectionSync(
       return request
     }
 
-    const cleanup = window.electronAPI.onPiProjectionEvent((event) => {
+    const cleanup = electronApi.onPiProjectionEvent((event) => {
       const sessionAtom = piProjectionAtomFamily(event.sessionId)
       const previous = store.get(sessionAtom)
       store.set(applyPiProjectionEventAtom, event)
@@ -53,12 +55,12 @@ export function usePiProjectionSync(
       }
     })
     return cleanup
-  }, [store])
+  }, [store, electronApi])
 
   useEffect(() => {
     if (!activeSessionId) return
     let cancelled = false
-    void window.electronAPI.getPiProjectionSnapshot(activeSessionId)
+    void electronApi.getPiProjectionSnapshot(activeSessionId)
       .then((snapshot) => {
         if (!cancelled && snapshot) store.set(applyPiProjectionSnapshotAtom, snapshot)
       })
@@ -66,14 +68,14 @@ export function usePiProjectionSync(
         if (!cancelled) console.error(`[PiProjection] Initial snapshot failed for ${activeSessionId}:`, error)
       })
     return () => { cancelled = true }
-  }, [activeSessionId, store])
+  }, [activeSessionId, store, electronApi])
 
   useEffect(() => {
     if (!activeSessionId) return
     let cancelled = false
-    const cleanup = window.electronAPI.onReconnected((isStale) => {
+    const cleanup = electronApi.onReconnected((isStale) => {
       if (!isStale) return
-      void window.electronAPI.getPiProjectionSnapshot(activeSessionId)
+      void electronApi.getPiProjectionSnapshot(activeSessionId)
         .then((snapshot) => {
           if (!cancelled && snapshot) store.set(applyPiProjectionSnapshotAtom, snapshot)
         })
@@ -85,5 +87,5 @@ export function usePiProjectionSync(
       cancelled = true
       cleanup()
     }
-  }, [activeSessionId, store])
+  }, [activeSessionId, store, electronApi])
 }

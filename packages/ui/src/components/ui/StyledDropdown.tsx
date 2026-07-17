@@ -15,6 +15,7 @@ import * as React from 'react'
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { ChevronRightIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { useDismissiblePrimitiveRootState } from './use-dismissible-layer'
 
 const SUPPORTED_HOVER_PREFIXES = ['bg-', 'text-', 'border-', 'ring-', 'opacity-']
 
@@ -48,7 +49,10 @@ export function mirrorHoverToOpenStateClasses(className?: string): string | unde
 }
 
 // Re-export raw primitives that need no styling
-const DropdownMenu = DropdownMenuPrimitive.Root
+function DropdownMenu(props: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
+  const state = useDismissiblePrimitiveRootState(props, 'radix-popover', 20)
+  return <DropdownMenuPrimitive.Root {...props} {...state} />
+}
 const DropdownMenuSub = DropdownMenuPrimitive.Sub
 
 interface DropdownMenuTriggerProps extends React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Trigger> {

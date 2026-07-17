@@ -2,7 +2,7 @@ import { Info } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
-import type { BackgroundTask } from './ActiveTasksBar'
+import { ActiveTasksBar, type BackgroundTask } from './ActiveTasksBar'
 import { SessionInfoPopover } from './SessionInfoPopover'
 
 export interface ActiveOptionBadgesProps {
@@ -17,10 +17,23 @@ export interface ActiveOptionBadgesProps {
   className?: string
 }
 
-export function ActiveOptionBadges({ sessionId, sessionFolderPath, className }: ActiveOptionBadgesProps) {
+export function ActiveOptionBadges({
+  tasks = [],
+  sessionId,
+  sessionFolderPath,
+  onKillTask,
+  onInsertMessage,
+  className,
+}: ActiveOptionBadgesProps) {
   const { t } = useTranslation()
   if (!sessionId) return null
-  return <div className={cn('flex items-start justify-end mb-2 px-px pt-px pb-0.5', className)}>
+  return <div className={cn('mb-2 flex flex-wrap items-start justify-end gap-1.5 px-px pb-0.5 pt-px', className)}>
+    <ActiveTasksBar
+      tasks={tasks}
+      sessionId={sessionId}
+      onKillTask={onKillTask}
+      onInsertMessage={onInsertMessage}
+    />
     <SessionInfoPopover
       sessionId={sessionId}
       sessionFolderPath={sessionFolderPath}

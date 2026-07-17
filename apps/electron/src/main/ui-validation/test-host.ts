@@ -4,6 +4,7 @@ import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { BrowserWindow, dialog, Menu } from 'electron'
 import type { ManagedWindowRole, WindowManager } from '../window-manager'
+import type { BrowserPaneManager } from '../browser-pane-manager'
 import { queryUiValidationCapabilities, UiValidationError, type UiValidationCapabilitiesQuery } from '@craft-agent/shared/ui-validation'
 import { extensionUIValidationEntityId } from '@craft-agent/shared/protocol'
 import {
@@ -14,10 +15,10 @@ import {
   type UiVerificationLevel,
 } from './electron-surface-driver'
 import { getUiValidationStateBridge } from './state-bridge'
-import { expectedRendererRoute, parseStateCondition, semanticReadyAppGate, stateObservation } from './test-host-state'
+import { expectedRendererRoute, parseStateCondition, semanticReadyAppGate, stateObservation, UI_TEST_HOST_DEFAULT_WAIT_MS, UI_TEST_HOST_MAX_WAIT_MS } from './test-host-state'
 import { ElectronExtensionValidationAdapter, ExtensionValidationAdapterError } from './extension-validation-adapter'
 import { WindowsNativeUiDriver } from './windows-native-driver'
-import { ensureNativeWindowReady } from './native-window-readiness'
+import { ElectronNativeWindowController } from './native-window-readiness'
 import { ElectronEvidenceCollector } from './evidence-collector'
 import { ElectronNativeDialogAdapter, type NativeDialogKind } from './native-dialog-adapter'
 import { ElectronNativeMenuAdapter } from './native-menu-adapter'
@@ -25,13 +26,18 @@ import { captureMainProcessDiagnostics } from './main-process-diagnostics'
 import { APP_SHELL_SCENARIO_IDS, AppShellScenarioAdapterError, ElectronAppShellScenarioAdapter, appShellScenarioApplyRequest } from './app-shell-scenario-adapter'
 import { loadRendererTarget, rendererPageUrl } from './renderer-navigation'
 import { uiTestHostHttpErrorEnvelope } from './http-error-envelope'
+import { findRendererSnapshotTargets, resolveRendererSnapshotTarget } from './snapshot-target'
+import { parseElectronActionParams, parseElectronWaitParams } from './test-host-request'
+import { ElectronBackgroundWindowController, parseElectronUiWindowMode } from './background-window-mode'
+import { parseBrowserViewKeyAction } from './browser-view-key-action'
 
 const MAX_REQUEST_BYTES = 1_000_000
-const MAX_WAIT_MS = 120_000
+const MAX_WAIT_MS = UI_TEST_HOST_MAX_WAIT_MS
 
 export interface UiTestHostOptions {
   isPackaged: boolean
   windowManager: WindowManager
+  browserPaneManager?: BrowserPaneManager
   runtimeLogPath: string
   openRoute?: (params: Record<string, unknown>, target: { webContentsId: number; workspaceId: string | null }) => Promise<unknown>
   shutdown?: () => void
@@ -71,6 +77,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
   const manifestPath = resolve(requireEnv('CRAFT_UI_ENDPOINT_MANIFEST'))
   const artifactsDir = resolve(requireEnv('CRAFT_UI_ARTIFACTS_DIR'))
   const surface = process.env.CRAFT_UI_SURFACE
+  const windowMode = parseElectronUiWindowMode(process.env.CRAFT_UI_WINDOW_MODE)
   if (surface !== 'electron') throw new Error(`Electron Test Host cannot serve surface ${surface ?? '(missing)'}.`)
   if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('CRAFT_UI_TOKEN must be 64 hexadecimal characters.')
   if (process.env.CRAFT_UI_PROTOCOL_VERSION !== '1') throw new Error('Unsupported CRAFT_UI_PROTOCOL_VERSION.')
@@ -81,6 +88,17 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
   const nativeMenus = new ElectronNativeMenuAdapter(Menu, () => BrowserWindow.getFocusedWindow())
   const stateBridge = getUiValidationStateBridge()!
   if (!stateBridge) throw new Error('UI validation state bridge must be installed before the Test Host starts.')
+  const nativeWindows = new ElectronNativeWindowController(nativeDriver, (webContentsId, phase, detail) => {
+    stateBridge.setNativeDriverState(webContentsId, phase, detail)
+  }, windowMode)
+  const backgroundWindows = windowMode === 'background'
+    ? new ElectronBackgroundWindowController(options.windowManager)
+    : undefined
+  if (windowMode === 'foreground') {
+    for (const { window } of options.windowManager.getAllWindows()) {
+      if (!window.isDestroyed()) nativeWindows.reveal(window, { focus: false })
+    }
+  }
   let nativeDialogWindowId: number | undefined
   const nativeDialogs = new ElectronNativeDialogAdapter(dialog, record => {
     if (nativeDialogWindowId === undefined) return
@@ -157,6 +175,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       const commandSeq = ++seq
       const command = normalizeMethod(body.method)
       const result = await dispatch(command, body.params ?? {}, abortController.signal)
+      backgroundWindows?.refresh()
       const level = resultVerificationLevel(command, result)
       if (level === 'native-verified' || (level === 'renderer-verified' && runVerificationLevel === 'scenario-verified')) {
         runVerificationLevel = level
@@ -189,6 +208,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         ...failureEnvelope(body.requestId, runId, ++seq, revision, verificationLevel(command), error, evidenceBundle ? { evidenceBundle } : undefined),
       })
     } finally {
+      backgroundWindows?.refresh()
       activeWaits.delete(abortController)
     }
   })
@@ -215,14 +235,24 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       const state = stateBridge.snapshot(selectedWindowId(options.windowManager, selector, false))
       const app = state.states.find(item => item.scope === 'app' && item.phase !== 'disposed')
       const driverStatus = driver.ready()
+      const nativeWindowId = selectedWindowId(options.windowManager, selector, false)
+      const nativeWindow = nativeWindowId === undefined ? undefined : options.windowManager.getWindowByWebContentsId(nativeWindowId)
+      const nativeWindowStatuses = options.windowManager.getAllWindows().map(entry => nativeWindows.status(entry.window))
       const appShellScenario = activeScenario && APP_SHELL_SCENARIO_IDS.has(activeScenario.id as never)
         ? await callAppShellScenarioAdapter(() => appShellScenarioAdapter(selector).snapshot())
         : undefined
       return {
         ...driverStatus,
         ready: driverStatus.ready && app?.phase === 'ready',
+        windowMode,
         windows: driver.windows(),
-        nativeDriver: { ready: nativeDriver.ready(), platform: process.platform, adapter: 'windows-uia', applicationMenu: nativeMenus.ready() },
+        nativeDriver: {
+          ...nativeWindows.status(nativeWindow ?? undefined),
+          platform: process.platform,
+          adapter: 'windows-uia',
+          applicationMenu: nativeMenus.ready(),
+          windows: nativeWindowStatuses,
+        },
         phase: app?.phase ?? 'loading',
         revision: state.revision,
         state,
@@ -252,7 +282,12 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       return { maxBytes, logs: { runtime: redactDiagnosticText(runtime, maxBytes) } }
     }
     if (command === 'snapshot') {
-      if (params.scope === 'native') return await nativeDriver.snapshot()
+      if (params.scope === 'native') {
+        return await nativeWindows.snapshot(resolveManagedWindow(options.windowManager, selector), {
+          timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
+          signal,
+        })
+      }
       if (extensionTarget) {
         const definitions = await extensionAdapter(selector).snapshot({
           sessionId: extensionTarget.sessionId,
@@ -274,16 +309,22 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       return snapshot
     }
     if (command === 'action') {
+      parseElectronActionParams(params)
+      const actionWindow = resolveManagedWindow(options.windowManager, selector)
+      const actionSelector = { ...selector, webContentsId: actionWindow.webContents.id }
       if (params.mode === 'native' || (isRecord(params.target) && params.target.kind === 'native')) {
         const target = isRecord(params.target) ? params.target : params
         const beforeEventSeq = stateBridge.events().latestSeq
-        const nativeReceipt = await nativeDriver.action({
+        const nativeReceipt = await nativeWindows.action(actionWindow, {
           revision: requiredNumber(params.revision, 'revision'),
           ref: requiredString(target.ref, 'target.ref'),
           action: requiredNativeAction(params.action),
           ...(typeof params.value === 'string' ? { value: params.value } : {}),
+        }, {
+          timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
+          signal,
         })
-        return await settleActionReceipt({ ...nativeReceipt }, params, selector, beforeEventSeq, signal)
+        return await settleActionReceipt({ ...nativeReceipt }, params, actionSelector, beforeEventSeq, signal)
       }
       if (extensionTarget) {
         if (!extensionTarget.definitionId) throw new ElectronUiDriverError('TARGET_NOT_FOUND', 'Extension action target requires definitionId.')
@@ -291,15 +332,15 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         const actionId = requiredScenarioId(params.action)
         const beforeRevision = stateBridge.snapshot().revision
         const beforeEventSeq = stateBridge.events().latestSeq
-        const beforeDefinitionRevision = await currentExtensionDefinitionRevision(extensionTarget, selector)
-        const result = await callExtensionAdapter(() => extensionAdapter(selector).execute({
+        const beforeDefinitionRevision = await currentExtensionDefinitionRevision(extensionTarget, actionSelector)
+        const result = await callExtensionAdapter(() => extensionAdapter(actionSelector).execute({
           ...extensionTarget,
           definitionId,
           kind: 'action',
           id: actionId,
           ...(isRecord(params.input) ? { input: params.input } : {}),
         }))
-        const readiness = await waitForExtensionCommandSettle(extensionTarget, selector, beforeEventSeq, beforeDefinitionRevision, params, signal)
+        const readiness = await waitForExtensionCommandSettle(extensionTarget, actionSelector, beforeEventSeq, beforeDefinitionRevision, params, signal)
         return await settleActionReceipt({
           actionId: randomUUID(),
           result,
@@ -311,23 +352,28 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
           warnings: [],
           mode: 'semantic',
           verificationLevel: 'scenario-verified',
-        }, params, selector, beforeEventSeq, signal)
+        }, params, actionSelector, beforeEventSeq, signal)
       }
       const target = typeof params.target === 'object' && params.target !== null
         ? params.target as Record<string, unknown>
         : params
       let actionRevision = typeof params.revision === 'number' ? requiredNumber(params.revision, 'revision') : undefined
       let actionRef = typeof target.ref === 'string' ? requiredString(target.ref, 'target.ref') : undefined
-      if (typeof target.semanticId === 'string') {
-        const current = rememberSnapshot(await driver.snapshot(selector))
-        const matches = Object.values(current.regions).flat().filter(node => node.semanticId === target.semanticId)
-        if (matches.length === 0) throw new ElectronUiDriverError('TARGET_NOT_FOUND', `Semantic target ${target.semanticId} was not found.`)
-        if (matches.length > 1) throw new ElectronUiDriverError('AMBIGUOUS_TARGET', `Semantic target ${target.semanticId} is not unique.`)
+      if (
+        typeof target.ref !== 'string'
+        && (
+          typeof target.semanticId === 'string'
+          || typeof target.testId === 'string'
+          || typeof target.role === 'string'
+        )
+      ) {
+        const current = rememberSnapshot(await driver.snapshot(actionSelector))
+        const matched = resolveRendererSnapshotTarget(Object.values(current.regions).flat(), target)
         actionRevision = current.revision
-        actionRef = matches[0]!.ref
+        actionRef = matched.ref
       }
       const beforeEventSeq = stateBridge.events().latestSeq
-      const action = await driver.action(selector, {
+      const action = await driver.action(actionSelector, {
         revision: actionRevision ?? requiredNumber(params.revision, 'revision'),
         ref: actionRef ?? requiredString(target.ref, 'target.ref'),
         action: requiredAction(params.action),
@@ -337,8 +383,30 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         ...(Array.isArray(params.modifiers) ? { modifiers: params.modifiers as never } : {}),
         ...(isPoint(params.to) ? { to: params.to } : {}),
       })
-      lastSnapshot = rememberSnapshot(await driver.snapshot(selector))
-      return await settleActionReceipt({ ...action, afterRevision: lastSnapshot.revision }, params, selector, beforeEventSeq, signal)
+      lastSnapshot = rememberSnapshot(await driver.snapshot(actionSelector))
+      return await settleActionReceipt({ ...action, afterRevision: lastSnapshot.revision }, params, actionSelector, beforeEventSeq, signal)
+    }
+    if (command === 'browser-key') {
+      const manager = options.browserPaneManager
+      if (!manager) throw new ElectronUiDriverError('UNSUPPORTED', 'BrowserView validation adapter is unavailable.')
+      const window = resolveManagedWindow(options.windowManager, selector)
+      const workspaceId = options.windowManager.getWorkspaceForWindow(window.webContents.id)
+      if (!workspaceId) throw new ElectronUiDriverError('TARGET_NOT_FOUND', 'Selected window has no workspace.')
+      const shortcut = parseBrowserViewKeyAction(params)
+      try {
+        manager.assertInstanceOwnedByWorkspace(shortcut.instanceId, workspaceId)
+        await manager.sendKeyToEmbeddedHost(shortcut.instanceId, window.webContents.id, shortcut)
+      } catch (error) {
+        throw new ElectronUiDriverError('TARGET_NOT_FOUND', error instanceof Error ? error.message : String(error))
+      }
+      return {
+        instanceId: shortcut.instanceId,
+        hostWebContentsId: window.webContents.id,
+        key: shortcut.key,
+        modifiers: shortcut.modifiers,
+        settledBy: ['browser-view-input-dispatched'],
+        verificationLevel: 'renderer-verified',
+      }
     }
     if (command === 'resize') {
       driver.resize(selector, requiredNumber(params.width, 'width'), requiredNumber(params.height, 'height'))
@@ -347,6 +415,9 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     if (command === 'native') {
       if (params.operation === 'menu.snapshot') return nativeMenus.snapshot()
       if (params.operation === 'menu.action') {
+        if (windowMode === 'background') {
+          throw new ElectronUiDriverError('UNSUPPORTED', 'Native menu actions require a foreground window and are unavailable in background mode.', { windowMode })
+        }
         const target = isRecord(params.target) ? params.target : params
         return await nativeMenus.action({
           revision: requiredNumber(params.revision, 'revision'),
@@ -355,50 +426,60 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         })
       }
       if (params.operation === 'dialog.open') {
+        if (windowMode === 'background') {
+          throw new ElectronUiDriverError('UNSUPPORTED', 'Native dialogs require a foreground window and are unavailable in background mode.', { windowMode })
+        }
         const window = resolveManagedWindow(options.windowManager, selector)
-        await ensureNativeWindowReady(window, nativeDriver, {
-          timeoutMs: numberOr(params.timeoutMs, 15_000),
+        return await nativeWindows.withReadyWindow(window, {
+          timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
           signal,
+        }, async () => {
+          nativeDialogWindowId = window.webContents.id
+          const opened = nativeDialogs.open(window, {
+            kind: requiredNativeDialogKind(params.kind),
+            ...(typeof params.title === 'string' ? { title: params.title } : {}),
+          })
+          const title = typeof params.title === 'string' ? params.title : undefined
+          const appeared = await nativeDriver.waitForNode(node =>
+            node.role === 'Window' && (!title || node.name === title),
+          { timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), signal })
+          return { ...opened, nativeRevision: appeared.snapshot.revision, nativeTarget: appeared.node }
         })
-        nativeDialogWindowId = window.webContents.id
-        const opened = nativeDialogs.open(window, {
-          kind: requiredNativeDialogKind(params.kind),
-          ...(typeof params.title === 'string' ? { title: params.title } : {}),
-        })
-        const title = typeof params.title === 'string' ? params.title : undefined
-        const appeared = await nativeDriver.waitForNode(node =>
-          node.role === 'Window' && (!title || node.name === title),
-        { timeoutMs: numberOr(params.timeoutMs, 15_000), signal })
-        return { ...opened, nativeRevision: appeared.snapshot.revision, nativeTarget: appeared.node }
       }
       if (params.operation === 'dialog.status') {
         return nativeDialogs.status(typeof params.dialogId === 'string' ? params.dialogId : undefined)
       }
       if (params.operation === 'dialog.wait') {
         return await nativeDialogs.wait(requiredString(params.dialogId, 'dialogId'), {
-          timeoutMs: numberOr(params.timeoutMs, 15_000),
+          timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
           signal,
         })
       }
       if (params.operation === 'snapshot' || params.action === undefined) {
         const window = resolveManagedWindow(options.windowManager, selector)
-        return (await ensureNativeWindowReady(window, nativeDriver, {
-          timeoutMs: numberOr(params.timeoutMs, 15_000),
+        return await nativeWindows.snapshot(window, {
+          timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
           signal,
-        })).snapshot
+        })
       }
       const target = isRecord(params.target) ? params.target : params
-      return await nativeDriver.action({
+      return await nativeWindows.action(resolveManagedWindow(options.windowManager, selector), {
         revision: requiredNumber(params.revision, 'revision'),
         ref: requiredString(target.ref, 'target.ref'),
         action: requiredNativeAction(params.action),
         ...(typeof params.value === 'string' ? { value: params.value } : {}),
+      }, {
+        timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
+        signal,
       })
     }
     if (command === 'window') {
       const action = params.action
       if (action !== 'focus' && action !== 'minimize' && action !== 'maximize' && action !== 'restore' && action !== 'close') {
         throw new ElectronUiDriverError('UNSUPPORTED', 'Unsupported native action.')
+      }
+      if (windowMode === 'background' && (action === 'focus' || action === 'maximize' || action === 'restore')) {
+        throw new ElectronUiDriverError('UNSUPPORTED', `${action} is unavailable in background mode.`, { windowMode, action })
       }
       return { verificationLevel: await driver.electronWindowAction(selector, action) }
     }
@@ -410,7 +491,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         webContentsId: targetWindow.webContents.id,
         workspaceId: options.windowManager.getWorkspaceForWindow(targetWindow.webContents.id),
       }) as { ready?: unknown; dependencies?: unknown }
-      const openTimeoutMs = Math.min(numberOr(params.timeoutMs, 15_000), MAX_WAIT_MS)
+      const openTimeoutMs = Math.min(numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), MAX_WAIT_MS)
       const waitOptions = {
         timeoutMs: openTimeoutMs,
         stableForMs: Math.min(numberOr(params.stableForMs, 0), openTimeoutMs),
@@ -465,6 +546,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     }
     if (command === 'wait') {
       if (extensionTarget) return waitForExtension(extensionTarget, selector, params, signal)
+      parseElectronWaitParams(params)
       return waitUntil(params, selector, signal)
     }
     if (command === 'assert') {
@@ -475,6 +557,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         if (readiness.phase !== expected) throw new ElectronUiDriverError('TARGET_NOT_FOUND', `Extension readiness is ${String(readiness.phase)}, expected ${expected}.`, { readiness })
         return { matched: true, observed: readiness, verificationLevel: 'scenario-verified' }
       }
+      parseElectronWaitParams(params)
       const observed = await evaluateCondition(params, selector)
       if (!observed.matched) throw new ElectronUiDriverError('TARGET_NOT_FOUND', 'UI assertion did not match.', { observed })
       return observed
@@ -590,7 +673,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       if (params.action === 'reset') {
         const window = resolveManagedWindow(options.windowManager, selector)
         await loadRendererTarget(window, rendererPageUrl(window.webContents.getURL(), 'index.html').toString(), {
-          timeoutMs: numberOr(params.timeoutMs, 15_000), signal,
+          timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), signal,
         })
         lastSnapshot = rememberSnapshot(await driver.snapshot({ webContentsId: window.webContents.id }))
         return { reset: true, revision: lastSnapshot.revision, verificationLevel: 'scenario-verified' }
@@ -625,19 +708,19 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         const viewport = params.viewport as Record<string, unknown>
         driver.resize({ webContentsId: window.webContents.id }, requiredNumber(viewport.width, 'viewport.width'), requiredNumber(viewport.height, 'viewport.height'))
       }
-      const scenarioUrl = rendererPageUrl(await waitForRendererUrl(window, numberOr(params.timeoutMs, 15_000)), 'playground.html')
+      const scenarioUrl = rendererPageUrl(await waitForRendererUrl(window, numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS)), 'playground.html')
       scenarioUrl.searchParams.set('scenario', scenarioId)
       if (typeof params.variant === 'string' && params.variant.length <= 200) scenarioUrl.searchParams.set('variant', params.variant)
       const targetScenarioUrl = scenarioUrl.toString()
       await loadRendererTarget(window, targetScenarioUrl, {
-        timeoutMs: numberOr(params.timeoutMs, 15_000), signal,
+        timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), signal,
       })
       const expectedPrefix = `Scenario: ${scenarioId}`
       try {
         lastSnapshot = rememberSnapshot(await driver.waitForSnapshot(
           { webContentsId: window.webContents.id },
           (snapshot) => Object.values(snapshot.regions).flat().some((node) => node.role === 'region' && node.name.startsWith(expectedPrefix)),
-          numberOr(params.timeoutMs, 15_000),
+          numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
         ))
       } catch (error) {
         throw new ElectronUiDriverError('TIMEOUT', `Scenario ${scenarioId} did not become ready.`, { cause: error instanceof Error ? error.message : String(error) })
@@ -664,7 +747,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         await callAppShellScenarioAdapter(() => adapter.reset())
         const window = resolveManagedWindow(options.windowManager, selector)
         await loadRendererTarget(window, rendererPageUrl(window.webContents.getURL(), 'index.html').toString(), {
-          timeoutMs: numberOr(params.timeoutMs, 15_000), signal,
+          timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), signal,
         })
         lastSnapshot = rememberSnapshot(await driver.snapshot({ webContentsId: window.webContents.id }))
         activeScenario = undefined
@@ -672,7 +755,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       }
       const window = resolveManagedWindow(options.windowManager, selector)
       await loadRendererTarget(window, rendererPageUrl(window.webContents.getURL(), 'index.html').toString(), {
-        timeoutMs: numberOr(params.timeoutMs, 15_000), signal,
+        timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), signal,
       })
       lastSnapshot = rememberSnapshot(await driver.snapshot({ webContentsId: window.webContents.id }))
       activeScenario = undefined
@@ -729,16 +812,16 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     } catch (error) {
       if (!(error instanceof AppShellScenarioAdapterError) || error.code !== 'NOT_READY') throw error
     }
-    const scenarioUrl = rendererPageUrl(await waitForRendererUrl(window, numberOr(params.timeoutMs, 15_000)), 'playground.html')
+    const scenarioUrl = rendererPageUrl(await waitForRendererUrl(window, numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS)), 'playground.html')
     scenarioUrl.searchParams.set('scenario', 'app-shell-scenario-host')
     const targetScenarioUrl = scenarioUrl.toString()
     await loadRendererTarget(window, targetScenarioUrl, {
-      timeoutMs: numberOr(params.timeoutMs, 15_000),
+      timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
     })
     await driver.waitForSnapshot(
       { webContentsId: window.webContents.id },
       snapshot => Object.values(snapshot.regions).flat().some(node => node.role === 'region' && node.name.startsWith('Scenario: app-shell-scenario-host')),
-      numberOr(params.timeoutMs, 15_000),
+      numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
     )
     adapter = new ElectronAppShellScenarioAdapter(window.webContents)
     const registered = await callAppShellScenarioAdapter(() => adapter.list()) as Array<{ id?: unknown }>
@@ -761,7 +844,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     if (current.phase === phase) return { matched: true, observed: current, elapsedMs: 0, verificationLevel: 'scenario-verified' }
     if (!target.runtimeId) throw new ElectronUiDriverError('AMBIGUOUS_TARGET', 'Extension wait requires runtimeId for event identity.')
     const window = resolveManagedWindow(options.windowManager, selector)
-    const timeoutMs = Math.min(numberOr(params.timeoutMs, 15_000), MAX_WAIT_MS)
+    const timeoutMs = Math.min(numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), MAX_WAIT_MS)
     const startedAt = Date.now()
     const state = await stateBridge.wait({
       scope: 'extension',
@@ -790,7 +873,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       throw new ElectronUiDriverError('AMBIGUOUS_TARGET', 'Extension command settle requires runtimeId and definitionId.')
     }
     const window = resolveManagedWindow(options.windowManager, selector)
-    const timeoutMs = Math.min(numberOr(params.timeoutMs, 30_000), MAX_WAIT_MS)
+    const timeoutMs = Math.min(numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), MAX_WAIT_MS)
     const entityId = extensionUIValidationEntityId(target.sessionId, target.extensionId, target.runtimeId, target.definitionId)
     const matches = (event: { type: string; payload?: unknown }) => {
       const payload = event.payload as { entityId?: unknown; phase?: unknown; detail?: { definitionRevision?: unknown; commandOwnerExtensionId?: unknown } } | undefined
@@ -837,7 +920,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
   }
 
   async function waitUntil(params: Record<string, unknown>, selector: UiDriverWindowSelector, signal?: AbortSignal): Promise<unknown> {
-    const timeoutMs = Math.min(numberOr(params.timeoutMs, 15_000), MAX_WAIT_MS)
+    const timeoutMs = Math.min(numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), MAX_WAIT_MS)
     const stableForMs = Math.min(numberOr(params.stableForMs, 0), timeoutMs)
     const condition = conditionParams(params)
     const parsed = parseStateCondition(condition, selectedWindowId(options.windowManager, selector, true))
@@ -999,6 +1082,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     for (const controller of activeWaits) controller.abort('Test Host stopped')
     activeWaits.clear()
     evidenceCollector.dispose()
+    backgroundWindows?.dispose()
     driver.dispose()
     if (!server.listening) return
     await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()))
@@ -1065,7 +1149,15 @@ function matchSnapshotCondition(snapshot: UiDriverSnapshot, condition: Record<st
     const name = typeof target.name === 'string' ? target.name : undefined
     const ref = typeof target.ref === 'string' ? target.ref : undefined
     const semanticId = typeof target.semanticId === 'string' ? target.semanticId : undefined
-    const matches = nodes.filter((node) => (!role || node.role === role) && (!name || node.name === name) && (!ref || node.ref === ref) && (!semanticId || node.semanticId === semanticId))
+    const testId = typeof target.testId === 'string' ? target.testId : undefined
+    const exact = typeof target.exact === 'boolean' ? target.exact : undefined
+    const matches = findRendererSnapshotTargets(nodes, { role, name, ref, semanticId, testId, exact })
+    if (matches.length > 1) {
+      throw new ElectronUiDriverError('AMBIGUOUS_TARGET', 'The renderer target matched more than one node.', {
+        count: matches.length,
+        refs: matches.slice(0, 10).map(node => node.ref),
+      })
+    }
     const state = typeof condition.state === 'string' ? condition.state : undefined
     const expectedState = condition.equals === undefined ? true : condition.equals
     const stateMatches = state
@@ -1082,7 +1174,7 @@ async function delayForStability(durationMs: number): Promise<void> {
 
 function verificationLevel(command: string): UiVerificationLevel {
   if (command === 'native') return 'native-verified'
-  if (command === 'action') return 'renderer-verified'
+  if (command === 'action' || command === 'browser-key') return 'renderer-verified'
   return 'scenario-verified'
 }
 
@@ -1105,6 +1197,7 @@ function normalizeMethod(method: string): string {
     'ui.window': 'window',
     'ui.snapshot': 'snapshot',
     'ui.action': 'action',
+    'ui.browserKey': 'browser-key',
     'ui.native': 'native',
     'ui.wait': 'wait',
     'ui.screenshot': 'screenshot',
@@ -1125,8 +1218,8 @@ function parseSelector(params: Record<string, unknown>): UiDriverWindowSelector 
 }
 
 function requiredWindowRole(value: unknown): ManagedWindowRole {
-  if (value === 'main' || value === 'child-session') return value
-  throw new ElectronUiDriverError('UNSUPPORTED', 'Window role must be main or child-session.')
+  if (value === 'main' || value === 'child-session' || value === 'auxiliary') return value
+  throw new ElectronUiDriverError('UNSUPPORTED', 'Window role must be main, child-session, or auxiliary.')
 }
 
 function parseExtensionTarget(params: Record<string, unknown>): ExtensionTarget | undefined {

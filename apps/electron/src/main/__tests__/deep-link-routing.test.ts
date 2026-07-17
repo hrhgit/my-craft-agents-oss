@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { handleDeepLink } from '../deep-link'
+import { handleDeepLink, parseDeepLink } from '../deep-link'
 import { RPC_CHANNELS } from '../../shared/types'
 import type { EventSink } from '@craft-agent/server-core/transport'
 import type { WindowManager } from '../window-manager'
@@ -20,6 +20,21 @@ function createMockWindow(webContentsId: number) {
 }
 
 describe('handleDeepLink routing', () => {
+  it('does not restore or forward the retired sidebar query parameter', () => {
+    expect(parseDeepLink('craftagents://allSessions/session/s1?sidebar=files')).toEqual({
+      workspaceId: undefined,
+      view: 'allSessions/session/s1',
+      windowMode: undefined,
+    })
+
+    expect(parseDeepLink('craftagents://action/new-chat?input=hello&sidebar=history')).toEqual({
+      workspaceId: undefined,
+      action: 'new-chat',
+      actionParams: { input: 'hello' },
+      windowMode: undefined,
+    })
+  })
+
   it('prefers resolved target client over preferred caller client', async () => {
     const targetWindow = createMockWindow(22)
 

@@ -1,4 +1,5 @@
 import { UiValidationError } from './errors.ts'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS } from './timeouts.ts'
 import { UiValidationEventRing } from './event-ring.ts'
 import type { UiValidationAppPhase, UiValidationEventReadResult } from './types.ts'
 
@@ -117,7 +118,7 @@ export class UiValidationScopedStateRegistry {
   }
 
   async waitFor(predicate: UiValidationScopedWait, options: UiValidationScopedWaitOptions = {}): Promise<UiValidationScopedState> {
-    const timeoutMs = options.timeoutMs ?? 10_000
+    const timeoutMs = options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
     const stableForMs = options.stableForMs ?? 0
     const startedAt = this.now()
     if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new UiValidationError('INVALID_REQUEST', 'timeoutMs must be non-negative.')

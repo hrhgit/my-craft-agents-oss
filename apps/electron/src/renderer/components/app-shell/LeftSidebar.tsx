@@ -1,7 +1,8 @@
 import type { LucideIcon } from "lucide-react"
 import * as React from "react"
 import { AnimatePresence, motion, type Variants } from "motion/react"
-import { ChevronRight } from "lucide-react"
+import { ChevronRight, MoreHorizontal } from "lucide-react"
+import { useTranslation } from "react-i18next"
 
 import { cn } from "@/lib/utils"
 import {
@@ -9,9 +10,15 @@ import {
   ContextMenuTrigger,
   StyledContextMenuContent,
 } from '@/components/ui/styled-context-menu'
-import { ContextMenuProvider } from '@/components/ui/menu-context'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  StyledDropdownMenuContent,
+} from '@/components/ui/styled-dropdown'
+import { ContextMenuProvider, DropdownMenuProvider } from '@/components/ui/menu-context'
 import { SidebarMenu, type SidebarMenuType } from './SidebarMenu'
 import { HoverRevealIcon } from '@/components/ui/HoverRevealIcon'
+import { FadingText } from '@/components/ui/fading-text'
 
 /** Context menu configuration for sidebar items */
 export interface SidebarContextMenuConfig {
@@ -37,23 +44,28 @@ export interface LinkItem {
   id: string            // Unique ID for navigation (e.g., 'nav:allSessions')
   title: string
   label?: string        // Optional badge (e.g., count)
-  icon: LucideIcon | React.ReactNode  // LucideIcon or custom React element
+  icon?: LucideIcon | React.ReactNode  // LucideIcon or custom React element
   iconColor?: string    // Optional color class for the icon
   /** Whether the icon responds to color (uses currentColor). Default true for Lucide icons. */
   iconColorable?: boolean
   variant: "default" | "ghost"  // "default" = highlighted, "ghost" = subtle
+  /** Visual hierarchy inside the primary sidebar. */
+  tone?: "navigation" | "workspace" | "session"
   onClick?: () => void
   // Expandable item properties
   expandable?: boolean
   expanded?: boolean
   onToggle?: () => void
   items?: SidebarItem[]    // Subitems as data (rendered as nested LeftSidebar) - supports separators
-  // Compact mode: reduced vertical padding (4px less total height)
+  // Compact mode: stable 28px row height for workspace and session lists
   compact?: boolean
   // Tutorial system
   dataTutorial?: string // data-tutorial attribute for tutorial targeting
   // Context menu configuration (optional - if provided, right-click shows context menu)
   contextMenu?: SidebarContextMenuConfig
+  /** Shared dropdown/context-menu content. When provided, the row gains the
+   *  same hover-revealed ellipsis and right-click behavior as entity lists. */
+  menuContent?: React.ReactNode
   // Optional element rendered after the title (e.g., label type icon), revealed on hover
   afterTitle?: React.ReactNode
   /** Always-visible trailing status, such as unread/remote/active workspace state. */
@@ -149,24 +161,17 @@ export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, i
   } : {}
 
   return (
-    <div className={cn("flex flex-col select-none", !isNested && "py-1")}>
+    <div className={cn("flex min-w-0 flex-col select-none", !isNested && "py-1")}>
       <NavWrapper
         data-craft-semantic-id={isNested ? undefined : 'navigation.main'}
         className={cn(
-          "grid gap-0.5",
+          "grid min-w-0 gap-0.5",
           isNested ? "pl-5 pr-0 relative" : "px-2"
         )}
         role="navigation"
         aria-label={isNested ? "Sub navigation" : "Main navigation"}
         {...navProps}
       >
-        {/* Vertical line for nested items - 4px left of chevron center */}
-        {isNested && (
-          <div
-            className="absolute left-[13px] top-1 bottom-1 w-px bg-foreground/10"
-            aria-hidden="true"
-          />
-        )}
         {links.map((item) => {
           // Handle separator items
           if (isSeparatorItem(item)) {
@@ -181,71 +186,25 @@ export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, i
           const itemProps = getItemProps?.(link.id)
           const isFocused = focusedItemId === link.id
 
-          // Button element shared by both expandable and non-expandable items
-          const buttonElement = (
-            <SidebarButton
-              link={link}
-              itemProps={itemProps}
-            />
-          )
-
           // Render nested content for expanded items.
-          const expandedContent = link.expandable && link.items && link.expanded
+          const hasExpandedItems = Boolean(link.expandable && link.items?.length)
+          const expandedContent = hasExpandedItems && link.expanded
             ? renderExpandedContent(link, getItemProps, focusedItemId)
             : null
 
-          // Wrap with context menu if configured, scoped to button only.
-          // ContextMenuTrigger with asChild sets data-state="open" on the button
-          // so only the clicked item highlights, not the entire section.
           const content = (
-            <div className="group/section">
-              {link.contextMenu ? (
-                <ContextMenu modal={true}>
-                  <ContextMenuTrigger asChild>
-                    {buttonElement}
-                  </ContextMenuTrigger>
-                  <StyledContextMenuContent>
-                    <ContextMenuProvider>
-                      <SidebarMenu
-                        type={link.contextMenu.type}
-                        onMarkAllRead={link.contextMenu.onMarkAllRead}
-                        onAddSource={link.contextMenu.onAddSource}
-                        onAddSkill={link.contextMenu.onAddSkill}
-                        onAddAutomation={link.contextMenu.onAddAutomation}
-                        sourceType={link.contextMenu.sourceType}
-                        isActiveWorkspace={link.contextMenu.isActiveWorkspace}
-                        onOpenWorkspaceInNewWindow={link.contextMenu.onOpenWorkspaceInNewWindow}
-                        onRemoveWorkspace={link.contextMenu.onRemoveWorkspace}
-                      />
-                    </ContextMenuProvider>
-                  </StyledContextMenuContent>
-                </ContextMenu>
-              ) : (
-                buttonElement
-              )}
-              {/* Expandable subitems — outside context menu scope so only the
-                * clicked button gets data-state="open", not nested children */}
-              {link.expandable && link.items && (
-                <AnimatePresence initial={false}>
-                  {link.expanded && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0, marginTop: 0, marginBottom: 0 }}
-                      animate={{ height: 'auto', opacity: 1, marginTop: 2, marginBottom: isNested ? 4 : 8 }}
-                      exit={{ height: 0, opacity: 0, marginTop: 0, marginBottom: 0 }}
-                      transition={{ duration: 0.2, ease: 'easeInOut' }}
-                      className="overflow-hidden"
-                    >
-                      {expandedContent}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              )}
-            </div>
+            <SidebarLinkRow
+              link={link}
+              itemProps={itemProps}
+              expandedContent={expandedContent}
+              hasExpandedItems={hasExpandedItems}
+              isNested={isNested}
+            />
           )
 
           // For nested items, wrap in motion.div for stagger animation
           return isNested ? (
-            <motion.div key={link.id} variants={itemVariants}>
+            <motion.div key={link.id} variants={itemVariants} className="min-w-0">
               {content}
             </motion.div>
           ) : (
@@ -255,6 +214,114 @@ export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, i
           )
         })}
       </NavWrapper>
+    </div>
+  )
+}
+
+function SidebarLinkRow({
+  link,
+  itemProps,
+  expandedContent,
+  hasExpandedItems,
+  isNested,
+}: {
+  link: LinkItem
+  itemProps?: SidebarButtonProps['itemProps']
+  expandedContent: React.ReactNode
+  hasExpandedItems: boolean
+  isNested?: boolean
+}) {
+  const { t } = useTranslation()
+  const [menuOpen, setMenuOpen] = React.useState(false)
+  const [contextMenuOpen, setContextMenuOpen] = React.useState(false)
+  const hasContextMenu = Boolean(link.menuContent || link.contextMenu)
+  const semanticId = `navigation.${link.id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+
+  const buttonElement = <SidebarButton link={link} itemProps={itemProps} />
+
+  const configuredContextMenu = link.contextMenu ? (
+    <SidebarMenu
+      type={link.contextMenu.type}
+      onMarkAllRead={link.contextMenu.onMarkAllRead}
+      onAddSource={link.contextMenu.onAddSource}
+      onAddSkill={link.contextMenu.onAddSkill}
+      onAddAutomation={link.contextMenu.onAddAutomation}
+      sourceType={link.contextMenu.sourceType}
+      isActiveWorkspace={link.contextMenu.isActiveWorkspace}
+      onOpenWorkspaceInNewWindow={link.contextMenu.onOpenWorkspaceInNewWindow}
+      onRemoveWorkspace={link.contextMenu.onRemoveWorkspace}
+    />
+  ) : null
+
+  return (
+    <div
+      className="group/section min-w-0"
+      data-menu-open={(menuOpen || contextMenuOpen) || undefined}
+    >
+      <div className="relative min-w-0">
+        {hasContextMenu ? (
+          <ContextMenu modal={true} onOpenChange={setContextMenuOpen}>
+            <ContextMenuTrigger asChild>
+              {buttonElement}
+            </ContextMenuTrigger>
+            <StyledContextMenuContent>
+              <ContextMenuProvider>
+                {link.menuContent ?? configuredContextMenu}
+              </ContextMenuProvider>
+            </StyledContextMenuContent>
+          </ContextMenu>
+        ) : (
+          buttonElement
+        )}
+
+        {link.menuContent && (
+          <div
+            data-touch-reveal="true"
+            className={cn(
+              "absolute inset-y-0 right-1 z-10 flex items-center transition-opacity",
+              menuOpen || contextMenuOpen
+                ? "opacity-100"
+                : "opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100",
+            )}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <DropdownMenu modal={true} open={menuOpen} onOpenChange={setMenuOpen}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  data-craft-semantic-id={`${semanticId}.menu`}
+                  aria-label={`${t('common.more')}: ${link.title}`}
+                  className="flex h-6 w-6 items-center justify-center rounded-[5px] text-muted-foreground outline-none hover:bg-foreground/[0.08] hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring data-[state=open]:bg-foreground/[0.08] data-[state=open]:text-foreground"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <StyledDropdownMenuContent align="end">
+                <DropdownMenuProvider>{link.menuContent}</DropdownMenuProvider>
+              </StyledDropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+      </div>
+
+      {/* Expandable subitems stay outside the context-menu trigger so opening
+        * one row never highlights the entire workspace subtree. */}
+      {hasExpandedItems && (
+        <AnimatePresence initial={false}>
+          {link.expanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0, marginTop: 0, marginBottom: 0 }}
+              animate={{ height: 'auto', opacity: 1, marginTop: 1, marginBottom: isNested ? 3 : 6 }}
+              exit={{ height: 0, opacity: 0, marginTop: 0, marginBottom: 0 }}
+              transition={{ duration: 0.2, ease: 'easeInOut' }}
+              className="overflow-hidden"
+            >
+              {expandedContent}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      )}
     </div>
   )
 }
@@ -313,46 +380,52 @@ const SidebarButton = React.forwardRef<HTMLButtonElement, SidebarButtonProps & R
         onClick={link.onClick}
         data-tutorial={link.dataTutorial}
         className={cn(
-          "group flex w-full items-center gap-2 rounded-[6px] text-[13px] select-none outline-none",
+          "group flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-[6px] text-[13px] leading-5 select-none outline-none",
           "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-          // Compact mode: 4px less total height (py-[3px] vs py-[5px])
-          link.compact ? "py-[3px]" : "py-[5px]",
+          link.compact ? "h-7" : "h-8",
           "px-2",
+          link.menuContent && "pr-8",
+          link.tone === "workspace" && "font-medium text-foreground/85",
+          link.tone === "session" && "text-foreground/75",
           link.variant === "default"
-            ? "bg-foreground/[0.07]"
+            ? "bg-foreground/[0.07] text-foreground"
             // Highlight on hover, context menu open (data-state), or EditPopover active (data-edit-active)
-            : "hover:bg-sidebar-hover data-[state=open]:bg-sidebar-hover data-[edit-active=true]:bg-sidebar-hover",
+            : "hover:bg-foreground/[0.045] data-[state=open]:bg-foreground/[0.055] group-data-[menu-open=true]/section:bg-foreground/[0.055] data-[edit-active=true]:bg-foreground/[0.055]",
           extraClassName,
         )}
       >
         {/* Icon container with hover toggle for expandable items */}
-        <span className="relative h-3.5 w-3.5 shrink-0 flex items-center justify-center">
-          {link.expandable ? (
-            <>
-              {/* Main icon - hidden on hover */}
-              <span className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity duration-150">
-                {renderIcon(link)}
-              </span>
-              {/* Toggle chevron - shown on hover. data-no-dnd prevents drag activation on click. */}
-              <HoverRevealIcon
-                icon={ChevronRight}
-                dataNoDnd
-                dataTouchReveal
-                onClick={(e) => {
-                  e.stopPropagation()
-                  link.onToggle?.()
-                }}
-                iconClassName={cn(
-                  "h-3.5 w-3.5 text-muted-foreground transition-transform duration-200",
-                  link.expanded && "rotate-90"
-                )}
-              />
-            </>
-          ) : (
-            renderIcon(link)
-          )}
-        </span>
-        {link.title}
+        {link.icon && (
+          <span className="relative h-3.5 w-3.5 shrink-0 flex items-center justify-center">
+            {link.expandable ? (
+              <>
+                {/* Main icon - hidden on hover */}
+                <span className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity duration-150">
+                  {renderIcon(link)}
+                </span>
+                {/* Toggle chevron - shown on hover. data-no-dnd prevents drag activation on click. */}
+                <HoverRevealIcon
+                  icon={ChevronRight}
+                  dataNoDnd
+                  dataTouchReveal
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    link.onToggle?.()
+                  }}
+                  iconClassName={cn(
+                    "h-3.5 w-3.5 text-muted-foreground transition-transform duration-200",
+                    link.expanded && "rotate-90"
+                  )}
+                />
+              </>
+            ) : (
+              renderIcon(link)
+            )}
+          </span>
+        )}
+        <FadingText className="min-w-0 flex-1 text-left" fadeWidth={22} title={link.title}>
+          {link.title}
+        </FadingText>
         {link.accessory && (
           <span className="ml-auto flex shrink-0 items-center gap-1.5 text-muted-foreground">
             {link.accessory}
@@ -360,13 +433,13 @@ const SidebarButton = React.forwardRef<HTMLButtonElement, SidebarButtonProps & R
         )}
         {/* After-title element: type indicator icon, right-aligned before count badge, revealed on hover */}
         {link.afterTitle && (
-          <span data-touch-reveal="true" className={cn(link.accessory ? 'ml-0' : 'ml-auto', 'opacity-0 group-hover/section:opacity-100 group-data-[state=open]:opacity-100 group-data-[edit-active=true]:opacity-100 transition-opacity')}>
+          <span data-touch-reveal="true" className={cn(link.accessory ? 'ml-0' : 'ml-auto', 'opacity-0 group-hover/section:opacity-100 group-data-[state=open]:opacity-100 group-data-[menu-open=true]/section:opacity-100 group-data-[edit-active=true]:opacity-100 transition-opacity')}>
             {link.afterTitle}
           </span>
         )}
         {/* Label Badge: Shows count or status on the right, revealed on section hover */}
         {link.label && (
-          <span data-touch-reveal="true" className={cn(link.afterTitle || link.accessory ? 'ml-0' : 'ml-auto', 'text-xs text-foreground/30 opacity-0 group-hover/section:opacity-100 group-data-[state=open]:opacity-100 group-data-[edit-active=true]:opacity-100 transition-opacity')}>
+          <span data-touch-reveal="true" className={cn(link.afterTitle || link.accessory ? 'ml-0' : 'ml-auto', 'text-xs text-foreground/30 opacity-0 group-hover/section:opacity-100 group-data-[state=open]:opacity-100 group-data-[menu-open=true]/section:opacity-100 group-data-[edit-active=true]:opacity-100 transition-opacity')}>
             {link.label}
           </span>
         )}

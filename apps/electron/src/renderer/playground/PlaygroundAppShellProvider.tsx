@@ -32,6 +32,8 @@ function logCall(method: string) {
 export const playgroundAppShellContext: AppShellContextType = {
   workspaces: [PLAYGROUND_WORKSPACE],
   activeWorkspaceId: PLAYGROUND_WORKSPACE.id,
+  workspaceTransition: null,
+  sessionsLoaded: true,
   activeWorkspaceSlug: PLAYGROUND_WORKSPACE.slug,
   piProviders: [],
   piGlobalSettings: {},

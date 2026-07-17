@@ -22,6 +22,7 @@ interface ModalContextValue {
   hasOpenModals: () => boolean
   /** Close the topmost modal (highest priority). Returns true if a modal was closed. */
   closeTopModal: () => boolean
+  subscribe: (listener: () => void) => () => void
 }
 
 const ModalContext = createContext<ModalContextValue | null>(null)
@@ -33,14 +34,25 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
   // Using ref instead of state to avoid re-renders when modals register/unregister.
   // The UI doesn't need to know about the registry - only the close handler does.
   const modalsRef = useRef<Map<string, RegisteredModal>>(new Map())
+  const listenersRef = useRef(new Set<() => void>())
+  const notify = useCallback(() => {
+    for (const listener of listenersRef.current) listener()
+  }, [])
 
   const registerModal = useCallback((id: string, close: () => void, priority = 0) => {
     modalsRef.current.set(id, { id, priority, close })
+    notify()
 
     // Return unregister function for cleanup
     return () => {
       modalsRef.current.delete(id)
+      notify()
     }
+  }, [notify])
+
+  const subscribe = useCallback((listener: () => void) => {
+    listenersRef.current.add(listener)
+    return () => listenersRef.current.delete(listener)
   }, [])
 
   const hasOpenModals = useCallback(() => {
@@ -62,6 +74,7 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
     registerModal,
     hasOpenModals,
     closeTopModal,
+    subscribe,
   }
 
   return (
@@ -108,4 +121,13 @@ export function useRegisterModal(isOpen: boolean, onClose: () => void, priority 
       return unregister
     }
   }, [isOpen, onClose, priority, registerModal])
+}
+
+export function useModalOpenState(): boolean {
+  const registry = useContext(ModalContext)
+  return React.useSyncExternalStore(
+    registry?.subscribe ?? (() => () => {}),
+    () => registry?.hasOpenModals() ?? false,
+    () => false,
+  )
 }

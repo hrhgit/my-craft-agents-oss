@@ -43,13 +43,14 @@ export { CONFIG_DIR } from './paths.ts';
 export type {
   WorkspaceInfo,
   Workspace,
+  RemoteServerConfig,
   McpAuthType,
   AuthType,
   OAuthCredentials,
 } from '@craft-agent/core/types';
 
 // Import for local use
-import type { Workspace } from '@craft-agent/core/types';
+import type { RemoteServerConfig, Workspace } from '@craft-agent/core/types';
 
 import {
   readPiGlobalProviders,
@@ -982,7 +983,7 @@ export function getWorkspaceByNameOrId(nameOrId: string): Workspace | null {
 
 export function updateWorkspaceRemoteServer(
   workspaceId: string,
-  remoteServer: { url: string; token: string; remoteWorkspaceId: string },
+  remoteServer: RemoteServerConfig,
 ): void {
   const config = loadStoredConfig();
   if (!config) return;

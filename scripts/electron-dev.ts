@@ -9,6 +9,7 @@ import { homedir } from "os";
 import { join, basename } from "path";
 import * as esbuild from "esbuild";
 import { downloadUv, type Platform, type Arch } from "./build/common";
+import { configureSharedBackend } from "./shared-backend-discovery";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
@@ -379,6 +380,10 @@ async function main(): Promise<void> {
   // Setup
   loadEnvFile();
   detectInstance();
+  const sharedBackend = await configureSharedBackend(process.env, DEFAULT_CONFIG_DIR);
+  if (sharedBackend) {
+    console.log(`🔗 Reusing shared Craft backend PID ${sharedBackend.pid} at ${sharedBackend.url}`);
+  }
   if (process.env.CRAFT_DEV_CLEAN_VITE_CACHE === "1") {
     cleanViteCache();
   }

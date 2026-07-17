@@ -1,4 +1,5 @@
 export * from './types.ts'
+export * from './timeouts.ts'
 export * from './errors.ts'
 export * from './semantic.ts'
 export * from './event-ring.ts'

@@ -125,6 +125,53 @@ describe('sendMessage durability', () => {
     expect(onDiskAtAck).toBe(true)
   })
 
+  it('reveals a deferred new session only after its first message is durable', async () => {
+    const sessionId = 'deferred-session-visibility'
+    const managed = buildSession(sessionId)
+    managed.hidden = true
+    managed.deferListUntilFirstMessage = true
+    const events: unknown[] = []
+    let persistedHiddenAtAck: boolean | undefined
+    sm.setEventSink((_channel, _target, event) => events.push(event))
+
+    await sm.sendMessage(
+      sessionId,
+      'first real message',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => {
+        persistedHiddenAtAck = readSessionJsonl(getSessionFilePath(tmpRoot, sessionId))?.hidden
+      },
+    ).catch(() => {
+      // This focused harness does not start a runtime; visibility changes happen
+      // before the post-ack runtime work.
+    })
+
+    expect(managed.hidden).toBe(false)
+    expect(managed.deferListUntilFirstMessage).toBe(false)
+    expect(persistedHiddenAtAck).toBe(false)
+    expect(events).toContainEqual({ type: 'session_created', sessionId })
+  })
+
+  it('keeps permanently hidden sessions hidden after their first message', async () => {
+    const sessionId = 'permanently-hidden-session'
+    const managed = buildSession(sessionId)
+    managed.hidden = true
+    const events: unknown[] = []
+    sm.setEventSink((_channel, _target, event) => events.push(event))
+
+    await sm.sendMessage(sessionId, 'internal message').catch(() => {
+      // This focused harness does not start a runtime; visibility changes happen
+      // before the post-ack runtime work.
+    })
+
+    expect(managed.hidden).toBe(true)
+    expect(events).not.toContainEqual({ type: 'session_created', sessionId })
+  })
+
   it('acks before Pi startup or runtime confirmation is required', async () => {
     const sessionId = 'durability-ack-before-pi-runtime'
     buildSession(sessionId)

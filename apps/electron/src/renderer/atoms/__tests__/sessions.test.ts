@@ -124,6 +124,35 @@ describe('session message loading atoms', () => {
     expect(secondResult?.messages.map((message) => message.id)).toEqual(['m1', 'm2'])
     expect(store.get(loadedSessionsAtom).has(sessionId)).toBe(true)
   })
+
+  it('uses the explicitly scoped API for cross-workspace lazy loading', async () => {
+    const store = createStore()
+    const sessionId = 'shared-session-id'
+    globalThis.window = {
+      electronAPI: {
+        getSessionMessages: async () => {
+          throw new Error('global API must not be used')
+        },
+      },
+    } as unknown as typeof window
+    const scopedApi = {
+      getSessionMessages: async (id: string) => makeSession({
+        id,
+        workspaceId: 'workspace-b',
+        messages: [msg('scoped-message')],
+      }),
+    }
+
+    store.set(sessionAtomFamily(sessionId), makeSession({ id: sessionId, workspaceId: 'workspace-b' }))
+    const loaded = await store.set(ensureSessionMessagesLoadedAtom, {
+      sessionId,
+      api: scopedApi,
+      cacheKey: `remote::workspace-b::${sessionId}`,
+    })
+
+    expect(loaded?.workspaceId).toBe('workspace-b')
+    expect(loaded?.messages.map(message => message.id)).toEqual(['scoped-message'])
+  })
 })
 
 describe('refreshSessionsMetadataAtom', () => {

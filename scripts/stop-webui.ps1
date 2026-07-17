@@ -4,6 +4,8 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $normalizedRepoRoot = $repoRoot.TrimEnd('\').ToLowerInvariant()
 $legacyInstanceRoot = Join-Path $repoRoot '.craft-agent\portmux\webui-instance-'
 $normalizedLegacyInstanceRoot = $legacyInstanceRoot.ToLowerInvariant()
+$clientProjectRoot = Join-Path $env:TEMP 'craft-agent-webui\portmux\client-'
+$normalizedClientProjectRoot = $clientProjectRoot.ToLowerInvariant()
 . (Join-Path $PSScriptRoot 'webui-process-utils.ps1')
 
 function Write-Step {
@@ -19,7 +21,9 @@ function Normalize-PathText {
 function Test-IsWebuiProject {
   param([string]$ProjectPath)
   $normalized = Normalize-PathText $ProjectPath
-  return $normalized -eq $normalizedRepoRoot -or $normalized.StartsWith($normalizedLegacyInstanceRoot)
+  return $normalized -eq $normalizedRepoRoot -or
+    $normalized.StartsWith($normalizedLegacyInstanceRoot) -or
+    $normalized.StartsWith($normalizedClientProjectRoot)
 }
 
 $statusText = (& portmux --json status 2>&1 | Out-String)

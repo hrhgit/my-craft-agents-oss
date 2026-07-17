@@ -92,10 +92,91 @@ class OopifFixtureDriver extends UiValidationBrowserCDP {
     if (method === 'DOM.getNodeForLocation') return params?.x === 255 && params?.y === 121
       ? { backendNodeId: 10, frameId: 'oopif-frame' }
       : { backendNodeId: 1, frameId: 'root' }
+    if (method === 'DOM.focus' && sessionId === 'oopif-session') return {}
     if (method === 'DOM.resolveNode' && sessionId === 'oopif-session') return { object: { objectId: 'child-button' } }
     if (method === 'Runtime.callFunctionOn' && sessionId === 'oopif-session') return { result: { value: null } }
     if (method === 'Input.dispatchMouseEvent' && sessionId === 'oopif-session') return {}
     throw new Error(`Unexpected CDP method ${method}`)
+  }
+}
+
+class DragFixtureDriver extends UiValidationBrowserCDP {
+  readonly cdpCalls: Array<{ method: string; params?: Record<string, unknown> }> = []
+  readonly nativeInputEvents: Array<Record<string, unknown>>
+  private readonly messageListeners: Set<(...args: any[]) => void>
+  private pressed = false
+  private intercepted = false
+  private failed = false
+
+  constructor(
+    private readonly options: {
+      interceptHtmlDrag?: boolean
+      interceptDelayMs?: number
+      dragInterceptTimeoutMs?: number
+      failOnce?: (method: string, params?: Record<string, unknown>) => boolean
+      blockFirstDrop?: () => Promise<void>
+    } = {},
+  ) {
+    const nativeInputEvents: Array<Record<string, unknown>> = []
+    const messageListeners = new Set<(...args: any[]) => void>()
+    super({
+      getURL: () => 'file:///fixture',
+      getTitle: () => 'Fixture',
+      sendInputEvent: (event: Record<string, unknown>) => nativeInputEvents.push(event),
+      debugger: {
+        on: (event: string, listener: (...args: any[]) => void) => {
+          if (event === 'message') messageListeners.add(listener)
+        },
+        removeListener: (event: string, listener: (...args: any[]) => void) => {
+          if (event === 'message') messageListeners.delete(listener)
+        },
+      },
+    } as unknown as WebContents, options.dragInterceptTimeoutMs)
+    this.nativeInputEvents = nativeInputEvents
+    this.messageListeners = messageListeners
+  }
+
+  get messageListenerCount(): number { return this.messageListeners.size }
+
+  protected override async send(method: string, params?: Record<string, unknown>): Promise<any> {
+    this.cdpCalls.push({ method, ...(params ? { params } : {}) })
+    if (!this.failed && this.options.failOnce?.(method, params)) {
+      this.failed = true
+      throw new Error('injected drag failure')
+    }
+    if (method === 'Runtime.evaluate') {
+      const expression = String(params?.expression ?? '')
+      if (expression.includes('return probe ? probe.read() : false')) {
+        return { result: { value: this.options.interceptHtmlDrag !== false } }
+      }
+      return { result: { value: true } }
+    }
+    if (method === 'Input.dispatchMouseEvent' && params?.type === 'mousePressed') this.pressed = true
+    if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased') {
+      this.pressed = false
+      this.intercepted = false
+    }
+    if (
+      method === 'Input.dispatchMouseEvent'
+      && params?.type === 'mouseMoved'
+      && this.pressed
+      && this.options.interceptHtmlDrag !== false
+      && !this.intercepted
+    ) {
+      this.intercepted = true
+      const data = { items: [{ mimeType: 'text/plain', data: '--flexlayout--' }], dragOperationsMask: 16 }
+      const emit = () => {
+        for (const listener of this.messageListeners) listener({}, 'Input.dragIntercepted', { data })
+      }
+      if (this.options.interceptDelayMs) setTimeout(emit, this.options.interceptDelayMs)
+      else emit()
+    }
+    if (method === 'Input.dispatchDragEvent' && params?.type === 'drop' && this.options.blockFirstDrop) {
+      const block = this.options.blockFirstDrop
+      this.options.blockFirstDrop = undefined
+      await block()
+    }
+    return {}
   }
 }
 
@@ -123,11 +204,100 @@ describe('UiValidationBrowserCDP accessibility geometry', () => {
     const geometry = await driver.getElementGeometry(button.ref)
     expect(geometry.box).toEqual({ x: 205, y: 106, width: 100, height: 30 })
     expect(geometry.clickPoint).toEqual({ x: 255, y: 121 })
+    await driver.focusElement(button.ref)
+    expect(driver.cdpCalls).toContainEqual({ method: 'DOM.focus', sessionId: 'oopif-session' })
     await driver.clickElement(button.ref)
     expect(driver.cdpCalls.filter(call => call.method === 'Input.dispatchMouseEvent')).toEqual([
       { method: 'Input.dispatchMouseEvent', sessionId: 'oopif-session' },
       { method: 'Input.dispatchMouseEvent', sessionId: 'oopif-session' },
     ])
     expect(driver.inputEvents).toEqual([])
+  })
+})
+
+describe('UiValidationBrowserCDP drag', () => {
+  it('uses intercepted CDP drag events without native webContents input', async () => {
+    const driver = new DragFixtureDriver()
+
+    await driver.drag(10, 20, 110, 20)
+
+    expect(driver.nativeInputEvents).toEqual([])
+    expect(driver.cdpCalls.filter(call => call.method === 'Input.dispatchDragEvent').map(call => call.params?.type))
+      .toEqual(expect.arrayContaining(['dragEnter', 'dragOver', 'drop']))
+    expect(driver.cdpCalls.some(call => call.method === 'Input.dispatchMouseEvent' && call.params?.type === 'mouseReleased')).toBe(true)
+    expect(driver.cdpCalls.at(-1)).toEqual({ method: 'Input.setInterceptDrags', params: { enabled: false } })
+    expect(driver.messageListenerCount).toBe(0)
+  })
+
+  it('waits for a delayed dragIntercepted event instead of falling back to pointer drag', async () => {
+    const driver = new DragFixtureDriver({ interceptDelayMs: 80 })
+
+    await driver.drag(10, 20, 110, 20)
+
+    expect(driver.cdpCalls.filter(call => call.method === 'Input.dispatchDragEvent').map(call => call.params?.type))
+      .toEqual(expect.arrayContaining(['dragEnter', 'dragOver', 'drop']))
+    expect(driver.messageListenerCount).toBe(0)
+  })
+
+  it('fails and cleans up when dragstart is observed without dragIntercepted', async () => {
+    const driver = new DragFixtureDriver({ interceptDelayMs: 100, dragInterceptTimeoutMs: 20 })
+
+    await expect(driver.drag(10, 20, 110, 20)).rejects.toThrow('Input.dragIntercepted was not received within 20ms')
+
+    expect(driver.cdpCalls.some(call => call.method === 'Input.dispatchDragEvent' && call.params?.type === 'dragCancel')).toBe(true)
+    expect(driver.cdpCalls.some(call => call.method === 'Input.dispatchMouseEvent' && call.params?.type === 'mouseReleased')).toBe(true)
+    expect(driver.cdpCalls.at(-1)).toEqual({ method: 'Input.setInterceptDrags', params: { enabled: false } })
+    expect(driver.messageListenerCount).toBe(0)
+  })
+
+  it('cancels, releases, disables interception, and removes listeners after failure', async () => {
+    const driver = new DragFixtureDriver({
+      failOnce: (method, params) => method === 'Input.dispatchDragEvent' && params?.type === 'dragOver',
+    })
+
+    await expect(driver.drag(10, 20, 110, 20)).rejects.toThrow('injected drag failure')
+
+    expect(driver.nativeInputEvents).toEqual([])
+    expect(driver.cdpCalls.some(call => call.method === 'Input.dispatchDragEvent' && call.params?.type === 'dragCancel')).toBe(true)
+    expect(driver.cdpCalls.some(call => call.method === 'Input.dispatchMouseEvent' && call.params?.type === 'mouseReleased')).toBe(true)
+    expect(driver.cdpCalls.at(-1)).toEqual({ method: 'Input.setInterceptDrags', params: { enabled: false } })
+    expect(driver.messageListenerCount).toBe(0)
+  })
+
+  it('keeps pointer-based drag on CDP mouse input and still releases it', async () => {
+    const driver = new DragFixtureDriver({ interceptHtmlDrag: false })
+
+    await driver.drag(10, 20, 110, 20)
+
+    expect(driver.nativeInputEvents).toEqual([])
+    expect(driver.cdpCalls.some(call => call.method === 'Input.dispatchDragEvent')).toBe(false)
+    expect(driver.cdpCalls.some(call => call.method === 'Input.dispatchMouseEvent' && call.params?.type === 'mouseReleased')).toBe(true)
+    expect(driver.messageListenerCount).toBe(0)
+  })
+
+  it('serializes drags so shared interception is not toggled by a second operation', async () => {
+    let markFirstDrop!: () => void
+    let releaseFirstDrop!: () => void
+    const firstDropReached = new Promise<void>((resolve) => { markFirstDrop = resolve })
+    const firstDropGate = new Promise<void>((resolve) => { releaseFirstDrop = resolve })
+    const driver = new DragFixtureDriver({
+      blockFirstDrop: async () => {
+        markFirstDrop()
+        await firstDropGate
+      },
+    })
+
+    const first = driver.drag(10, 20, 110, 20)
+    await firstDropReached
+    const second = driver.drag(20, 30, 120, 30)
+    await Promise.resolve()
+
+    expect(driver.cdpCalls.filter(call => call.method === 'Input.setInterceptDrags' && call.params?.enabled === true)).toHaveLength(1)
+    expect(driver.cdpCalls.filter(call => call.method === 'Input.setInterceptDrags' && call.params?.enabled === false)).toHaveLength(0)
+
+    releaseFirstDrop()
+    await Promise.all([first, second])
+    expect(driver.cdpCalls.filter(call => call.method === 'Input.setInterceptDrags').map(call => call.params?.enabled))
+      .toEqual([true, false, true, false])
   })
 })

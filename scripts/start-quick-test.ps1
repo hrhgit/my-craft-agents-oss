@@ -36,6 +36,12 @@ function Ensure-Command {
 
 Ensure-Command "bun"
 
+# Product feature test mode is intentionally separate from the privileged UI
+# validation host. Quick launches use normal Craft data while enabling gated
+# work that has not reached the production default yet.
+$env:CRAFT_TEST_MODE = "1"
+$env:VITE_CRAFT_TEST_MODE = "1"
+
 $nodeModulesPath = Join-Path $repoRoot "node_modules"
 if (-not (Test-Path $nodeModulesPath)) {
   if ($SkipInstall) {
@@ -70,6 +76,7 @@ $modeLabel = switch ($Mode) {
 }
 
 Write-Step "Repository: $repoRoot"
+Write-Step "Feature test mode: enabled"
 Write-Step "Starting $modeLabel"
 Write-Step ("Command: bun " + ($bunArgs -join " "))
 Write-Host ""

@@ -22,7 +22,12 @@ export interface DismissibleLayerRegistry extends DismissibleLayerBridge {
 
 export function createDismissibleLayerRegistry(): DismissibleLayerRegistry {
   const layers = new Map<string, DismissibleLayer>()
+  const listeners = new Set<() => void>()
   let orderSeed = 0
+
+  const notify = () => {
+    for (const listener of listeners) listener()
+  }
 
   const getOrderedOpenLayers = (): DismissibleLayer[] => {
     const open = Array.from(layers.values()).filter((layer) => layer.isOpen)
@@ -45,10 +50,17 @@ export function createDismissibleLayerRegistry(): DismissibleLayerRegistry {
       back: layer.back,
       order,
     })
+    notify()
 
     return () => {
       layers.delete(layer.id)
+      notify()
     }
+  }
+
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener)
+    return () => listeners.delete(listener)
   }
 
   const hasOpenLayers = () => getOrderedOpenLayers().length > 0
@@ -86,6 +98,7 @@ export function createDismissibleLayerRegistry(): DismissibleLayerRegistry {
 
   return {
     registerLayer,
+    subscribe,
     hasOpenLayers,
     getTopLayer,
     closeTop,
@@ -141,4 +154,44 @@ export function useRegisterDismissibleLayer(layer: DismissibleLayerRegistration 
     const unregister = registerLayer(layer)
     return unregister
   }, [layer, registerLayer])
+}
+
+export function useDismissibleLayerOpenState(): boolean {
+  const registry = useContext(DismissibleLayerContext)
+  return React.useSyncExternalStore(
+    registry?.subscribe ?? (() => () => {}),
+    () => registry?.hasOpenLayers() ?? false,
+    () => false,
+  )
+}
+
+export function useDismissibleRootState(
+  props: {
+    open?: boolean
+    defaultOpen?: boolean
+    onOpenChange?: (open: boolean) => void
+  },
+  type: DismissibleLayerRegistration['type'],
+  priority: number,
+): { open: boolean; onOpenChange: (open: boolean) => void } {
+  const registry = useContext(DismissibleLayerContext)
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(props.defaultOpen ?? false)
+  const open = props.open ?? uncontrolledOpen
+  const id = React.useId()
+  const onOpenChange = React.useCallback((nextOpen: boolean) => {
+    if (props.open === undefined) setUncontrolledOpen(nextOpen)
+    props.onOpenChange?.(nextOpen)
+  }, [props.onOpenChange, props.open])
+
+  React.useLayoutEffect(() => {
+    if (!registry || !open) return
+    return registry.registerLayer({
+      id: `primitive-${id}`,
+      type,
+      priority,
+      close: () => onOpenChange(false),
+    })
+  }, [id, onOpenChange, open, priority, registry, type])
+
+  return { open, onOpenChange }
 }

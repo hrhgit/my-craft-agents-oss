@@ -2,8 +2,12 @@ import * as React from "react"
 import * as SelectPrimitive from "@radix-ui/react-select"
 import { Check, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useDismissibleRootState } from "@/context/DismissibleLayerContext"
 
-const Select = SelectPrimitive.Root
+function Select(props: React.ComponentProps<typeof SelectPrimitive.Root>) {
+  const state = useDismissibleRootState(props, 'radix-popover', 20)
+  return <SelectPrimitive.Root {...props} {...state} />
+}
 
 const SelectGroup = SelectPrimitive.Group
 

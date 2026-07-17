@@ -1,4 +1,5 @@
 import { UiValidationError } from './errors.ts'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS } from './timeouts.ts'
 import { UiValidationEventRing } from './event-ring.ts'
 import type { UiValidationAppState, UiValidationEvent } from './types.ts'
 
@@ -49,7 +50,7 @@ export class UiValidationStateRegistry {
     predicate: (state: Readonly<UiValidationAppState>) => boolean,
     options: UiValidationStateWaitOptions = {},
   ): Promise<UiValidationAppState> {
-    const timeoutMs = options.timeoutMs ?? 10_000
+    const timeoutMs = options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
     const stableForMs = options.stableForMs ?? 0
     const startedAt = this.now()
     if (options.signal?.aborted) throw abortError(options.signal)

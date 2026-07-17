@@ -26,6 +26,7 @@ import type { TFunction } from 'i18next'
 import { navigate, routes } from '@/lib/navigate'
 import { useMenuComponents } from '@/components/ui/menu-context'
 import { messagingDialogAtom } from '@/atoms/messaging'
+import { useWorkspaceElectronApi } from '@/context/WorkspaceElectronApiContext'
 
 export type MessagingPlatform = 'telegram' | 'whatsapp' | 'lark'
 
@@ -57,13 +58,14 @@ export function useMessagingConnect({
 }: UseMessagingConnectOptions) {
   const { t } = useTranslation()
   const setMessagingDialog = useSetAtom(messagingDialogAtom)
+  const electronApi = useWorkspaceElectronApi()
 
   return React.useCallback(async (platform: MessagingPlatform) => {
     // First-run check — avoid hitting the server if the platform is not
     // connected. Failure to read config is treated as "unknown" and falls
     // through to attempting pairing so the server surfaces a real error.
     try {
-      const cfg = await window.electronAPI.getMessagingConfig()
+      const cfg = await electronApi.getMessagingConfig()
       const runtime = cfg?.runtime?.[platform]
       const isConnected = Boolean(runtime?.connected)
       if (!isConnected) {
@@ -91,7 +93,7 @@ export function useMessagingConnect({
       expiresAt: null,
     })
     try {
-      const result = await window.electronAPI.generateMessagingPairingCode(sessionId, platform)
+      const result = await electronApi.generateMessagingPairingCode(sessionId, platform)
       setMessagingDialog({
         kind: 'pairing',
         platform,
@@ -110,7 +112,7 @@ export function useMessagingConnect({
         error: classifyError(err, t),
       })
     }
-  }, [sessionId, onTelegramNotConfigured, classifyError, setMessagingDialog, t])
+  }, [electronApi, sessionId, onTelegramNotConfigured, classifyError, setMessagingDialog, t])
 }
 
 export type MessagingSessionMenuItemProps = UseMessagingConnectOptions

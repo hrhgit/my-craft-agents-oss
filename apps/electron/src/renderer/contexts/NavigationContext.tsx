@@ -45,14 +45,14 @@ import {
   parseRoute,
   parseRouteToNavigationState,
   buildRouteFromNavigationState,
-  buildRightSidebarParam,
   type ParsedRoute,
 } from '../../shared/route-parser'
 import { routes, type Route, type ViewRoute } from '../../shared/routes'
 import { parsePermissionMode } from '@craft-agent/shared/agent/mode-types'
 import { NAVIGATE_EVENT, type NavigateOptions } from '../lib/navigate'
+import { waitForRendererCommit } from '../lib/workspace-transition'
 import { normalizePanelRouteForReconcile } from './navigation-reconcile'
-import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch, type WorkspaceSwitchDestination } from './navigation-history'
+import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch, shouldNavigateToInitialDefault, type WorkspaceSwitchDestination } from './navigation-history'
 import * as storage from '@/lib/local-storage'
 import type {
   DeepLinkNavigation,
@@ -60,7 +60,6 @@ import type {
   NavigationState,
   SessionFilter,
   SourceFilter,
-  RightSidebarPanel,
   ContentBadge,
 } from '../../shared/types'
 import {
@@ -102,7 +101,7 @@ interface NavigationContextValue {
   navigate: (route: Route, options?: NavigateOptions) => void | Promise<void>
   /** Check if navigation is ready */
   isReady: boolean
-  /** Unified navigation state — derived from focused panel + right sidebar */
+  /** Unified navigation state derived from the focused panel. */
   navigationState: NavigationState
   /** Whether we can go back in history */
   canGoBack: boolean
@@ -112,10 +111,6 @@ interface NavigationContextValue {
   goBack: () => void
   /** Go forward in history */
   goForward: () => void
-  /** Update right sidebar panel */
-  updateRightSidebar: (panel: RightSidebarPanel | undefined) => void
-  /** Toggle right sidebar (with optional panel) */
-  toggleRightSidebar: (panel?: RightSidebarPanel) => void
   /** Navigate to a source (or source list if no slug), preserving the current filter type */
   navigateToSource: (sourceSlug?: string) => void
   /** Navigate to a session, preserving the current filter type */
@@ -186,23 +181,17 @@ export function NavigationProvider({
   const skills = useAtomValue(skillsAtom)
 
   // =========================================================================
-  // DERIVED NAVIGATION STATE (from focused panel + right sidebar)
+  // DERIVED NAVIGATION STATE (from focused panel)
   // =========================================================================
 
   const focusedRoute = useAtomValue(focusedPanelRouteAtom)
 
-  // Right sidebar is independent of panels (not per-panel state)
-  const [rightSidebar, setRightSidebar] = useState<RightSidebarPanel | undefined>()
-  const rightSidebarRef = useRef<RightSidebarPanel | undefined>(rightSidebar)
-  useEffect(() => { rightSidebarRef.current = rightSidebar }, [rightSidebar])
-
   // NavigationState derived from the focused panel's route
   const navigationState: NavigationState = useMemo(() => {
-    const base = focusedRoute
+    return focusedRoute
       ? parseRouteToNavigationState(focusedRoute) ?? DEFAULT_NAVIGATION_STATE
       : DEFAULT_NAVIGATION_STATE
-    return rightSidebar ? { ...base, rightSidebar } : base
-  }, [focusedRoute, rightSidebar])
+  }, [focusedRoute])
 
   // =========================================================================
   // BROWSER HISTORY TRACKING
@@ -238,6 +227,7 @@ export function NavigationProvider({
   // Semantic key for the last history entry we intentionally pushed/reconciled.
   // Excludes layout-only values (like panel proportions) so resize does not create history entries.
   const lastSemanticHistoryKeyRef = useRef('')
+  const suppressPushReleaseGenerationRef = useRef(0)
 
   const updateCanGoBackForward = useCallback(() => {
     setCanGoBack(historySeqRef.current > 0)
@@ -247,14 +237,21 @@ export function NavigationProvider({
   const getSemanticHistoryKey = useCallback(() => {
     const panels = store.get(panelStackAtom)
     const focusedIdx = store.get(focusedPanelIndexAtom)
-    const sidebarKey = buildRightSidebarParam(rightSidebarRef.current) ?? ''
     return buildSemanticHistoryKey({
       workspaceSlug,
       panelRoutes: panels.map(p => p.route),
       focusedPanelIndex: focusedIdx,
-      sidebarParam: sidebarKey,
     })
   }, [store, workspaceSlug])
+
+  const releaseSuppressPushAfterCommit = useCallback(() => {
+    const generation = ++suppressPushReleaseGenerationRef.current
+    void waitForRendererCommit().then(() => {
+      if (generation !== suppressPushReleaseGenerationRef.current) return
+      suppressPushRef.current = false
+      lastSemanticHistoryKeyRef.current = getSemanticHistoryKey()
+    })
+  }, [getSemanticHistoryKey])
 
   // =========================================================================
   // URL SYNC (builds URL from current state, push or replace)
@@ -299,13 +296,8 @@ export function NavigationProvider({
       url.searchParams.delete('fi')
     }
 
-    // ?sidebar=
-    const sidebarParam = buildRightSidebarParam(rightSidebarRef.current)
-    if (sidebarParam) {
-      url.searchParams.set('sidebar', sidebarParam)
-    } else {
-      url.searchParams.delete('sidebar')
-    }
+    // Drop the retired sidebar query parameter while normalizing old saved URLs.
+    url.searchParams.delete('sidebar')
 
     const urlStr = url.toString()
 
@@ -336,13 +328,13 @@ export function NavigationProvider({
     lastSemanticHistoryKeyRef.current = currentSemanticKey
   }, [getSemanticHistoryKey])
 
-  // replaceState sync when panel stack, focus, or sidebar changes (catches resize, etc.)
+  // replaceState sync when panel stack or focus changes (catches resize, etc.)
   const panelStack = useAtomValue(panelStackAtom)
   const focusedPanelId = useAtomValue(focusedPanelIdAtom)
   useEffect(() => {
     if (!initialRouteRestoredRef.current) return
     syncUrlRef.current(false)
-  }, [panelStack, focusedPanelId, rightSidebar])
+  }, [panelStack, focusedPanelId])
 
   // =========================================================================
   // ATOM SUBSCRIPTIONS FOR pushState (meaningful navigation)
@@ -382,42 +374,19 @@ export function NavigationProvider({
     return unsub
   }, [store, maybePushHistoryForSemanticChange])
 
-  // Right sidebar changes: push history
-  const prevSidebarTypeRef = useRef(rightSidebar?.type)
-  useEffect(() => {
-    if (rightSidebar?.type === prevSidebarTypeRef.current) return
-    prevSidebarTypeRef.current = rightSidebar?.type
-    if (suppressPushRef.current) return
-    if (!initialRouteRestoredRef.current) return
-    maybePushHistoryForSemanticChange()
-  }, [rightSidebar, maybePushHistoryForSemanticChange])
-
   // =========================================================================
   // RECONCILE PANELS FROM URL PARAMS
   // =========================================================================
 
   /**
-   * Parse URL search params and reconcile the panel stack + sidebar.
+   * Parse URL search params and reconcile the panel stack.
    * Uses reconcilePanelStackAtom for smart matching (preserves React keys).
    */
   const reconcileFromUrlParams = useCallback(
     (params: URLSearchParams) => {
       const initialRoute = params.get('route')
-      const sidebarParam = params.get('sidebar') || undefined
       const panelsParam = params.get('panels')
       const focusedIndexParam = params.get('fi')
-
-      // Restore right sidebar
-      if (sidebarParam) {
-        const parsed = parseRouteToNavigationState('allSessions', sidebarParam)
-        if (parsed?.rightSidebar) {
-          setRightSidebar(parsed.rightSidebar)
-        } else {
-          setRightSidebar(undefined)
-        }
-      } else {
-        setRightSidebar(undefined)
-      }
 
       // Parse panel entries from URL
       let entries: { route: ViewRoute; proportion: number }[] = []
@@ -660,7 +629,9 @@ export function NavigationProvider({
 
       switch (parsed.name) {
         case 'new-session': {
-          const createOptions: import('../../shared/types').CreateSessionOptions = {}
+          const createOptions: import('../../shared/types').CreateSessionOptions = {
+            deferListUntilFirstMessage: true,
+          }
           if (parsed.params.mode) {
             const parsedMode = parsePermissionMode(parsed.params.mode)
             if (parsedMode) {
@@ -902,14 +873,12 @@ export function NavigationProvider({
       suppressPushRef.current = true
       reconcileFromUrlParamsRef.current(params)
       lastSemanticHistoryKeyRef.current = getSemanticHistoryKey()
-      requestAnimationFrame(() => {
-        suppressPushRef.current = false
-      })
+      releaseSuppressPushAfterCommit()
     }
 
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [workspaceSlug, onSwitchWorkspaceBySlug, updateCanGoBackForward, getSemanticHistoryKey, isSessionsReady])
+  }, [workspaceSlug, onSwitchWorkspaceBySlug, updateCanGoBackForward, getSemanticHistoryKey, isSessionsReady, releaseSuppressPushAfterCommit])
 
   // =========================================================================
   // WORKSPACE SWITCH
@@ -963,11 +932,8 @@ export function NavigationProvider({
 
     initialRouteRestoredRef.current = true
 
-    requestAnimationFrame(() => {
-      suppressPushRef.current = false
-      lastSemanticHistoryKeyRef.current = getSemanticHistoryKey()
-    })
-  }, [workspaceId, workspaceSlug, store, updateCanGoBackForward, getSemanticHistoryKey, isSessionsReady, workspaceSwitchDestination, onWorkspaceSwitchDestinationConsumed])
+    releaseSuppressPushAfterCommit()
+  }, [workspaceId, workspaceSlug, store, updateCanGoBackForward, getSemanticHistoryKey, isSessionsReady, workspaceSwitchDestination, onWorkspaceSwitchDestinationConsumed, releaseSuppressPushAfterCommit])
 
   // =========================================================================
   // INITIAL ROUTE RESTORATION (CMD+R reload)
@@ -992,7 +958,7 @@ export function NavigationProvider({
     lastSemanticHistoryKeyRef.current = getSemanticHistoryKey()
 
     // If nothing was in the URL, navigate to default
-    if (!params.get('route') && !params.get('panels')) {
+    if (shouldNavigateToInitialDefault(params)) {
       navigate(routes.view.allSessions())
     }
 
@@ -1001,11 +967,8 @@ export function NavigationProvider({
     historySeqRef.current = 0
     historyMaxSeqRef.current = 0
 
-    requestAnimationFrame(() => {
-      suppressPushRef.current = false
-      lastSemanticHistoryKeyRef.current = getSemanticHistoryKey()
-    })
-  }, [isReady, isSessionsReady, workspaceId, navigate, store, getSemanticHistoryKey])
+    releaseSuppressPushAfterCommit()
+  }, [isReady, isSessionsReady, workspaceId, navigate, store, getSemanticHistoryKey, releaseSuppressPushAfterCommit])
 
   // =========================================================================
   // PENDING NAVIGATION
@@ -1091,23 +1054,6 @@ export function NavigationProvider({
   }, [navigate])
 
   // =========================================================================
-  // SIDEBAR HELPERS
-  // =========================================================================
-
-  const updateRightSidebar = useCallback((panel: RightSidebarPanel | undefined) => {
-    setRightSidebar(panel)
-    // pushState handled by the rightSidebar change effect
-  }, [])
-
-  const toggleRightSidebar = useCallback((panel?: RightSidebarPanel) => {
-    const currentSidebar = rightSidebarRef.current
-    const newPanel = panel || (currentSidebar && currentSidebar.type !== 'none'
-      ? { type: 'none' as const }
-      : { type: 'none' as const })
-    updateRightSidebar(newPanel)
-  }, [updateRightSidebar])
-
-  // =========================================================================
   // PRESERVE-FILTER NAVIGATION HELPERS
   // =========================================================================
 
@@ -1176,8 +1122,6 @@ export function NavigationProvider({
         canGoForward,
         goBack,
         goForward,
-        updateRightSidebar,
-        toggleRightSidebar,
         navigateToSource,
         navigateToSession,
       }}

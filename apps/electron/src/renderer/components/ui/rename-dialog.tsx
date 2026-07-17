@@ -19,6 +19,9 @@ interface RenameDialogProps {
   onValueChange: (value: string) => void
   onSubmit: () => void
   placeholder?: string
+  submitLabel?: string
+  submitting?: boolean
+  error?: string | null
 }
 
 export function RenameDialog({
@@ -29,6 +32,9 @@ export function RenameDialog({
   onValueChange,
   onSubmit,
   placeholder,
+  submitLabel,
+  submitting = false,
+  error,
 }: RenameDialogProps) {
   const { t } = useTranslation()
   const effectivePlaceholder = placeholder ?? t("common.enterName")
@@ -65,19 +71,21 @@ export function RenameDialog({
             value={value}
             onChange={(e) => onValueChange(e.target.value)}
             placeholder={effectivePlaceholder}
+            disabled={submitting}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 handleSubmit()
               }
             }}
           />
+          {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             {t("common.cancel")}
           </Button>
-          <Button onClick={handleSubmit} disabled={!value.trim()}>
-            {t("common.save")}
+          <Button onClick={handleSubmit} disabled={!value.trim() || submitting}>
+            {submitLabel ?? t("common.save")}
           </Button>
         </DialogFooter>
       </DialogContent>

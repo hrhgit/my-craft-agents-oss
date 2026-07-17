@@ -48,11 +48,74 @@ describe('ExtensionContributionV1', () => {
       content: { ...sandbox, permissions: ['validation'] },
     })).toBeNull()
     expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'workspace-sandbox',
+      surface: 'workspace.content',
+      workspaceContent: { title: 'Dashboard', icon: 'activity' },
+      content: sandbox,
+    })).toBeNull()
+    expect(validateExtensionContributionV1({
       schemaVersion: 1, id: 'nested-sandbox', surface: 'conversation.timeline.before',
       content: { type: 'stack', children: [sandbox] },
     })).toContain('top-level')
     expect(validateExtensionContributionV1({
       schemaVersion: 1, id: 'compact-sandbox', surface: 'window.topRight', content: sandbox,
     })).toContain('Compact surfaces')
+  })
+
+  it('validates workspace content metadata and rejects the obsolete right-workbench surface', () => {
+    const sandbox = { type: 'sandbox-app', appId: 'inspector', title: 'Inspector', html: '' }
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'inspector',
+      surface: 'workspace.content',
+      workspaceContent: {
+        title: 'Repository inspector',
+        icon: 'activity',
+        scope: 'workspace',
+        instancePolicy: 'singleton',
+        preferredGroup: 'adjacent',
+      },
+      content: sandbox,
+    })).toBeNull()
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1, id: 'legacy', surface: 'workbench.right', content: sandbox,
+    })).toContain('Unsupported contribution surface')
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1, id: 'missing-metadata', surface: 'workspace.content', content: sandbox,
+    })).toContain('requires workspaceContent metadata')
+    expect(validateExtensionContributionV1({
+      ...contribution,
+      workspaceContent: { title: 'Wrong surface', icon: 'activity' },
+    })).toContain('only allowed')
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1, id: 'invalid-group', surface: 'workspace.content', content: sandbox,
+      workspaceContent: { title: 'Invalid group', icon: 'activity', preferredGroup: 'right' },
+    })).toContain('preferredGroup')
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1, id: 'legacy-width', surface: 'workspace.content', content: sandbox,
+      workspaceContent: { title: 'Legacy width', icon: 'activity', preferredWidth: 480 },
+    })).toContain('Unsupported workspaceContent metadata field')
+  })
+
+  it('requires a trusted workspace route for workspace-scoped tools', () => {
+    const scoped = {
+      schemaVersion: 1 as const,
+      id: 'workspace-tool',
+      surface: 'workspace.content' as const,
+      workspaceContent: { title: 'Workspace tool', icon: 'activity' as const, scope: 'workspace' as const },
+      content: { type: 'text' as const, text: 'Ready' },
+    }
+    const base = {
+      schemaVersion: 1 as const,
+      extensionId: 'tool',
+      sessionId: 'session-1',
+      runtimeId: 'runtime-1',
+      revision: 1,
+      operation: 'upsert' as const,
+      contribution: scoped,
+    }
+    expect(validateExtensionContributionDeltaV1(base)).toContain('require workspaceId')
+    expect(validateExtensionContributionDeltaV1({ ...base, workspaceId: 'workspace-1' })).toBeNull()
   })
 })

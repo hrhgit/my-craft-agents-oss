@@ -3,6 +3,7 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { useDismissibleRootState } from "@/context/DismissibleLayerContext"
 
 const SUPPORTED_HOVER_PREFIXES = ["bg-", "text-", "border-", "ring-", "opacity-"]
 
@@ -30,7 +31,8 @@ function mirrorHoverToOpenStateClasses(className?: string): string | undefined {
 function DropdownMenu({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />
+  const state = useDismissibleRootState(props, 'radix-popover', 20)
+  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} {...state} />
 }
 
 function DropdownMenuPortal({

@@ -1,10 +1,25 @@
 import { describe, it, expect } from 'bun:test'
 import { createStore } from 'jotai'
 import {
+  activeDockTabIdAtom,
+  activeDockTabProtectionAtom,
+  activeDockTabTypeAtom,
+  acknowledgeDockTabCloseRequestAtom,
+  dockTabCloseRequestAtom,
+  dockTabProtectionsAtom,
+  compactDockViewIntentAtom,
+  emptyDockPageSessionRequestAtom,
+  enterCompactDockDetailAtom,
+  exitCompactDockDetailAtom,
+  generateEmptyDockPageTabId,
+  isEmptyDockPageTabId,
   panelStackAtom,
   focusedPanelIdAtom,
   pushPanelAtom,
   reconcilePanelStackAtom,
+  resetCompactDockViewIntentAtom,
+  requestDockTabCloseAtom,
+  shouldReplaceActiveTabWithSession,
   updateFocusedPanelRouteAtom,
   type PanelStackEntry,
 } from '../panel-stack'
@@ -14,6 +29,90 @@ function getStack(store: ReturnType<typeof createStore>): PanelStackEntry[] {
 }
 
 describe('panel stack single-lane behavior', () => {
+  it('keeps compact drill-in intent independent from the active dock tab', () => {
+    const store = createStore()
+    expect(store.get(compactDockViewIntentAtom)).toBeNull()
+
+    store.set(enterCompactDockDetailAtom)
+    store.set(activeDockTabIdAtom, 'dock:content:files')
+    expect(store.get(compactDockViewIntentAtom)).toBe('detail')
+
+    store.set(exitCompactDockDetailAtom)
+    store.set(activeDockTabIdAtom, 'session-panel')
+    expect(store.get(compactDockViewIntentAtom)).toBe('navigator')
+
+    // Returning to a list must not be undone just because a workspace tab
+    // remains active in the preserved dock model.
+    store.set(activeDockTabIdAtom, 'dock:content:files')
+    expect(store.get(compactDockViewIntentAtom)).toBe('navigator')
+
+    store.set(resetCompactDockViewIntentAtom)
+    expect(store.get(compactDockViewIntentAtom)).toBeNull()
+  })
+
+  it('only replaces the selected tab when that tab is a session', () => {
+    const store = createStore()
+
+    store.set(pushPanelAtom, { route: 'allSessions/session/s1' })
+    const sessionTabId = getStack(store)[0].id
+    expect(store.get(activeDockTabTypeAtom)).toBe('session')
+    expect(shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))).toBe(true)
+
+    store.set(activeDockTabIdAtom, sessionTabId)
+    store.set(dockTabProtectionsAtom, {
+      [sessionTabId]: { pinned: false, dirty: false, running: true, awaitingInput: false },
+    })
+    expect(store.get(activeDockTabProtectionAtom).running).toBe(true)
+    expect(shouldReplaceActiveTabWithSession(
+      store.get(activeDockTabTypeAtom),
+      store.get(activeDockTabProtectionAtom),
+    )).toBe(false)
+
+    store.set(activeDockTabIdAtom, 'dock:content:files')
+    expect(store.get(activeDockTabTypeAtom)).toBe('other')
+    expect(shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))).toBe(false)
+
+    store.set(activeDockTabIdAtom, sessionTabId)
+    store.set(pushPanelAtom, { route: 'sources/source/github' })
+    const sourceTabId = getStack(store).at(-1)!.id
+    store.set(activeDockTabIdAtom, sourceTabId)
+    expect(store.get(activeDockTabTypeAtom)).toBe('source')
+    expect(shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))).toBe(false)
+  })
+
+  it('targets a session selection request at the active empty dock page', () => {
+    const store = createStore()
+    const emptyTabId = generateEmptyDockPageTabId()
+
+    store.set(emptyDockPageSessionRequestAtom, {
+      tabId: emptyTabId,
+      sessionId: 's1',
+    })
+
+    expect(store.get(emptyDockPageSessionRequestAtom)).toEqual({
+      tabId: emptyTabId,
+      sessionId: 's1',
+    })
+    expect(isEmptyDockPageTabId(emptyTabId)).toBe(true)
+    expect(generateEmptyDockPageTabId()).not.toBe(emptyTabId)
+    expect(isEmptyDockPageTabId('panel-1')).toBe(false)
+  })
+
+  it('delivers and acknowledges ordered dock close requests', () => {
+    const store = createStore()
+    store.set(requestDockTabCloseAtom, 'dock:content:files')
+    const first = store.get(dockTabCloseRequestAtom)
+    expect(first).toMatchObject({ tabId: 'dock:content:files' })
+
+    store.set(requestDockTabCloseAtom, 'conversation')
+    const second = store.get(dockTabCloseRequestAtom)
+    expect(second?.requestId).toBeGreaterThan(first?.requestId ?? 0)
+    store.set(acknowledgeDockTabCloseRequestAtom, first!.requestId)
+    expect(store.get(dockTabCloseRequestAtom)).toEqual(second)
+    store.set(acknowledgeDockTabCloseRequestAtom, second!.requestId)
+    expect(store.get(dockTabCloseRequestAtom)).toBeNull()
+  })
+
   it('keeps insertion order for new panels', () => {
     const store = createStore()
 

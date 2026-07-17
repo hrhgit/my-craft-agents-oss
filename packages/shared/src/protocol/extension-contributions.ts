@@ -7,6 +7,7 @@ export const EXTENSION_UI_SURFACES = [
   'composer.above', 'composer.below', 'composer.toolbar', 'composer.status', 'composer.replace',
   'sidebar.header', 'sidebar.section', 'sidebar.footer',
   'navigation.item', 'session.badge',
+  'workspace.content',
   'window.topLeft', 'window.topRight',
 ] as const
 
@@ -14,6 +15,17 @@ export type ExtensionUISurface = typeof EXTENSION_UI_SURFACES[number]
 export type ExtensionUITone = 'default' | 'muted' | 'info' | 'success' | 'warning' | 'danger'
 export type ExtensionUIIconName = 'activity' | 'alert-circle' | 'check' | 'chevron-right' | 'circle' | 'clock' | 'info' | 'loader' | 'settings' | 'sparkles' | 'x'
 export type ExtensionUIAction = { kind: 'command'; command: string; args?: string }
+export type ExtensionWorkspaceContentScope = 'session' | 'workspace' | 'global'
+export type ExtensionWorkspaceContentInstancePolicy = 'singleton' | 'multiple'
+export type ExtensionWorkspaceContentPreferredGroup = 'active' | 'adjacent'
+
+export interface ExtensionWorkspaceContentMetadataV1 {
+  title: string
+  icon: ExtensionUIIconName
+  scope?: ExtensionWorkspaceContentScope
+  instancePolicy?: ExtensionWorkspaceContentInstancePolicy
+  preferredGroup?: ExtensionWorkspaceContentPreferredGroup
+}
 export type ExtensionUINode =
   | { type: 'text'; text: string; tone?: Exclude<ExtensionUITone, 'info'> }
   | { type: 'markdown'; markdown: string }
@@ -49,6 +61,7 @@ export interface ExtensionContributionV1 {
   overflow?: 'menu' | 'collapse' | 'hide'
   exclusive?: boolean
   target?: { turnId?: string; messageId?: string; toolCallId?: string }
+  workspaceContent?: ExtensionWorkspaceContentMetadataV1
 }
 
 export type ExtensionContributionDeltaV1 = {
@@ -56,6 +69,8 @@ export type ExtensionContributionDeltaV1 = {
   extensionId: string
   sessionId: string
   runtimeId: string
+  /** Trusted workspace route injected by the host bridge. */
+  workspaceId?: string
   revision: number
 } & (
   | { operation: 'upsert'; contribution: ExtensionContributionV1 }
@@ -171,7 +186,7 @@ export function validateExtensionContributionV1(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'Contribution must be an object'
   const item = value as Record<string, unknown>
   if (item.schemaVersion !== 1) return 'Unsupported contribution schema version'
-  if (!onlyKeys(item, ['schemaVersion', 'id', 'surface', 'content', 'priority', 'order', 'group', 'collapse', 'overflow', 'exclusive', 'target'])) return 'Unsupported contribution field'
+  if (!onlyKeys(item, ['schemaVersion', 'id', 'surface', 'content', 'priority', 'order', 'group', 'collapse', 'overflow', 'exclusive', 'target', 'workspaceContent'])) return 'Unsupported contribution field'
   if (!boundedString(item.id, 256)) return 'id must be a non-empty bounded string'
   if (!surfaceSet.has(String(item.surface))) return 'Unsupported contribution surface'
   if (item.priority !== undefined && (!Number.isInteger(item.priority) || Number(item.priority) < -1000 || Number(item.priority) > 1000)) return 'priority must be an integer between -1000 and 1000'
@@ -181,6 +196,18 @@ export function validateExtensionContributionV1(value: unknown): string | null {
   if (item.overflow !== undefined && !['menu', 'collapse', 'hide'].includes(String(item.overflow))) return 'Unsupported overflow policy'
   if (item.exclusive !== undefined && typeof item.exclusive !== 'boolean') return 'exclusive must be boolean'
   const surface = String(item.surface)
+  if (surface === 'workspace.content' && item.workspaceContent === undefined) return 'workspace.content requires workspaceContent metadata'
+  if (item.workspaceContent !== undefined) {
+    if (surface !== 'workspace.content') return 'workspaceContent metadata is only allowed on workspace.content'
+    if (!item.workspaceContent || typeof item.workspaceContent !== 'object' || Array.isArray(item.workspaceContent)) return 'workspaceContent metadata must be an object'
+    const workspaceContent = item.workspaceContent as Record<string, unknown>
+    if (!onlyKeys(workspaceContent, ['title', 'icon', 'scope', 'instancePolicy', 'preferredGroup'])) return 'Unsupported workspaceContent metadata field'
+    if (!boundedString(workspaceContent.title, 256)) return 'workspaceContent title is required'
+    if (!iconSet.has(String(workspaceContent.icon))) return 'Unsupported workspaceContent icon'
+    if (workspaceContent.scope !== undefined && !['session', 'workspace', 'global'].includes(String(workspaceContent.scope))) return 'Unsupported workspaceContent scope'
+    if (workspaceContent.instancePolicy !== undefined && !['singleton', 'multiple'].includes(String(workspaceContent.instancePolicy))) return 'Unsupported workspaceContent instance policy'
+    if (workspaceContent.preferredGroup !== undefined && !['active', 'adjacent'].includes(String(workspaceContent.preferredGroup))) return 'Unsupported workspaceContent preferredGroup'
+  }
   if (item.target !== undefined) {
     if (!item.target || typeof item.target !== 'object' || Array.isArray(item.target)) return 'target must be an object'
     const target = item.target as Record<string, unknown>
@@ -196,7 +223,7 @@ export function validateExtensionContributionV1(value: unknown): string | null {
   if (['composer.toolbar', 'composer.status', 'window.topLeft', 'window.topRight', 'navigation.item', 'session.badge'].includes(surface)) {
     return validateCompactSurfaceNode(item.content as ExtensionUINode)
   }
-  const sandboxSurfaces = new Set(['conversation.timeline.before', 'conversation.timeline.after', 'conversation.turn.before', 'conversation.turn.after', 'conversation.turn.replace', 'conversation.message.before', 'conversation.message.after', 'conversation.message.replace', 'conversation.tool.before', 'conversation.tool.after', 'conversation.tool.replace', 'conversation.inline', 'conversation.overlay', 'composer.above', 'composer.below', 'composer.replace', 'sidebar.section'])
+  const sandboxSurfaces = new Set(['conversation.timeline.before', 'conversation.timeline.after', 'conversation.turn.before', 'conversation.turn.after', 'conversation.turn.replace', 'conversation.message.before', 'conversation.message.after', 'conversation.message.replace', 'conversation.tool.before', 'conversation.tool.after', 'conversation.tool.replace', 'conversation.inline', 'conversation.overlay', 'composer.above', 'composer.below', 'composer.replace', 'sidebar.section', 'workspace.content'])
   const content = item.content as ExtensionUINode
   if ((content.type === 'row' || content.type === 'stack') && containsSandboxNode(content)) return 'Sandbox apps must be the top-level contribution node'
   if (content.type === 'sandbox-app' && !sandboxSurfaces.has(surface)) return 'Sandbox apps are not allowed on this surface'
@@ -211,8 +238,15 @@ export function validateExtensionContributionDeltaV1(value: unknown): string | n
   for (const key of ['extensionId', 'sessionId', 'runtimeId'] as const) {
     if (!boundedString(item[key], 256)) return `${key} must be a non-empty bounded string`
   }
+  if (item.workspaceId !== undefined && !boundedString(item.workspaceId, 256)) return 'workspaceId must be a bounded string'
   if (!Number.isSafeInteger(item.revision) || Number(item.revision) < 1) return 'revision must be a positive safe integer'
-  if (item.operation === 'upsert') return validateExtensionContributionV1(item.contribution)
+  if (item.operation === 'upsert') {
+    const error = validateExtensionContributionV1(item.contribution)
+    if (error) return error
+    const contribution = item.contribution as ExtensionContributionV1
+    if (contribution.workspaceContent?.scope === 'workspace' && !boundedString(item.workspaceId, 256)) return 'workspace-scoped content contributions require workspaceId'
+    return null
+  }
   if (item.operation === 'remove') return boundedString(item.contributionId, 256) ? null : 'contributionId must be a bounded string'
   if (item.operation === 'reset') return null
   if (item.operation === 'snapshot') {
@@ -220,6 +254,7 @@ export function validateExtensionContributionDeltaV1(value: unknown): string | n
     for (const contribution of item.contributions) {
       const error = validateExtensionContributionV1(contribution)
       if (error) return error
+      if ((contribution as ExtensionContributionV1).workspaceContent?.scope === 'workspace' && !boundedString(item.workspaceId, 256)) return 'workspace-scoped content contributions require workspaceId'
     }
     return null
   }

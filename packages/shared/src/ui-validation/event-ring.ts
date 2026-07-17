@@ -1,4 +1,5 @@
 import { UiValidationError } from './errors.ts'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS } from './timeouts.ts'
 import { UI_VALIDATION_PROTOCOL_VERSION, type UiValidationEvent, type UiValidationEventReadResult } from './types.ts'
 
 export interface UiValidationEventWaitOptions {
@@ -72,7 +73,7 @@ export class UiValidationEventRing {
     options: UiValidationEventWaitOptions = {},
   ): Promise<UiValidationEvent> {
     const startedAt = this.now()
-    const timeoutMs = options.timeoutMs ?? 10_000
+    const timeoutMs = options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
     const afterSeq = options.afterSeq ?? 0
     const existing = this.read({ afterSeq }).events.find(predicate)
     if (existing) return existing

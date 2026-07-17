@@ -9,8 +9,19 @@ import { parseRouteToNavigationState } from '../../shared/route-parser'
 import type { ViewRoute } from '../../shared/routes'
 
 let nextPanelId = 0
-function generatePanelId(): string {
+export function generatePanelId(): string {
   return `panel-${++nextPanelId}-${Date.now()}`
+}
+
+let nextEmptyDockPageId = 0
+export const EMPTY_DOCK_PAGE_TAB_ID_PREFIX = 'dock:content-picker:'
+
+export function generateEmptyDockPageTabId(): string {
+  return `${EMPTY_DOCK_PAGE_TAB_ID_PREFIX}${Date.now()}-${++nextEmptyDockPageId}`
+}
+
+export function isEmptyDockPageTabId(tabId: string | null | undefined): tabId is string {
+  return typeof tabId === 'string' && tabId.startsWith(EMPTY_DOCK_PAGE_TAB_ID_PREFIX)
 }
 
 export type PanelType = 'session' | 'source' | 'settings' | 'skills' | 'other'
@@ -26,6 +37,88 @@ export interface PanelStackEntry {
 
 export const panelStackAtom = atom<PanelStackEntry[]>([])
 export const focusedPanelIdAtom = atom<string | null>(null)
+// The dock tracks the actual selected tab separately from the focused content
+// panel so a selected tool tab cannot be mistaken for the last chat panel.
+export const activeDockTabIdAtom = atom<string | null>(null)
+
+// Compact navigation is an explicit, transient view intent. `null` follows the
+// focused route, while the two concrete values let a user enter workspace
+// content or return to the navigator without changing or closing dock tabs.
+export type CompactDockViewIntent = 'navigator' | 'detail' | null
+export const compactDockViewIntentAtom = atom<CompactDockViewIntent>(null)
+export const enterCompactDockDetailAtom = atom(null, (_get, set) => {
+  set(compactDockViewIntentAtom, 'detail')
+})
+export const exitCompactDockDetailAtom = atom(null, (_get, set) => {
+  set(compactDockViewIntentAtom, 'navigator')
+})
+export const resetCompactDockViewIntentAtom = atom(null, (_get, set) => {
+  set(compactDockViewIntentAtom, null)
+})
+let nextDockTabCloseRequestId = 0
+
+export interface DockTabCloseRequest {
+  requestId: number
+  tabId: string
+}
+
+export const dockTabCloseRequestAtom = atom<DockTabCloseRequest | null>(null)
+export const requestDockTabCloseAtom = atom(null, (_get, set, tabId: string) => {
+  set(dockTabCloseRequestAtom, {
+    requestId: ++nextDockTabCloseRequestId,
+    tabId,
+  })
+})
+export const acknowledgeDockTabCloseRequestAtom = atom(null, (get, set, requestId: number) => {
+  if (get(dockTabCloseRequestAtom)?.requestId === requestId) {
+    set(dockTabCloseRequestAtom, null)
+  }
+})
+export const emptyDockPageSessionRequestAtom = atom<{
+  tabId: string
+  sessionId: string
+} | null>(null)
+
+export interface DockTabProtection {
+  pinned: boolean
+  dirty: boolean
+  running: boolean
+  awaitingInput: boolean
+}
+
+export const UNPROTECTED_DOCK_TAB: DockTabProtection = {
+  pinned: false,
+  dirty: false,
+  running: false,
+  awaitingInput: false,
+}
+
+export const dockTabProtectionsAtom = atom<Record<string, DockTabProtection>>({})
+export const activeDockTabProtectionAtom = atom((get) => {
+  const activeId = get(activeDockTabIdAtom)
+  return activeId ? get(dockTabProtectionsAtom)[activeId] ?? UNPROTECTED_DOCK_TAB : UNPROTECTED_DOCK_TAB
+})
+
+export function isDockTabProtected(protection: DockTabProtection): boolean {
+  return protection.pinned || protection.dirty || protection.running || protection.awaitingInput
+}
+
+export const activeDockTabTypeAtom = atom<PanelType>((get) => {
+  const stack = get(panelStackAtom)
+  const activeId = get(activeDockTabIdAtom)
+  if (activeId) return stack.find(entry => entry.id === activeId)?.panelType ?? 'other'
+
+  const focusedId = get(focusedPanelIdAtom)
+  return (stack.find(entry => entry.id === focusedId) ?? stack[0])?.panelType ?? 'other'
+})
+
+export function shouldReplaceActiveTabWithSession(
+  activeTabType: PanelType,
+  protection: DockTabProtection = UNPROTECTED_DOCK_TAB,
+): boolean {
+  return activeTabType === 'session'
+    && !isDockTabProtected(protection)
+}
 
 export const panelCountAtom = atom((get) => get(panelStackAtom).length)
 
@@ -61,7 +154,7 @@ export function getPanelTypeFromRoute(route: ViewRoute): PanelType {
   }
 }
 
-function createEntry(route: ViewRoute, proportion: number, id?: string): PanelStackEntry {
+export function createPanelStackEntry(route: ViewRoute, proportion: number, id?: string): PanelStackEntry {
   const panelType = getPanelTypeFromRoute(route)
   return {
     id: id ?? generatePanelId(),
@@ -110,7 +203,7 @@ export const pushPanelAtom = atom(
       insertAt = afterIndex + 1
     }
 
-    const newEntry = createEntry(route, 0)
+    const newEntry = createPanelStackEntry(route, 0)
     const newStack = [
       ...stack.slice(0, insertAt),
       newEntry,
@@ -159,24 +252,24 @@ export const reconcilePanelStackAtom = atom(
 
       if (positional && positional.route === target.route && !used.has(positional.id)) {
         used.add(positional.id)
-        const updated = createEntry(target.route, target.proportion, positional.id)
+        const updated = createPanelStackEntry(target.route, target.proportion, positional.id)
         return { ...updated, proportion: target.proportion }
       }
 
       const any = current.find(c => c.route === target.route && !used.has(c.id))
       if (any) {
         used.add(any.id)
-        const updated = createEntry(target.route, target.proportion, any.id)
+        const updated = createPanelStackEntry(target.route, target.proportion, any.id)
         return { ...updated, proportion: target.proportion }
       }
 
       if (positional && !used.has(positional.id)) {
         used.add(positional.id)
-        const updated = createEntry(target.route, target.proportion, positional.id)
+        const updated = createPanelStackEntry(target.route, target.proportion, positional.id)
         return { ...updated, proportion: target.proportion }
       }
 
-      return createEntry(target.route, target.proportion)
+      return createPanelStackEntry(target.route, target.proportion)
     })
 
     const normalized = normalizeProportions(newStack)
@@ -238,7 +331,7 @@ export const updateFocusedPanelRouteAtom = atom(
     const stack = get(panelStackAtom)
 
     if (stack.length === 0) {
-      const newEntry = createEntry(route, 1)
+      const newEntry = createPanelStackEntry(route, 1)
       set(panelStackAtom, [newEntry])
       set(focusedPanelIdAtom, newEntry.id)
       return
@@ -249,7 +342,7 @@ export const updateFocusedPanelRouteAtom = atom(
 
     const updated = stack.map((p) =>
       p.id === focused.id
-        ? { ...createEntry(route, p.proportion, p.id), proportion: p.proportion }
+        ? { ...createPanelStackEntry(route, p.proportion, p.id), proportion: p.proportion }
         : p
     )
 

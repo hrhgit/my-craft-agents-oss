@@ -100,17 +100,25 @@ import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvid
 import { completeOAuthFlow } from '@craft-agent/server-core/handlers/rpc/oauth'
 import { listWorkspaceAutomationsForCapability, setWorkspaceAutomationEnabledById } from '@craft-agent/server-core/handlers/rpc/automations'
 import { registerAllRpcHandlers } from './handlers/index'
-import { registerCoreRpcHandlers, cleanupSessionFileWatchForClient } from '@craft-agent/server-core/handlers/rpc'
+import { registerCoreRpcHandlers, cleanupClientFileWatches } from '@craft-agent/server-core/handlers/rpc'
 import type { PlatformServices } from '../runtime/platform'
 import { createElectronPlatform } from './platform'
 import type { HandlerDeps } from './handlers/handler-deps'
-import { bootstrapServer, releaseServerLock } from '@craft-agent/server-core/bootstrap'
+import {
+  bootstrapServer,
+  publishServerEndpoint,
+  readLiveServerConnection,
+  releaseServerLock,
+  removeServerEndpoint,
+} from '@craft-agent/server-core/bootstrap'
 import { createMessagingBootstrap, type MessagingBootstrapHandle } from '@craft-agent/messaging-gateway'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { initModelRefreshService, getModelRefreshService, setFetcherPlatform } from '@craft-agent/server-core/model-fetchers'
 import { setSearchPlatform, setImageProcessor } from '@craft-agent/server-core/services'
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
+import { resolveInitialWindowTarget } from './initial-window-target'
+import { LayoutCoordinator } from './layout-coordinator'
 import { loadWindowState, saveWindowState } from './window-state'
 import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig, CONFIG_DIR } from '@craft-agent/shared/config'
 import { getDefaultWorkspacesDir } from '@craft-agent/shared/workspaces'
@@ -231,6 +239,7 @@ if (isDebugMode) {
 const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'
 
 let windowManager: WindowManager | null = null
+let layoutCoordinator: LayoutCoordinator | null = null
 let sessionManager: SessionManager | null = null
 let browserPaneManager: BrowserPaneManager | null = null
 let oauthFlowStore: OAuthFlowStore | null = null
@@ -279,12 +288,18 @@ if (process.defaultApp) {
 
 // Apply network proxy settings early (Node-level only — Electron sessions require app.whenReady)
 import { applyConfiguredProxySettings } from './network-proxy'
+import {
+  BeforeQuitGate,
+  captureRecoverableWindowSnapshot,
+  closeRendererWindowsGracefully,
+  restoreRecoverableWindows,
+  runCommittedExit,
+} from './application-exit'
 void applyConfiguredProxySettings()
 
-// Accept self-signed / untrusted certificates when connecting to a user-configured remote server.
-// Only bypasses cert validation for the exact CRAFT_SERVER_URL origin — all other connections
-// use standard certificate verification. Without this, wss:// to self-signed servers fails with
-// ERR_CERT_AUTHORITY_INVALID because Chromium's WebSocket rejects untrusted certs.
+// Thin-client mode may explicitly opt into a self-signed certificate. The
+// bypass remains origin-scoped; normal and workspace-configured connections
+// use WsRpcClient's per-connection TLS policy instead.
 //
 // Electron's certificate-error always reports URLs with https:// scheme, so we normalize
 // wss:// → https:// (and ws:// → http://) to ensure origins compare correctly.
@@ -295,7 +310,7 @@ function normalizeOriginForCert(urlStr: string): string {
   return u.origin
 }
 
-if (process.env.CRAFT_SERVER_URL) {
+if (process.env.CRAFT_SERVER_URL && process.env.CRAFT_ALLOW_INSECURE_TLS === '1') {
   let serverOrigin: string | undefined
   try {
     serverOrigin = normalizeOriginForCert(process.env.CRAFT_SERVER_URL)
@@ -411,9 +426,17 @@ async function createInitialWindows(): Promise<void> {
     }
   }
 
-  // Default: open window for first workspace
-  windowManager.createWindow({ workspaceId: workspaces[0].id })
-  mainLog.info(`Created window for first workspace: ${workspaces[0].name}`)
+  const storedConfig = loadStoredConfig()
+  const target = resolveInitialWindowTarget({
+    workspaces,
+    sessions: sessionManager?.getSessions() ?? [],
+    activeWorkspaceId: storedConfig?.activeWorkspaceId,
+    activeSessionId: storedConfig?.activeSessionId,
+  })
+  if (!target) return
+
+  windowManager.createWindow(target)
+  mainLog.info('Created initial workspace window', target)
 }
 
 app.whenReady().then(async () => {
@@ -491,10 +514,37 @@ app.whenReady().then(async () => {
 
   try {
     // Initialize window manager
-    windowManager = new WindowManager()
+    windowManager = new WindowManager(
+      __CRAFT_UI_VALIDATION_BUILD__
+        && process.env.CRAFT_UI_TEST_HOST === '1'
+        && process.env.CRAFT_UI_WINDOW_MODE === 'background',
+    )
+    layoutCoordinator = new LayoutCoordinator({
+      authorizeContentRef: ref => ref.workspaceId === '' || !!getWorkspaceByNameOrId(ref.workspaceId),
+      resolveServerId: workspaceId => {
+        if (!workspaceId) return 'local'
+        const workspace = getWorkspaceByNameOrId(workspaceId)
+        return workspace ? workspace.remoteServer?.url ?? 'local' : undefined
+      },
+    })
+    windowManager.setAuxiliaryClosedHandler((windowId, workspaceId) => {
+      layoutCoordinator?.redockWindow(windowId, workspaceId)
+    })
 
     // Create the application menu (needs windowManager for New Window action)
     createApplicationMenu(windowManager)
+
+    // Launcher scripts normally configure thin-client mode before Electron
+    // starts. Keep a source-development fallback here so direct Electron
+    // launches also reuse the backend that owns this config directory.
+    if (!app.isPackaged && !process.env.CRAFT_SERVER_URL) {
+      const sharedBackend = await readLiveServerConnection()
+      if (sharedBackend) {
+        process.env.CRAFT_SERVER_URL = sharedBackend.endpoint.url
+        process.env.CRAFT_SERVER_TOKEN = sharedBackend.token
+        mainLog.info(`Reusing shared backend PID ${sharedBackend.endpoint.pid} at ${sharedBackend.endpoint.url}`)
+      }
+    }
 
     // When CRAFT_SERVER_URL is set, this Electron instance is a thin client —
     // it only creates windows whose preload connects to the remote server.
@@ -512,6 +562,9 @@ app.whenReady().then(async () => {
     // Initialize browser pane manager (always — even in headless, for deps wiring)
     browserPaneManager = new BrowserPaneManager()
     browserPaneManager.setWindowManager(windowManager)
+    windowManager.setWorkspaceChangingHandler((webContentsId) => {
+      browserPaneManager?.detachAllFromHost(webContentsId)
+    })
     browserPaneManager.registerToolbarIpc()
     browserPaneManager.registerCapabilityIpc()
 
@@ -1121,6 +1174,7 @@ app.whenReady().then(async () => {
             platform: p,
             windowManager: windowManager ?? undefined,
             browserPaneManager: browserPaneManager ?? undefined,
+            layoutCoordinator: layoutCoordinator ?? undefined,
             oauthFlowStore: ofs,
             messagingRegistry: messagingHandle.registry,
           }
@@ -1153,7 +1207,7 @@ app.whenReady().then(async () => {
           for (const [wcId, cId] of clientMap) {
             if (cId === clientId) { clientMap.delete(wcId); break }
           }
-          cleanupSessionFileWatchForClient(clientId)
+          cleanupClientFileWatches(clientId)
         },
       })
 
@@ -1162,6 +1216,9 @@ app.whenReady().then(async () => {
       oauthFlowStore = instance.oauthFlowStore
       moduleSink = instance.wsServer.push.bind(instance.wsServer)
       moduleClientResolver = resolveClientId
+      layoutCoordinator?.setChangedHandler(layout => {
+        moduleSink?.(RPC_CHANNELS.layout.CHANGED, { to: 'workspace', workspaceId: layout.workspaceId }, layout)
+      })
 
       // -----------------------------------------------------------------------
       // Messaging Gateway — attach the WS publisher, init local workspaces,
@@ -1202,9 +1259,16 @@ app.whenReady().then(async () => {
       })
 
       // Cross-server RPC — invoke a channel on an arbitrary remote server
-      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.SERVER_INVOKE_ON_SERVER, async (_event, url: string, token: string, channel: string, ...args: unknown[]) => {
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.SERVER_INVOKE_ON_SERVER, async (
+        _event,
+        url: string,
+        token: string,
+        channel: string,
+        connection: { allowInsecureTls?: boolean },
+        ...args: unknown[]
+      ) => {
         const { connectToRemote } = await import('./handlers/workspace')
-        const { client, error } = await connectToRemote(url, token)
+        const { client, error } = await connectToRemote(url, token, connection)
         if (!client) throw new Error(error ?? 'Connection failed')
         try {
           return await client.invoke(channel, ...args)
@@ -1235,9 +1299,13 @@ app.whenReady().then(async () => {
         let bundle: any = null
 
         if (sourceWorkspace.remoteServer) {
-          const { url: sourceUrl, token: sourceToken, remoteWorkspaceId: sourceRemoteWorkspaceId } = sourceWorkspace.remoteServer
+          const sourceRemote = sourceWorkspace.remoteServer
+          const { url: sourceUrl, token: sourceToken, remoteWorkspaceId: sourceRemoteWorkspaceId } = sourceRemote
           console.log(`[Transfer] Exporting remote-owned session ${sessionId} from workspace ${sourceRemoteWorkspaceId}...`)
-          const { client: sourceClient, error: sourceError } = await connectToRemote(sourceUrl, sourceToken, sourceRemoteWorkspaceId)
+          const { client: sourceClient, error: sourceError } = await connectToRemote(sourceUrl, sourceToken, {
+            workspaceId: sourceRemoteWorkspaceId,
+            allowInsecureTls: sourceRemote.allowInsecureTls,
+          })
           if (!sourceClient) throw new Error(sourceError ?? 'Connection failed to source remote server')
 
           try {
@@ -1278,9 +1346,13 @@ app.whenReady().then(async () => {
 
         console.log(`[Transfer] Export complete: ${bundle.session?.messages?.length ?? 0} messages, ${bundle.files?.length ?? 0} files`)
 
-        const { url, token, remoteWorkspaceId } = targetWorkspace.remoteServer
+        const targetRemote = targetWorkspace.remoteServer
+        const { url, token, remoteWorkspaceId } = targetRemote
         console.log(`[Transfer] Connecting to target remote server: ${url}`)
-        const { client, error } = await connectToRemote(url, token, remoteWorkspaceId)
+        const { client, error } = await connectToRemote(url, token, {
+          workspaceId: remoteWorkspaceId,
+          allowInsecureTls: targetRemote.allowInsecureTls,
+        })
         if (!client) throw new Error(error ?? 'Connection failed to target remote server')
         console.log('[Transfer] Connected to target remote server')
 
@@ -1504,15 +1576,25 @@ app.whenReady().then(async () => {
         mainLog.info('[workspace-server] Isolation disabled while server mode is enabled; embedded server remains authoritative.')
       }
 
-      // Headless: print connection details
-      if (isHeadless) {
+      // Source-development Electron processes publish their embedded backend so
+      // later test windows can enter thin-client mode instead of competing for
+      // the same config lock. Packaged GUI builds keep this surface disabled.
+      if (isHeadless || !app.isPackaged) {
         // Write token to a file with 0600 permissions instead of stdout,
         // because container/logging systems often persist stdout and would leak the token.
         const tokenFilePath = join(CONFIG_DIR, '.server-token')
         const { writeOwnerOnlyFileSync } = await import('./secure-files')
         writeOwnerOnlyFileSync(tokenFilePath, instance.token)
-        console.log(`CRAFT_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
-        console.log(`CRAFT_SERVER_TOKEN_FILE=${tokenFilePath}`)
+        publishServerEndpoint({
+          host: instance.host,
+          port: instance.port,
+          protocol: instance.protocol,
+          tokenFile: tokenFilePath,
+        })
+        if (isHeadless) {
+          console.log(`CRAFT_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
+          console.log(`CRAFT_SERVER_TOKEN_FILE=${tokenFilePath}`)
+        }
       }
     }
 
@@ -1529,6 +1611,7 @@ app.whenReady().then(async () => {
       uiTestHost = await startUiTestHost({
         isPackaged: app.isPackaged,
         windowManager,
+        browserPaneManager: browserPaneManager ?? undefined,
         runtimeLogPath: join(CONFIG_DIR, 'logs', 'runtime.log'),
         shutdown: () => app.quit(),
         openRoute: async (params, target) => {
@@ -1536,7 +1619,7 @@ app.whenReady().then(async () => {
           if (resolvedRoute.route.surface === 'workspace-picker') {
             const window = windowManager!.getWindowByWebContentsId(target.webContentsId)
             if (!window || window.isDestroyed()) throw new Error('Target window is no longer available.')
-            if (!windowManager!.updateWindowWorkspace(target.webContentsId, '')) {
+            if (!await windowManager!.updateWindowWorkspace(target.webContentsId, '')) {
               throw new Error('Target window is not managed by Craft.')
             }
             const targetUrl = new URL(window.webContents.getURL())
@@ -1619,7 +1702,30 @@ app.whenReady().then(async () => {
     // (Squirrel.Mac) destroys BrowserWindows between quitAndInstall and
     // before-quit firing; saving from before-quit alone would overwrite
     // window-state.json with an empty array.
-    setBeforeUpdateQuitHook(() => captureAndSaveWindowState('pre-update'))
+    setBeforeUpdateQuitHook(async () => {
+      const recoverableSnapshot = captureRecoverableWindowSnapshot(windowManager)
+      captureAndSaveWindowState('pre-update')
+      isPreparingUpdateQuit = true
+      try {
+        await closeRendererWindowsGracefully(windowManager)
+      } catch (error) {
+        try {
+          restoreRecoverableWindows(windowManager, recoverableSnapshot)
+        } finally {
+          isPreparingUpdateQuit = false
+        }
+        throw error
+      }
+      return () => {
+        try {
+          const restored = restoreRecoverableWindows(windowManager, recoverableSnapshot)
+          mainLog.warn('[update-flow] Restored windows after failed installer handoff', { restored })
+        } finally {
+          isPreparingUpdateQuit = false
+          windowManager?.setAppQuitting(false)
+        }
+      }
+    })
     // Auto-update check on launch disabled (local fork, no remote tracking)
     // Manual "Check for Updates" via menu remains available.
     mainLog.info('[auto-update] Launch auto-update check disabled (local build)')
@@ -1660,16 +1766,18 @@ app.whenReady().then(async () => {
   })
 })
 
+// Guard both the normal quit sequence and the pre-update renderer flush.
+const beforeQuitGate = new BeforeQuitGate()
+let isPreparingUpdateQuit = false
+
 app.on('window-all-closed', () => {
   if (process.env.CRAFT_HEADLESS) return  // headless server stays alive
+  if (beforeQuitGate.isPreparing() || isPreparingUpdateQuit) return
   // On macOS, apps typically stay active until explicitly quit
   if (process.platform !== 'darwin') {
     app.quit()
   }
 })
-
-// Track if we're in the process of quitting (to avoid re-entry)
-let isQuitting = false
 
 /**
  * Capture the current multi-window state and persist it to disk.
@@ -1679,39 +1787,25 @@ let isQuitting = false
  *     electron-updater destroys BrowserWindows between quitAndInstall and
  *     before-quit firing — by the time before-quit runs, getWindowStates()
  *     returns an empty array and would clobber the on-disk state.
- * Returns the number of windows saved, or -1 if windowManager isn't ready.
  */
-function captureAndSaveWindowState(reason: 'before-quit' | 'pre-update'): number {
-  if (!windowManager) return -1
+function captureAndSaveWindowState(reason: 'before-quit' | 'pre-update'): void {
+  if (!windowManager) return
   const windows = windowManager.getWindowStates()
   const focusedWindow = BrowserWindow.getFocusedWindow()
   const lastFocusedWorkspaceId = focusedWindow
     ? windowManager.getWorkspaceForWindow(focusedWindow.webContents.id) ?? undefined
     : undefined
-  saveWindowState({ windows, lastFocusedWorkspaceId })
+  const state = { windows, lastFocusedWorkspaceId }
+  saveWindowState(state)
   mainLog.info('[window-state] saved', { windowCount: windows.length, reason })
-  return windows.length
 }
 
 // Save window state and clean up resources before quitting
 app.on('before-quit', async (event) => {
-  // Avoid re-entry when we call app.exit()
-  if (isQuitting) return
-  isQuitting = true
+  const decision = beforeQuitGate.enter(event)
+  if (decision !== 'start') return
 
-  // Ensure Cmd+Q/app quit bypasses layered window close interception (Cmd+W behavior).
-  windowManager?.setAppQuitting(true)
-
-  if (uiTestHost) {
-    const host = uiTestHost
-    uiTestHost = null
-    try {
-      await host.close()
-    } catch (error) {
-      mainLog.warn('[ui-validation] Failed to close Test Host', error)
-    }
-  }
-
+  const recoverableSnapshot = captureRecoverableWindowSnapshot(windowManager)
   if (windowManager) {
     const windows = windowManager.getWindowStates()
     // Empty-snapshot guard: during update-quit, electron-updater has already
@@ -1740,74 +1834,111 @@ app.on('before-quit', async (event) => {
     }
   }
 
-  // Flush all pending session writes before quitting
-  if (sessionManager) {
-    // Prevent quit until sessions are flushed
-    event.preventDefault()
+  try {
+    await closeRendererWindowsGracefully(windowManager)
+  } catch (error) {
+    mainLog.error('[quit] Renderer state did not flush; quit cancelled', error)
     try {
-      await sessionManager.flushAllSessions()
-      mainLog.info('Flushed all pending session writes')
-    } catch (error) {
-      mainLog.error('Failed to flush sessions:', error)
+      const restored = restoreRecoverableWindows(windowManager, recoverableSnapshot)
+      if (restored > 0) mainLog.warn('[quit] Restored windows closed before cancellation', { restored })
+    } catch (restoreError) {
+      mainLog.error('[quit] Failed to restore a window after cancellation', restoreError)
+    } finally {
+      isPreparingUpdateQuit = false
+      windowManager?.setAppQuitting(false)
+      // Keep window-all-closed suppressed until replacement windows exist.
+      beforeQuitGate.cancel()
     }
-    // Clean up SessionManager resources (backend runtimes, MCP pools, file watchers, timers, etc.)
-    await sessionManager.cleanup()
+    return
+  }
 
-    // Clean up browser pane instances
-    if (browserPaneManager) {
-      browserPaneManager.destroyAll()
-    }
+  // Renderer-owned state is now durable and every BrowserWindow is closed.
+  // Remaining quit activity may bypass the layered window-close policy.
+  windowManager?.setAppQuitting(true)
 
-    // Clean up OAuth flow store (stop periodic cleanup timer)
-    disposeCapabilityOAuthFlows()
-    if (oauthFlowStore) {
-      oauthFlowStore.dispose()
-    }
-
-    // Stop all model refresh timers
-    getModelRefreshService().stopAll()
-
-    // Stop messaging gateways so the WhatsApp worker subprocess exits cleanly.
-    if (messagingHandle) {
-      try {
-        await messagingHandle.dispose()
-      } catch (err) {
-        mainLog.error('[messaging] dispose failed:', err)
-      }
-    }
-
-    if (workspaceServer) {
-      try {
-        await workspaceServer.stop()
-        mainLog.info('[workspace-server] Stopped child-process workspace server')
-      } catch (err) {
-        mainLog.error('[workspace-server] Failed to stop child-process workspace server:', err)
-      } finally {
-        workspaceServer = null
-        delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL
-        delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN
-      }
-    }
-
-    // Clean up power manager (release power blocker)
-    const { cleanup: cleanupPowerManager } = await import('./power-manager')
-    cleanupPowerManager()
-
-    // Release the server lock file so the next launch doesn't see a stale PID.
-    // This must happen regardless of the exit path (normal quit or update quit).
-    releaseServerLock()
-
-    // If update is in progress, let electron-updater handle the quit flow
-    // Force exit breaks the NSIS installer on Windows
+  await runCommittedExit([
+    {
+      name: 'ui-validation-host',
+      run: async () => {
+        if (!uiTestHost) return
+        const host = uiTestHost
+        uiTestHost = null
+        await host.close()
+      },
+    },
+    {
+      name: 'session-flush',
+      run: async () => {
+        if (!sessionManager) return
+        await sessionManager.flushAllSessions()
+        mainLog.info('Flushed all pending session writes')
+      },
+    },
+    {
+      name: 'session-cleanup',
+      run: async () => sessionManager?.cleanup(),
+    },
+    {
+      name: 'browser-panes',
+      run: () => browserPaneManager?.destroyAll(),
+    },
+    {
+      name: 'oauth-flows',
+      run: () => {
+        disposeCapabilityOAuthFlows()
+        oauthFlowStore?.dispose()
+      },
+    },
+    {
+      name: 'model-refresh',
+      run: () => getModelRefreshService().stopAll(),
+    },
+    {
+      name: 'messaging-gateway',
+      run: async () => messagingHandle?.dispose(),
+    },
+    {
+      name: 'workspace-server',
+      run: async () => {
+        if (!workspaceServer) return
+        try {
+          await workspaceServer.stop()
+          mainLog.info('[workspace-server] Stopped child-process workspace server')
+        } finally {
+          workspaceServer = null
+          delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL
+          delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN
+        }
+      },
+    },
+    {
+      name: 'power-manager',
+      run: async () => {
+        const { cleanup: cleanupPowerManager } = await import('./power-manager')
+        cleanupPowerManager()
+      },
+    },
+    {
+      name: 'server-endpoint',
+      run: () => removeServerEndpoint(),
+    },
+    {
+      name: 'server-lock',
+      run: () => releaseServerLock(),
+    },
+  ], (name, error) => {
+    mainLog.error(`[quit] Cleanup failed (${name}); continuing exit`, error)
+  }, () => {
+    beforeQuitGate.commit()
+    // Force exit breaks the NSIS installer on Windows, so update shutdown
+    // re-enters app.quit() only after the gate has explicitly committed.
     if (isUpdating()) {
       mainLog.info('Update in progress, letting electron-updater handle quit')
       app.quit()
-      return
+    } else {
+      app.exit(0)
     }
-
-    // Now actually quit
-    app.exit(0)
-  }
+  })
 })
 
 // Handle uncaught exceptions — forward to Sentry explicitly since registering

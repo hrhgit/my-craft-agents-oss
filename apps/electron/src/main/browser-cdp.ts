@@ -60,6 +60,7 @@ export interface UiBusinessSemanticSnapshot {
   revision: number
   nodes: Array<{
     id: string
+    testId?: string
     role: string
     name: string
     description?: string
@@ -892,11 +893,7 @@ export class BrowserCDP {
     const target = this.targetForRef(ref)
     if (!target) throw new Error(`Element ${ref} not found. Run browser_snapshot first.`)
     await this.send('DOM.focus', { backendNodeId: target.backendNodeId }, target.sessionId)
-    const modifier = process.platform === 'darwin' ? 4 : 2
-    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: modifier })
-    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: modifier })
-    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace' })
-    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace' })
+    this.webContents.selectAll()
     await this.send('Input.insertText', { text })
     return await this.getElementGeometry(ref)
   }
@@ -975,26 +972,11 @@ export class BrowserCDP {
       // Focus the element first
       await this.send('DOM.focus', { backendNodeId: target.backendNodeId }, target.sessionId)
 
-      // Clear with trusted keyboard input. Do not mutate value or dispatch
-      // synthetic DOM events: renderer-verified must exercise the component's
-      // real input path.
-      const modifier = process.platform === 'darwin' ? 4 : 2
-      await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: modifier })
-      await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: modifier })
-      await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace' })
-      await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace' })
-
-      // Type the new value character by character for realistic input
-      for (const char of value) {
-        await this.send('Input.dispatchKeyEvent', {
-          type: 'keyDown',
-          text: char,
-        })
-        await this.send('Input.dispatchKeyEvent', {
-          type: 'keyUp',
-          text: char,
-        })
-      }
+      // Use Electron's native edit command after CDP focuses the exact node.
+      // Raw CDP Ctrl+A events are not interpreted reliably in Electron, while
+      // DOM value mutation would bypass the renderer's real input path.
+      this.webContents.selectAll()
+      await this.send('Input.insertText', { text: value })
 
       return await this.getElementGeometry(ref)
     } catch (err) {

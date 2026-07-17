@@ -31,6 +31,7 @@ export interface UiSemanticDefinition {
 
 export interface UiBusinessSemanticNode {
   id: string
+  testId?: string
   role: string
   name: string
   description?: string

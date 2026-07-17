@@ -30,7 +30,7 @@
  * Used by: PreviewOverlay, DocumentFormattedMarkdownOverlay, WorkspaceCreationScreen
  */
 
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { usePlatform } from '../../context/PlatformContext'
 import { cn } from '../../lib/utils'
@@ -129,7 +129,7 @@ export function FullscreenOverlayBase({
   const hasHeader = !!(typeBadge || filePath || title || subtitle || headerActions || copyContent)
   const overlayIdRef = useRef(`fullscreen-overlay-${Math.random().toString(36).slice(2)}`)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isOpen) return
 
     const bridge = getDismissibleLayerBridge()

@@ -110,7 +110,7 @@ export type ExtensionBridgeEvent = {
   | { type: 'extension_widget'; key: string; content: string[] | undefined; placement?: 'aboveEditor' | 'belowEditor'; source?: string }
   | { type: 'extension_contribution'; delta: ExtensionContributionDeltaV1 }
   | { type: 'extension_ui_validation'; delta: ExtensionUIValidationDeltaV1 }
-  | { type: 'extension_contributions_runtime_reset' }
+  | { type: 'extension_contributions_runtime_reset'; workspaceId?: string }
   | ExtensionInteractionBridgeRequestV1
   | ExtensionInteractionBridgeCancelV1
   | ExtensionInteractionBridgeSettledV1

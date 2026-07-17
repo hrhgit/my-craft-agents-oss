@@ -1,4 +1,5 @@
 import type { WebContents } from 'electron'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS } from '@craft-agent/shared/ui-validation'
 import { mainLog } from '../logger'
 import {
   BrowserCDP,
@@ -17,8 +18,14 @@ export class UiValidationBrowserCDP extends BrowserCDP {
   }>()
   private readonly childTargetSessions = new Map<string, string>()
   private readonly childTargetStableRefs = new Map<string, string>()
+  private dragQueue: Promise<void> = Promise.resolve()
 
-  constructor(webContents: WebContents) { super(webContents) }
+  constructor(
+    webContents: WebContents,
+    private readonly dragInterceptTimeoutMs = 1_000,
+  ) {
+    super(webContents)
+  }
 
   override async getAccessibilitySnapshot() {
     this.childTargetRefs.clear()
@@ -196,6 +203,12 @@ export class UiValidationBrowserCDP extends BrowserCDP {
     return child ? { backendNodeId: child.backendNodeId, sessionId: child.sessionId } : super.targetForRef(ref)
   }
 
+  async focusElement(ref: string): Promise<void> {
+    const target = this.targetForRef(ref)
+    if (!target) throw new Error(`Element ${ref} not found. Run ui.snapshot first.`)
+    await this.send('DOM.focus', { backendNodeId: target.backendNodeId }, target.sessionId)
+  }
+
   override async clickElement(ref: string): Promise<ElementGeometry> {
     const child = this.childTargetRefs.get(ref)
     if (!child) return await super.clickElement(ref)
@@ -212,6 +225,216 @@ export class UiValidationBrowserCDP extends BrowserCDP {
     await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, child.sessionId)
     await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }, child.sessionId)
     return await this.getElementGeometry(ref)
+  }
+
+  override drag(x1: number, y1: number, x2: number, y2: number): Promise<void> {
+    const operation = this.dragQueue.then(() => this.dragWithCdp(x1, y1, x2, y2))
+    this.dragQueue = operation.catch(() => undefined)
+    return operation
+  }
+
+  private async dragWithCdp(x1: number, y1: number, x2: number, y2: number): Promise<void> {
+    type DragData = Record<string, unknown>
+
+    let interceptedDragData: DragData | undefined
+    let resolveInterceptedDrag!: (data: DragData) => void
+    const interceptedDrag = new Promise<DragData>((resolve) => { resolveInterceptedDrag = resolve })
+    const onDebuggerMessage = (_event: unknown, method: string, params: { data?: unknown }) => {
+      if (method !== 'Input.dragIntercepted' || !params.data || typeof params.data !== 'object' || interceptedDragData) return
+      interceptedDragData = params.data as DragData
+      resolveInterceptedDrag(interceptedDragData)
+    }
+
+    const distance = Math.hypot(x2 - x1, y2 - y1)
+    const steps = Math.max(5, Math.min(20, Math.round(distance / 20)))
+    const points = Array.from({ length: steps }, (_, index) => {
+      const progress = (index + 1) / steps
+      return {
+        x: Math.round(x1 + (x2 - x1) * progress),
+        y: Math.round(y1 + (y2 - y1) * progress),
+      }
+    })
+
+    let lastPoint = { x: Math.round(x1), y: Math.round(y1) }
+    let dragEntered = false
+    let htmlDragExpected = false
+    let dropped = false
+    let failure: unknown
+    this.webContents.debugger.on('message', onDebuggerMessage)
+
+    try {
+      // Interception keeps HTML5 drags out of Electron's synchronous native
+      // drag loop, while raw CDP mouse events still drive pointer-based DnD.
+      await this.send('Input.setInterceptDrags', { enabled: true })
+      await this.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: lastPoint.x,
+        y: lastPoint.y,
+        button: 'none',
+        buttons: 0,
+      })
+      await this.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        x: lastPoint.x,
+        y: lastPoint.y,
+        button: 'left',
+        buttons: 1,
+        clickCount: 1,
+      })
+
+      for (const point of points) {
+        lastPoint = point
+        if (dragEntered && interceptedDragData) {
+          await this.send('Input.dispatchDragEvent', {
+            type: 'dragOver',
+            x: point.x,
+            y: point.y,
+            data: interceptedDragData,
+          })
+          continue
+        }
+
+        await this.installHtmlDragProbe()
+        await this.send('Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
+          x: point.x,
+          y: point.y,
+          button: 'left',
+          buttons: 1,
+        })
+        const htmlDragStarted = await this.readHtmlDragProbe()
+        if (!htmlDragStarted) {
+          if (interceptedDragData) {
+            htmlDragExpected = true
+            throw new Error('CDP intercepted a drag whose renderer dragstart was cancelled.')
+          }
+          continue
+        }
+
+        htmlDragExpected = true
+        if (!interceptedDragData) {
+          interceptedDragData = await withTimeout(
+            interceptedDrag,
+            this.dragInterceptTimeoutMs,
+            `Input.dragIntercepted was not received within ${this.dragInterceptTimeoutMs}ms.`,
+          )
+        }
+        if (interceptedDragData) {
+          await this.send('Input.dispatchDragEvent', {
+            type: 'dragEnter',
+            x: point.x,
+            y: point.y,
+            data: interceptedDragData,
+          })
+          dragEntered = true
+        }
+      }
+
+      if (interceptedDragData) {
+        if (!dragEntered) {
+          await this.send('Input.dispatchDragEvent', {
+            type: 'dragEnter',
+            x: lastPoint.x,
+            y: lastPoint.y,
+            data: interceptedDragData,
+          })
+        }
+        await this.send('Input.dispatchDragEvent', {
+          type: 'dragOver',
+          x: Math.round(x2),
+          y: Math.round(y2),
+          data: interceptedDragData,
+        })
+        await this.send('Input.dispatchDragEvent', {
+          type: 'drop',
+          x: Math.round(x2),
+          y: Math.round(y2),
+          data: interceptedDragData,
+        })
+        dropped = true
+      }
+    } catch (error) {
+      failure = error
+    } finally {
+      const recordCleanupFailure = (error: unknown) => {
+        if (failure === undefined) failure = error
+      }
+      await this.cleanupHtmlDragProbe().catch(recordCleanupFailure)
+      if ((htmlDragExpected || interceptedDragData) && !dropped) {
+        await this.send('Input.dispatchDragEvent', {
+          type: 'dragCancel',
+          x: lastPoint.x,
+          y: lastPoint.y,
+          data: { items: [], dragOperationsMask: 65535 },
+        }).catch(recordCleanupFailure)
+      }
+      await this.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x: lastPoint.x,
+        y: lastPoint.y,
+        button: 'left',
+        buttons: 0,
+        clickCount: 1,
+      }).catch(recordCleanupFailure)
+      await this.send('Input.setInterceptDrags', { enabled: false }).catch(recordCleanupFailure)
+      this.webContents.debugger.removeListener('message', onDebuggerMessage)
+    }
+
+    if (failure !== undefined) throw failure
+  }
+
+  private async installHtmlDragProbe(): Promise<void> {
+    await this.send('Runtime.evaluate', {
+      expression: `(() => {
+        const key = '__craftUiValidationDragProbe';
+        globalThis[key]?.cleanup?.();
+        let dragEvent = null;
+        let didStartDrag = Promise.resolve(false);
+        const onDragStart = event => { dragEvent = event; };
+        const onMouseMove = () => {
+          didStartDrag = new Promise(resolve => {
+            addEventListener('dragstart', onDragStart, { once: true, capture: true });
+            setTimeout(() => resolve(Boolean(dragEvent && !dragEvent.defaultPrevented)), 0);
+          });
+        };
+        const cleanup = () => {
+          removeEventListener('mousemove', onMouseMove, { capture: true });
+          removeEventListener('dragstart', onDragStart, { capture: true });
+          if (globalThis[key]?.cleanup === cleanup) delete globalThis[key];
+        };
+        addEventListener('mousemove', onMouseMove, { once: true, capture: true });
+        globalThis[key] = {
+          read: async () => {
+            const result = await didStartDrag;
+            cleanup();
+            return result;
+          },
+          cleanup,
+        };
+      })()`,
+      returnByValue: true,
+    })
+  }
+
+  private async readHtmlDragProbe(): Promise<boolean> {
+    const result = await this.send('Runtime.evaluate', {
+      expression: `(() => {
+        const probe = globalThis.__craftUiValidationDragProbe;
+        return probe ? probe.read() : false;
+      })()`,
+      awaitPromise: true,
+      returnByValue: true,
+    })
+    return result?.result?.value === true
+  }
+
+  private async cleanupHtmlDragProbe(): Promise<void> {
+    await this.send('Runtime.evaluate', {
+      expression: `(() => {
+        globalThis.__craftUiValidationDragProbe?.cleanup?.();
+      })()`,
+      returnByValue: true,
+    })
   }
 
   override async getElementGeometry(ref: string): Promise<ElementGeometry> {
@@ -298,7 +521,7 @@ export class UiValidationBrowserCDP extends BrowserCDP {
   ): Promise<UiBusinessSemanticSnapshot | null> {
     const current = await this.getUiBusinessSemanticSnapshot()
     if (predicate(current)) return current
-    const timeoutMs = Math.max(1, options.timeoutMs ?? 15_000)
+    const timeoutMs = Math.max(1, options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS)
     await this.send('Runtime.addBinding', { name: '__craftUiSemanticChanged' }).catch(() => undefined)
     await this.send('Runtime.evaluate', {
       expression: `(() => {
@@ -393,6 +616,18 @@ async function mapWithConcurrency<T>(items: T[], limit: number, visit: (item: T)
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => { timeout = setTimeout(() => reject(new Error(message)), timeoutMs) }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 }
 
 function hasAccessibilityNodes(tree: unknown): boolean {

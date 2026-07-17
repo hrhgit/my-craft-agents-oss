@@ -113,6 +113,8 @@ export interface CreateSessionOptions {
   provider?: string
   systemPromptPreset?: 'default' | 'mini' | string
   hidden?: boolean
+  /** Keep a user-created session out of lists until its first message is durably accepted. */
+  deferListUntilFirstMessage?: boolean
   enabledSourceSlugs?: string[]
   /**
    * Message ID to branch from. This is a hard context cutoff:
@@ -305,6 +307,64 @@ export interface FileSearchResult {
   path: string
   type: 'file' | 'directory'
   relativePath: string
+}
+
+export interface WorkspaceFileEntry {
+  name: string
+  relativePath: string
+  type: 'file' | 'directory'
+  isSymlink: boolean
+}
+
+export interface WorkspaceEntryMutationResult {
+  relativePath: string
+  type: WorkspaceFileEntry['type']
+  isSymlink: boolean
+}
+
+export interface WorkspaceEntryRenameResult extends WorkspaceEntryMutationResult {
+  previousRelativePath: string
+}
+
+export interface WorkspaceDirectoryListing {
+  relativePath: string
+  entries: WorkspaceFileEntry[]
+  truncated: boolean
+  totalEntries: number
+}
+
+interface WorkspaceFilePreviewBase {
+  name: string
+  relativePath: string
+  extension: string
+  size: number
+  truncated: boolean
+}
+
+export type WorkspaceFilePreview =
+  | (WorkspaceFilePreviewBase & { kind: 'text'; content: string })
+  | (WorkspaceFilePreviewBase & { kind: 'markdown'; content: string; source: 'native' | 'converted' })
+  | (WorkspaceFilePreviewBase & { kind: 'table'; content: string; delimiter: ',' | '\t' })
+  | (WorkspaceFilePreviewBase & { kind: 'image'; dataUrl: string })
+  | (WorkspaceFilePreviewBase & { kind: 'pdf'; data: Uint8Array })
+  | (WorkspaceFilePreviewBase & {
+    kind: 'unsupported'
+    reason: 'unsupported-format' | 'too-large' | 'binary'
+    maxBytes?: number
+  })
+
+/**
+ * Recoverable, server-owned editor state for one workspace file.
+ *
+ * File contents are intentionally excluded from renderer localStorage. The
+ * backend stores this record under its private config directory, partitioned
+ * by workspace and resource identity.
+ */
+export interface WorkspaceFileDraft {
+  relativePath: string
+  content: string
+  baseContent: string
+  updatedAt: number
 }
 
 // ---------------------------------------------------------------------------
@@ -501,17 +561,29 @@ export interface BrowserInstanceInfo {
   ownerType: 'session' | 'manual'
   ownerSessionId: string | null
   isVisible: boolean
+  isEmbedded?: boolean
   agentControlActive: boolean
   themeColor: string | null
-  /**
-   * Workspace that owns this browser instance, or `null` for unbound manual
-   * windows. Renderers filter the tab strip / status badge by `activeWorkspaceId`
-   * so a session in workspace A doesn't see windows opened by workspace B.
-   * Missing/null entries always pass the filter — this keeps older renderers
-   * and main processes that pre-date the field working unchanged.
-   */
+  /** Workspace that owns this browser instance. Null instances are internal
+   * legacy entries and must never be mounted into a workspace renderer. */
   workspaceId?: string | null
 }
+
+export type BrowserHostDockNavigationCommand =
+  | 'focus-active-tab'
+  | 'focus-next-group'
+  | 'focus-previous-group'
+
+export interface BrowserEmbedBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export type FileTextWriteResult =
+  | { status: 'saved' }
+  | { status: 'conflict'; currentContent: string }
 
 export interface DeepLinkNavigation {
   view?: string

@@ -33,24 +33,20 @@ export const browserInstanceCountAtom = atom<number>(
  *   through the WS bridge). Read from `activeWorkspace.remoteServer.remoteWorkspaceId`.
  *
  * An instance is visible when:
- *   - its `workspaceId` is null/undefined (truly unbound, visible everywhere), OR
  *   - its `workspaceId` matches the local workspace, OR
  *   - its `workspaceId` matches the remote-mirror workspace.
- *
- * When both context IDs are null (no workspace resolved yet), returns the
- * unfiltered list — safe default.
+ * Null/legacy entries are intentionally not exposed to a workspace renderer.
  */
 export function filterInstancesForWorkspace(
   all: BrowserInstanceInfo[],
   activeWorkspaceId: string | null,
   remoteWorkspaceId: string | null,
 ): BrowserInstanceInfo[] {
-  if (!activeWorkspaceId && !remoteWorkspaceId) return all
+  if (!activeWorkspaceId && !remoteWorkspaceId) return []
   return all.filter(
     (i) =>
-      !i.workspaceId ||
-      i.workspaceId === activeWorkspaceId ||
-      i.workspaceId === remoteWorkspaceId,
+      Boolean(i.workspaceId)
+      && (i.workspaceId === activeWorkspaceId || i.workspaceId === remoteWorkspaceId),
   )
 }
 
@@ -71,6 +67,7 @@ export const activeBrowserInstanceAtom = atom<BrowserInstanceInfo | null>((get) 
 export const updateBrowserInstanceAtom = atom(
   null,
   (get, set, info: BrowserInstanceInfo) => {
+    if (!info.workspaceId) return
     const removedIds = get(removedBrowserInstanceIdsAtom)
     if (removedIds.has(info.id)) {
       return
@@ -102,6 +99,7 @@ export const setBrowserInstancesAtom = atom(
   (get, set, instances: BrowserInstanceInfo[]) => {
     const map = new Map<string, BrowserInstanceInfo>()
     for (const info of instances) {
+      if (!info.workspaceId) continue
       map.set(info.id, info)
     }
     set(browserInstancesMapAtom, map)

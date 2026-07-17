@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, OpenDialogOptions, SaveDialogOptions } from 'electron'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@craft-agent/shared/ui-validation'
 import { ElectronUiDriverError } from './electron-surface-driver'
 
 export type NativeDialogKind = 'open-file' | 'open-directory' | 'save-file'
@@ -76,9 +77,9 @@ export class ElectronNativeDialogAdapter {
     const current = this.records.get(dialogId)
     if (!current) throw new ElectronUiDriverError('TARGET_NOT_FOUND', `Unknown native dialog ${dialogId}.`)
     if (current.phase !== 'opening') return structuredClone(current)
-    const timeoutMs = options.timeoutMs ?? 15_000
-    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
-      throw new ElectronUiDriverError('INVALID_REQUEST', 'Native dialog wait timeout must be between 1 and 120000ms.')
+    const timeoutMs = options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > UI_VALIDATION_MAX_WAIT_MS) {
+      throw new ElectronUiDriverError('INVALID_REQUEST', `Native dialog wait timeout must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}ms.`)
     }
 
     return await new Promise<NativeDialogRecord>((resolveWait, rejectWait) => {

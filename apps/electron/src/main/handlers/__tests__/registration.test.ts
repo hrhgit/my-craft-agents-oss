@@ -70,6 +70,7 @@ function createMockDeps(): HandlerDeps {
       },
     },
     windowManager: {} as HandlerDeps['windowManager'],
+    layoutCoordinator: {} as NonNullable<HandlerDeps['layoutCoordinator']>,
     browserPaneManager: {
       onStateChange: () => {},
       onRemoved: () => {},
@@ -121,11 +122,12 @@ async function getExpectedChannels(): Promise<Set<string>> {
   ])
 
   // GUI handler channels (remain in electron)
-  const [browser, guiSystem, guiWorkspace, guiSettings] = await Promise.all([
+  const [browser, guiSystem, guiWorkspace, guiSettings, layout] = await Promise.all([
     import('../browser'),
     import('../system'),
     import('../workspace'),
     import('../settings'),
+    import('../layout'),
   ])
 
   return new Set([
@@ -147,6 +149,7 @@ async function getExpectedChannels(): Promise<Set<string>> {
     ...guiSystem.GUI_HANDLED_CHANNELS,
     ...guiWorkspace.GUI_HANDLED_CHANNELS,
     ...guiSettings.GUI_HANDLED_CHANNELS,
+    ...layout.LAYOUT_HANDLED_CHANNELS,
   ])
 }
 

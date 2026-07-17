@@ -1,5 +1,6 @@
 import { UiValidationError } from './errors.ts'
 import { UI_VALIDATION_APP_SHELL_SCENARIO_IDS } from './runtime.ts'
+import { UI_VALIDATION_MAX_WAIT_MS } from './timeouts.ts'
 import { UI_VALIDATION_PROTOCOL_VERSION } from './types.ts'
 
 export type UiValidationCapabilityKind = 'route' | 'scenario' | 'action'
@@ -69,7 +70,7 @@ function actionSchema(id: string, native: boolean): Record<string, unknown> {
     key: { type: 'string', minLength: 1, maxLength: 128 },
     modifiers: { type: 'array', uniqueItems: true, items: { enum: ['shift', 'control', 'alt', 'meta'] }, maxItems: 4 },
     to: objectSchema({ x: { type: 'number' }, y: { type: 'number' } }, ['x', 'y']),
-    timeoutMs: { type: 'integer', minimum: 1, maximum: 300_000 },
+    timeoutMs: { type: 'integer', minimum: 1, maximum: UI_VALIDATION_MAX_WAIT_MS },
     waitUntil: { type: 'object' },
   }, required)
 }

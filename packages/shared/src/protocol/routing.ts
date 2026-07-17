@@ -23,6 +23,7 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.workspaces.CREATE,
   RPC_CHANNELS.workspaces.CHECK_SLUG,
   RPC_CHANNELS.workspaces.UPDATE_REMOTE,
+  RPC_CHANNELS.workspaces.REMOTE_UPDATED,
 
   // window — Electron window management
   RPC_CHANNELS.window.GET_WORKSPACE,
@@ -38,6 +39,14 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.window.SET_TRAFFIC_LIGHTS,
   RPC_CHANNELS.window.FOCUS_STATE,
   RPC_CHANNELS.window.GET_FOCUS_STATE,
+
+  // layout — local main-process authority, persisted independently per workspace
+  RPC_CHANNELS.layout.GET,
+  RPC_CHANNELS.layout.SAVE,
+  RPC_CHANNELS.layout.DETACH_TAB,
+  RPC_CHANNELS.layout.DETACH_GROUP,
+  RPC_CHANNELS.layout.REDOCK_WINDOW,
+  RPC_CHANNELS.layout.CHANGED,
 
   // file — native file dialog
   RPC_CHANNELS.file.OPEN_DIALOG,
@@ -167,6 +176,9 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
 
   // browserPane — Electron BrowserView
   RPC_CHANNELS.browserPane.CREATE,
+  RPC_CHANNELS.browserPane.EMBED,
+  RPC_CHANNELS.browserPane.UPDATE_EMBED_BOUNDS,
+  RPC_CHANNELS.browserPane.DETACH,
   RPC_CHANNELS.browserPane.DESTROY,
   RPC_CHANNELS.browserPane.LIST,
   RPC_CHANNELS.browserPane.NAVIGATE,
@@ -182,10 +194,10 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.browserPane.SCREENSHOT,
   RPC_CHANNELS.browserPane.EVALUATE,
   RPC_CHANNELS.browserPane.SCROLL,
-  RPC_CHANNELS.browserPane.LAUNCH,
   RPC_CHANNELS.browserPane.STATE_CHANGED,
   RPC_CHANNELS.browserPane.REMOVED,
   RPC_CHANNELS.browserPane.INTERACTED,
+  RPC_CHANNELS.browserPane.HOST_DOCK_NAVIGATION,
 
   // gitbash — Windows-specific local
   RPC_CHANNELS.gitbash.CHECK,
@@ -241,6 +253,8 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.GET_MODEL,
   RPC_CHANNELS.sessions.SET_MODEL,
   RPC_CHANNELS.sessions.GET_FILES,
+  RPC_CHANNELS.sessions.READ_FILE,
+  RPC_CHANNELS.sessions.WRITE_FILE,
   RPC_CHANNELS.sessions.WATCH_FILES,
   RPC_CHANNELS.sessions.UNWATCH_FILES,
   RPC_CHANNELS.sessions.FILES_CHANGED,
@@ -272,6 +286,19 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   // fs — workspace filesystem
   RPC_CHANNELS.fs.SEARCH,
   RPC_CHANNELS.fs.LIST_DIRECTORY,
+  RPC_CHANNELS.fs.LIST_WORKSPACE_DIRECTORY,
+  RPC_CHANNELS.fs.SEARCH_WORKSPACE,
+  RPC_CHANNELS.fs.READ_WORKSPACE_PREVIEW,
+  RPC_CHANNELS.fs.READ_WORKSPACE_DRAFT,
+  RPC_CHANNELS.fs.SET_WORKSPACE_DRAFT,
+  RPC_CHANNELS.fs.DELETE_WORKSPACE_DRAFT,
+  RPC_CHANNELS.fs.WRITE_WORKSPACE_TEXT,
+  RPC_CHANNELS.fs.CREATE_WORKSPACE_ENTRY,
+  RPC_CHANNELS.fs.RENAME_WORKSPACE_ENTRY,
+  RPC_CHANNELS.fs.DELETE_WORKSPACE_ENTRY,
+  RPC_CHANNELS.fs.WATCH_WORKSPACE,
+  RPC_CHANNELS.fs.UNWATCH_WORKSPACE,
+  RPC_CHANNELS.fs.WORKSPACE_CHANGED,
 
   // credentials — remote server's credential state
   RPC_CHANNELS.credentials.HEALTH_CHECK,

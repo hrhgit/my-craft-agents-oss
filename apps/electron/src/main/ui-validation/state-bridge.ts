@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainEvent, type WebContents } from 'electron'
+import { BrowserWindow, ipcMain, type IpcMainEvent, type WebContents } from 'electron'
 import {
   UI_VALIDATION_STATE_SCOPES,
   UiValidationScopedStateRegistry,
@@ -10,6 +10,7 @@ import {
 } from '@craft-agent/shared/ui-validation'
 import type { UiValidationRendererStateBatch } from '../../shared/ui-validation-state-bridge'
 import { PRELOAD_LOCAL_CHANNELS } from '../../shared/ipc-channels'
+import { rendererStatesMissingFromBatch } from './renderer-state-batch'
 
 const MAX_BATCH_STATES = 2_000
 
@@ -54,7 +55,12 @@ export class ElectronUiValidationStateBridge {
     this.registry.update({
       scope: 'native-driver',
       phase,
-      detail: { platform: process.platform, adapter: process.platform === 'win32' ? 'windows-electron' : 'electron', ...detail },
+      detail: {
+        platform: process.platform,
+        adapter: process.platform === 'win32' ? 'windows-electron' : 'electron',
+        available: process.platform === 'win32',
+        ...detail,
+      },
     }, String(webContentsId))
   }
 
@@ -62,24 +68,30 @@ export class ElectronUiValidationStateBridge {
     const batch = validateBatch(payload)
     this.trackSender(event.sender)
     const windowId = String(event.sender.id)
-    const incomingSessionIds = new Set(batch.states
-      .filter(state => state.scope === 'session' && state.entityId)
-      .map(state => state.entityId!))
-    const incomingExtensionIds = new Set(batch.states
-      .filter(state => state.scope === 'extension' && state.entityId)
-      .map(state => state.entityId!))
-    for (const existing of this.snapshot(event.sender.id).states) {
-      if (existing.scope === 'session' && existing.entityId && existing.phase !== 'disposed' && !incomingSessionIds.has(existing.entityId)) {
-        this.registry.update({ scope: 'session', entityId: existing.entityId, phase: 'disposed' }, windowId)
-      }
-      if (existing.scope === 'extension' && existing.entityId && existing.phase !== 'disposed' && !incomingExtensionIds.has(existing.entityId)) {
-        this.registry.update({ scope: 'extension', entityId: existing.entityId, phase: 'disposed' }, windowId)
-      }
+    for (const existing of rendererStatesMissingFromBatch(this.snapshot(event.sender.id).states, batch.states)) {
+      this.registry.update({
+        scope: existing.scope,
+        phase: 'disposed',
+        ...(existing.entityId ? { entityId: existing.entityId } : {}),
+      }, windowId)
     }
     this.registry.updateMany(batch.states, windowId)
-    this.setNativeDriverState(event.sender.id, event.sender.isDestroyed() ? 'disposed' : 'ready', {
-      destroyed: event.sender.isDestroyed(),
-      loading: event.sender.isLoading(),
+    const existingNativeState = this.snapshot(event.sender.id).states.find(state => state.scope === 'native-driver')
+    const destroyed = event.sender.isDestroyed()
+    const rendererLoading = !destroyed && event.sender.isLoading()
+    const window = destroyed ? null : BrowserWindow.fromWebContents(event.sender)
+    const visible = window?.isVisible() === true
+    const verified = !rendererLoading && existingNativeState?.detail?.verified === true
+    const available = process.platform === 'win32'
+    const nativePhase = destroyed ? 'disposed' : !available ? 'error' : visible && verified ? 'ready' : 'loading'
+    this.setNativeDriverState(event.sender.id, nativePhase, {
+      available,
+      verified,
+      destroyed,
+      visible,
+      focused: window?.isFocused() === true,
+      minimized: window?.isMinimized() === true,
+      rendererLoading,
     })
   }
 

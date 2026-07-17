@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { navigate, routes } from '@/lib/navigate'
 import type { SessionMeta } from '@/atoms/sessions'
+import { useWorkspaceElectronApi } from '@/context/WorkspaceElectronApiContext'
 
 export interface UseSessionMenuActionsOptions {
   item: SessionMeta
@@ -40,45 +41,46 @@ export function useSessionMenuActions({
   item,
 }: UseSessionMenuActionsOptions): SessionMenuActions {
   const { t } = useTranslation()
+  const electronApi = useWorkspaceElectronApi()
   const sessionId = item.id
   const sharedUrl = item.sharedUrl
 
   const share = React.useCallback(async () => {
-    const result = await window.electronAPI.sessionCommand(sessionId, { type: 'shareToViewer' }) as { success: boolean; url?: string; error?: string } | undefined
+    const result = await electronApi.sessionCommand(sessionId, { type: 'shareToViewer' }) as { success: boolean; url?: string; error?: string } | undefined
     if (result?.success && result.url) {
       await navigator.clipboard.writeText(result.url)
       toast.success(t('toast.linkCopied'), {
         description: result.url,
         action: {
           label: t('common.open'),
-          onClick: () => window.electronAPI.openUrl(result.url!),
+          onClick: () => electronApi.openUrl(result.url!),
         },
       })
     } else {
       toast.error(t('toast.failedToShare'), { description: result?.error || t('toast.unknownError') })
     }
-  }, [sessionId, t])
+  }, [electronApi, sessionId, t])
 
   const showInFinder = React.useCallback(() => {
-    window.electronAPI.sessionCommand(sessionId, { type: 'showInFinder' })
-  }, [sessionId])
+    electronApi.sessionCommand(sessionId, { type: 'showInFinder' })
+  }, [electronApi, sessionId])
 
   const copyPath = React.useCallback(async () => {
-    const result = await window.electronAPI.sessionCommand(sessionId, { type: 'copyPath' }) as { success: boolean; path?: string } | undefined
+    const result = await electronApi.sessionCommand(sessionId, { type: 'copyPath' }) as { success: boolean; path?: string } | undefined
     if (result?.success && result.path) {
       await navigator.clipboard.writeText(result.path)
       toast.success(t('toast.pathCopied'))
     }
-  }, [sessionId, t])
+  }, [electronApi, sessionId, t])
 
   const refreshTitle = React.useCallback(async () => {
-    const result = await window.electronAPI.sessionCommand(sessionId, { type: 'refreshTitle' }) as { success: boolean; title?: string; error?: string } | undefined
+    const result = await electronApi.sessionCommand(sessionId, { type: 'refreshTitle' }) as { success: boolean; title?: string; error?: string } | undefined
     if (result?.success) {
       toast.success(t('toast.titleRefreshed'), { description: result.title })
     } else {
       toast.error(t('toast.failedToRefreshTitle'), { description: result?.error || t('toast.unknownError') })
     }
-  }, [sessionId, t])
+  }, [electronApi, sessionId, t])
 
   const openInNewPanel = React.useCallback(() => {
     navigate(routes.view.allSessions(sessionId), { newPanel: true })
@@ -86,8 +88,8 @@ export function useSessionMenuActions({
 
   const openSharedInBrowser = React.useCallback(() => {
     if (!sharedUrl) return
-    window.electronAPI.openUrl(sharedUrl)
-  }, [sharedUrl])
+    electronApi.openUrl(sharedUrl)
+  }, [electronApi, sharedUrl])
 
   const copySharedLink = React.useCallback(async () => {
     if (!sharedUrl) return
@@ -96,24 +98,24 @@ export function useSessionMenuActions({
   }, [sharedUrl, t])
 
   const updateShare = React.useCallback(async () => {
-    const result = await window.electronAPI.sessionCommand(sessionId, { type: 'updateShare' })
+    const result = await electronApi.sessionCommand(sessionId, { type: 'updateShare' })
     if (result && 'success' in result && result.success) {
       toast.success(t('chat.shareUpdated'))
     } else {
       const errorMsg = result && 'error' in result ? result.error : undefined
       toast.error(t('chat.failedToUpdateShare'), { description: errorMsg })
     }
-  }, [sessionId, t])
+  }, [electronApi, sessionId, t])
 
   const revokeShare = React.useCallback(async () => {
-    const result = await window.electronAPI.sessionCommand(sessionId, { type: 'revokeShare' })
+    const result = await electronApi.sessionCommand(sessionId, { type: 'revokeShare' })
     if (result && 'success' in result && result.success) {
       toast.success(t('chat.sharingStopped'))
     } else {
       const errorMsg = result && 'error' in result ? result.error : undefined
       toast.error(t('chat.failedToStopSharing'), { description: errorMsg })
     }
-  }, [sessionId, t])
+  }, [electronApi, sessionId, t])
 
   return {
     share,

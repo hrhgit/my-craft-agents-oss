@@ -10,7 +10,7 @@ export interface IWindowManager {
   getWorkspaceForWindow(webContentsId: number): string | null
 
   /** Move a window to a different workspace. Returns false if the window is not tracked. */
-  updateWindowWorkspace(webContentsId: number, workspaceId: string): boolean
+  updateWindowWorkspace(webContentsId: number, workspaceId: string): Promise<boolean>
 
   /** Look up a window by its webContentsId. */
   getWindowByWebContentsId(webContentsId: number): unknown | null

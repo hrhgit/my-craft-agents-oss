@@ -13,8 +13,6 @@
  * they have their own fixed/user-resizable widths managed by AppShell.
  * They just reduce the available width for content panels and scroll with everything else.
  *
- * The right sidebar stays OUTSIDE this container.
- *
  * Compact mode (mobile / narrow window):
  * The flex layout is replaced with an absolute-positioned, transform-animated
  * stack — navigator and the focused content panel both stay mounted and slide
@@ -23,12 +21,21 @@
  */
 
 import { useRef, useEffect } from 'react'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { motion } from 'motion/react'
 import { cn } from '@/lib/utils'
-import { panelStackAtom, focusedPanelIdAtom, focusedPanelRouteAtom } from '@/atoms/panel-stack'
+import {
+  compactDockViewIntentAtom,
+  focusedPanelIdAtom,
+  focusedPanelRouteAtom,
+  panelStackAtom,
+} from '@/atoms/panel-stack'
 import { parseRouteToNavigationState } from '../../../shared/route-parser'
 import { isDetailNavState } from '@/lib/nav-helpers'
+import {
+  compactDockIntentAfterRouteChange,
+  resolveCompactDockDetailActive,
+} from './compact-dock-navigation'
 import { PanelSlot } from './PanelSlot'
 import { PanelResizeSash } from './PanelResizeSash'
 import { CompactPanelTransition } from './CompactPanelTransition'
@@ -49,28 +56,32 @@ const COMPACT_PANEL_TOP_GAP = 8
 interface PanelStackContainerProps {
   sidebarSlot: React.ReactNode
   sidebarWidth: number
-  navigatorSlot: React.ReactNode
-  navigatorWidth: number
+  /** Core module navigator. Desktop session navigation omits it; compact mode keeps it. */
+  navigatorSlot?: React.ReactNode
+  navigatorWidth?: number
   isSidebarAndNavigatorHidden: boolean
-  isRightSidebarVisible?: boolean
   /** Compact mode: single-panel, list/content toggle (mobile or narrow window) */
   isCompact?: boolean
   isResizing?: boolean
+  /** Universal tab/group workspace shared by desktop and compact detail views. */
+  unifiedDockSlot: React.ReactNode
 }
 
 export function PanelStackContainer({
   sidebarSlot,
   sidebarWidth,
   navigatorSlot,
-  navigatorWidth,
+  navigatorWidth = 0,
   isSidebarAndNavigatorHidden,
-  isRightSidebarVisible,
   isCompact = false,
   isResizing,
+  unifiedDockSlot,
 }: PanelStackContainerProps) {
   const panelStack = useAtomValue(panelStackAtom)
   const focusedPanelId = useAtomValue(focusedPanelIdAtom)
   const focusedRoute = useAtomValue(focusedPanelRouteAtom)
+  const compactDockViewIntent = useAtomValue(compactDockViewIntentAtom)
+  const setCompactDockViewIntent = useSetAtom(compactDockViewIntentAtom)
 
   const contentPanels = panelStack
 
@@ -79,7 +90,18 @@ export function PanelStackContainer({
   // For sources/skills/automations: a detail entity is selected.
   const focusedNavState = focusedRoute ? parseRouteToNavigationState(focusedRoute) : null
   const isDetailFocused = isDetailNavState(focusedNavState)
-  const hasSelectedContent = isCompact && isDetailFocused
+  const hasSelectedContent = resolveCompactDockDetailActive({
+    isCompact,
+    routeHasDetail: isDetailFocused,
+    intent: compactDockViewIntent,
+  })
+
+  const previousFocusedRoute = useRef(focusedRoute)
+  useEffect(() => {
+    if (previousFocusedRoute.current === focusedRoute) return
+    previousFocusedRoute.current = focusedRoute
+    setCompactDockViewIntent(compactDockIntentAfterRouteChange(isDetailFocused))
+  }, [focusedRoute, isDetailFocused, setCompactDockViewIntent])
 
   const visiblePanels = isCompact
     ? contentPanels.filter(e => e.id === focusedPanelId).slice(0, 1)
@@ -154,20 +176,26 @@ export function PanelStackContainer({
         )}
 
         {/* Content slot — full width, slides in from the right when detail focused. */}
-        {focusedEntry && (
+        {(unifiedDockSlot || focusedEntry) && (
           <CompactPanelTransition role="detail" isDetailActive={hasSelectedContent}>
             <div className="h-full w-full flex">
-              <PanelSlot
-                key={focusedEntry.id}
-                entry={focusedEntry}
-                isOnly={true}
-                isFocusedPanel={true}
-                isSidebarAndNavigatorHidden={isSidebarAndNavigatorHidden}
-                isAtLeftEdge={isLeftEdge}
-                isAtRightEdge={!isRightSidebarVisible}
-                proportion={focusedEntry.proportion}
-                isCompact={true}
-              />
+              {unifiedDockSlot ? (
+                <div className="h-full min-w-0 flex-1 overflow-hidden">
+                  {unifiedDockSlot}
+                </div>
+              ) : focusedEntry && (
+                <PanelSlot
+                  key={focusedEntry.id}
+                  entry={focusedEntry}
+                  isOnly={true}
+                  isFocusedPanel={true}
+                  isSidebarAndNavigatorHidden={isSidebarAndNavigatorHidden}
+                  isAtLeftEdge={isLeftEdge}
+                  isAtRightEdge={true}
+                  proportion={focusedEntry.proportion}
+                  isCompact={true}
+                />
+              )}
             </div>
           </CompactPanelTransition>
         )}
@@ -219,33 +247,35 @@ export function PanelStackContainer({
         </motion.div>
 
         {/* === NAVIGATOR SLOT === */}
-        <motion.div
-          data-panel-role="navigator"
-          initial={false}
-          animate={{
-            width: hasNavigator ? navigatorWidth : 0,
-            marginRight: hasNavigator ? 0 : -PANEL_GAP,
-            opacity: hasNavigator ? 1 : 0,
-          }}
-          transition={transition}
-          className={cn(
-            'h-full overflow-hidden relative shrink-0 z-[2]',
-            'bg-background shadow-middle',
-          )}
-          style={{
-            borderTopLeftRadius: RADIUS_INNER,
-            borderBottomLeftRadius: !hasSidebar ? RADIUS_EDGE : RADIUS_INNER,
-            borderTopRightRadius: RADIUS_INNER,
-            borderBottomRightRadius: RADIUS_INNER,
-          }}
-        >
-          <div className="h-full" style={{ width: navigatorWidth }}>
-            {navigatorSlot}
-          </div>
-        </motion.div>
+        {hasNavigator && (
+          <motion.div
+            data-panel-role="navigator"
+            initial={false}
+            animate={{ width: navigatorWidth, marginRight: 0, opacity: 1 }}
+            transition={transition}
+            className={cn(
+              'h-full overflow-hidden relative shrink-0 z-[2]',
+              'bg-background shadow-middle',
+            )}
+            style={{
+              borderTopLeftRadius: RADIUS_INNER,
+              borderBottomLeftRadius: !hasSidebar ? RADIUS_EDGE : RADIUS_INNER,
+              borderTopRightRadius: RADIUS_INNER,
+              borderBottomRightRadius: RADIUS_INNER,
+            }}
+          >
+            <div className="h-full" style={{ width: navigatorWidth }}>
+              {navigatorSlot}
+            </div>
+          </motion.div>
+        )}
 
         {/* === CONTENT PANELS WITH SASHES === */}
-        {visiblePanels.length === 0 ? (
+        {unifiedDockSlot ? (
+          <div className="min-w-0 flex-1 overflow-hidden">
+            {unifiedDockSlot}
+          </div>
+        ) : visiblePanels.length === 0 ? (
           <div className="flex-1 flex items-center justify-center" />
         ) : (
           visiblePanels.map((entry, index) => (
@@ -256,7 +286,7 @@ export function PanelStackContainer({
               isFocusedPanel={isMultiPanel ? entry.id === focusedPanelId : true}
               isSidebarAndNavigatorHidden={isSidebarAndNavigatorHidden}
               isAtLeftEdge={index === 0 && isLeftEdge}
-              isAtRightEdge={index === visiblePanels.length - 1 && !isRightSidebarVisible}
+              isAtRightEdge={index === visiblePanels.length - 1}
               proportion={entry.proportion}
               isCompact={false}
               sash={index > 0 ? (

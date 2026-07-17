@@ -43,6 +43,7 @@ export function createExtensionEventForwarder(
   const legacyRevisions = new Map<string, number>()
   return (event: ExtensionBridgeEvent) => {
     if (!eventSink) return
+    const trustedSessionId = sessionId ?? event.sessionId
 
     // 临时交互的会话归属由 host 注入，不接受扩展提供的路由身份。
     if (
@@ -56,8 +57,29 @@ export function createExtensionEventForwarder(
     }
 
     if (event.type === 'extension_contribution') {
-      if (validateExtensionContributionDeltaV1(event.delta) !== null) return
-      eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, event)
+      const trustedRoute = {
+        extensionId: event.extensionId,
+        runtimeId: event.runtimeId,
+        sessionId: trustedSessionId,
+      }
+      const delta = { ...event.delta, ...trustedRoute, workspaceId }
+      if (validateExtensionContributionDeltaV1(delta) !== null) return
+      eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, {
+        type: 'extension_contribution',
+        ...trustedRoute,
+        delta,
+      })
+      return
+    }
+
+    if (event.type === 'extension_contributions_runtime_reset') {
+      eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, {
+        type: 'extension_contributions_runtime_reset',
+        extensionId: event.extensionId,
+        runtimeId: event.runtimeId,
+        sessionId: trustedSessionId,
+        workspaceId,
+      })
       return
     }
 
@@ -91,6 +113,7 @@ export function createExtensionEventForwarder(
         extensionId: legacyExtensionId,
         sessionId,
         runtimeId: event.runtimeId,
+        workspaceId,
         revision,
         ...(event.content === undefined || event.content.length === 0
           ? { operation: 'remove', contributionId: `legacy-widget:${event.key}` }

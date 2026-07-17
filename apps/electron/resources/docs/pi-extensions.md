@@ -227,6 +227,47 @@ Conversation surfaces provide the most freedom:
 | `composer.above/below` | Panels around the composer |
 | `composer.toolbar/status` | Compact actions and state |
 | `composer.replace` | Full composer replacement with built-in fallback |
+| `workspace.content` | A persistent tool or sandbox app as an ordinary tab in the workspace's universal dock |
+
+```ts
+ctx.ui.upsertContribution({
+  schemaVersion: 1,
+  id: "deployment-inspector",
+  surface: "workspace.content",
+  workspaceContent: {
+    title: "Deployments",
+    icon: "activity",
+    scope: "workspace",
+    instancePolicy: "singleton",
+    preferredGroup: "adjacent",
+  },
+  content: {
+    type: "sandbox-app",
+    appId: "deployment-inspector",
+    title: "Deployments",
+    html: '<main id="app"></main>',
+    script: 'document.querySelector("#app").textContent = "Ready";',
+    permissions: ["theme", "storage", "commands", "validation"],
+    minHeight: 240,
+    maxHeight: 1600,
+    preferredHeight: 720,
+  },
+});
+```
+
+`workspaceContent` is required on `workspace.content` so Craft can create and restore a stable host-owned tab:
+
+| Field | Meaning |
+|-------|---------|
+| `title` | Required tab label, up to 256 characters |
+| `icon` | Required host icon from the contribution icon set |
+| `scope` | `session` (default), `workspace`, or `global` |
+| `instancePolicy` | `singleton` (default) deduplicates matching extension/contribution IDs; `multiple` keeps each publishing runtime as a separate tab |
+| `preferredGroup` | Initial placement intent: `active` (default) opens in the current group; `adjacent` creates a neighboring group when first opened |
+
+`preferredGroup` is not a persistent direction or position. Once opened, the tab follows the user's move, split, group, detach, and saved-layout choices. The host injects trusted workspace identity; extensions cannot route workspace content into another workspace. Scope controls tab visibility and deduplication, not runtime lifetime: removing, resetting, reloading, or terminating the publishing runtime still removes its contribution. Craft invokes commands through the runtime that published the selected tab.
+
+`workbench.right` is not a compatibility alias. Craft rejects it as an unsupported surface; publish `workspace.content` instead.
 
 Shell surfaces are more constrained:
 
@@ -391,6 +432,7 @@ Optional contribution fields:
 | `collapse` | `never`, `auto`, or `always` |
 | `overflow` | `menu`, `collapse`, or `hide` |
 | `exclusive` | Requests the only visible slot; Craft chooses one winner |
+| `workspaceContent` | Required metadata for `workspace.content`; rejected on other surfaces |
 
 Craft sorts by host policy, priority, order, extension ID, and contribution ID. Typical capacities are:
 
@@ -400,9 +442,10 @@ Craft sorts by host policy, priority, order, extension ID, and contribution ID. 
 | Composer toolbar or status | 4 |
 | Window top-left or top-right | 2 |
 | Sidebar sections | 5 |
+| Workspace content | 4 admitted sandbox apps per renderer; host-rendered content is not subject to the sandbox budget |
 | Replace surfaces | 1 |
 
-Extra contributions enter host-owned overflow. A surface runs at most four visible sandbox apps at once.
+Extra contributions enter host-owned overflow. A shared surface runs at most four visible sandbox apps at once. `workspace.content` uses the same renderer-wide sandbox admission budget even when several dock groups are visible; excess sandbox apps remain unmounted.
 
 Compact surfaces (`composer.toolbar`, `composer.status`, `navigation.item`, `session.badge`, `window.topLeft`, `window.topRight`) accept only text, icon, badge, button, and shallow rows. They reject Markdown, stacks, dividers, sandbox apps, deep trees, and long text.
 
@@ -723,6 +766,24 @@ Sandbox UI Apps must provide equivalent semantics through the sandbox bridge. Do
 
 Validation support must degrade safely: production packages and hosts without the development validation capability ignore validation declarations, while the extension's normal GUI and non-GUI behavior continue to work.
 
+### Verification Levels
+
+The validation definition's `verificationLevel` describes the strongest kind of evidence the contribution needs. It is distinct from the result reported by a test run:
+
+| Evidence | What it proves | Result label |
+|----------|----------------|--------------|
+| Scenario | A declared extension command or typed scenario reached a production-valid state and published its semantic contract. | `scenario-verified` |
+| Renderer | A real host-rendered or sandbox control was found and used in the production renderer. | `renderer-verified` |
+| Native | The operating system's native accessibility/input adapter operated the Craft window, menu, or dialog. | `native-verified` |
+
+Use `verificationLevel: "semantic"` when command-backed semantic evidence is sufficient. Use `"physical"` when the contribution also needs renderer interaction evidence. Native verification is an additional host/platform capability, not a value extension authors declare. When a platform has no native adapter, the only correct native result is `UNSUPPORTED`.
+
+### Compatibility and Authority
+
+Craft-specific authoring rules in this guide take precedence for Craft surfaces, sandboxing, reload, and validation. Pi's extension guide is the authority for the underlying extension lifecycle and `ctx.ui` API.
+
+Always capability-check `ctx.ui.capabilities.contributions` and `ctx.ui.validation.available`. Do not pin behavior to a Craft version, an Electron/WebUI check, `ctx.hasUI`, or an environment variable: linked Pi SDKs and hosts may be older and must receive a safe no-op path.
+
 ## Testing
 
 Before publishing a Craft GUI extension, verify:
@@ -780,10 +841,12 @@ TUI component factories never cross the Pi RPC boundary.
 | Quick Start above | Craft-target package manifest and update lifecycle | `targets`, `session_start`, `session_shutdown` |
 | Sandbox example above | Self-contained interactive iframe | `sandbox-app`, `craft.storage`, `craft.resize` |
 | Manifest settings above | Generic settings UI | `ui.settings`, `SettingsManager` |
+| [Pi `craft-gui.ts` example](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/craft-gui.ts) | Complete contribution, validation contract, scenario teardown, and sandbox bridge | `ctx.ui.validation`, `upsertContribution` |
 
 ## See Also
 
 - [Pi extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md) for the complete Pi extension lifecycle and API.
+- [Pi host-mediated UI validation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md#host-mediated-ui-validation) for the SDK-level validation contract.
 - [Pi Extension GUI Architecture](../../../../docs/architecture/pi-extension-gui.md) for protocol, layout, isolation, and migration rationale.
 - [Themes](./themes.md) for TUI and GUI theme boundaries.
 - [Skills](./skills.md) for Craft workspace skills, which are separate from Pi extensions.

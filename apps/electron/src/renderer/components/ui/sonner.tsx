@@ -1,5 +1,6 @@
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { useTheme } from "@/context/ThemeContext"
+import { getToasterLayoutProps } from "./sonner-layout"
 
 // Empty fragment to hide all toast icons
 const NoIcon = () => <></>
@@ -10,7 +11,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme={resolvedMode as ToasterProps["theme"]}
-      position="top-right"
+      {...getToasterLayoutProps()}
       closeButton
       richColors={false}
       swipeDirections={["right"]}

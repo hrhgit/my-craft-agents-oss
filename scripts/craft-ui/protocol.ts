@@ -3,11 +3,13 @@ import {
   type UiValidationRequestEnvelope,
   type UiValidationResponseEnvelope,
 } from '@craft-agent/shared/ui-validation'
+import type { CraftUiFixtureSummary } from './fixture.ts'
 
 export const CRAFT_UI_PROTOCOL_VERSION = UI_VALIDATION_PROTOCOL_VERSION
 
 export type CraftUiSurface = 'electron' | 'webui'
-export type CraftUiProfileMode = 'isolated' | 'clone'
+export type CraftUiProfileMode = 'fixture' | 'isolated' | 'clone'
+export type CraftUiWindowMode = 'foreground' | 'background'
 
 export interface CraftUiEndpointManifest {
   protocolVersion: typeof CRAFT_UI_PROTOCOL_VERSION
@@ -30,6 +32,7 @@ export interface CraftUiRunManifest {
   launcherPid?: number
   hostPid?: number
   profileMode: CraftUiProfileMode
+  windowMode: CraftUiWindowMode
   containsClonedUserData: boolean
   runDir: string
   profileDir: string
@@ -46,6 +49,7 @@ export interface CraftUiRunManifest {
   profileCleanedAt?: string
   cleanupError?: string
   initialScenario?: { name: string; seed?: number }
+  fixture?: CraftUiFixtureSummary
 }
 
 export type CraftUiRequest = UiValidationRequestEnvelope
@@ -78,6 +82,7 @@ export interface CraftUiHostAdapterEnvironment {
   CRAFT_UI_TOKEN: string
   CRAFT_UI_PROTOCOL_VERSION: string
   CRAFT_UI_ELECTRON_USER_DATA_DIR: string
+  CRAFT_UI_WINDOW_MODE: CraftUiWindowMode
 }
 
 export interface CraftUiSurfaceDriver {

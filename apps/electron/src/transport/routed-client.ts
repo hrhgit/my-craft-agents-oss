@@ -14,6 +14,8 @@ import type { WsRpcClient, TransportConnectionState } from '@craft-agent/server-
 import type { RpcClient } from '@craft-agent/server-core/transport'
 import type { RemoteServerConfig } from '@craft-agent/core/types'
 import { isLocalOnly, RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import type { WorkspaceRoute } from '../shared/app-layout'
+import { WorkspaceRuntimeRegistry, type WorkspaceRuntimeRegistration } from './workspace-runtime-registry'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,6 +34,7 @@ export interface WorkspaceSwitchResult {
 
 /** Factory to create a new WsRpcClient for a remote workspace. */
 export type WorkspaceClientFactory = (remoteServer: RemoteServerConfig) => WsRpcClient
+export type WorkspaceSwitchHandler = (result: WorkspaceSwitchResult) => void | Promise<void>
 
 export interface RoutedClientOptions {
   localWorkspaceClient?: WsRpcClient
@@ -42,6 +45,7 @@ export interface RoutedClientOptions {
 // ---------------------------------------------------------------------------
 
 export class RoutedClient implements RpcClient {
+  private readonly workspaceRuntimes = new WorkspaceRuntimeRegistry()
   private workspaceClient: WsRpcClient
 
   /** REMOTE_ELIGIBLE listener registry — survives workspace switches. */
@@ -56,6 +60,7 @@ export class RoutedClient implements RpcClient {
 
   /** Factory for creating remote workspace clients on switch. */
   private clientFactory: WorkspaceClientFactory | null = null
+  private workspaceSwitchHandler: WorkspaceSwitchHandler | null = null
 
   /** Client used for local workspace-owned channels; may be a child-process server. */
   private readonly localWorkspaceClient: WsRpcClient
@@ -80,6 +85,52 @@ export class RoutedClient implements RpcClient {
   /** Set factory for creating remote workspace clients. */
   setClientFactory(factory: WorkspaceClientFactory): void {
     this.clientFactory = factory
+  }
+
+  setWorkspaceSwitchHandler(handler: WorkspaceSwitchHandler): void {
+    this.workspaceSwitchHandler = handler
+  }
+
+  /** Register a long-lived runtime used by explicitly routed content tabs. */
+  registerWorkspaceRuntime(registration: WorkspaceRuntimeRegistration): () => void {
+    this.registerCapabilitiesOnWorkspaceRuntime(registration)
+    return this.workspaceRuntimes.register(registration)
+  }
+
+  replaceWorkspaceRuntime(registration: WorkspaceRuntimeRegistration): () => void {
+    this.registerCapabilitiesOnWorkspaceRuntime(registration)
+    return this.workspaceRuntimes.replace(registration)
+  }
+
+  moveWorkspaceRuntime(fromRoute: WorkspaceRoute, registration: WorkspaceRuntimeRegistration): () => void {
+    this.registerCapabilitiesOnWorkspaceRuntime(registration)
+    return this.workspaceRuntimes.move(fromRoute, registration)
+  }
+
+  removeWorkspaceRuntimes(workspaceId: string, exceptRoute?: WorkspaceRoute): void {
+    this.workspaceRuntimes.removeWorkspace(workspaceId, exceptRoute)
+  }
+
+  getRegisteredWorkspaceRoutes(): WorkspaceRoute[] {
+    return this.workspaceRuntimes.getRegisteredRoutes()
+  }
+
+  /** Invoke against a tab's trusted route without changing the active navigation workspace. */
+  invokeForWorkspace(route: WorkspaceRoute, channel: string, ...args: unknown[]): Promise<unknown> {
+    return this.workspaceRuntimes.invoke(route, channel, ...args)
+  }
+
+  /** Subscribe to one workspace runtime without rebinding other tab subscriptions. */
+  onForWorkspace(route: WorkspaceRoute, channel: string, callback: (...args: any[]) => void): () => void {
+    return this.workspaceRuntimes.on(route, channel, callback)
+  }
+
+  isChannelAvailableForWorkspace(route: WorkspaceRoute, channel: string): boolean {
+    return this.workspaceRuntimes.isChannelAvailable(route, channel)
+  }
+
+  hasWorkspaceRuntime(route: WorkspaceRoute): boolean {
+    return this.workspaceRuntimes.has(route)
   }
 
   /**
@@ -207,10 +258,16 @@ export class RoutedClient implements RpcClient {
     if (!result) return
 
     if (result.remoteServer && this.clientFactory) {
-      // Remote workspace — set up ID mapping and create + connect new client
-      this.setWorkspaceMapping(result.workspaceId, result.remoteServer.remoteWorkspaceId)
+      // Do not commit the new ID mapping until the replacement transport has
+      // connected. A synchronous failure must leave the old workspace intact.
       const newClient = this.clientFactory(result.remoteServer)
-      newClient.connect()
+      try {
+        newClient.connect()
+      } catch (error) {
+        try { newClient.destroy() } catch { /* preserve the connection error */ }
+        throw error
+      }
+      this.setWorkspaceMapping(result.workspaceId, result.remoteServer.remoteWorkspaceId)
       this.swapWorkspaceClient(newClient)
     } else if (!result.remoteServer) {
       // SWITCH_WORKSPACE is LOCAL_ONLY, so the first invocation above updates
@@ -231,6 +288,8 @@ export class RoutedClient implements RpcClient {
         this.swapWorkspaceClient(this.localWorkspaceClient)
       }
     }
+
+    await this.workspaceSwitchHandler?.(result)
   }
 
   private swapWorkspaceClient(newClient: WsRpcClient): void {
@@ -287,5 +346,11 @@ export class RoutedClient implements RpcClient {
         try { cb(snapshot) } catch { /* listener errors must not break transport */ }
       }
     })
+  }
+
+  private registerCapabilitiesOnWorkspaceRuntime(registration: WorkspaceRuntimeRegistration): void {
+    for (const [channel, handler] of this.capabilities) {
+      registration.client.handleCapability(channel, handler)
+    }
   }
 }

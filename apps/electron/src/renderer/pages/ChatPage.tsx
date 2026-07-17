@@ -29,6 +29,7 @@ import { ensureSessionMessagesLoadedAtom, sessionMetaMapAtom } from '@/atoms/ses
 import { piProjectionAtomFamily } from '@/atoms/pi-projection'
 import { getSessionTitle } from '@/utils/session'
 import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
+import { useWorkspaceElectronApi, useWorkspaceRoute } from '@/context/WorkspaceElectronApiContext'
 
 export interface ChatPageProps {
   sessionId: string
@@ -36,6 +37,8 @@ export interface ChatPageProps {
 
 const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const { t } = useTranslation()
+  const electronApi = useWorkspaceElectronApi()
+  const workspaceRoute = useWorkspaceRoute()
   // 监听 yourself / repo-memory 扩展的 extension_notify 完成通知并显示 toast
   useExtensionStatus(sessionId)
   // Diagnostic: mark when component runs
@@ -66,7 +69,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onSessionSourcesChange,
     onRenameSession,
     onDeleteSession,
-    rightSidebarButton,
+    panelHeaderTrailingAction,
     leadingAction,
     isCompactMode,
     sessionListSearchQuery,
@@ -98,7 +101,14 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   React.useEffect(() => {
     let cancelled = false
 
-    ensureMessagesLoaded(sessionId)
+    const request = workspaceRoute
+      ? {
+          sessionId,
+          api: electronApi,
+          cacheKey: `${workspaceRoute.serverId}::${workspaceRoute.workspaceId}::${sessionId}`,
+        }
+      : sessionId
+    ensureMessagesLoaded(request)
       .then((loadedSession) => {
         if (!cancelled && !loadedSession) {
           console.warn(`[ChatPage] Session overlay is not available for ${sessionId}`)
@@ -113,7 +123,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     return () => {
       cancelled = true
     }
-  }, [sessionId, ensureMessagesLoaded])
+  }, [electronApi, ensureMessagesLoaded, sessionId, workspaceRoute])
 
   const messageLoadState = React.useMemo(() => deriveSessionMessagesLoadState({
     session,
@@ -134,10 +144,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   // Track window focus state for marking session as read when app regains focus
   const [isWindowFocused, setIsWindowFocused] = React.useState(true)
   React.useEffect(() => {
-    window.electronAPI.getWindowFocusState().then(setIsWindowFocused)
-    const cleanup = window.electronAPI.onWindowFocusChange(setIsWindowFocused)
+    electronApi.getWindowFocusState().then(setIsWindowFocused)
+    const cleanup = electronApi.onWindowFocusChange(setIsWindowFocused)
     return cleanup
-  }, [])
+  }, [electronApi])
 
   // Track which session user is viewing (for unread state machine).
   // This tells main process user is looking at this session, so:
@@ -231,17 +241,17 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   // Session model change handler - persists the provider/model pair directly.
   const handleModelChange = React.useCallback((model: string, provider?: string) => {
     if (activeWorkspaceId) {
-      window.electronAPI.setSessionModel(sessionId, activeWorkspaceId, model, provider)
+      electronApi.setSessionModel(sessionId, activeWorkspaceId, model, provider)
     }
-  }, [sessionId, activeWorkspaceId])
+  }, [sessionId, activeWorkspaceId, electronApi])
 
   const handleProviderChange = React.useCallback(async (provider: string) => {
     try {
-      await window.electronAPI.sessionCommand(sessionId, { type: 'setProvider', provider })
+      await electronApi.sessionCommand(sessionId, { type: 'setProvider', provider })
     } catch (error) {
       console.error('Failed to change provider:', error)
     }
-  }, [sessionId])
+  }, [sessionId, electronApi])
 
   const providerUnavailable = React.useMemo(() =>
     !!session?.provider && !piProviders.some(entry => entry.key === session.provider),
@@ -288,7 +298,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
           const parentDir = resolved.slice(0, lastSlash)
           const fileName = resolved.slice(lastSlash + 1)
           try {
-            const matches = await window.electronAPI.searchFiles(parentDir, fileName)
+            const matches = await electronApi.searchFiles(parentDir, fileName)
             const files = matches.filter((m) => m.type === 'file' && m.name === fileName)
             const exact = files.find((m) => m.path === resolved)
             if (exact) {
@@ -309,7 +319,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
       onOpenFile(resolved)
     },
-    [onOpenFile, activeWorkspace?.rootPath, workingDirectory]
+    [onOpenFile, activeWorkspace?.rootPath, workingDirectory, electronApi, t]
   )
 
   const handleOpenUrl = React.useCallback(
@@ -381,54 +391,54 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     const separator = route.includes('?') ? '&' : '?'
     const url = `craftagents://${route}${separator}window=focused`
     try {
-      await window.electronAPI?.openUrl(url)
+      await electronApi.openUrl(url)
     } catch (error) {
       console.error('[ChatPage] openUrl failed:', error)
     }
-  }, [sessionId])
+  }, [sessionId, electronApi])
 
   // Share action handlers
   const handleShare = React.useCallback(async () => {
-    const result = await window.electronAPI.sessionCommand(sessionId, { type: 'shareToViewer' }) as { success: boolean; url?: string; error?: string } | undefined
+    const result = await electronApi.sessionCommand(sessionId, { type: 'shareToViewer' }) as { success: boolean; url?: string; error?: string } | undefined
     if (result?.success && result.url) {
       await navigator.clipboard.writeText(result.url)
       toast.success(t('toast.linkCopied'), {
         description: result.url,
-        action: { label: t('sendToWorkspace.open'), onClick: () => window.electronAPI.openUrl(result.url!) },
+        action: { label: t('sendToWorkspace.open'), onClick: () => electronApi.openUrl(result.url!) },
       })
     } else {
       toast.error(t('toast.failedToShare'), { description: result?.error || t('toast.unknownError') })
     }
-  }, [sessionId])
+  }, [sessionId, electronApi, t])
 
   const handleOpenInBrowser = React.useCallback(() => {
-    if (sharedUrl) window.electronAPI.openUrl(sharedUrl)
-  }, [sharedUrl])
+    if (sharedUrl) electronApi.openUrl(sharedUrl)
+  }, [sharedUrl, electronApi])
 
   const handleCopyLink = React.useCallback(async () => {
     if (sharedUrl) {
       await navigator.clipboard.writeText(sharedUrl)
       toast.success(t('toast.linkCopied'))
     }
-  }, [sharedUrl])
+  }, [sharedUrl, t])
 
   const handleUpdateShare = React.useCallback(async () => {
-    const result = await window.electronAPI.sessionCommand(sessionId, { type: 'updateShare' }) as { success: boolean; error?: string } | undefined
+    const result = await electronApi.sessionCommand(sessionId, { type: 'updateShare' }) as { success: boolean; error?: string } | undefined
     if (result?.success) {
       toast.success(t('chat.shareUpdated'))
     } else {
       toast.error(t('chat.failedToUpdateShare'), { description: result?.error })
     }
-  }, [sessionId])
+  }, [sessionId, electronApi, t])
 
   const handleRevokeShare = React.useCallback(async () => {
-    const result = await window.electronAPI.sessionCommand(sessionId, { type: 'revokeShare' }) as { success: boolean; error?: string } | undefined
+    const result = await electronApi.sessionCommand(sessionId, { type: 'revokeShare' }) as { success: boolean; error?: string } | undefined
     if (result?.success) {
       toast.success(t('chat.sharingStopped'))
     } else {
       toast.error(t('chat.failedToStopSharing'), { description: result?.error })
     }
-  }, [sessionId])
+  }, [sessionId, electronApi, t])
 
   // Share button with dropdown menu rendered in PanelHeader actions slot
   const shareButton = React.useMemo(() => (
@@ -468,7 +478,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               <span className="flex-1">{t('sessionMenu.stopSharing')}</span>
             </StyledDropdownMenuItem>
             <StyledDropdownMenuSeparator />
-            <StyledDropdownMenuItem onClick={() => window.electronAPI.openUrl('https://agents.craft.do/docs/go-further/sharing')}>
+            <StyledDropdownMenuItem onClick={() => electronApi.openUrl('https://agents.craft.do/docs/go-further/sharing')}>
               <Info className="h-3.5 w-3.5" />
               <span className="flex-1">{t('chat.learnMore')}</span>
             </StyledDropdownMenuItem>
@@ -482,7 +492,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               <span className="flex-1">{t('chat.shareOnline')}</span>
             </StyledDropdownMenuItem>
             <StyledDropdownMenuSeparator />
-            <StyledDropdownMenuItem onClick={() => window.electronAPI.openUrl('https://agents.craft.do/docs/go-further/sharing')}>
+            <StyledDropdownMenuItem onClick={() => electronApi.openUrl('https://agents.craft.do/docs/go-further/sharing')}>
               <Info className="h-3.5 w-3.5" />
               <span className="flex-1">{t('chat.learnMore')}</span>
             </StyledDropdownMenuItem>
@@ -490,7 +500,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         )}
       </StyledDropdownMenuContent>
     </DropdownMenu>
-  ), [sharedUrl, handleShare, handleOpenInBrowser, handleCopyLink, handleUpdateShare, handleRevokeShare])
+  ), [sharedUrl, handleShare, handleOpenInBrowser, handleCopyLink, handleUpdateShare, handleRevokeShare, electronApi, t])
 
   const compactInfoButton = React.useMemo(() => {
     if (!isCompactMode || !sessionMeta) return undefined
@@ -508,7 +518,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         )}
       />
     )
-  }, [isCompactMode, sessionId, session?.sessionFolderPath, sessionMeta])
+  }, [isCompactMode, sessionId, session?.sessionFolderPath, sessionMeta, t])
 
   const headerActions = isCompactMode ? compactInfoButton : shareButton
 
@@ -574,7 +584,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       return (
         <>
           <div className="h-full flex flex-col" data-e2e-chat-session-id={sessionId}>
-            <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isTitleBusy={isAsyncOperationOngoing} />
+            <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} trailingAction={panelHeaderTrailingAction} isTitleBusy={isAsyncOperationOngoing} />
             <div className="flex-1 flex flex-col min-h-0">
               <ChatDisplay
                 ref={chatDisplayRef}
@@ -631,7 +641,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     // Session truly doesn't exist
     return (
       <div className="h-full flex flex-col" data-e2e-chat-session-id={sessionId}>
-        <PanelHeader  title={t('chat.session')} leadingAction={leadingAction} rightSidebarButton={rightSidebarButton} />
+        <PanelHeader  title={t('chat.session')} leadingAction={leadingAction} trailingAction={panelHeaderTrailingAction} />
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
           <AlertCircle className="h-10 w-10" />
           <p className="text-sm">{t('chat.sessionNoLongerExists')}</p>
@@ -643,7 +653,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   return (
     <>
       <div className="h-full flex flex-col" data-e2e-chat-session-id={sessionId}>
-        <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isTitleBusy={isAsyncOperationOngoing} />
+        <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} trailingAction={panelHeaderTrailingAction} isTitleBusy={isAsyncOperationOngoing} />
         <div className="flex-1 flex flex-col min-h-0">
           <ChatDisplay
             ref={chatDisplayRef}

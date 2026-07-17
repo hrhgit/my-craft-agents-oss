@@ -42,6 +42,7 @@ function createMockWebContents(sendCommandImpl?: (method: string, params?: any) 
     },
     getURL: mock(() => 'https://example.com'),
     getTitle: mock(() => 'Example Page'),
+    selectAll: mock(() => {}),
     _debuggerListeners: listeners,
     _triggerDetach: () => {
       for (const cb of listeners['detach'] || []) cb()
@@ -354,10 +355,12 @@ describe('BrowserCDP', () => {
   })
 
   describe('fillElement', () => {
-    it('focuses, clears, and types characters', async () => {
+    it('focuses, clears, and inserts a multiline replacement atomically', async () => {
       const sentCommands: string[] = []
-      const wc = createMockWebContents(async (method) => {
+      const insertedValues: string[] = []
+      const wc = createMockWebContents(async (method, params) => {
         sentCommands.push(method)
+        if (method === 'Input.insertText') insertedValues.push(params?.text)
         if (method === 'Accessibility.getFullAXTree') {
           return {
             nodes: [
@@ -377,13 +380,14 @@ describe('BrowserCDP', () => {
       const cdp = new BrowserCDP(wc as any)
       await cdp.getAccessibilitySnapshot()
 
-      await cdp.fillElement('@e1', 'ab')
+      await cdp.fillElement('@e1', 'a\nb')
 
       expect(sentCommands).toContain('DOM.focus')
       expect(sentCommands).not.toContain('Runtime.callFunctionOn')
-      // Select-all, Backspace, then two characters: four keyDown/keyUp pairs.
+      expect(wc.selectAll).toHaveBeenCalledTimes(1)
       const keyEvents = sentCommands.filter(c => c === 'Input.dispatchKeyEvent')
-      expect(keyEvents.length).toBe(8)
+      expect(keyEvents.length).toBe(0)
+      expect(insertedValues).toEqual(['a\nb'])
     })
   })
 

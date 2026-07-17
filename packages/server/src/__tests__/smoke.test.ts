@@ -9,6 +9,8 @@
  */
 
 import { describe, it, expect, afterEach } from 'bun:test'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Subprocess } from 'bun'
 import WebSocket from 'ws'
@@ -21,6 +23,7 @@ interface SpawnedServer {
   url: string
   token: string
   healthPort: number
+  endpointFile: string
   proc: Subprocess
   stop: () => Promise<void>
 }
@@ -28,6 +31,7 @@ interface SpawnedServer {
 async function spawnTestServer(extraEnv?: Record<string, string>): Promise<SpawnedServer> {
   const token = crypto.randomUUID() + crypto.randomUUID() // 72 chars, well above 16 minimum
   const { CLAUDECODE: _, ...parentEnv } = process.env
+  const configDir = mkdtempSync(join(tmpdir(), 'craft-server-smoke-'))
 
   const proc = Bun.spawn(['bun', 'run', SERVER_ENTRY], {
     env: {
@@ -37,6 +41,7 @@ async function spawnTestServer(extraEnv?: Record<string, string>): Promise<Spawn
       CRAFT_RPC_PORT: '0',
       CRAFT_RPC_HOST: '127.0.0.1',
       CRAFT_HEALTH_PORT: '0', // random port
+      CRAFT_CONFIG_DIR: configDir,
     },
     stdout: 'pipe',
     stderr: 'pipe',
@@ -45,6 +50,7 @@ async function spawnTestServer(extraEnv?: Record<string, string>): Promise<Spawn
   return new Promise<SpawnedServer>((resolve, reject) => {
     const timer = setTimeout(() => {
       proc.kill()
+      rmSync(configDir, { recursive: true, force: true })
       reject(new Error(`Server did not start within ${STARTUP_TIMEOUT}ms`))
     }, STARTUP_TIMEOUT)
 
@@ -64,10 +70,15 @@ async function spawnTestServer(extraEnv?: Record<string, string>): Promise<Spawn
             url,
             token,
             healthPort: 0, // health port not printed; we skip health test if 0
+            endpointFile: join(configDir, '.server-endpoint.json'),
             proc,
             stop: async () => {
-              proc.kill('SIGTERM')
-              await proc.exited
+              try {
+                proc.kill('SIGTERM')
+                await proc.exited
+              } finally {
+                rmSync(configDir, { recursive: true, force: true })
+              }
             },
           })
           return
@@ -90,6 +101,7 @@ async function spawnTestServer(extraEnv?: Record<string, string>): Promise<Spawn
       }
       clearTimeout(timer)
       if (!url) {
+        rmSync(configDir, { recursive: true, force: true })
         reject(new Error('Server exited before printing CRAFT_SERVER_URL'))
       }
     })()
@@ -136,6 +148,10 @@ describe('headless server smoke test', () => {
 
   it('accepts valid token handshake', async () => {
     server = await spawnTestServer()
+    const endpoint = JSON.parse(readFileSync(server.endpointFile, 'utf8'))
+    expect(endpoint.url).toBe(server.url)
+    expect(endpoint.pid).toBe(server.proc.pid)
+    expect(JSON.stringify(endpoint)).not.toContain(server.token)
     const ws = await connectWs(server.url, server.token)
     expect(ws.readyState).toBe(WebSocket.OPEN)
     ws.close()
@@ -151,19 +167,25 @@ describe('headless server smoke test', () => {
   it('rejects short token at startup', async () => {
     const token = 'short'
     const { CLAUDECODE: _, ...parentEnv } = process.env
+    const configDir = mkdtempSync(join(tmpdir(), 'craft-server-smoke-'))
     const proc = Bun.spawn(['bun', 'run', SERVER_ENTRY], {
       env: {
         ...parentEnv,
         CRAFT_SERVER_TOKEN: token,
         CRAFT_RPC_PORT: '0',
         CRAFT_RPC_HOST: '127.0.0.1',
+        CRAFT_CONFIG_DIR: configDir,
       },
       stdout: 'pipe',
       stderr: 'pipe',
     })
 
-    const exitCode = await proc.exited
-    expect(exitCode).not.toBe(0)
+    try {
+      const exitCode = await proc.exited
+      expect(exitCode).not.toBe(0)
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
   }, TEST_TIMEOUT)
 
   it('shuts down cleanly on SIGTERM', async () => {
@@ -174,9 +196,12 @@ describe('headless server smoke test', () => {
     expect(ws.readyState).toBe(WebSocket.OPEN)
 
     // Send SIGTERM
-    server.proc.kill('SIGTERM')
-    const exitCode = await server.proc.exited
-    expect(exitCode).toBe(0)
+    const proc = server.proc
+    await server.stop()
+    const exitCode = await proc.exited
+    // Bun on Windows reports 128 + SIGTERM even when the child received the
+    // requested termination; Unix runtimes allow the shutdown handler to exit 0.
+    expect(process.platform === 'win32' ? [0, 143] : [0]).toContain(exitCode)
 
     // Mark as stopped so afterEach doesn't double-kill
     server = null

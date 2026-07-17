@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 interface FadingTextProps {
   children: React.ReactNode
   className?: string
+  title?: string
   /** Width of the fade gradient in pixels (default: 24) */
   fadeWidth?: number
 }
@@ -19,9 +20,10 @@ interface FadingTextProps {
  * <FadingText>Long text that might overflow</FadingText>
  * <FadingText fadeWidth={36}>Custom fade width</FadingText>
  */
-export function FadingText({ children, className, fadeWidth = 24 }: FadingTextProps) {
+export function FadingText({ children, className, title, fadeWidth = 24 }: FadingTextProps) {
   const ref = useRef<HTMLSpanElement>(null)
   const [isOverflowing, setIsOverflowing] = useState(false)
+  const fadeMask = `linear-gradient(to right, black calc(100% - ${fadeWidth}px), transparent)`
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -36,9 +38,11 @@ export function FadingText({ children, className, fadeWidth = 24 }: FadingTextPr
   return (
     <span
       ref={ref}
+      title={title}
       className={cn("overflow-hidden whitespace-nowrap min-w-0", className)}
       style={isOverflowing ? {
-        maskImage: `linear-gradient(to right, black calc(100% - ${fadeWidth}px), transparent)`
+        maskImage: fadeMask,
+        WebkitMaskImage: fadeMask,
       } : undefined}
     >
       {children}

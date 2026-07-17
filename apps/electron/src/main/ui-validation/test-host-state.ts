@@ -1,4 +1,6 @@
 import {
+  UI_VALIDATION_DEFAULT_TIMEOUT_MS,
+  UI_VALIDATION_MAX_WAIT_MS,
   UI_VALIDATION_STATE_SCOPES,
   type UiValidationAppPhase,
   type UiValidationScopedState,
@@ -6,6 +8,9 @@ import {
 } from '@craft-agent/shared/ui-validation'
 
 const PHASES: readonly UiValidationAppPhase[] = ['booting', 'loading', 'ready', 'busy', 'error', 'disposed']
+
+export const UI_TEST_HOST_DEFAULT_WAIT_MS = UI_VALIDATION_DEFAULT_TIMEOUT_MS
+export const UI_TEST_HOST_MAX_WAIT_MS = UI_VALIDATION_MAX_WAIT_MS
 
 export type ParsedStateCondition =
   | { kind: 'state'; predicate: UiValidationScopedWait }

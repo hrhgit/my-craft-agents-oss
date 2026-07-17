@@ -5,13 +5,20 @@ export interface RegisteredExtensionContribution {
   extensionId: string
   sessionId: string
   runtimeId: string
+  workspaceId?: string
   revision: number
   contribution: ExtensionContributionV1
 }
 
-const routeKey = (delta: ExtensionContributionDeltaV1) => `${delta.sessionId}\0${delta.runtimeId}\0${delta.extensionId}`
-const itemKey = (item: Pick<RegisteredExtensionContribution, 'sessionId' | 'runtimeId' | 'extensionId'>, id: string) =>
-  `${item.sessionId}\0${item.runtimeId}\0${item.extensionId}\0${id}`
+const workspaceKey = (workspaceId?: string) => workspaceId ?? ''
+const routeKey = (delta: ExtensionContributionDeltaV1) =>
+  `${workspaceKey(delta.workspaceId)}\0${delta.sessionId}\0${delta.runtimeId}\0${delta.extensionId}`
+const routePrefix = (item: Pick<RegisteredExtensionContribution, 'workspaceId' | 'sessionId' | 'runtimeId' | 'extensionId'>) =>
+  `${workspaceKey(item.workspaceId)}\0${item.sessionId}\0${item.runtimeId}\0${item.extensionId}\0`
+const itemKey = (
+  item: Pick<RegisteredExtensionContribution, 'workspaceId' | 'sessionId' | 'runtimeId' | 'extensionId'>,
+  id: string,
+) => `${routePrefix(item)}${id}`
 
 export class ContributionStore {
   private readonly items = new Map<string, RegisteredExtensionContribution>()
@@ -25,10 +32,10 @@ export class ContributionStore {
     if (delta.revision <= (this.revisions.get(route) ?? 0)) return false
     this.revisions.set(route, delta.revision)
     if (delta.operation === 'snapshot') {
-      const prefix = `${delta.sessionId}\0${delta.runtimeId}\0${delta.extensionId}\0`
+      const prefix = routePrefix(delta)
       for (const key of this.items.keys()) if (key.startsWith(prefix)) this.items.delete(key)
       for (const contribution of delta.contributions) {
-        const item: RegisteredExtensionContribution = { extensionId: delta.extensionId, sessionId: delta.sessionId, runtimeId: delta.runtimeId, revision: delta.revision, contribution }
+        const item: RegisteredExtensionContribution = { extensionId: delta.extensionId, sessionId: delta.sessionId, runtimeId: delta.runtimeId, workspaceId: delta.workspaceId, revision: delta.revision, contribution }
         this.items.set(itemKey(item, contribution.id), item)
       }
     } else if (delta.operation === 'upsert') {
@@ -36,6 +43,7 @@ export class ContributionStore {
         extensionId: delta.extensionId,
         sessionId: delta.sessionId,
         runtimeId: delta.runtimeId,
+        workspaceId: delta.workspaceId,
         revision: delta.revision,
         contribution: delta.contribution,
       }
@@ -43,7 +51,7 @@ export class ContributionStore {
     } else if (delta.operation === 'remove') {
       this.items.delete(itemKey(delta, delta.contributionId))
     } else {
-      const prefix = `${delta.sessionId}\0${delta.runtimeId}\0${delta.extensionId}\0`
+      const prefix = routePrefix(delta)
       for (const key of this.items.keys()) if (key.startsWith(prefix)) this.items.delete(key)
     }
     this.version += 1
@@ -51,8 +59,8 @@ export class ContributionStore {
     return true
   }
 
-  resetRuntime(sessionId: string, runtimeId: string): void {
-    const prefix = `${sessionId}\0${runtimeId}\0`
+  resetRuntime(sessionId: string, runtimeId: string, workspaceId?: string): void {
+    const prefix = `${workspaceKey(workspaceId)}\0${sessionId}\0${runtimeId}\0`
     let changed = false
     for (const key of this.items.keys()) {
       if (!key.startsWith(prefix)) continue
@@ -69,9 +77,45 @@ export class ContributionStore {
     for (const listener of this.listeners) listener()
   }
 
-  list(sessionId: string, surface?: ExtensionUISurface): RegisteredExtensionContribution[] {
+  list(
+    sessionId: string,
+    surface?: ExtensionUISurface,
+    workspaceId?: string | null,
+  ): RegisteredExtensionContribution[] {
     return Array.from(this.items.values()).filter(item =>
-      item.sessionId === sessionId && (surface === undefined || item.contribution.surface === surface))
+      item.sessionId === sessionId
+      && (workspaceId === undefined || item.workspaceId === workspaceId)
+      && (surface === undefined || item.contribution.surface === surface))
+  }
+
+  listWorkspaceContent(sessionId: string, workspaceId?: string | null): RegisteredExtensionContribution[] {
+    const admittedSandboxKeys = selectAdmittedWorkspaceContentSandboxKeys(this.items.values(), workspaceId)
+    const candidates = Array.from(this.items.values()).filter(item => {
+      if (item.contribution.surface !== 'workspace.content') return false
+      if (workspaceId !== undefined && item.workspaceId !== workspaceId) return false
+      if (isSandboxContribution(item) && !admittedSandboxKeys.has(workspaceContentInstanceKey(item))) return false
+      const scope = item.contribution.workspaceContent?.scope ?? 'session'
+      if (scope === 'session') return item.sessionId === sessionId
+      if (scope === 'workspace') return Boolean(workspaceId) && item.workspaceId === workspaceId
+      return true
+    })
+
+    candidates.sort((a, b) =>
+      Number(b.sessionId === sessionId) - Number(a.sessionId === sessionId)
+      || Number(b.workspaceId === workspaceId) - Number(a.workspaceId === workspaceId)
+      || b.revision - a.revision
+      || a.runtimeId.localeCompare(b.runtimeId)
+      || a.sessionId.localeCompare(b.sessionId))
+
+    const singletonKeys = new Set<string>()
+    return candidates.filter(item => {
+      if ((item.contribution.workspaceContent?.instancePolicy ?? 'singleton') === 'multiple') return true
+      const scope = item.contribution.workspaceContent?.scope ?? 'session'
+      const key = `${scope}\0${item.extensionId}\0${item.contribution.id}`
+      if (singletonKeys.has(key)) return false
+      singletonKeys.add(key)
+      return true
+    })
   }
 
   getVersion = (): number => this.version
@@ -101,6 +145,47 @@ const MAX_ACTIVE_SANDBOX_APPS_PER_SURFACE = 4
 
 function isSandboxContribution(item: RegisteredExtensionContribution): boolean {
   return item.contribution.content.type === 'sandbox-app'
+}
+
+function workspaceContentInstanceKey(item: RegisteredExtensionContribution): string {
+  const scope = item.contribution.workspaceContent?.scope ?? 'session'
+  const base = `${scope}\0${item.extensionId}\0${item.contribution.id}`
+  if ((item.contribution.workspaceContent?.instancePolicy ?? 'singleton') === 'multiple') {
+    return `${base}\0${workspaceKey(item.workspaceId)}\0${item.sessionId}\0${item.runtimeId}`
+  }
+  if (scope === 'session') return `${base}\0${item.sessionId}`
+  if (scope === 'workspace') return `${base}\0${workspaceKey(item.workspaceId)}`
+  return base
+}
+
+function selectAdmittedWorkspaceContentSandboxKeys(
+  items: Iterable<RegisteredExtensionContribution>,
+  workspaceId?: string | null,
+): Set<string> {
+  const representatives = new Map<string, RegisteredExtensionContribution>()
+  for (const item of items) {
+    if (item.contribution.surface !== 'workspace.content' || !isSandboxContribution(item)) continue
+    if (workspaceId !== undefined && item.workspaceId !== workspaceId) continue
+    const key = workspaceContentInstanceKey(item)
+    const current = representatives.get(key)
+    if (!current || compareWorkspaceContentAdmission(item, current) < 0) representatives.set(key, item)
+  }
+  return new Set([...representatives.entries()]
+    .sort(([, a], [, b]) => compareWorkspaceContentAdmission(a, b))
+    .slice(0, MAX_ACTIVE_SANDBOX_APPS_PER_SURFACE)
+    .map(([key]) => key))
+}
+
+function compareWorkspaceContentAdmission(
+  a: RegisteredExtensionContribution,
+  b: RegisteredExtensionContribution,
+): number {
+  return (b.contribution.priority ?? 0) - (a.contribution.priority ?? 0)
+    || (a.contribution.order ?? 0) - (b.contribution.order ?? 0)
+    || a.extensionId.localeCompare(b.extensionId)
+    || a.contribution.id.localeCompare(b.contribution.id)
+    || a.sessionId.localeCompare(b.sessionId)
+    || a.runtimeId.localeCompare(b.runtimeId)
 }
 
 export function selectMountableOverflow(layout: SurfaceLayout): RegisteredExtensionContribution[] {

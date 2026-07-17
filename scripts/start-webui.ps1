@@ -243,7 +243,8 @@ try {
     throw "WebUI dev server did not start on http://localhost:$webuiPort within 180 seconds. See $viteErrorLog."
   }
 
-  $webuiUrl = "http://localhost:$webuiPort"
+  $testModeQuery = if ($env:CRAFT_TEST_MODE -eq "1") { "?craftTestMode=1" } else { "" }
+  $webuiUrl = "http://localhost:$webuiPort$testModeQuery"
   Write-Step "WebUI is ready: $webuiUrl (RPC: ws://127.0.0.1:$rpcPort)"
   if (-not $NoBrowser -and $env:CRAFT_WEBUI_NO_BROWSER -ne "1") {
     Start-Process $webuiUrl

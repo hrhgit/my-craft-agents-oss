@@ -2,10 +2,14 @@ import { clipboard, type BrowserWindow } from 'electron'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS } from '@craft-agent/shared/ui-validation'
 import type { AccessibilityNode, UiBusinessSemanticSnapshot } from '../browser-cdp'
 import { UiValidationBrowserCDP } from './browser-cdp-driver'
 import { captureRendererDriverDiagnosticFallback } from './main-process-diagnostics'
 import type { ManagedWindow, ManagedWindowRole, WindowManager } from '../window-manager'
+import { ElectronUiDriverError } from './electron-ui-driver-error'
+
+export { ElectronUiDriverError } from './electron-ui-driver-error'
 
 export type UiVerificationLevel = 'scenario-verified' | 'renderer-verified' | 'native-verified'
 
@@ -18,6 +22,7 @@ export interface UiDriverWindowSelector {
 export interface UiDriverSnapshotNode {
   ref: string
   semanticId?: string
+  testId?: string
   role: string
   name: string
   value?: string
@@ -80,27 +85,6 @@ export interface UiDriverActionReceipt {
   warnings: string[]
   mode: 'semantic' | 'physical'
   observed?: { focused?: boolean; hit?: boolean; obscuredBy?: string }
-}
-
-export class ElectronUiDriverError extends Error {
-  constructor(
-    readonly code:
-      | 'NOT_READY'
-      | 'STALE_REF'
-      | 'TARGET_NOT_FOUND'
-      | 'AMBIGUOUS_TARGET'
-      | 'DISABLED'
-      | 'UNSUPPORTED'
-      | 'TIMEOUT'
-      | 'WINDOW_GONE'
-      | 'DRIVER_DISCONNECTED'
-      | 'INVALID_REQUEST',
-    message: string,
-    readonly details?: Record<string, unknown>,
-  ) {
-    super(message)
-    this.name = 'ElectronUiDriverError'
-  }
 }
 
 interface DriverWindowState {
@@ -208,7 +192,7 @@ export class ElectronUiSurfaceDriver {
   async waitForSnapshot(
     selector: UiDriverWindowSelector,
     predicate: (snapshot: UiDriverSnapshot) => boolean,
-    timeoutMs = 15_000,
+    timeoutMs = UI_VALIDATION_DEFAULT_TIMEOUT_MS,
   ): Promise<UiDriverSnapshot> {
     const window = this.resolveWindow(selector)
     const state = this.stateFor(window)
@@ -275,6 +259,7 @@ export class ElectronUiSurfaceDriver {
       const node: UiDriverSnapshotNode = {
         ref: `r${state.revision}:business.${semantic.id.replace(/[^A-Za-z0-9._-]/g, '_')}`,
         semanticId: semantic.id,
+        ...(semantic.testId ? { testId: semantic.testId } : {}),
         role: semantic.role,
         name: semantic.name.slice(0, 500),
         ...(semantic.value !== undefined ? { value: semantic.value } : {}),
@@ -341,11 +326,12 @@ export class ElectronUiSurfaceDriver {
 
   async action(selector: UiDriverWindowSelector, request: UiDriverActionRequest): Promise<UiDriverActionReceipt> {
     const window = this.resolveWindow(selector)
+    const boundSelector = { ...selector, webContentsId: window.webContents.id }
     const state = this.stateFor(window)
     // Refresh the live AX tree before trusting a revision-bound ref. A renderer
     // mutation between snapshot and action must invalidate the old ref even if
     // the caller did not explicitly request another snapshot.
-    await this.snapshot(selector)
+    await this.snapshot(boundSelector)
     if (request.revision !== state.revision) {
       throw new ElectronUiDriverError('STALE_REF', `Ref belongs to revision ${request.revision}; current revision is ${state.revision}.`, {
         requestedRevision: request.revision,
@@ -419,6 +405,7 @@ export class ElectronUiSurfaceDriver {
       await state.cdp.replaceTextElement(resolved.cdpRef, request.value)
     } else {
       if (!request.key) throw new ElectronUiDriverError('UNSUPPORTED', 'press requires key.')
+      await state.cdp.focusElement(resolved.cdpRef)
       window.webContents.sendInputEvent({
         type: 'keyDown',
         keyCode: request.key,
@@ -432,7 +419,7 @@ export class ElectronUiSurfaceDriver {
     }
     }
 
-    const after = await this.snapshot(selector)
+    const after = await this.snapshot(boundSelector)
     if (resolved.selector) {
       const observed = await state.cdp.inspectSemanticSelector(resolved.selector)
       interaction = {
@@ -481,8 +468,11 @@ export class ElectronUiSurfaceDriver {
     action: 'focus' | 'minimize' | 'maximize' | 'restore' | 'close',
   ): Promise<UiVerificationLevel> {
     const window = this.resolveWindow(selector)
-    if (action === 'focus') window.focus()
-    else if (action === 'minimize') window.minimize()
+    if (action === 'focus') {
+      if (window.isMinimized()) window.restore()
+      if (!window.isVisible()) window.show()
+      window.focus()
+    } else if (action === 'minimize') window.minimize()
     else if (action === 'maximize') window.maximize()
     else if (action === 'restore') window.restore()
     else {
@@ -494,8 +484,8 @@ export class ElectronUiSurfaceDriver {
         }
         const timeout = setTimeout(() => {
           window.removeListener('closed', onClosed)
-          reject(new ElectronUiDriverError('TIMEOUT', `Window ${webContentsId} did not close within 15 seconds.`))
-        }, 15_000)
+          reject(new ElectronUiDriverError('TIMEOUT', `Window ${webContentsId} did not close within ${UI_VALIDATION_DEFAULT_TIMEOUT_MS / 1_000} seconds.`))
+        }, UI_VALIDATION_DEFAULT_TIMEOUT_MS)
         window.once('closed', onClosed)
         window.close()
       })

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { UI_VALIDATION_EXTENDED_TIMEOUT_MS } from '@craft-agent/shared/ui-validation'
 import {
   CRAFT_UI_PROTOCOL_VERSION,
   type CraftUiEndpointManifest,
@@ -53,7 +54,7 @@ export async function requestCraftUiHost<T>(args: {
     params: args.params ?? {},
   }
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(new Error('Craft UI host request timed out')), args.timeoutMs ?? 10_000)
+  const timeout = setTimeout(() => controller.abort(new Error('Craft UI host request timed out')), args.timeoutMs ?? UI_VALIDATION_EXTENDED_TIMEOUT_MS)
   try {
     const response = await fetch(new URL('/v1/command', endpoint.url), {
       method: 'POST',

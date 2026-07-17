@@ -33,6 +33,17 @@ export interface PiGlobalProvider {
   [key: string]: unknown;
 }
 
+/** Parse a context window entered as tokens or with a K/M suffix. */
+export function parseContextWindowInput(value: string): number | undefined {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*([km])?$/i);
+  if (!match) return undefined;
+
+  const amount = Number(match[1]);
+  const multiplier = match[2]?.toLowerCase() === 'm' ? 1_000_000 : match[2] ? 1_000 : 1;
+  const result = amount * multiplier;
+  return Number.isFinite(result) && result > 0 && Number.isInteger(result) ? result : undefined;
+}
+
 export function piProviderModelSupportsImages(
   provider: PiGlobalProvider | null | undefined,
   modelId: string,

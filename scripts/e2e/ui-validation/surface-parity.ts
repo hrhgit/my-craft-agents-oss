@@ -31,7 +31,7 @@ for (const surface of ['webui', 'electron'] as const) {
   try {
     manifest = await startCraftUiRun({
       surface,
-      profileMode: 'isolated',
+      profileMode: 'fixture',
       waitMs: surface === 'electron' ? 180_000 : 90_000,
       ...(process.env.CRAFT_UI_SKIP_BUILD === '1' ? { extraEnv: { CRAFT_UI_SKIP_BUILD: '1' } } : {}),
     })

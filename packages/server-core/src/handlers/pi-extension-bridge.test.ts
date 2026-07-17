@@ -36,17 +36,35 @@ describe('Pi extension contribution bridge', () => {
   })
 
   it('forwards valid native deltas and rejects invalid payloads', () => {
-    const payloads: unknown[] = []
-    const sink = ((...args: Parameters<EventSink>) => { payloads.push(args[2]) }) as EventSink
+    const calls: Parameters<EventSink>[] = []
+    const sink = ((...args: Parameters<EventSink>) => { calls.push(args) }) as EventSink
     const forward = createExtensionEventForwarder(sink, 'workspace', 'session')
     forward({
-      type: 'extension_contribution', ...route,
+      type: 'extension_contribution', ...route, sessionId: 'untrusted-outer-session',
       delta: {
-        schemaVersion: 1, ...route, revision: 1, operation: 'upsert',
+        schemaVersion: 1,
+        extensionId: 'spoofed-extension',
+        runtimeId: 'spoofed-runtime',
+        sessionId: 'spoofed-session',
+        workspaceId: 'spoofed-workspace',
+        revision: 1,
+        operation: 'upsert',
         contribution: { schemaVersion: 1, id: 'status', surface: 'composer.status', content: { type: 'text', text: 'Ready' } },
       },
     })
-    expect(payloads).toHaveLength(1)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.[1]).toEqual({ to: 'workspace', workspaceId: 'workspace' })
+    expect(calls[0]?.[2]).toMatchObject({
+      extensionId: 'example',
+      runtimeId: 'runtime',
+      sessionId: 'session',
+      delta: {
+        extensionId: 'example',
+        runtimeId: 'runtime',
+        sessionId: 'session',
+        workspaceId: 'workspace',
+      },
+    })
 
     forward({
       type: 'extension_contribution', ...route,
@@ -55,7 +73,26 @@ describe('Pi extension contribution bridge', () => {
         contribution: { schemaVersion: 1, id: 'bad', surface: 'composer.status', content: { type: 'text', text: '' } },
       },
     } as ExtensionBridgeEvent)
-    expect(payloads).toHaveLength(1)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('routes runtime resets to their workspace and injects reset ownership', () => {
+    const calls: Parameters<EventSink>[] = []
+    const sink = ((...args: Parameters<EventSink>) => { calls.push(args) }) as EventSink
+    createExtensionEventForwarder(sink, 'workspace', 'trusted-session')({
+      type: 'extension_contributions_runtime_reset',
+      ...route,
+      sessionId: 'untrusted-session',
+    })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.[1]).toEqual({ to: 'workspace', workspaceId: 'workspace' })
+    expect(calls[0]?.[2]).toMatchObject({
+      type: 'extension_contributions_runtime_reset',
+      sessionId: 'trusted-session',
+      runtimeId: 'runtime',
+      workspaceId: 'workspace',
+    })
   })
 
   it('normalizes legacy widgets into revisioned contributions', () => {

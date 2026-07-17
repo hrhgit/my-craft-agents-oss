@@ -76,6 +76,7 @@ import { handleErrorMessageAction } from "./error-message-actions"
 import { piProjectionAtomFamily } from "@/atoms/pi-projection"
 import { selectPendingPiCredential, selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
 import { buildPiTurnOverlay, buildPiTurns, getPiTurnSearchText } from "./pi-turn-model"
+import { useWorkspaceElectronApi } from "@/context/WorkspaceElectronApiContext"
 
 // ============================================================================
 // CSS Custom Highlight API helper
@@ -496,6 +497,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   providerUnavailable = false,
 }, ref) {
   const { t } = useTranslation()
+  const electronApi = useWorkspaceElectronApi()
   const activeSessionId = session?.id
   const piProjection = useAtomValue(piProjectionAtomFamily(activeSessionId ?? ''))
   const projectionEntities = React.useMemo(
@@ -658,10 +660,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     let isMounted = true
 
     const loadSendMessageKey = async () => {
-      if (!window.electronAPI) return
-
       try {
-        const key = await window.electronAPI.getSendMessageKey()
+        const key = await electronApi.getSendMessageKey()
         if (!isMounted) return
         setSendMessageKey(key ?? 'enter')
       } catch (error) {
@@ -674,7 +674,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [electronApi])
 
   // Reset match state when session or search query changes
   useEffect(() => {
@@ -1003,7 +1003,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   // Load diff viewer settings from preferences on mount
   useEffect(() => {
-    window.electronAPI.readPreferences().then(({ content }) => {
+    electronApi.readPreferences().then(({ content }) => {
       try {
         const prefs = JSON.parse(content)
         if (prefs.diffViewer) {
@@ -1013,24 +1013,24 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         // Ignore parse errors, use defaults
       }
     })
-  }, [])
+  }, [electronApi])
 
   // Persist diff viewer settings to preferences when changed
   const handleDiffViewerSettingsChange = useCallback((settings: DiffViewerSettings) => {
     setDiffViewerSettings(settings)
     // Read current preferences, merge in new settings, write back
-    window.electronAPI.readPreferences().then(({ content }) => {
+    electronApi.readPreferences().then(({ content }) => {
       try {
         const prefs = JSON.parse(content)
         prefs.diffViewer = settings
         prefs.updatedAt = Date.now()
-        window.electronAPI.writePreferences(JSON.stringify(prefs, null, 2))
+        electronApi.writePreferences(JSON.stringify(prefs, null, 2))
       } catch {
         // If preferences malformed, create fresh with just diffViewer
-        window.electronAPI.writePreferences(JSON.stringify({ diffViewer: settings, updatedAt: Date.now() }, null, 2))
+        electronApi.writePreferences(JSON.stringify({ diffViewer: settings, updatedAt: Date.now() }, null, 2))
       }
     })
-  }, [])
+  }, [electronApi])
 
   // Close overlay handler
   const handleCloseOverlay = useCallback(() => {
@@ -1283,7 +1283,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         const currentMeta = followUp.meta ?? {}
         const currentFollowUpMeta = asRecord(currentMeta.followUp) ?? {}
 
-        return window.electronAPI.sessionCommand(session.id, {
+        return electronApi.sessionCommand(session.id, {
           type: 'updateAnnotation',
           messageId: followUp.messageId,
           annotationId: followUp.annotationId,
@@ -1339,7 +1339,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const handleStop = (silent = false) => {
     if (!session || !effectiveIsProcessing) return
 
-    window.electronAPI.cancelProcessing(session.id, silent).catch(error => {
+    electronApi.cancelProcessing(session.id, silent).catch(error => {
       console.error('[ChatDisplay] Failed to cancel processing:', error)
     })
   }
@@ -1835,7 +1835,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         onAddAnnotation={async (messageId, annotation) => {
                           if (!session) return
                           try {
-                            await window.electronAPI.sessionCommand(session.id, {
+                            await electronApi.sessionCommand(session.id, {
                               type: 'addAnnotation',
                               messageId,
                               annotation,
@@ -1850,7 +1850,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         onRemoveAnnotation={async (messageId, annotationId) => {
                           if (!session) return
                           try {
-                            await window.electronAPI.sessionCommand(session.id, {
+                            await electronApi.sessionCommand(session.id, {
                               type: 'removeAnnotation',
                               messageId,
                               annotationId,
@@ -1864,7 +1864,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         onUpdateAnnotation={async (messageId, annotationId, patch) => {
                           if (!session) return
                           try {
-                            await window.electronAPI.sessionCommand(session.id, {
+                            await electronApi.sessionCommand(session.id, {
                               type: 'updateAnnotation',
                               messageId,
                               annotationId,

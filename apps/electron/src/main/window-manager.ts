@@ -1,4 +1,4 @@
-import { BrowserWindow, shell, nativeTheme, Menu, app } from 'electron'
+import { BrowserWindow, shell, nativeTheme, Menu, app, screen } from 'electron'
 import { windowLog } from './logger'
 import { join, resolve, sep } from 'path'
 import { existsSync } from 'fs'
@@ -6,11 +6,20 @@ import { release } from 'os'
 import { fileURLToPath } from 'url'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { classifyExternalUrl, formatBlockedUrlError } from '@craft-agent/shared/utils/url-safety'
-import { RPC_CHANNELS, type WindowCloseRequestSource } from '../shared/types'
+import { RPC_CHANNELS, type BrowserHostDockNavigationCommand, type WindowCloseRequestSource } from '../shared/types'
 import type { SavedWindow } from './window-state'
+import { clampWindowBounds, type WindowBounds } from './window-bounds'
+import {
+  applyWindowRendererRuntimeQuery,
+  buildInitialWindowRendererQuery,
+  resolveWindowLayoutRuntime,
+  type WindowLayoutMode,
+} from './window-renderer-query'
+import { isKeyboardCloseShortcut } from './keyboard-close-shortcut'
 
 // Vite dev server URL for hot reload
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
+const CRAFT_TEST_MODE = process.env.CRAFT_TEST_MODE === '1'
 
 /**
  * Get the appropriate background material for Windows transparency effects
@@ -37,7 +46,39 @@ function getWindowsBackgroundMaterial(): 'mica' | 'acrylic' | undefined {
 }
 
 
-export type ManagedWindowRole = 'main' | 'child-session'
+export type ManagedWindowRole = 'main' | 'child-session' | 'auxiliary'
+
+export type WindowCloseHandshakeErrorCode =
+  | 'not-found'
+  | 'cancelled'
+  | 'timeout'
+  | 'close-failed'
+  | 'redock-failed'
+
+export class WindowCloseHandshakeError extends Error {
+  constructor(
+    readonly code: WindowCloseHandshakeErrorCode,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options)
+    this.name = 'WindowCloseHandshakeError'
+  }
+}
+
+export function shouldScheduleWindowCloseFallback(hasGracefulCloseWaiter: boolean): boolean {
+  return !hasGracefulCloseWaiter
+}
+
+export function restoreSourceWindowAfterAuxiliaryShow(
+  sourceWindow: Pick<BrowserWindow, 'isDestroyed' | 'isMinimized' | 'isVisible' | 'restore' | 'showInactive'>,
+  auxiliaryWindow: Pick<BrowserWindow, 'isDestroyed' | 'focus'>,
+): void {
+  if (sourceWindow.isDestroyed()) return
+  if (sourceWindow.isMinimized()) sourceWindow.restore()
+  if (!sourceWindow.isVisible()) sourceWindow.showInactive()
+  if (!auxiliaryWindow.isDestroyed()) auxiliaryWindow.focus()
+}
 
 export interface ManagedWindow {
   window: BrowserWindow
@@ -47,6 +88,15 @@ export interface ManagedWindow {
   parentWebContentsId?: number
   /** If set, this window's title is pinned to this string (e.g. child session name) */
   customTitle?: string
+  layoutWindowId?: string
+  layoutMode?: WindowLayoutMode
+}
+
+export interface LayoutWriteContext {
+  workspaceId: string
+  layoutWindowId: string
+  role: 'primary' | 'auxiliary'
+  ownerWebContentsId: number
 }
 
 export interface CreateWindowOptions {
@@ -56,18 +106,24 @@ export interface CreateWindowOptions {
   focused?: boolean
   /** Deep link URL to navigate to after window loads (without ?window= param) */
   initialDeepLink?: string
+  /** Session selected after the initial workspace session list has loaded. */
+  initialSessionId?: string
   /** Full URL to restore from saved state (preserves route/query params) */
   restoreUrl?: string
   /** Custom window width (overrides focused/default size) */
   width?: number
   /** Custom window height (overrides focused/default size) */
   height?: number
+  /** Optional screen position (used by detached layout groups). */
+  x?: number
+  y?: number
   /** Custom window title — overrides the workspace-name title policy */
   customTitle?: string
   /** Stable lifecycle role used for deterministic window selection. */
   role?: ManagedWindowRole
   sessionId?: string
   parentWebContentsId?: number
+  layoutWindowId?: string
 }
 
 /** Options for creating a child session window (pi session tree branch) */
@@ -88,6 +144,7 @@ export class WindowManager {
   private windows: Map<number, ManagedWindow> = new Map()  // webContents.id → ManagedWindow
   private focusedModeWindows: Set<number> = new Set()  // webContents.id of windows in focused mode
   private pendingCloseTimeouts: Map<number, NodeJS.Timeout> = new Map()  // Fallback timeouts for window close
+  private cascadingPrimaryCloses = new Set<number>()
   // F11: parent webContents.id → set of child window webContents.ids, so that
   // closing a parent window cascades to its child session windows.
   private childWindowsByParent: Map<number, Set<number>> = new Map()
@@ -96,6 +153,24 @@ export class WindowManager {
   private keyboardCloseIntents: Set<number> = new Set()  // webContents.id flagged by Cmd/Ctrl+W before close
   private keyboardCloseIntentTimeouts: Map<number, NodeJS.Timeout> = new Map()  // Auto-clear stale keyboard-close intents
   private isAppQuitting = false  // Skip layered close interception during app quit
+  private auxiliaryClosedHandler: ((layoutWindowId: string, workspaceId: string) => void | Promise<void>) | null = null
+  private workspaceChangingHandler: ((webContentsId: number, oldWorkspaceId: string, newWorkspaceId: string) => void | Promise<void>) | null = null
+  private primaryWebContentsByWorkspace: Map<string, number> = new Map()
+  private auxiliaryRedockPromises = new Map<number, Promise<void>>()
+  private auxiliaryCloseHandshakeTimeoutMs = 4_500
+  private gracefulCloseCancellers = new Map<number, () => void>()
+
+  constructor(private readonly backgroundTestWindows = false) {}
+
+  setAuxiliaryClosedHandler(handler: (layoutWindowId: string, workspaceId: string) => void | Promise<void>): void {
+    this.auxiliaryClosedHandler = handler
+  }
+
+  setWorkspaceChangingHandler(
+    handler: (webContentsId: number, oldWorkspaceId: string, newWorkspaceId: string) => void | Promise<void>,
+  ): void {
+    this.workspaceChangingHandler = handler
+  }
 
   /**
    * Set the event sink and client resolver for pushing events via the RPC server
@@ -231,8 +306,8 @@ export class WindowManager {
    */
   createWindow(options: CreateWindowOptions): BrowserWindow {
     const {
-      workspaceId, focused = false, initialDeepLink, restoreUrl, customTitle,
-      role = 'main', sessionId, parentWebContentsId,
+      workspaceId, focused = false, initialDeepLink, initialSessionId, restoreUrl, customTitle,
+      role = 'main', sessionId, parentWebContentsId, layoutWindowId,
     } = options
 
     // Load platform-specific app icon
@@ -267,6 +342,8 @@ export class WindowManager {
     const window = new BrowserWindow({
       width: windowWidth,
       height: windowHeight,
+      ...(options.x !== undefined ? { x: options.x } : {}),
+      ...(options.y !== undefined ? { y: options.y } : {}),
       minWidth: 800,
       minHeight: 600,
       show: false, // Don't show until ready-to-show event (faster perceived startup)
@@ -298,13 +375,19 @@ export class WindowManager {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false,
-        webviewTag: false // Browser integration uses WebContentsView, not <webview>
+        webviewTag: false, // Browser integration uses WebContentsView, not <webview>
+        ...(this.backgroundTestWindows ? { backgroundThrottling: false } : {}),
       }
     })
 
     // Show window when first paint is ready (faster perceived startup)
     window.once('ready-to-show', () => {
-      window.show()
+      if (this.backgroundTestWindows) {
+        window.showInactive()
+        window.minimize()
+      } else {
+        window.show()
+      }
     })
 
     // Open external links in default browser, but never hand known-dangerous
@@ -350,12 +433,41 @@ export class WindowManager {
     // Store the window mapping BEFORE loadURL — bootstrap preload uses
     // __get-workspace-id (via sendSync) which reads this map during eval.
     const webContentsId = window.webContents.id
+    const layoutRuntime = resolveWindowLayoutRuntime({
+      role,
+      workspaceHasPrimary: this.primaryWebContentsByWorkspace.has(workspaceId),
+      webContentsId,
+      requestedLayoutWindowId: layoutWindowId,
+    })
+    const resolvedLayoutWindowId = layoutRuntime.layoutWindowId
     this.windows.set(webContentsId, {
       window, workspaceId, role,
       ...(sessionId ? { sessionId } : {}),
       ...(parentWebContentsId != null ? { parentWebContentsId } : {}),
       ...(customTitle ? { customTitle } : {}),
+      ...(resolvedLayoutWindowId ? { layoutWindowId: resolvedLayoutWindowId } : {}),
+      layoutMode: layoutRuntime.mode,
     })
+    if (role === 'main' && layoutRuntime.mode === 'coordinated') {
+      this.primaryWebContentsByWorkspace.set(workspaceId, webContentsId)
+    }
+    const runtimeQueryOptions = {
+      craftTestMode: CRAFT_TEST_MODE,
+      layoutReadOnly: layoutRuntime.layoutReadOnly,
+    }
+    const withWindowRuntimeQuery = (query: Record<string, string>): Record<string, string> =>
+      applyWindowRendererRuntimeQuery({
+        ...query,
+        ...(resolvedLayoutWindowId ? { layoutWindowId: resolvedLayoutWindowId } : {}),
+      }, runtimeQueryOptions)
+    const defaultRendererQuery = buildInitialWindowRendererQuery({
+      workspaceId,
+      focused,
+      initialSessionId,
+      layoutWindowId: resolvedLayoutWindowId,
+      ...runtimeQueryOptions,
+    })
+    let rendererQuery = defaultRendererQuery
 
     // Apply window-title policy now that the map size reflects this window —
     // covers both the new window and any existing windows that should switch
@@ -377,12 +489,17 @@ export class WindowManager {
           const devUrl = new URL(VITE_DEV_SERVER_URL)
           // Preserve pathname and search from saved URL, use dev server host
           devUrl.pathname = savedUrl.pathname
-          devUrl.search = savedUrl.search
+          rendererQuery = withWindowRuntimeQuery({
+            ...Object.fromEntries(savedUrl.searchParams),
+            workspaceId,
+          })
+          devUrl.search = new URLSearchParams(rendererQuery).toString()
           window.loadURL(devUrl.toString())
         } catch {
           // Fallback if URL parsing fails
           windowLog.warn('Failed to parse restoreUrl, using default:', restoreUrl)
-          const params = new URLSearchParams({ workspaceId, ...(focused && { focused: 'true' }) }).toString()
+          rendererQuery = defaultRendererQuery
+          const params = new URLSearchParams(rendererQuery).toString()
           window.loadURL(`${VITE_DEV_SERVER_URL}?${params}`)
         }
       } else {
@@ -391,25 +508,22 @@ export class WindowManager {
         // mounts to a different /tmp dir on each launch). See #13.
         try {
           const savedUrl = new URL(restoreUrl)
-          const query: Record<string, string> = {}
-          savedUrl.searchParams.forEach((value, key) => { query[key] = value })
-          window.loadFile(join(__dirname, 'renderer/index.html'), { query })
+          rendererQuery = withWindowRuntimeQuery({
+            ...Object.fromEntries(savedUrl.searchParams),
+            workspaceId,
+          })
+          window.loadFile(join(__dirname, 'renderer/index.html'), { query: rendererQuery })
         } catch {
-          window.loadFile(join(__dirname, 'renderer/index.html'), { query: { workspaceId } })
+          rendererQuery = defaultRendererQuery
+          window.loadFile(join(__dirname, 'renderer/index.html'), { query: rendererQuery })
         }
       }
     } else {
-      // Build URL from options
-      const query: Record<string, string> = { workspaceId }
-      if (focused) {
-        query.focused = 'true' // Open in focused mode (no sidebars)
-      }
-
       if (VITE_DEV_SERVER_URL) {
-        const params = new URLSearchParams(query).toString()
+        const params = new URLSearchParams(rendererQuery).toString()
         window.loadURL(`${VITE_DEV_SERVER_URL}?${params}`)
       } else {
-        window.loadFile(join(__dirname, 'renderer/index.html'), { query })
+        window.loadFile(join(__dirname, 'renderer/index.html'), { query: rendererQuery })
       }
     }
 
@@ -427,11 +541,11 @@ export class WindowManager {
         failLoadRetries++
         windowLog.info(`Retrying Vite dev server (attempt ${failLoadRetries}/5)...`)
         setTimeout(() => {
-          const params = new URLSearchParams({ workspaceId }).toString()
+          const params = new URLSearchParams(rendererQuery).toString()
           window.loadURL(`${VITE_DEV_SERVER_URL}?${params}`)
         }, 1000)
       } else {
-        window.loadFile(join(__dirname, 'renderer/index.html'), { query: { workspaceId } })
+        window.loadFile(join(__dirname, 'renderer/index.html'), { query: rendererQuery })
       }
     })
 
@@ -471,26 +585,8 @@ export class WindowManager {
 
     // Detect Cmd/Ctrl+W before close events so renderer can distinguish close source.
     // Intent is short-lived to avoid stale classification.
-    window.webContents.on('before-input-event', (_event, input) => {
-      if (!input || input.type !== 'keyDown') return
-      const key = input.key?.toLowerCase?.()
-      if (key !== 'w') return
-
-      const isCloseShortcut = process.platform === 'darwin'
-        ? !!input.meta
-        : !!input.control
-
-      if (!isCloseShortcut) return
-
-      const wcId = window.webContents.id
-      this.keyboardCloseIntents.add(wcId)
-      const existingTimeout = this.keyboardCloseIntentTimeouts.get(wcId)
-      if (existingTimeout) clearTimeout(existingTimeout)
-
-      this.keyboardCloseIntentTimeouts.set(wcId, setTimeout(() => {
-        this.keyboardCloseIntentTimeouts.delete(wcId)
-        this.keyboardCloseIntents.delete(wcId)
-      }, 500))
+    window.webContents.on('before-input-event', (event, input) => {
+      this.handleKeyboardCloseInput(window, event, input)
     })
 
     // Handle window close request (traffic-light button, menu close, Cmd/Ctrl+W)
@@ -525,10 +621,12 @@ export class WindowManager {
         const existingTimeout = this.pendingCloseTimeouts.get(wcId)
         if (existingTimeout) clearTimeout(existingTimeout)
 
-        this.pendingCloseTimeouts.set(wcId, setTimeout(() => {
-          this.pendingCloseTimeouts.delete(wcId)
-          if (!window.isDestroyed()) window.destroy()
-        }, 3000))
+        if (shouldScheduleWindowCloseFallback(this.gracefulCloseCancellers.has(wcId))) {
+          this.pendingCloseTimeouts.set(wcId, setTimeout(() => {
+            this.pendingCloseTimeouts.delete(wcId)
+            if (!window.isDestroyed()) window.destroy()
+          }, 3000))
+        }
       }
       // If renderer not ready, allow default close behavior
     })
@@ -551,12 +649,31 @@ export class WindowManager {
       this.keyboardCloseIntents.delete(webContentsId)
 
       nativeTheme.removeListener('updated', themeHandler)
+      const closedManaged = this.windows.get(webContentsId)
+      const closedWorkspaceId = closedManaged?.workspaceId ?? workspaceId
       this.windows.delete(webContentsId)
+      this.cascadingPrimaryCloses.delete(webContentsId)
       this.focusedModeWindows.delete(webContentsId)
       // Re-apply window-title policy — surviving windows revert from workspace
       // name back to app name when the count drops from 2 → 1.
       this.refreshWindowTitles()
       windowLog.info(`Window closed for workspace ${workspaceId}`)
+
+      if (role === 'auxiliary' && resolvedLayoutWindowId) {
+        void this.redockAuxiliaryOnce(webContentsId, resolvedLayoutWindowId, closedWorkspaceId)
+          .catch(error => windowLog.error('Failed to redock closed auxiliary window', error))
+      }
+      if (this.primaryWebContentsByWorkspace.get(closedWorkspaceId) === webContentsId) {
+        for (const managed of this.windows.values()) {
+          if (
+            managed.role === 'auxiliary'
+            && managed.parentWebContentsId === webContentsId
+            && !managed.window.isDestroyed()
+          ) managed.window.destroy()
+        }
+        this.primaryWebContentsByWorkspace.delete(closedWorkspaceId)
+        this.promotePrimaryLayoutWriter(closedWorkspaceId)
+      }
 
       // F11: Cascade close — when a parent window closes, close all of its
       // child session windows so they don't keep rendering a (now-stale)
@@ -576,6 +693,48 @@ export class WindowManager {
 
     windowLog.info(`Created window for workspace ${workspaceId} (focused: ${focused})`)
     return window
+  }
+
+  private handleKeyboardCloseInput(
+    window: BrowserWindow,
+    event: Electron.Event,
+    input: Electron.Input,
+  ): void {
+    if (!isKeyboardCloseShortcut(input)) return
+
+    // The Windows/Linux File menu has no native close-window accelerator, and
+    // source-development windows may have no application menu at all. Consume
+    // the shortcut and initiate the close explicitly on every platform so the
+    // renderer's layered close policy always runs exactly once.
+    event.preventDefault()
+    this.requestKeyboardClose(window.webContents.id)
+  }
+
+  requestKeyboardClose(webContentsId: number): boolean {
+    const window = this.getWindowByWebContentsId(webContentsId)
+    if (!window || window.isDestroyed()) return false
+
+    const wcId = window.webContents.id
+    this.keyboardCloseIntents.add(wcId)
+    const existingTimeout = this.keyboardCloseIntentTimeouts.get(wcId)
+    if (existingTimeout) clearTimeout(existingTimeout)
+
+    this.keyboardCloseIntentTimeouts.set(wcId, setTimeout(() => {
+      this.keyboardCloseIntentTimeouts.delete(wcId)
+      this.keyboardCloseIntents.delete(wcId)
+    }, 500))
+    window.close()
+    return true
+  }
+
+  requestBrowserHostDockNavigation(
+    webContentsId: number,
+    command: BrowserHostDockNavigationCommand,
+  ): boolean {
+    const window = this.getWindowByWebContentsId(webContentsId)
+    if (!window || window.isDestroyed()) return false
+    this.pushToWindow(window, RPC_CHANNELS.browserPane.HOST_DOCK_NAVIGATION, command)
+    return true
   }
 
   /**
@@ -651,6 +810,58 @@ export class WindowManager {
     return childWindow
   }
 
+  createAuxiliaryWindow(
+    layoutWindowId: string,
+    workspaceId: string,
+    parentWebContentsId: number,
+    bounds?: { x: number; y: number; width: number; height: number },
+  ): BrowserWindow {
+    const source = this.getLayoutWriteContext(parentWebContentsId)
+    if (!source || source.role !== 'primary' || source.workspaceId !== workspaceId) {
+      throw new Error('Auxiliary windows must be created by the primary layout writer')
+    }
+    const sourceWindow = this.getWindowByWebContentsId(parentWebContentsId)
+    const preserveSourceVisibility = Boolean(
+      sourceWindow
+      && sourceWindow.isVisible()
+      && !sourceWindow.isMinimized(),
+    )
+    const auxiliaryWindow = this.createWindow({
+      workspaceId,
+      focused: true,
+      role: 'auxiliary',
+      layoutWindowId,
+      parentWebContentsId,
+      customTitle: 'Craft Workbench',
+      ...(bounds ? { width: bounds.width, height: bounds.height } : {}),
+      ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
+    })
+    if (sourceWindow && preserveSourceVisibility) {
+      auxiliaryWindow.once('ready-to-show', () => {
+        setImmediate(() => restoreSourceWindowAfterAuxiliaryShow(sourceWindow, auxiliaryWindow))
+      })
+    }
+    return auxiliaryWindow
+  }
+
+  resolveAuxiliaryWindowBounds(webContentsId: number, requested?: WindowBounds): WindowBounds {
+    const sourceBounds = this.getWindowByWebContentsId(webContentsId)?.getBounds()
+    const cursor = screen.getCursorScreenPoint()
+    const width = requested?.width ?? Math.min(sourceBounds?.width ?? 900, 1200)
+    const height = requested?.height ?? Math.min(sourceBounds?.height ?? 700, 900)
+    const desired = requested ?? {
+      x: cursor.x - 96,
+      y: cursor.y - 20,
+      width,
+      height,
+    }
+    const display = screen.getDisplayNearestPoint({
+      x: requested ? requested.x + Math.min(96, requested.width / 2) : cursor.x,
+      y: requested ? requested.y + Math.min(20, requested.height / 2) : cursor.y,
+    })
+    return clampWindowBounds(desired, display.workArea)
+  }
+
   /**
    * Get window by webContents.id (used by IPC handlers instead of BrowserWindow.fromId)
    */
@@ -663,6 +874,16 @@ export class WindowManager {
    * Get window by workspace ID (returns first match - for backwards compatibility)
    */
   getWindowByWorkspace(workspaceId: string): BrowserWindow | null {
+    const primaryId = this.primaryWebContentsByWorkspace.get(workspaceId)
+    if (primaryId != null) {
+      const primary = this.windows.get(primaryId)?.window
+      if (primary && !primary.isDestroyed()) return primary
+    }
+    for (const managed of this.windows.values()) {
+      if (managed.role === 'main' && managed.workspaceId === workspaceId && !managed.window.isDestroyed()) {
+        return managed.window
+      }
+    }
     for (const managed of this.windows.values()) {
       if (managed.workspaceId === workspaceId && !managed.window.isDestroyed()) {
         return managed.window
@@ -698,6 +919,126 @@ export class WindowManager {
     return managed?.workspaceId ?? null
   }
 
+  /** Return the trusted layout identity for primary writers and their auxiliary windows. */
+  getLayoutWriteContext(webContentsId: number): LayoutWriteContext | null {
+    const managed = this.windows.get(webContentsId)
+    if (!managed || managed.layoutMode === 'standalone') return null
+    if (managed.role === 'main') {
+      return this.primaryWebContentsByWorkspace.get(managed.workspaceId) === webContentsId
+        ? {
+            workspaceId: managed.workspaceId,
+            layoutWindowId: 'primary',
+            role: 'primary',
+            ownerWebContentsId: webContentsId,
+          }
+        : null
+    }
+    if (managed.role !== 'auxiliary' || !managed.layoutWindowId || managed.parentWebContentsId == null) return null
+    return this.primaryWebContentsByWorkspace.get(managed.workspaceId) === managed.parentWebContentsId
+      ? {
+          workspaceId: managed.workspaceId,
+          layoutWindowId: managed.layoutWindowId,
+          role: 'auxiliary',
+          ownerWebContentsId: managed.parentWebContentsId,
+        }
+      : null
+  }
+
+  private redockAuxiliaryOnce(
+    webContentsId: number,
+    layoutWindowId: string,
+    workspaceId: string,
+  ): Promise<void> {
+    const existing = this.auxiliaryRedockPromises.get(webContentsId)
+    if (existing) return existing
+    const task = Promise.resolve().then(() => this.auxiliaryClosedHandler?.(layoutWindowId, workspaceId))
+      .then(() => undefined)
+    this.auxiliaryRedockPromises.set(webContentsId, task)
+    void task.then(
+      () => queueMicrotask(() => this.auxiliaryRedockPromises.delete(webContentsId)),
+      () => queueMicrotask(() => this.auxiliaryRedockPromises.delete(webContentsId)),
+    )
+    return task
+  }
+
+  private requestManagedWindowCloseAndWait(
+    webContentsId: number,
+    managed: ManagedWindow,
+  ): Promise<void> {
+    if (managed.window.isDestroyed()) {
+      return managed.role === 'auxiliary' && managed.layoutWindowId
+        ? this.redockAuxiliaryOnce(webContentsId, managed.layoutWindowId, managed.workspaceId)
+        : Promise.resolve()
+    }
+    return new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (error?: unknown) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        managed.window.removeListener('closed', onClosed)
+        if (this.gracefulCloseCancellers.get(webContentsId) === cancel) {
+          this.gracefulCloseCancellers.delete(webContentsId)
+        }
+        if (error) reject(error)
+        else resolve()
+      }
+      const onClosed = () => {
+        if (managed.role !== 'auxiliary' || !managed.layoutWindowId) {
+          finish()
+          return
+        }
+        void this.redockAuxiliaryOnce(webContentsId, managed.layoutWindowId, managed.workspaceId)
+          .then(
+            () => finish(),
+            cause => finish(new WindowCloseHandshakeError(
+              'redock-failed',
+              `Auxiliary window ${managed.layoutWindowId} closed but could not redock`,
+              { cause },
+            )),
+          )
+      }
+      const cancel = () => finish(new WindowCloseHandshakeError(
+        'cancelled',
+        `Window ${webContentsId} close was cancelled because renderer state did not flush`,
+      ))
+      const timeout = setTimeout(() => finish(new WindowCloseHandshakeError(
+        'timeout',
+        `Window ${webContentsId} did not flush and close within ${this.auxiliaryCloseHandshakeTimeoutMs} ms`,
+      )), this.auxiliaryCloseHandshakeTimeoutMs)
+      this.gracefulCloseCancellers.set(webContentsId, cancel)
+      managed.window.once('closed', onClosed)
+      try {
+        managed.window.close()
+      } catch (error) {
+        finish(new WindowCloseHandshakeError(
+          'close-failed',
+          `Window ${webContentsId} close request failed`,
+          { cause: error },
+        ))
+      }
+    })
+  }
+
+  /** Close every detached layout window and wait for renderer flush + redock. */
+  async closeAuxiliaryWindowsGracefully(parentWebContentsId: number): Promise<void> {
+    const auxiliaries = [...this.windows.entries()].filter(([, candidate]) =>
+      candidate.role === 'auxiliary'
+      && candidate.parentWebContentsId === parentWebContentsId)
+    await Promise.all(auxiliaries.map(([webContentsId, managed]) =>
+      this.requestManagedWindowCloseAndWait(webContentsId, managed)))
+  }
+
+  /** Close one managed window without bypassing renderer persistence. */
+  async closeWindowGracefully(webContentsId: number): Promise<void> {
+    const managed = this.windows.get(webContentsId)
+    if (!managed) {
+      throw new WindowCloseHandshakeError('not-found', `Window ${webContentsId} is not managed by Craft`)
+    }
+    if (managed.role === 'main') await this.closeAuxiliaryWindowsGracefully(webContentsId)
+    await this.requestManagedWindowCloseAndWait(webContentsId, managed)
+  }
+
   /**
    * Mark whether the app is in quit flow.
    * When true, window close events bypass layered close interception.
@@ -730,8 +1071,31 @@ export class WindowManager {
 
     const managed = this.windows.get(webContentsId)
     if (managed && !managed.window.isDestroyed()) {
+      if (managed.role === 'main' && this.cascadingPrimaryCloses.has(webContentsId)) return
+      if (managed.role === 'main') {
+        const auxiliaries = [...this.windows.values()].filter(candidate =>
+          candidate.role === 'auxiliary'
+          && candidate.parentWebContentsId === webContentsId
+          && !candidate.window.isDestroyed())
+        if (auxiliaries.length > 0) {
+          this.cascadingPrimaryCloses.add(webContentsId)
+          let remaining = auxiliaries.length
+          const closePrimary = () => {
+            remaining -= 1
+            if (remaining > 0) return
+            this.cascadingPrimaryCloses.delete(webContentsId)
+            if (!managed.window.isDestroyed()) managed.window.destroy()
+          }
+          for (const auxiliary of auxiliaries) {
+            auxiliary.window.once('closed', closePrimary)
+            auxiliary.window.close()
+          }
+          return
+        }
+      }
       // Remove close listener temporarily to avoid infinite loop,
       // then destroy the window directly
+      this.cascadingPrimaryCloses.delete(webContentsId)
       managed.window.destroy()
     }
   }
@@ -746,6 +1110,7 @@ export class WindowManager {
       clearTimeout(timeout)
       this.pendingCloseTimeouts.delete(webContentsId)
     }
+    this.gracefulCloseCancellers.get(webContentsId)?.()
   }
 
   /**
@@ -764,11 +1129,34 @@ export class WindowManager {
    * @param workspaceId - The new workspace ID
    * @returns true if window was found and updated, false otherwise
    */
-  updateWindowWorkspace(webContentsId: number, workspaceId: string): boolean {
+  async updateWindowWorkspace(webContentsId: number, workspaceId: string): Promise<boolean> {
     const managed = this.windows.get(webContentsId)
     if (managed) {
       const oldWorkspaceId = managed.workspaceId
+      if (oldWorkspaceId === workspaceId) return true
+      if (managed.role !== 'main') {
+        throw new Error(`${managed.role} windows cannot switch workspaces directly`)
+      }
+      const wasPrimaryWriter = managed.role === 'main'
+        && this.primaryWebContentsByWorkspace.get(oldWorkspaceId) === webContentsId
+      const destinationPrimary = this.primaryWebContentsByWorkspace.get(workspaceId)
+      if (wasPrimaryWriter && destinationPrimary != null && destinationPrimary !== webContentsId) {
+        throw new Error(`Workspace ${workspaceId} already has a primary layout window`)
+      }
+
+      if (wasPrimaryWriter) {
+        await this.closeAuxiliaryWindowsGracefully(webContentsId)
+      }
+      await this.workspaceChangingHandler?.(webContentsId, oldWorkspaceId, workspaceId)
+
       managed.workspaceId = workspaceId
+      if (wasPrimaryWriter) {
+        this.primaryWebContentsByWorkspace.delete(oldWorkspaceId)
+        this.promotePrimaryLayoutWriter(oldWorkspaceId)
+      }
+      if (managed.layoutMode !== 'standalone' && !this.primaryWebContentsByWorkspace.has(workspaceId)) {
+        this.primaryWebContentsByWorkspace.set(workspaceId, webContentsId)
+      }
       // Re-apply window-title policy so in-window workspace switches update
       // the titlebar immediately (relevant when ≥2 windows are open).
       this.refreshWindowTitles()
@@ -796,7 +1184,21 @@ export class WindowManager {
       ...(existing?.sessionId ? { sessionId: existing.sessionId } : {}),
       ...(existing?.parentWebContentsId != null ? { parentWebContentsId: existing.parentWebContentsId } : {}),
       ...(existing?.customTitle ? { customTitle: existing.customTitle } : {}),
+      ...(existing?.layoutWindowId ? { layoutWindowId: existing.layoutWindowId } : {}),
+      layoutMode: existing?.layoutMode ?? (
+        (existing?.role ?? 'main') === 'child-session'
+          || ((existing?.role ?? 'main') === 'main' && this.primaryWebContentsByWorkspace.has(workspaceId))
+          ? 'standalone'
+          : 'coordinated'
+      ),
     })
+    if (
+      (existing?.role ?? 'main') === 'main'
+      && existing?.layoutMode !== 'standalone'
+      && !this.primaryWebContentsByWorkspace.has(workspaceId)
+    ) {
+      this.primaryWebContentsByWorkspace.set(workspaceId, webContentsId)
+    }
     // Re-apply window-title policy after re-registration (e.g. post-refresh).
     this.refreshWindowTitles()
     windowLog.info(`Registered window ${webContentsId} for workspace ${workspaceId}`)
@@ -813,7 +1215,8 @@ export class WindowManager {
    * Focus existing window for workspace or create new one
    */
   focusOrCreateWindow(workspaceId: string): BrowserWindow {
-    const existing = this.getWindowByWorkspace(workspaceId)
+    const primaryId = this.primaryWebContentsByWorkspace.get(workspaceId)
+    const existing = primaryId == null ? null : this.getWindowByWebContentsId(primaryId)
     if (existing) {
       if (existing.isMinimized()) {
         existing.restore()
@@ -824,12 +1227,27 @@ export class WindowManager {
     return this.createWindow({ workspaceId })
   }
 
+  private promotePrimaryLayoutWriter(workspaceId: string): void {
+    if (this.primaryWebContentsByWorkspace.has(workspaceId)) return
+    for (const [webContentsId, managed] of this.windows) {
+      if (
+        managed.role === 'main'
+        && managed.layoutMode !== 'standalone'
+        && managed.workspaceId === workspaceId
+        && !managed.window.isDestroyed()
+      ) {
+        this.primaryWebContentsByWorkspace.set(workspaceId, webContentsId)
+        return
+      }
+    }
+  }
+
   /**
    * Get window states for persistence (includes bounds and focused mode)
    * Used by window-state.ts to save/restore windows
    */
   getWindowStates(): SavedWindow[] {
-    return this.getAllWindows().map(managed => {
+    return this.getAllWindows().filter(managed => managed.role === 'main').map(managed => {
       const webContentsId = managed.window.webContents.id
       const isFocused = this.focusedModeWindows.has(webContentsId)
       const url = managed.window.webContents.getURL()

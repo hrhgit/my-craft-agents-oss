@@ -504,7 +504,7 @@ export function Island({
   const shouldLockScroll = (activeView?.lockScroll ?? false) || (activeView?.blockOutsideInteraction ?? false) || lockScrollWhileVisible
   const isDialogMode = dialogBehavior !== 'none'
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     if (!isDialogMode || !isVisible) return
 
     const bridge = getDismissibleLayerBridge()

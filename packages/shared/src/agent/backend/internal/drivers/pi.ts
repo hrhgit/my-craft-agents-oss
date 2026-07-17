@@ -264,11 +264,11 @@ function piGlobalModelsToCustomModels(
     if (m.contextWindow || supportsImages !== undefined) {
       return {
         id: m.id,
-        ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+        contextWindow: m.contextWindow ?? 200_000,
         ...(supportsImages !== undefined ? { supportsImages } : {}),
       };
     }
-    return m.id;
+    return { id: m.id, contextWindow: 200_000 };
   });
 }
 

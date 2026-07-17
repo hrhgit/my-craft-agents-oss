@@ -1,19 +1,16 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import * as Icons from 'lucide-react'
 import type { ComponentEntry } from './types'
 import {
   BrowserControls,
-  BrowserEmptyStateCard,
   TurnCard,
   type ActivityItem,
   type ResponseContent,
 } from '@craft-agent/ui'
 import { AnimatePresence, motion } from 'motion/react'
 import { BrowserTabStrip } from '@/components/browser/BrowserTabStrip'
-import { EMPTY_STATE_PROMPT_SAMPLES } from '@/components/browser/empty-state-prompts'
 import type { BrowserInstanceInfo } from '../../../shared/types'
 import { BROWSER_LIVE_FX_BORDER, getBrowserLiveFxCornerRadii } from '../../../shared/browser-live-fx'
-import { routes } from '../../../shared/routes'
 import { isLinux, isMac, isWindows } from '@/lib/platform'
 
 interface BrowserTraceSidebarSampleProps {
@@ -27,7 +24,6 @@ interface BrowserTraceSidebarSampleProps {
 type RunState = BrowserTraceSidebarSampleProps['runState']
 type Scenario = BrowserTraceSidebarSampleProps['scenario']
 type AgentVisualState = 'idle' | 'active' | 'failed'
-type BrowserSurfaceMode = 'content' | 'empty-state'
 
 const now = Date.now()
 const PLAYGROUND_LIVE_FX_CORNERS = getBrowserLiveFxCornerRadii(
@@ -210,76 +206,11 @@ function getLiveFxPayloadFromAgentState(
   }
 }
 
-function BrowserAgentEmptyState({
-  title,
-  description,
-  showExamplePrompts,
-  showSafetyHint,
-}: {
-  title: string
-  description: string
-  showExamplePrompts: boolean
-  showSafetyHint: boolean
-}) {
-  const handlePromptSelect = useCallback(async (prompt: string) => {
-    const deepLinkRoute = routes.action.newSession({ input: prompt, send: true })
-    const deepLinkUrl = `craftagents://${deepLinkRoute}`
-
-    try {
-      if (typeof window !== 'undefined' && window.electronAPI?.openUrl) {
-        await window.electronAPI.openUrl(deepLinkUrl)
-        return
-      }
-
-      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(prompt)
-      }
-      console.info('[BrowserEmptyState] Prompt copied (Electron API unavailable):', prompt)
-    } catch (error) {
-      console.warn('[BrowserEmptyState] Failed to open prompt deep link:', error)
-    }
-  }, [])
-
-  return (
-    <BrowserEmptyStateCard
-      title={title}
-      description={description}
-      prompts={EMPTY_STATE_PROMPT_SAMPLES}
-      showExamplePrompts={showExamplePrompts}
-      showSafetyHint={showSafetyHint}
-      onPromptSelect={(sample) => void handlePromptSelect(sample.full)}
-    />
-  )
-}
-
 function BrowserMockPageSurface({
   className,
-  mode = 'content',
-  emptyStateTitle = 'This browser is ready for your Agents - and you ;)',
-  emptyStateDescription = 'Ask any session to use this browser (or open another one) to complete tasks like research, form filling, QA checks, or data extraction.',
-  showExamplePrompts = true,
-  showSafetyHint = true,
 }: {
   className?: string
-  mode?: BrowserSurfaceMode
-  emptyStateTitle?: string
-  emptyStateDescription?: string
-  showExamplePrompts?: boolean
-  showSafetyHint?: boolean
 }) {
-  if (mode === 'empty-state') {
-    return (
-      <div className={className ?? 'absolute inset-0 p-6 z-10'}>
-        <BrowserAgentEmptyState
-          title={emptyStateTitle}
-          description={emptyStateDescription}
-          showExamplePrompts={showExamplePrompts}
-          showSafetyHint={showSafetyHint}
-        />
-      </div>
-    )
-  }
-
   return (
     <div className={className ?? 'absolute inset-0 p-6 z-10'}>
       <div className="h-10 rounded-lg border border-foreground/10 bg-background/80 backdrop-blur-sm" />
@@ -393,21 +324,11 @@ function BrowserFramePlayground({
   loading,
   agentState,
   themeColor,
-  surfaceMode,
-  emptyStateTitle,
-  emptyStateDescription,
-  showExamplePrompts,
-  showSafetyHint,
 }: {
   initialUrl: string
   loading: boolean
   agentState: AgentVisualState
   themeColor: string
-  surfaceMode: BrowserSurfaceMode
-  emptyStateTitle: string
-  emptyStateDescription: string
-  showExamplePrompts: boolean
-  showSafetyHint: boolean
 }) {
   const [url, setUrl] = useState(initialUrl)
   const scenario: Scenario = 'full-matrix'
@@ -427,14 +348,7 @@ function BrowserFramePlayground({
         />
         <div className="h-[calc(100%-48px)] bg-foreground-2">
           <div className="relative h-full w-full bg-background overflow-hidden">
-            <BrowserMockPageSurface
-              className="absolute inset-0 p-6"
-              mode={surfaceMode}
-              emptyStateTitle={emptyStateTitle}
-              emptyStateDescription={emptyStateDescription}
-              showExamplePrompts={showExamplePrompts}
-              showSafetyHint={showSafetyHint}
-            />
+            <BrowserMockPageSurface className="absolute inset-0 p-6" />
 
             <AnimatePresence>
               {liveFx.active && (
@@ -494,33 +408,6 @@ function BrowserFramePlayground({
         </div>
       </div>
 
-    </div>
-  )
-}
-
-function BrowserEmptyStatePlayground({
-  title,
-  description,
-  showExamplePrompts,
-  showSafetyHint,
-}: {
-  title: string
-  description: string
-  showExamplePrompts: boolean
-  showSafetyHint: boolean
-}) {
-  return (
-    <div className="w-full h-[700px] rounded-xl border border-border overflow-hidden bg-background shadow-sm flex">
-      <div className="relative h-full w-full bg-foreground-2 overflow-hidden">
-        <BrowserMockPageSurface
-          className="absolute inset-0 p-8"
-          mode="empty-state"
-          emptyStateTitle={title}
-          emptyStateDescription={description}
-          showExamplePrompts={showExamplePrompts}
-          showSafetyHint={showSafetyHint}
-        />
-      </div>
     </div>
   )
 }
@@ -962,77 +849,6 @@ export const browserUiComponents: ComponentEntry[] = [
           ],
         },
         defaultValue: '',
-      },
-      {
-        name: 'surfaceMode',
-        description: 'Switch between generic mock page content and the new browser onboarding empty state.',
-        control: {
-          type: 'select',
-          options: [
-            { label: 'Empty State', value: 'empty-state' },
-            { label: 'Mock Content', value: 'content' },
-          ],
-        },
-        defaultValue: 'empty-state',
-      },
-      {
-        name: 'emptyStateTitle',
-        description: 'Main heading shown in the browser empty state.',
-        control: { type: 'string' },
-        defaultValue: 'This browser is ready for your Agents - and you ;)',
-      },
-      {
-        name: 'emptyStateDescription',
-        description: 'Body copy describing how sessions can use this browser window.',
-        control: { type: 'string' },
-        defaultValue: 'Ask any session to use this browser (or open another one) to complete tasks like research, form filling, QA checks, or data extraction.',
-      },
-      {
-        name: 'showExamplePrompts',
-        description: 'Show quick prompt chips that demonstrate browser automation requests.',
-        control: { type: 'boolean' },
-        defaultValue: true,
-      },
-      {
-        name: 'showSafetyHint',
-        description: 'Show a small trust hint explaining that browser control is user-triggered.',
-        control: { type: 'boolean' },
-        defaultValue: true,
-      },
-
-    ],
-  },
-  {
-    id: 'browser-empty-state-playground',
-    name: 'Browser Empty State (Agent Guidance)',
-    category: 'Browser',
-    description: 'Focused preview of the first-load browser empty state message for copy and visual iteration.',
-    component: BrowserEmptyStatePlayground,
-    layout: 'top',
-    props: [
-      {
-        name: 'title',
-        description: 'Main heading for the empty state card.',
-        control: { type: 'string' },
-        defaultValue: 'This browser is ready for your Agents - and you ;)',
-      },
-      {
-        name: 'description',
-        description: 'Explanatory copy shown under the title.',
-        control: { type: 'string' },
-        defaultValue: 'Ask any session to use this browser (or open another one) to complete tasks like research, form filling, QA checks, or data extraction.',
-      },
-      {
-        name: 'showExamplePrompts',
-        description: 'Show quick prompt examples for common browser workflows.',
-        control: { type: 'boolean' },
-        defaultValue: true,
-      },
-      {
-        name: 'showSafetyHint',
-        description: 'Show a subtle note that browser control happens only when requested.',
-        control: { type: 'boolean' },
-        defaultValue: true,
       },
     ],
   },

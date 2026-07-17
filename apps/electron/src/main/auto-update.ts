@@ -28,6 +28,11 @@ import {
 import { readJsonFileSync } from '@craft-agent/shared/utils/files'
 import { RPC_CHANNELS, type UpdateInfo } from '../shared/types'
 import type { EventSink } from '@craft-agent/server-core/transport'
+import {
+  runUpdateQuitTransaction,
+  UpdateQuitRecovery,
+  type UpdateQuitRollback,
+} from './application-exit'
 
 // Platform detection
 const PLATFORM = platform()
@@ -70,13 +75,16 @@ let __isUpdating = false
 // Hook fired immediately before quitAndInstall, while BrowserWindows still exist.
 // electron-updater destroys windows between quitAndInstall and before-quit firing,
 // so the regular before-quit save site would see an empty array.
-let beforeUpdateQuitHook: (() => void) | null = null
+let beforeUpdateQuitHook: (() => void | UpdateQuitRollback | Promise<void | UpdateQuitRollback>) | null = null
+let pendingUpdateQuitRecovery: UpdateQuitRecovery | null = null
 
 /**
  * Register a callback to run inside installUpdate() before quitAndInstall.
  * Used by index.ts to snapshot multi-window state while windows are still alive.
  */
-export function setBeforeUpdateQuitHook(fn: () => void): void {
+export function setBeforeUpdateQuitHook(
+  fn: () => void | UpdateQuitRollback | Promise<void | UpdateQuitRollback>,
+): void {
   beforeUpdateQuitHook = fn
 }
 
@@ -111,6 +119,29 @@ function broadcastUpdateInfo(): void {
 
   const snapshot = { ...updateInfo }
   eventSink(RPC_CHANNELS.update.AVAILABLE, { to: 'all' }, snapshot)
+}
+
+function markUpdateInstallFailed(error: unknown): void {
+  __isUpdating = false
+  updateInfo = {
+    ...updateInfo,
+    // The downloaded artifact remains valid, so keep retry available.
+    downloadState: 'ready',
+    error: error instanceof Error ? error.message : 'Update install failed',
+  }
+  broadcastUpdateInfo()
+}
+
+function recoverFailedUpdateQuit(error: unknown): Promise<void> | null {
+  const recovery = pendingUpdateQuitRecovery
+  if (!recovery) return null
+  const task = recovery.fail(error, markUpdateInstallFailed)
+  void task.catch(recoveryError => {
+    autoUpdateLog.error('Failed to restore application windows after updater error', recoveryError)
+  }).finally(() => {
+    if (pendingUpdateQuitRecovery === recovery) pendingUpdateQuitRecovery = null
+  })
+  return task
 }
 
 /**
@@ -225,12 +256,26 @@ autoUpdater.on('update-downloaded', async (info) => {
 autoUpdater.on('error', (error) => {
   autoUpdateLog.error('electron-updater error', error)
 
+  // BaseUpdater.install() catches launch failures and emits this event instead
+  // of throwing from quitAndInstall(). The pre-update windows still need the
+  // same rollback as a direct exception.
+  if (__isUpdating && pendingUpdateQuitRecovery) {
+    void recoverFailedUpdateQuit(error)
+    return
+  }
+
   updateInfo = {
     ...updateInfo,
     downloadState: 'error',
     error: error.message,
   }
   broadcastUpdateInfo()
+})
+
+app.on('before-quit', () => {
+  // A real before-quit means electron-updater accepted the handoff. Do not let
+  // a late updater error recreate windows during committed shutdown.
+  if (__isUpdating) pendingUpdateQuitRecovery = null
 })
 
 // ─── Exported API ─────────────────────────────────────────────────────────────
@@ -388,7 +433,7 @@ export async function installUpdate(): Promise<void> {
 
   autoUpdateLog.info('Installing update and restarting...')
 
-  updateInfo = { ...updateInfo, downloadState: 'installing' }
+  updateInfo = { ...updateInfo, downloadState: 'installing', error: undefined }
   broadcastUpdateInfo()
 
   // Clear dismissed version since user is explicitly updating
@@ -406,26 +451,26 @@ export async function installUpdate(): Promise<void> {
     latestVersion: updateInfo.latestVersion,
   })
 
-  // Snapshot window state BEFORE quitAndInstall — electron-updater destroys
-  // BrowserWindows between this call and before-quit firing, so the regular
-  // before-quit save would clobber window-state.json with an empty array.
+  pendingUpdateQuitRecovery = null
   try {
-    beforeUpdateQuitHook?.()
-  } catch (err) {
-    autoUpdateLog.error('beforeUpdateQuit hook failed', err)
-  }
-
-  try {
-    // Windows uses an assisted installer for first install so users can choose
-    // the directory. Updates should still apply silently in place.
-    const isSilent = process.platform === 'win32'
-    // isForceRunAfter=true ensures the app relaunches after install
-    autoUpdater.quitAndInstall(isSilent, true)
+    await runUpdateQuitTransaction({
+      // Snapshot window state BEFORE quitAndInstall — electron-updater destroys
+      // BrowserWindows between this call and before-quit firing, so the regular
+      // before-quit save would clobber window-state.json with an empty array.
+      prepare: async () => beforeUpdateQuitHook?.(),
+      onPrepared: recovery => { pendingUpdateQuitRecovery = recovery },
+      install: () => {
+        // Windows uses an assisted installer for first install so users can choose
+        // the directory. Updates should still apply silently in place.
+        const isSilent = process.platform === 'win32'
+        // isForceRunAfter=true ensures the app relaunches after install
+        autoUpdater.quitAndInstall(isSilent, true)
+      },
+      markFailed: markUpdateInstallFailed,
+    })
   } catch (error) {
-    __isUpdating = false
-    autoUpdateLog.error('quitAndInstall failed', error)
-    updateInfo = { ...updateInfo, downloadState: 'error' }
-    broadcastUpdateInfo()
+    pendingUpdateQuitRecovery = null
+    autoUpdateLog.error('Update install handoff failed; application restored', error)
     throw error
   }
 }

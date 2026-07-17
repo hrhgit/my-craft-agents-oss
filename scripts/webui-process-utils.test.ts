@@ -7,6 +7,8 @@ const scriptsDir = fileURLToPath(new URL(".", import.meta.url));
 const utilsPath = fileURLToPath(new URL("./webui-process-utils.ps1", import.meta.url));
 const launcherPath = fileURLToPath(new URL("./start-webui.ps1", import.meta.url));
 const instanceLauncherPath = fileURLToPath(new URL("./start-webui-instance.ps1", import.meta.url));
+const clientLauncherPath = fileURLToPath(new URL("./start-webui-client.ps1", import.meta.url));
+const cmdLauncherPath = fileURLToPath(new URL("../start-webui.cmd", import.meta.url));
 const packageJsonPath = fileURLToPath(new URL("../package.json", import.meta.url));
 const webuiViteConfigPath = fileURLToPath(new URL("../apps/webui/vite.config.ts", import.meta.url));
 const windowsTest = process.platform === "win32" ? test : test.skip;
@@ -130,6 +132,41 @@ describe("WebUI process lifecycle utilities", () => {
     });
   });
 
+  windowsTest("accepts a live endpoint owned by the current process", () => {
+    const result = runPowerShellJson(`
+      $directory = Join-Path $env:TEMP ('craft-endpoint-test-' + [guid]::NewGuid())
+      $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+      try {
+        New-Item -ItemType Directory -Force $directory | Out-Null
+        $tokenFile = Join-Path $directory '.server-token'
+        Set-Content -LiteralPath $tokenFile -Value 'test-token'
+        $listener.Start()
+        $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+        [ordered]@{
+          schemaVersion = 1
+          pid = $PID
+          startedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          url = "ws://127.0.0.1:$port"
+          tokenFile = $tokenFile
+          webui = [ordered]@{ enabled = $true; autoLogin = $true }
+        } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $directory '.server-endpoint.json')
+        $endpoint = Get-CraftServerEndpoint -ConfigDir $directory -RequireWebuiAutoLogin
+        [pscustomobject]@{
+          found = $null -ne $endpoint
+          pid = $endpoint.pid
+          port = ([Uri]$endpoint.url).Port
+        } | ConvertTo-Json -Compress
+      } finally {
+        $listener.Stop()
+        Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
+      }
+    `) as { found: boolean; pid: number; port: number };
+
+    expect(result.found).toBe(true);
+    expect(result.pid).toBeGreaterThan(0);
+    expect(result.port).toBeGreaterThan(0);
+  });
+
   test("starts Vite with non-interactive standard input and persists child state", () => {
     const launcher = readFileSync(launcherPath, "utf8");
     expect(launcher).toContain("-RedirectStandardInput $viteStandardInput");
@@ -164,5 +201,19 @@ describe("WebUI process lifecycle utilities", () => {
     const portmuxIndex = launcher.indexOf("& portmux start --project $repoRoot");
     expect(cleanupIndex).toBeGreaterThan(-1);
     expect(portmuxIndex).toBeGreaterThan(cleanupIndex);
+  });
+
+  test("repeated zero-argument launches create frontend-only clients", () => {
+    const cmd = readFileSync(cmdLauncherPath, "utf8");
+    const instanceLauncher = readFileSync(instanceLauncherPath, "utf8");
+    const clientLauncher = readFileSync(clientLauncherPath, "utf8");
+
+    expect(cmd).not.toContain("%~1");
+    expect(instanceLauncher).toContain("Get-CraftServerEndpoint -RequireWebuiAutoLogin");
+    expect(instanceLauncher).toContain("Start-SharedClientInstance");
+    expect(clientLauncher).toContain("apps/webui/vite.config.ts");
+    expect(clientLauncher).not.toContain("Start-HeadlessServer");
+    expect(clientLauncher).not.toContain("server:dev:webui");
+    expect(clientLauncher).not.toContain("Stop-LegacyWebuiRpcProcess");
   });
 });

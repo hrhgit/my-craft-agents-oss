@@ -570,6 +570,21 @@ html[data-font="inter"] {
     -webkit-mask-image: linear-gradient(to bottom, black 0%, black calc(100% - 32px), transparent 100%);
   }
 
+  /* Top fade — mirrors mask-fade-bottom for blending a container's top edge
+     into whatever sits above it (e.g. bottom sidebar buttons blending into the
+     scrollable session list). 32px fade distance matches mask-fade-bottom. */
+  .mask-fade-top {
+    mask-image: linear-gradient(to bottom, transparent 0%, black 32px, black 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 32px, black 100%);
+  }
+
+  /* Short top fade (12px) — used by session list header area where a long fade
+     would clip too much content. Also referenced by SessionList scroll area. */
+  .mask-fade-top-short {
+    mask-image: linear-gradient(to bottom, transparent 0%, black 12px, black 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 12px, black 100%);
+  }
+
   /* Custom shadow utilities
      - Border layer (1px ring) uses foreground color with --shadow-border-opacity
      - Blur/spread layers use black with --shadow-blur-opacity

@@ -2,13 +2,18 @@ import { randomBytes } from 'node:crypto'
 import { closeSync, existsSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { join, resolve } from 'node:path'
-import { CRAFT_UI_PROTOCOL_VERSION, type CraftUiProfileMode, type CraftUiResponse, type CraftUiRunManifest, type CraftUiSurface } from './protocol.ts'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@craft-agent/shared/ui-validation'
+import { CRAFT_UI_PROTOCOL_VERSION, type CraftUiProfileMode, type CraftUiResponse, type CraftUiRunManifest, type CraftUiSurface, type CraftUiWindowMode } from './protocol.ts'
 import { ensureDir, writeJsonAtomic } from './files.ts'
-import { prepareProfile } from './profile.ts'
+import type { CraftUiFixtureSpec } from './fixture.ts'
 import { redactText } from './redaction.ts'
 import { createCraftUiSurfaceDriver, readEndpointManifest, requestCraftUiHost } from './client.ts'
 
 export const DEFAULT_CRAFT_UI_RUN_ROOT = resolve(process.cwd(), 'output', 'craft-ui')
+export const DEFAULT_CRAFT_UI_START_WAIT_MS = 600_000
+const CRAFT_UI_SHUTDOWN_REQUEST_TIMEOUT_MS = 30_000
+const CRAFT_UI_SHUTDOWN_GRACE_PERIOD_MS = 30_000
+const CRAFT_UI_FORCED_STOP_GRACE_PERIOD_MS = 10_000
 
 export function getDefaultAdapterCommand(surface: CraftUiSurface): string[] {
   if (surface === 'webui') return [
@@ -59,6 +64,7 @@ export function resolveRunDir(runRoot = DEFAULT_CRAFT_UI_RUN_ROOT, runId?: strin
 export async function startCraftUiRun(args: {
   surface: CraftUiSurface
   profileMode?: CraftUiProfileMode
+  windowMode?: CraftUiWindowMode
   adapterCommand?: string[]
   runRoot?: string
   sourceCraftConfigDir?: string
@@ -67,9 +73,17 @@ export async function startCraftUiRun(args: {
   waitForReady?: boolean
   extraEnv?: Record<string, string>
   scenario?: Record<string, unknown>
+  fixtureSpec?: CraftUiFixtureSpec
 }): Promise<CraftUiRunManifest> {
   if (args.profileMode === 'clone' && (!args.sourceCraftConfigDir || !args.sourcePiAgentDir)) {
     throw new Error('clone profile requires explicit sourceCraftConfigDir and sourcePiAgentDir paths')
+  }
+  if (args.fixtureSpec && args.profileMode !== undefined && args.profileMode !== 'fixture') {
+    throw new Error('fixtureSpec requires the fixture profile mode')
+  }
+  const waitMs = args.waitMs ?? DEFAULT_CRAFT_UI_START_WAIT_MS
+  if (!Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > UI_VALIDATION_MAX_WAIT_MS) {
+    throw new Error(`waitMs must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}`)
   }
   const adapterCommand = args.adapterCommand ?? getDefaultAdapterCommand(args.surface)
   if (adapterCommand.length === 0 || !adapterCommand[0]) throw new Error('An adapter command is required')
@@ -86,13 +100,16 @@ export async function startCraftUiRun(args: {
   writeJsonAtomic(join(artifactsDir, 'manifest.json'), {
     protocolVersion: CRAFT_UI_PROTOCOL_VERSION, runId, updatedAt: new Date().toISOString(), artifacts: [],
   })
+  const { prepareProfile } = await import('./profile.ts')
   const profile = prepareProfile({
     profileDir,
-    mode: args.profileMode ?? 'isolated',
+    mode: args.profileMode ?? 'fixture',
     sourceCraftConfigDir: args.sourceCraftConfigDir,
     sourcePiAgentDir: args.sourcePiAgentDir,
+    fixtureSpec: args.fixtureSpec,
   })
   const now = new Date().toISOString()
+  const windowMode = args.windowMode ?? 'foreground'
   const manifest: CraftUiRunManifest = {
     protocolVersion: CRAFT_UI_PROTOCOL_VERSION,
     runId,
@@ -102,6 +119,7 @@ export async function startCraftUiRun(args: {
     updatedAt: now,
     controllerPid: process.pid,
     profileMode: profile.mode,
+    windowMode,
     containsClonedUserData: profile.containsClonedUserData,
     runDir,
     profileDir,
@@ -111,6 +129,7 @@ export async function startCraftUiRun(args: {
     stdoutPath,
     stderrPath,
     adapterCommand: adapterCommand.map(part => redactText(part, [token])),
+    fixture: profile.fixture,
     ...(typeof args.scenario?.name === 'string' ? {
       initialScenario: {
         name: args.scenario.name,
@@ -146,6 +165,7 @@ export async function startCraftUiRun(args: {
         CRAFT_UI_TOKEN: token,
         CRAFT_UI_PROTOCOL_VERSION: String(CRAFT_UI_PROTOCOL_VERSION),
         CRAFT_UI_ELECTRON_USER_DATA_DIR: profile.electronUserDataDir,
+        CRAFT_UI_WINDOW_MODE: windowMode,
         CRAFT_UI_VALIDATION_BUILD: '1',
         CRAFT_UI_TEST_HOST: '1',
       },
@@ -160,7 +180,7 @@ export async function startCraftUiRun(args: {
   updateRunManifest(runDir, { hostPid: child.pid })
   if (args.waitForReady === false) return readRunManifest(runDir)
 
-  const deadline = Date.now() + (args.waitMs ?? 30_000)
+  const deadline = Date.now() + waitMs
   while (Date.now() < deadline) {
     if (existsSync(endpointManifestPath)) {
       const endpoint = readEndpointManifest(endpointManifestPath)
@@ -171,32 +191,34 @@ export async function startCraftUiRun(args: {
         throw new Error(error)
       }
       let readyManifest = updateRunManifest(runDir, { launcherPid: child.pid, hostPid: endpoint.pid })
+      const appReadyTimeoutMs = Math.max(1, deadline - Date.now())
       const readiness = await requestCraftUiHost({
         ...readyManifest,
         command: 'ui.wait',
-        params: { predicate: { kind: 'app-phase', phase: 'ready' }, stableForMs: 50 },
-        timeoutMs: Math.max(1, deadline - Date.now()),
+        params: { predicate: { kind: 'app-phase', phase: 'ready' }, stableForMs: 50, timeoutMs: appReadyTimeoutMs },
+        timeoutMs: appReadyTimeoutMs,
         minimumSeqExclusive: readyManifest.lastResponseSeq,
       }).catch(error => ({ ok: false as const, error: { code: 'NOT_READY', message: error instanceof Error ? error.message : String(error) } }))
       if (!readiness.ok) {
         const error = `Host endpoint opened but the application did not become ready: ${readiness.error.code}: ${readiness.error.message}`
         updateRunManifest(runDir, { status: 'failed', error })
-        await requestCraftUiHost({ ...readyManifest, command: 'app.shutdown', timeoutMs: 5_000 }).catch(() => undefined)
+        await requestCraftUiHost({ ...readyManifest, command: 'app.shutdown', timeoutMs: CRAFT_UI_SHUTDOWN_REQUEST_TIMEOUT_MS }).catch(() => undefined)
         await terminateAndCleanFailedRun(runDir, child.pid)
         throw new Error(error)
       }
       readyManifest = updateRunManifest(runDir, { lastResponseSeq: readiness.seq, lastRevision: readiness.revision, verificationLevel: readiness.verificationLevel })
+      const semanticReadyTimeoutMs = Math.max(1, deadline - Date.now())
       const semanticReadiness = await requestCraftUiHost({
         ...readyManifest,
         command: 'ui.wait',
-        params: { predicate: { kind: 'semantic-ready' }, stableForMs: 50 },
-        timeoutMs: Math.max(1, deadline - Date.now()),
+        params: { predicate: { kind: 'semantic-ready' }, stableForMs: 50, timeoutMs: semanticReadyTimeoutMs },
+        timeoutMs: semanticReadyTimeoutMs,
         minimumSeqExclusive: readyManifest.lastResponseSeq,
       }).catch(error => ({ ok: false as const, error: { code: 'NOT_READY', message: error instanceof Error ? error.message : String(error) } }))
       if (!semanticReadiness.ok) {
         const error = `Application state became ready but its semantic UI did not: ${semanticReadiness.error.code}: ${semanticReadiness.error.message}`
         updateRunManifest(runDir, { status: 'failed', error })
-        await requestCraftUiHost({ ...readyManifest, command: 'app.shutdown', timeoutMs: 5_000 }).catch(() => undefined)
+        await requestCraftUiHost({ ...readyManifest, command: 'app.shutdown', timeoutMs: CRAFT_UI_SHUTDOWN_REQUEST_TIMEOUT_MS }).catch(() => undefined)
         await terminateAndCleanFailedRun(runDir, child.pid)
         throw new Error(error)
       }
@@ -211,14 +233,14 @@ export async function startCraftUiRun(args: {
           ...readyManifest,
           command: 'scenario.apply',
           params: args.scenario,
-          timeoutMs: args.waitMs ?? 30_000,
+          timeoutMs: waitMs,
           minimumSeqExclusive: readyManifest.lastResponseSeq,
         })
         updateRunManifest(runDir, { lastResponseSeq: applied.seq, lastRevision: applied.revision, verificationLevel: applied.verificationLevel })
         if (!applied.ok) {
           const error = `Initial scenario failed: ${applied.error.code}: ${applied.error.message}`
           updateRunManifest(runDir, { status: 'failed', error })
-          await requestCraftUiHost({ ...readyManifest, command: 'app.shutdown', timeoutMs: 5_000 }).catch(() => undefined)
+          await requestCraftUiHost({ ...readyManifest, command: 'app.shutdown', timeoutMs: CRAFT_UI_SHUTDOWN_REQUEST_TIMEOUT_MS }).catch(() => undefined)
           await terminateAndCleanFailedRun(runDir, child.pid)
           throw new Error(error)
         }
@@ -235,7 +257,7 @@ export async function startCraftUiRun(args: {
     }
     await Bun.sleep(100)
   }
-  const error = `Timed out waiting for Craft UI host endpoint after ${args.waitMs ?? 30_000}ms`
+  const error = `Timed out waiting for Craft UI host endpoint after ${waitMs}ms`
   updateRunManifest(runDir, { status: 'failed', error })
   await terminateAndCleanFailedRun(runDir, child.pid)
   throw new Error(error)
@@ -249,7 +271,7 @@ export async function getCraftUiRunStatus(runDir: string): Promise<Record<string
     try {
       const endpoint = readEndpointManifest(manifest.endpointManifestPath)
       if (endpoint.pid !== manifest.hostPid || endpoint.surface !== manifest.surface) throw new Error('Host endpoint identity changed')
-      const driver = createCraftUiSurfaceDriver({ ...manifest, timeoutMs: 3_000, minimumSeqExclusive: manifest.lastResponseSeq })
+      const driver = createCraftUiSurfaceDriver({ ...manifest, timeoutMs: UI_VALIDATION_DEFAULT_TIMEOUT_MS, minimumSeqExclusive: manifest.lastResponseSeq })
       host = await driver.ready()
       const response = host as CraftUiResponse
       manifest = updateRunManifest(runDir, {
@@ -270,7 +292,7 @@ export async function stopCraftUiRunDetailed(runDir: string): Promise<{ manifest
   let manifest = updateRunManifest(runDir, { status: 'stopping' })
   let shutdownResponse: CraftUiResponse | undefined
   if (existsSync(manifest.endpointManifestPath) && isPidAlive(manifest.hostPid)) {
-    const driver = createCraftUiSurfaceDriver({ ...manifest, timeoutMs: 5_000, minimumSeqExclusive: manifest.lastResponseSeq })
+    const driver = createCraftUiSurfaceDriver({ ...manifest, timeoutMs: CRAFT_UI_SHUTDOWN_REQUEST_TIMEOUT_MS, minimumSeqExclusive: manifest.lastResponseSeq })
     const response = await driver.dispose().catch(() => undefined)
     if (response) {
       shutdownResponse = response
@@ -281,12 +303,12 @@ export async function stopCraftUiRunDetailed(runDir: string): Promise<{ manifest
       })
     }
   }
-  const deadline = Date.now() + 5_000
+  const deadline = Date.now() + CRAFT_UI_SHUTDOWN_GRACE_PERIOD_MS
   while (isPidAlive(manifest.hostPid) && Date.now() < deadline) await Bun.sleep(100)
   if (isPidAlive(manifest.hostPid)) {
     try { process.kill(manifest.hostPid!, 'SIGTERM') } catch { /* already stopped */ }
   }
-  const forcedDeadline = Date.now() + 2_000
+  const forcedDeadline = Date.now() + CRAFT_UI_FORCED_STOP_GRACE_PERIOD_MS
   while (isPidAlive(manifest.hostPid) && Date.now() < forcedDeadline) await Bun.sleep(100)
   if (isPidAlive(manifest.hostPid)) {
     return { manifest: updateRunManifest(runDir, { status: 'failed', error: 'Craft UI host did not stop after shutdown and SIGTERM' }), response: shutdownResponse }
@@ -317,7 +339,7 @@ async function terminateAndCleanFailedRun(runDir: string, pid?: number): Promise
   if (isPidAlive(pid)) {
     try { process.kill(pid!, 'SIGTERM') } catch { /* already stopped */ }
   }
-  const deadline = Date.now() + 5_000
+  const deadline = Date.now() + CRAFT_UI_SHUTDOWN_GRACE_PERIOD_MS
   while (isPidAlive(pid) && Date.now() < deadline) await Bun.sleep(100)
   const manifest = readRunManifest(runDir)
   let cleanupError: string | undefined

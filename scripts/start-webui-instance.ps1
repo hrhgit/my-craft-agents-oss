@@ -61,6 +61,40 @@ function Clear-StaleWebuiLaunch {
   }
 }
 
+function Start-SharedClientInstance {
+  $endpoint = Get-CraftServerEndpoint -RequireWebuiAutoLogin
+  if ($null -eq $endpoint) {
+    throw 'No healthy shared Craft WebUI backend was found. Run start-webui.cmd once to start it.'
+  }
+
+  $clientId = [string]$PID
+  $portmuxProject = Join-Path $env:TEMP "craft-agent-webui\portmux\client-$clientId"
+  $portmuxConfig = Join-Path $portmuxProject '.portmux.json'
+  $portmuxLauncher = Join-Path $portmuxProject 'start.ps1'
+  New-Item -ItemType Directory -Force $portmuxProject | Out-Null
+
+  $clientScript = Join-Path $PSScriptRoot 'start-webui-client.ps1'
+  $escapedClientScript = $clientScript.Replace("'", "''")
+  $launcher = "& '$escapedClientScript' -PortmuxManaged -ClientId '$clientId'$([Environment]::NewLine)exit `$LASTEXITCODE$([Environment]::NewLine)"
+  [System.IO.File]::WriteAllText($portmuxLauncher, $launcher, [System.Text.UTF8Encoding]::new($false))
+
+  $config = [ordered]@{
+    start = 'powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File start.ps1'
+    port_env = @('CRAFT_WEBUI_PORT', 'PORT')
+  }
+  $json = ($config | ConvertTo-Json -Depth 3) + [Environment]::NewLine
+  [System.IO.File]::WriteAllText($portmuxConfig, $json, [System.Text.UTF8Encoding]::new($false))
+
+  Write-Host "[Craft Agents Web] Starting a new frontend process against shared backend PID $($endpoint.pid)..." -ForegroundColor Cyan
+  & portmux start --project $portmuxProject
+  if ($LASTEXITCODE -ne 0) { throw 'Failed to start a frontend process for the shared backend.' }
+}
+
+if ($null -ne (Get-CraftServerEndpoint -RequireWebuiAutoLogin)) {
+  Start-SharedClientInstance
+  exit 0
+}
+
 $existingUrl = Get-RunningWebuiUrl
 if ($null -ne $existingUrl) {
   Open-WebuiUrl $existingUrl
@@ -75,6 +109,10 @@ if ($null -eq $primaryLock) {
   $deadline = (Get-Date).AddSeconds(180)
   do {
     Start-Sleep -Milliseconds 250
+    if ($null -ne (Get-CraftServerEndpoint -RequireWebuiAutoLogin)) {
+      Start-SharedClientInstance
+      exit 0
+    }
     $existingUrl = Get-RunningWebuiUrl
     if ($null -ne $existingUrl) {
       Open-WebuiUrl $existingUrl

@@ -37,6 +37,7 @@ function collectAutomaticSemantics(): ReturnType<typeof uiSemanticRegistry.snaps
   const selector = [
     '[data-craft-semantic-id]',
     '[data-craft-ui-interactions]',
+    '[data-testid]',
     '[data-slot="button"]',
     '[data-slot="input"]',
     '[data-slot="textarea"]',
@@ -88,6 +89,7 @@ export function disambiguateAutomaticNodes(nodes: AutomaticSemanticNode[]): Auto
 
 function automaticNode(element: HTMLElement): ReturnType<typeof uiSemanticRegistry.snapshot>['nodes'][number] | null {
   const explicitId = element.dataset.craftSemanticId
+  const testId = element.getAttribute('data-testid') ?? undefined
   const role = implicitRole(element)
   const name = accessibleName(element)
   let id = explicitId
@@ -103,10 +105,12 @@ function automaticNode(element: HTMLElement): ReturnType<typeof uiSemanticRegist
   } else if (role === 'alert' || role === 'status') {
     id = `notification.${slug(name || role)}`
     domSelector = element.hasAttribute('data-sonner-toast') ? '[data-sonner-toast]' : `[role="${role}"]`
+  } else if (testId) {
+    id = `test.${slug(testId)}`
+    domSelector = `[data-testid="${CSS.escape(testId)}"]`
   } else if (element.dataset.slot && name) {
-    const testId = element.getAttribute('data-testid') ?? undefined
-    id = testId ? `test.${slug(testId)}` : `primitive.${slug(element.dataset.slot)}.${slug(name)}`
-    domSelector = testId ? `[data-testid="${CSS.escape(testId)}"]` : structuralSelector(element)
+    id = `primitive.${slug(element.dataset.slot)}.${slug(name)}`
+    domSelector = structuralSelector(element)
   } else {
     return null
   }
@@ -123,6 +127,7 @@ function automaticNode(element: HTMLElement): ReturnType<typeof uiSemanticRegist
   const resolvedName = name || explicitId || role
   return {
     id,
+    ...(testId ? { testId } : {}),
     role,
     name: resolvedName.slice(0, 500),
     ...(rawValue === undefined ? {} : { value: sensitive ? '[REDACTED]' : rawValue.slice(0, 2_000) }),

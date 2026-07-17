@@ -2,11 +2,13 @@ import * as React from "react"
 import { Drawer as DrawerPrimitive } from "vaul"
 
 import { cn } from "../../lib/utils"
+import { useDismissiblePrimitiveRootState } from "./use-dismissible-layer"
 
 function Drawer({
   ...props
 }: React.ComponentProps<typeof DrawerPrimitive.Root>) {
-  return <DrawerPrimitive.Root data-slot="drawer" {...props} />
+  const state = useDismissiblePrimitiveRootState(props, 'radix-dialog', 100)
+  return <DrawerPrimitive.Root data-slot="drawer" {...props} {...state} />
 }
 
 function DrawerTrigger({

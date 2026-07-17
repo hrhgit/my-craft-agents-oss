@@ -1,0 +1,71 @@
+.craft-file-workbench-shell {
+  container-type: inline-size;
+}
+
+.craft-file-workbench-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+}
+
+.craft-file-workbench-tree {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+}
+
+.craft-file-tree-toggle,
+.craft-file-tree-close,
+.craft-file-tree-backdrop {
+  display: none;
+}
+
+@container (max-width: 520px) {
+  .craft-file-preview-size {
+    display: none;
+  }
+}
+
+@container (max-width: 380px) {
+  .craft-file-copy-action,
+  .craft-file-refresh-action {
+    display: none;
+  }
+}
+
+@container (max-width: 300px) {
+  .craft-file-editor-modes [role='tab'] {
+    width: 24px;
+  }
+}
+
+@container (max-width: 720px) {
+  .craft-file-workbench-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .craft-file-workbench-tree {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 30;
+    display: none;
+    width: min(86%, 320px);
+    box-shadow: -12px 0 28px color-mix(in srgb, var(--foreground) 13%, transparent);
+  }
+
+  .craft-file-workbench-shell[data-tree-open='true'] .craft-file-workbench-tree {
+    display: flex;
+  }
+
+  .craft-file-workbench-shell[data-tree-open='true'] .craft-file-tree-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: block;
+    background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  }
+
+  .craft-file-tree-toggle,
+  .craft-file-tree-close {
+    display: inline-flex;
+  }
+}

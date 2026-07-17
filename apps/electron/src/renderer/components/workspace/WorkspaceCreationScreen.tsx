@@ -10,7 +10,7 @@ import { AddWorkspaceStep_Choice } from "./AddWorkspaceStep_Choice"
 import { AddWorkspaceStep_CreateNew } from "./AddWorkspaceStep_CreateNew"
 import { AddWorkspaceStep_OpenFolder } from "./AddWorkspaceStep_OpenFolder"
 import { AddWorkspaceStep_ConnectRemote } from "./AddWorkspaceStep_ConnectRemote"
-import type { Workspace } from "../../../shared/types"
+import type { RemoteServerConfig, Workspace } from "../../../shared/types"
 import { toast } from "sonner"
 
 type CreationStep = 'choice' | 'create' | 'open' | 'remote'
@@ -24,7 +24,7 @@ interface WorkspaceCreationScreenProps {
   /** When set, skip choice step and open ConnectRemote in reconnect mode */
   reconnectWorkspace?: Workspace
   /** Reconnect an existing remote workspace and resolve only on real success. */
-  onReconnectWorkspace?: (workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => Promise<void>
+  onReconnectWorkspace?: (workspaceId: string, remoteServer: RemoteServerConfig) => Promise<void>
 }
 
 /**
@@ -66,7 +66,7 @@ export function WorkspaceCreationScreen({
     }
   }, [isCreating, onClose])
 
-  const handleCreateWorkspace = useCallback(async (folderPath: string, name: string, remoteServer?: { url: string; token: string; remoteWorkspaceId: string }) => {
+  const handleCreateWorkspace = useCallback(async (folderPath: string, name: string, remoteServer?: RemoteServerConfig) => {
     setIsCreating(true)
     try {
       const workspace = await window.electronAPI.createWorkspace(folderPath, name, remoteServer)
@@ -81,7 +81,7 @@ export function WorkspaceCreationScreen({
     }
   }, [onWorkspaceCreated])
 
-  const handleReconnectWorkspace = useCallback(async (workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => {
+  const handleReconnectWorkspace = useCallback(async (workspaceId: string, remoteServer: RemoteServerConfig) => {
     if (!onReconnectWorkspace) {
       throw new Error('Reconnect handler not configured')
     }
@@ -131,6 +131,7 @@ export function WorkspaceCreationScreen({
             isCreating={isCreating}
             initialUrl={reconnectWorkspace?.remoteServer?.url}
             initialToken={reconnectWorkspace?.remoteServer?.token}
+            initialAllowInsecureTls={reconnectWorkspace?.remoteServer?.allowInsecureTls}
             reconnectWorkspace={reconnectWorkspace?.remoteServer ? {
               id: reconnectWorkspace.id,
               name: reconnectWorkspace.name,

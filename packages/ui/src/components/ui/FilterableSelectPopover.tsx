@@ -2,6 +2,7 @@ import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/utils'
+import { useDismissibleLayerRegistration } from './use-dismissible-layer'
 
 export interface FilterableSelectRenderState {
   selected: boolean
@@ -57,6 +58,7 @@ export function FilterableSelectPopover<T>({
   const [position, setPosition] = React.useState<{ top: number; left: number } | null>(null)
   const inputRef = React.useRef<HTMLInputElement>(null)
   const listRef = React.useRef<HTMLDivElement>(null)
+  useDismissibleLayerRegistration(open, () => onOpenChange(false), 'radix-popover', 20)
 
   const filteredItems = React.useMemo(() => {
     const query = filter.trim().toLowerCase()

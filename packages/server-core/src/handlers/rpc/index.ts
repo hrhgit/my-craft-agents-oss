@@ -3,13 +3,14 @@ import type { HandlerDeps } from '../handler-deps'
 
 import { registerAuthHandlers } from './auth'
 import { registerAutomationsHandlers } from './automations'
-import { registerFilesHandlers } from './files'
+import { cleanupWorkspaceFileWatchForClient, registerFilesHandlers } from './files'
 import { registerPiProviderHandlers } from './pi-providers'
 import { registerOAuthHandlers } from './oauth'
 import { registerResourcesHandlers } from './resources'
 import { registerOnboardingHandlers } from './onboarding'
-import { registerSessionsHandlers } from './sessions'
+import { cleanupSessionFileWatchForClient, registerSessionsHandlers } from './sessions'
 export { registerSessionsHandlers, cleanupSessionFileWatchForClient } from './sessions'
+export { cleanupWorkspaceFileWatchForClient } from './files'
 import { registerServerHandlers } from './server'
 import type { ServerHandlerContext } from '../../bootstrap/headless-start'
 export type { ServerHandlerContext } from '../../bootstrap/headless-start'
@@ -21,6 +22,11 @@ import { registerSystemCoreHandlers } from './system'
 import { registerTransferHandlers } from './transfer'
 import { registerWorkspaceCoreHandlers } from './workspace'
 import { registerMessagingHandlers } from './messaging'
+
+export function cleanupClientFileWatches(clientId: string): void {
+  cleanupSessionFileWatchForClient(clientId)
+  cleanupWorkspaceFileWatchForClient(clientId)
+}
 
 export function registerCoreRpcHandlers(
   server: RpcServer,

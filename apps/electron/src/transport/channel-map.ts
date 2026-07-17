@@ -68,6 +68,7 @@ export const CHANNEL_MAP = {
   createWorkspace: invoke(RPC_CHANNELS.workspaces.CREATE),
   checkWorkspaceSlug: invoke(RPC_CHANNELS.workspaces.CHECK_SLUG),
   updateWorkspaceRemoteServer: invoke(RPC_CHANNELS.workspaces.UPDATE_REMOTE),
+  onWorkspaceRemoteServerUpdated: listener(RPC_CHANNELS.workspaces.REMOTE_UPDATED),
   testRemoteConnection: invoke(RPC_CHANNELS.remote.TEST_CONNECTION),
 
   // Server-level workspace operations (REMOTE_ELIGIBLE)
@@ -86,6 +87,12 @@ export const CHANNEL_MAP = {
   cancelCloseWindow: invoke(RPC_CHANNELS.window.CANCEL_CLOSE),
   onCloseRequested: listener(RPC_CHANNELS.window.CLOSE_REQUESTED),
   setTrafficLightsVisible: invoke(RPC_CHANNELS.window.SET_TRAFFIC_LIGHTS),
+  getAppLayout: invoke(RPC_CHANNELS.layout.GET),
+  saveAppLayout: invoke(RPC_CHANNELS.layout.SAVE),
+  detachLayoutTab: invoke(RPC_CHANNELS.layout.DETACH_TAB),
+  detachLayoutGroup: invoke(RPC_CHANNELS.layout.DETACH_GROUP),
+  redockLayoutWindow: invoke(RPC_CHANNELS.layout.REDOCK_WINDOW),
+  onAppLayoutChanged: listener(RPC_CHANNELS.layout.CHANGED),
 
   // File operations
   readFile: invoke(RPC_CHANNELS.file.READ),
@@ -194,6 +201,21 @@ export const CHANNEL_MAP = {
   // Server filesystem browsing (remote mode)
   listServerDirectory: invoke(RPC_CHANNELS.fs.LIST_DIRECTORY),
 
+  // Workspace-scoped file workbench
+  listWorkspaceDirectory: invoke(RPC_CHANNELS.fs.LIST_WORKSPACE_DIRECTORY),
+  searchWorkspaceFiles: invoke(RPC_CHANNELS.fs.SEARCH_WORKSPACE),
+  readWorkspaceFilePreview: invoke(RPC_CHANNELS.fs.READ_WORKSPACE_PREVIEW),
+  readWorkspaceFileDraft: invoke(RPC_CHANNELS.fs.READ_WORKSPACE_DRAFT),
+  setWorkspaceFileDraft: invoke(RPC_CHANNELS.fs.SET_WORKSPACE_DRAFT),
+  deleteWorkspaceFileDraft: invoke(RPC_CHANNELS.fs.DELETE_WORKSPACE_DRAFT),
+  writeWorkspaceTextFile: invoke(RPC_CHANNELS.fs.WRITE_WORKSPACE_TEXT),
+  createWorkspaceEntry: invoke(RPC_CHANNELS.fs.CREATE_WORKSPACE_ENTRY),
+  renameWorkspaceEntry: invoke(RPC_CHANNELS.fs.RENAME_WORKSPACE_ENTRY),
+  deleteWorkspaceEntry: invoke(RPC_CHANNELS.fs.DELETE_WORKSPACE_ENTRY),
+  watchWorkspaceFiles: invoke(RPC_CHANNELS.fs.WATCH_WORKSPACE),
+  unwatchWorkspaceFiles: invoke(RPC_CHANNELS.fs.UNWATCH_WORKSPACE),
+  onWorkspaceFilesChanged: listener(RPC_CHANNELS.fs.WORKSPACE_CHANGED),
+
   // Debug logging
   debugLog: invoke(RPC_CHANNELS.debug.LOG),
 
@@ -209,6 +231,8 @@ export const CHANNEL_MAP = {
 
   // Session Info Panel
   getSessionFiles: invoke(RPC_CHANNELS.sessions.GET_FILES),
+  readSessionFile: invoke(RPC_CHANNELS.sessions.READ_FILE),
+  writeSessionTextFile: invoke(RPC_CHANNELS.sessions.WRITE_FILE),
   watchSessionFiles: invoke(RPC_CHANNELS.sessions.WATCH_FILES),
   unwatchSessionFiles: invoke(RPC_CHANNELS.sessions.UNWATCH_FILES),
   onSessionFilesChanged: listener(RPC_CHANNELS.sessions.FILES_CHANGED),
@@ -348,6 +372,9 @@ export const CHANNEL_MAP = {
 
   // Browser pane management
   'browserPane.create': invoke(RPC_CHANNELS.browserPane.CREATE),
+  'browserPane.embed': invoke(RPC_CHANNELS.browserPane.EMBED),
+  'browserPane.updateEmbedBounds': invoke(RPC_CHANNELS.browserPane.UPDATE_EMBED_BOUNDS),
+  'browserPane.detach': invoke(RPC_CHANNELS.browserPane.DETACH),
   'browserPane.destroy': invoke(RPC_CHANNELS.browserPane.DESTROY),
   'browserPane.list': invoke(RPC_CHANNELS.browserPane.LIST),
   'browserPane.navigate': invoke(RPC_CHANNELS.browserPane.NAVIGATE),
@@ -356,10 +383,10 @@ export const CHANNEL_MAP = {
   'browserPane.reload': invoke(RPC_CHANNELS.browserPane.RELOAD),
   'browserPane.stop': invoke(RPC_CHANNELS.browserPane.STOP),
   'browserPane.focus': invoke(RPC_CHANNELS.browserPane.FOCUS),
-  'browserPane.emptyStateLaunch': invoke(RPC_CHANNELS.browserPane.LAUNCH),
   'browserPane.onStateChanged': listener(RPC_CHANNELS.browserPane.STATE_CHANGED),
   'browserPane.onRemoved': listener(RPC_CHANNELS.browserPane.REMOVED),
   'browserPane.onInteracted': listener(RPC_CHANNELS.browserPane.INTERACTED),
+  'browserPane.onHostDockNavigation': listener(RPC_CHANNELS.browserPane.HOST_DOCK_NAVIGATION),
 
   // LLM Connections
 

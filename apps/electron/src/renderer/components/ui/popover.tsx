@@ -3,11 +3,13 @@ import * as PopoverPrimitive from "@radix-ui/react-popover"
 
 import { cn } from "@/lib/utils"
 import { uiValidationAttributes, type UiValidationPrimitiveProps } from "./ui-validation"
+import { useDismissibleRootState } from "@/context/DismissibleLayerContext"
 
 function Popover({
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+  const state = useDismissibleRootState(props, 'radix-popover', 20)
+  return <PopoverPrimitive.Root data-slot="popover" {...props} {...state} />
 }
 
 function PopoverTrigger({

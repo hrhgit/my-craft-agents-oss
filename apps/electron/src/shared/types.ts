@@ -2,6 +2,7 @@
 // Protocol re-exports (channels, DTOs, events, wire types)
 // =============================================================================
 export * from '@craft-agent/shared/protocol'
+import type { BrowserHostDockNavigationCommand } from '@craft-agent/shared/protocol'
 
 // =============================================================================
 // Package re-exports (convenience for renderer imports)
@@ -15,6 +16,7 @@ import type {
   TokenUsage as CoreTokenUsage,
   WorkspaceInfo as CoreWorkspaceInfo,
   Workspace as CoreWorkspace,
+  RemoteServerConfig as CoreRemoteServerConfig,
   SessionMetadata as CoreSessionMetadata,
   StoredAttachment as CoreStoredAttachment,
   ContentBadge,
@@ -39,6 +41,7 @@ export type {
   CoreTokenUsage as TokenUsage,
   CoreWorkspaceInfo as WorkspaceInfo,
   CoreWorkspace as Workspace,
+  CoreRemoteServerConfig as RemoteServerConfig,
   CoreSessionMetadata as SessionMetadata,
   CoreStoredAttachment as StoredAttachment,
   ContentBadge,
@@ -108,23 +111,8 @@ export interface BrowserPaneCreateOptions {
   id?: string
   show?: boolean
   bindToSessionId?: string
-}
-
-/**
- * Empty-state launch request from the browser empty-state renderer.
- */
-export interface BrowserEmptyStateLaunchPayload {
-  route: string
-  token?: string
-}
-
-/**
- * Result of browser empty-state launch handling.
- */
-export interface BrowserEmptyStateLaunchResult {
-  ok: boolean
-  handled: boolean
-  reason?: string
+  /** Required for renderer-created browser instances. */
+  workspaceId?: string
 }
 
 export type TransportMode = 'local' | 'remote'
@@ -200,11 +188,19 @@ import type {
   WorkspaceSettings,
   PermissionModeState,
   BrowserInstanceInfo,
+  BrowserEmbedBounds,
+  FileTextWriteResult,
   DeepLinkNavigation,
   TestAutomationPayload,
   TestAutomationResult,
   WindowCloseRequest,
   DirectoryListingResult,
+  WorkspaceDirectoryListing,
+  WorkspaceFileEntry,
+  WorkspaceFilePreview,
+  WorkspaceFileDraft,
+  WorkspaceEntryMutationResult,
+  WorkspaceEntryRenameResult,
   RemoteSessionTransferPayload,
   ImportRemoteSessionTransferResult,
   PiProjectionEventV1,
@@ -243,7 +239,21 @@ export interface ElectronAPI {
   // App lifecycle
   relaunchApp(): Promise<void>
   removeWorkspace(workspaceId: string): Promise<boolean>
-  invokeOnServer(url: string, token: string, channel: string, ...args: any[]): Promise<any>
+  invokeOnServer(
+    url: string,
+    token: string,
+    channel: string,
+    connection: { allowInsecureTls?: boolean },
+    ...args: any[]
+  ): Promise<any>
+  /** Invoke a known ElectronAPI method against a trusted workspace runtime. */
+  invokeWorkspaceApi(route: import('./app-layout').WorkspaceRoute, method: string, ...args: any[]): Promise<any>
+  /** Subscribe to a known ElectronAPI listener on one trusted workspace runtime. */
+  onWorkspaceApiEvent(
+    route: import('./app-layout').WorkspaceRoute,
+    method: string,
+    callback: (...args: any[]) => void,
+  ): () => void
 
   // Remote session transfer (main-process orchestrated, supports chunked upload)
   transferSessionToWorkspace(sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number): Promise<{ sessionId: string }>
@@ -262,15 +272,16 @@ export interface ElectronAPI {
 
   // Workspace management
   getWorkspaces(): Promise<Workspace[]>
-  createWorkspace(folderPath: string, name: string, remoteServer?: { url: string; token: string; remoteWorkspaceId: string }): Promise<Workspace>
+  createWorkspace(folderPath: string, name: string, remoteServer?: CoreRemoteServerConfig): Promise<Workspace>
   checkWorkspaceSlug(slug: string): Promise<{ exists: boolean; path: string }>
-  updateWorkspaceRemoteServer(workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }): Promise<{ success: boolean }>
+  updateWorkspaceRemoteServer(workspaceId: string, remoteServer: CoreRemoteServerConfig): Promise<{ success: boolean }>
+  onWorkspaceRemoteServerUpdated(callback: (data: { workspaceId: string }) => void): () => void
 
   // Server-level workspace operations (for thin client / remote workspace discovery)
   getServerWorkspaces(): Promise<WorkspaceInfo[]>
   createServerWorkspace(name: string): Promise<WorkspaceInfo>
 
-  testRemoteConnection(url: string, token: string): Promise<{
+  testRemoteConnection(url: string, token: string, allowInsecureTls?: boolean): Promise<{
     ok: boolean
     error?: string
     needsWorkspace?: boolean
@@ -301,6 +312,14 @@ export interface ElectronAPI {
   /** Show/hide macOS traffic light buttons (for fullscreen overlays) */
   setTrafficLightsVisible(visible: boolean): Promise<void>
 
+  // Client-wide dock layout (main-process authority)
+  getAppLayout(workspaceId?: string, serverId?: string): Promise<import('./app-layout').AppLayout>
+  saveAppLayout(layout: import('./app-layout').AppLayout, expectedRevision?: number): Promise<import('./app-layout').AppLayout>
+  detachLayoutTab(tabId: string, bounds?: { x: number; y: number; width: number; height: number }): Promise<import('./app-layout').AppLayout>
+  detachLayoutGroup(groupId: string, bounds?: { x: number; y: number; width: number; height: number }): Promise<import('./app-layout').AppLayout>
+  redockLayoutWindow(windowId: string): Promise<import('./app-layout').AppLayout>
+  onAppLayoutChanged(callback: (layout: import('./app-layout').AppLayout) => void): () => void
+
   // Event listeners
   onSessionEvent(callback: (event: SessionEvent) => void): () => void
   onPiProjectionEvent(callback: (event: PiProjectionEventV1) => void): () => void
@@ -308,6 +327,8 @@ export interface ElectronAPI {
 
   // File operations
   readFile(path: string): Promise<string>
+  readSessionFile(sessionId: string, path: string): Promise<string>
+  writeSessionTextFile(sessionId: string, path: string, content: string, expectedContent: string): Promise<FileTextWriteResult>
   /** Read a file as binary data (Uint8Array) */
   readFileBinary(path: string): Promise<Uint8Array>
   /** Read a file as a data URL (data:{mime};base64,...) for binary preview (images, PDFs) */
@@ -329,6 +350,20 @@ export interface ElectronAPI {
 
   // Server filesystem browsing (remote mode)
   listServerDirectory(dirPath: string): Promise<DirectoryListingResult>
+  // Workspace-scoped file workbench. Paths are always workspace-relative.
+  listWorkspaceDirectory(relativePath?: string): Promise<WorkspaceDirectoryListing>
+  searchWorkspaceFiles(query: string): Promise<WorkspaceFileEntry[]>
+  readWorkspaceFilePreview(relativePath: string): Promise<WorkspaceFilePreview>
+  readWorkspaceFileDraft(relativePath: string): Promise<WorkspaceFileDraft | null>
+  setWorkspaceFileDraft(relativePath: string, content: string, baseContent: string): Promise<WorkspaceFileDraft>
+  deleteWorkspaceFileDraft(relativePath: string): Promise<void>
+  writeWorkspaceTextFile(relativePath: string, content: string, expectedContent: string): Promise<FileTextWriteResult>
+  createWorkspaceEntry(relativePath: string, type: WorkspaceFileEntry['type']): Promise<WorkspaceEntryMutationResult>
+  renameWorkspaceEntry(relativePath: string, nextRelativePath: string): Promise<WorkspaceEntryRenameResult>
+  deleteWorkspaceEntry(relativePath: string, recursive: boolean): Promise<WorkspaceEntryMutationResult>
+  watchWorkspaceFiles(): Promise<void>
+  unwatchWorkspaceFiles(): Promise<void>
+  onWorkspaceFilesChanged(callback: (workspaceId: string) => void): () => void
   // Debug: send renderer logs to main process log file
   debugLog(...args: unknown[]): void
 
@@ -601,6 +636,9 @@ export interface ElectronAPI {
   // Browser pane management
   browserPane: {
     create(input?: string | BrowserPaneCreateOptions): Promise<string>
+    embed(id: string, bounds: BrowserEmbedBounds): Promise<void>
+    updateEmbedBounds(id: string, bounds: BrowserEmbedBounds): Promise<void>
+    detach(id: string): Promise<void>
     destroy(id: string): Promise<void>
     list(): Promise<BrowserInstanceInfo[]>
     navigate(id: string, url: string): Promise<{ url: string; title: string }>
@@ -609,10 +647,10 @@ export interface ElectronAPI {
     reload(id: string): Promise<void>
     stop(id: string): Promise<void>
     focus(id: string): Promise<void>
-    emptyStateLaunch(payload: BrowserEmptyStateLaunchPayload): Promise<BrowserEmptyStateLaunchResult>
     onStateChanged(callback: (info: BrowserInstanceInfo) => void): () => void
     onRemoved(callback: (id: string) => void): () => void
     onInteracted(callback: (id: string) => void): () => void
+    onHostDockNavigation(callback: (command: BrowserHostDockNavigationCommand) => void): () => void
   }
 
   getDefaultThinkingLevel(): Promise<ThinkingLevel>
@@ -745,14 +783,6 @@ export type WhatsAppUiEvent =
 // =============================================================================
 
 /**
- * Right sidebar panel types
- */
-export type RightSidebarPanel =
-  | { type: 'files'; path?: string }
-  | { type: 'history' }
-  | { type: 'none' }
-
-/**
  * Session filter options
  */
 export type SessionFilter = { kind: 'allSessions' }
@@ -770,7 +800,6 @@ export interface SessionsNavigationState {
   navigator: 'sessions'
   filter: SessionFilter
   details: { type: 'session'; sessionId: string } | null
-  rightSidebar?: RightSidebarPanel
 }
 
 /**
@@ -796,7 +825,6 @@ export interface SourcesNavigationState {
   navigator: 'sources'
   filter?: SourceFilter
   details: { type: 'source'; sourceSlug: string } | null
-  rightSidebar?: RightSidebarPanel
 }
 
 /**
@@ -809,7 +837,6 @@ export interface SourcesNavigationState {
 export interface SettingsNavigationState {
   navigator: 'settings'
   subpage: SettingsSubpage | null
-  rightSidebar?: RightSidebarPanel
 }
 
 /**
@@ -818,7 +845,6 @@ export interface SettingsNavigationState {
 export interface SkillsNavigationState {
   navigator: 'skills'
   details: { type: 'skill'; skillSlug: string } | null
-  rightSidebar?: RightSidebarPanel
 }
 
 /**
@@ -828,7 +854,6 @@ export interface AutomationsNavigationState {
   navigator: 'automations'
   filter?: AutomationFilter
   details: { type: 'automation'; automationId: string } | null
-  rightSidebar?: RightSidebarPanel
 }
 
 /**

@@ -34,6 +34,7 @@ import type {
 } from '@/components/extensions/RemoteUIModal'
 import type { ExtensionUIRequest, ExtensionUIResponse } from '@/hooks/useRemoteUIRequests'
 import type { WorkspaceSelectHandler } from '@/components/workspace/useWorkspaceNavigation'
+import type { WorkspaceTransitionState } from '@/lib/workspace-transition'
 
 export interface AppShellContextType {
   // Data
@@ -42,6 +43,10 @@ export interface AppShellContextType {
   // from retaining the full messages array and causing memory leaks.
   workspaces: Workspace[]
   activeWorkspaceId: string | null
+  /** Explicit renderer transition boundary for workspace-owned layout state. */
+  workspaceTransition: WorkspaceTransitionState | null
+  /** True after the active workspace session list has loaded authoritatively. */
+  sessionsLoaded: boolean
   /** Workspace slug for SDK skill qualification (derived from workspace path) */
   activeWorkspaceSlug: string | null
   /** Pi providers and global provider/model defaults. */
@@ -105,7 +110,7 @@ export interface AppShellContextType {
 
   // Workspace
   onSelectWorkspace: WorkspaceSelectHandler
-  onRefreshWorkspaces?: () => void
+  onRefreshWorkspaces?: () => void | Promise<void>
 
   // App actions
   onOpenSettings: () => void
@@ -127,8 +132,8 @@ export interface AppShellContextType {
   // Open a new chat with optional agent, name, and pre-filled input
   openNewChat?: (params?: NewChatActionParams) => Promise<void>
 
-  // Right sidebar button (for page headers)
-  rightSidebarButton?: React.ReactNode
+  // Optional trailing action rendered in page headers.
+  panelHeaderTrailingAction?: React.ReactNode
 
   // Leading action button for panel header (e.g., back button in compact mode)
   leadingAction?: React.ReactNode

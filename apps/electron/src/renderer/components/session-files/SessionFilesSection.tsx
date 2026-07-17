@@ -76,6 +76,8 @@ export interface SessionFilesSectionProps {
   sessionFolderPath?: string
   /** Hide section header when embedded inside compact containers (e.g. popovers) */
   hideHeader?: boolean
+  /** Override file activation, for example to open a file inside the workbench. */
+  onFileSelect?: (file: SessionFile) => void
 }
 
 /**
@@ -418,7 +420,7 @@ function FileTreeItem({
 /**
  * Section displaying session files as a tree
  */
-export function SessionFilesSection({ sessionId, className, sessionFolderPath, hideHeader = false }: SessionFilesSectionProps) {
+export function SessionFilesSection({ sessionId, className, sessionFolderPath, hideHeader = false, onFileSelect }: SessionFilesSectionProps) {
   const { t } = useTranslation()
   const [files, setFiles] = useState<SessionFile[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -537,9 +539,10 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
       // eslint-disable-next-line craft-links/no-direct-file-open -- directories can't be previewed in-app
       window.electronAPI.openFile(file.path)
     } else {
-      onOpenFile(file.path)
+      if (onFileSelect) onFileSelect(file)
+      else onOpenFile(file.path)
     }
-  }, [onOpenFile])
+  }, [onFileSelect, onOpenFile])
 
   // Handle double-click — same as single click (interceptor decides preview vs external)
   const handleFileDoubleClick = useCallback((file: SessionFile) => {

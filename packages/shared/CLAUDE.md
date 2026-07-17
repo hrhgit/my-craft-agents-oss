@@ -93,7 +93,6 @@ Keys use **flat dot-notation** with a category prefix:
 | `sendToWorkspace.*` | Send to workspace dialog | `sendToWorkspace.title` |
 | `webui.*` | WebUI-specific strings | `webui.connectionFailed` |
 | `auth.*` | Auth banner/prompts | `auth.connectionRequired` |
-| `browser.*` | Browser empty state | `browser.readyTitle` |
 
 ### Rules
 

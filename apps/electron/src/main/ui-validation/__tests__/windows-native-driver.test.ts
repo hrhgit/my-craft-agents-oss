@@ -15,8 +15,11 @@ describe('WindowsNativeUiDriver', () => {
       ] }] }
     }, 'win32')
     const snapshot = await driver.snapshot()
+    expect(driver.available()).toBeTrue()
+    expect(snapshot.verificationLevel).toBe('native-verified')
     const target = snapshot.windows[0]!.nodes.find(node => node.name === 'Open')!
     expect(target.actions).toContain('click')
+    expect(target.backgroundActions).toContain('click')
     const receipt = await driver.action({ revision: snapshot.revision, ref: target.ref, action: 'click' })
     expect(receipt.verificationLevel).toBe('native-verified')
     expect(receipt.afterRevision).toBeGreaterThan(receipt.beforeRevision)
@@ -28,7 +31,9 @@ describe('WindowsNativeUiDriver', () => {
     const driver = new WindowsNativeUiDriver(42, runner, 'win32')
     const snapshot = await driver.snapshot()
     await expect(driver.action({ revision: snapshot.revision - 1, ref: 'n0:stale', action: 'focus' })).rejects.toMatchObject({ code: 'STALE_REF' })
-    await expect(new WindowsNativeUiDriver(42, runner, 'linux').snapshot()).rejects.toMatchObject({ code: 'UNSUPPORTED' })
+    const unsupported = new WindowsNativeUiDriver(42, runner, 'linux')
+    expect(unsupported.available()).toBeFalse()
+    await expect(unsupported.snapshot()).rejects.toMatchObject({ code: 'UNSUPPORTED' })
   })
 
   it('does not invalidate a published ref with a hidden pre-action snapshot', async () => {
@@ -59,5 +64,27 @@ describe('WindowsNativeUiDriver', () => {
     const result = await driver.waitForNode(node => node.name === 'Folder picker', { timeoutMs: 500 })
     expect(result.node.actions).toContain('close')
     expect(reads).toBe(2)
+  })
+
+  it('advertises only pattern-backed operations as background-safe', async () => {
+    const driver = new WindowsNativeUiDriver(42, async () => ({ windows: [{
+      runtimeId: 'root', role: 'Window', name: 'Craft', nativeWindowHandle: 9001, enabled: true, focused: false,
+      patterns: ['Window'], children: [
+        { runtimeId: 'invoke', role: 'Button', name: 'Invoke', enabled: true, focused: false, patterns: ['Invoke'], bounds: { x: 1, y: 1, width: 10, height: 10 } },
+        { runtimeId: 'coordinate', role: 'Button', name: 'Coordinate', enabled: true, focused: false, bounds: { x: 1, y: 1, width: 10, height: 10 } },
+        { runtimeId: 'value', role: 'Edit', name: 'Value', enabled: true, focused: false, patterns: ['Value'] },
+      ],
+    }] }), 'win32')
+
+    const snapshot = await driver.snapshot()
+    const nodes = snapshot.windows[0]!.nodes
+    expect(nodes.find(node => node.name === 'Craft')).toMatchObject({
+      nativeWindowHandle: 9001,
+      backgroundActions: ['minimize', 'close'],
+    })
+    expect(nodes.find(node => node.name === 'Invoke')!.backgroundActions).toEqual(['click'])
+    expect(nodes.find(node => node.name === 'Coordinate')!.actions).toContain('click')
+    expect(nodes.find(node => node.name === 'Coordinate')!.backgroundActions).toEqual([])
+    expect(nodes.find(node => node.name === 'Value')!.backgroundActions).toEqual(['fill'])
   })
 })

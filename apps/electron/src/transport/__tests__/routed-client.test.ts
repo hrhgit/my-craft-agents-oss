@@ -146,6 +146,86 @@ describe('RoutedClient', () => {
       expect(workspace.destroy).toHaveBeenCalled()
     })
 
+    it('builds the replacement from the latest switch config and destroys the old remote client', async () => {
+      const latestRemoteServer = {
+        url: 'wss://new.example.test:9443',
+        token: 'new-token',
+        remoteWorkspaceId: 'remote-workspace-2',
+        allowInsecureTls: true,
+      }
+      const local = stubClient({
+        invoke: mock(async () => ({
+          workspaceId: 'workspace-2',
+          remoteServer: latestRemoteServer,
+        })),
+      })
+      const oldRemote = stubClient()
+      const newRemote = stubClient()
+      const factory = mock(() => newRemote)
+      const routed = new RoutedClient(local, oldRemote)
+      routed.setClientFactory(factory)
+
+      await routed.invoke(SWITCH_CHANNEL, 'workspace-2')
+
+      expect(factory).toHaveBeenCalledWith(latestRemoteServer)
+      expect(newRemote.connect).toHaveBeenCalledTimes(1)
+      expect(oldRemote.destroy).toHaveBeenCalledTimes(1)
+      await routed.invoke(REMOTE_CHANNEL)
+      expect(newRemote.invoke).toHaveBeenCalledWith(REMOTE_CHANNEL)
+    })
+
+    it('rolls back a synchronous replacement connect failure without changing workspace mapping', async () => {
+      const local = stubClient({
+        invoke: mock(async () => ({
+          workspaceId: 'workspace-new',
+          remoteServer: {
+            url: 'wss://new.example.test',
+            token: 'new-token',
+            remoteWorkspaceId: 'remote-new',
+          },
+        })),
+      })
+      const oldRemote = stubClient({ invoke: mock(async () => 'old-runtime') })
+      const connectError = new Error('connect failed synchronously')
+      const newRemote = stubClient({ connect: mock(() => { throw connectError }) })
+      const routed = new RoutedClient(local, oldRemote)
+      routed.setWorkspaceMapping('workspace-old', 'remote-old')
+      routed.setClientFactory(() => newRemote)
+
+      await expect(routed.invoke(SWITCH_CHANNEL, 'workspace-new')).rejects.toBe(connectError)
+
+      expect(newRemote.destroy).toHaveBeenCalledTimes(1)
+      expect(oldRemote.destroy).not.toHaveBeenCalled()
+      expect(await routed.invoke(REMOTE_CHANNEL, 'workspace-old')).toBe('old-runtime')
+      expect(oldRemote.invoke).toHaveBeenLastCalledWith(REMOTE_CHANNEL, 'remote-old')
+    })
+
+    it('refreshes scoped workspace runtimes after the active client has swapped', async () => {
+      const latestRemoteServer = {
+        url: 'wss://same.example.test',
+        token: 'rotated-token',
+        remoteWorkspaceId: 'remote-workspace',
+        allowInsecureTls: true,
+      }
+      const local = stubClient({
+        invoke: mock(async () => ({ workspaceId: 'workspace-2', remoteServer: latestRemoteServer })),
+      })
+      const oldRemote = stubClient()
+      const newRemote = stubClient({ invoke: mock(async () => 'new-runtime') })
+      const routed = new RoutedClient(local, oldRemote)
+      routed.setClientFactory(() => newRemote)
+      const switchHandler = mock(async (result) => {
+        expect(result.remoteServer).toEqual(latestRemoteServer)
+        expect(await routed.invoke(REMOTE_CHANNEL)).toBe('new-runtime')
+      })
+      routed.setWorkspaceSwitchHandler(switchHandler)
+
+      await routed.invoke(SWITCH_CHANNEL, 'workspace-2')
+
+      expect(switchHandler).toHaveBeenCalledTimes(1)
+      expect(oldRemote.destroy).toHaveBeenCalledTimes(1)
+    })
+
     it('reverts to localClient when switching to local workspace', async () => {
       const local = stubClient({
         invoke: mock(async () => ({

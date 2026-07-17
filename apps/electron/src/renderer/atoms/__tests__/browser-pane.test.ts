@@ -24,7 +24,7 @@ function makeInstance(id: string, overrides?: Partial<BrowserInstanceInfo>): Bro
     isVisible: true,
     agentControlActive: false,
     themeColor: null,
-    workspaceId: null,
+    workspaceId: 'ws-a',
     ...overrides,
   }
 }
@@ -58,7 +58,7 @@ describe('browser pane atoms', () => {
   })
 
   describe('filterInstancesForWorkspace', () => {
-    it('returns only the active workspace + unbound entries (single id)', () => {
+    it('returns only the active workspace and excludes unbound entries', () => {
       const all = [
         makeInstance('ws-a-bound', { workspaceId: 'ws-a' }),
         makeInstance('ws-b-bound', { workspaceId: 'ws-b' }),
@@ -66,10 +66,10 @@ describe('browser pane atoms', () => {
       ]
 
       const visibleInWsA = filterInstancesForWorkspace(all, 'ws-a', null)
-      expect(visibleInWsA.map((i) => i.id).sort()).toEqual(['unbound', 'ws-a-bound'])
+      expect(visibleInWsA.map((i) => i.id).sort()).toEqual(['ws-a-bound'])
 
       const visibleInWsB = filterInstancesForWorkspace(all, 'ws-b', null)
-      expect(visibleInWsB.map((i) => i.id).sort()).toEqual(['unbound', 'ws-b-bound'])
+      expect(visibleInWsB.map((i) => i.id).sort()).toEqual(['ws-b-bound'])
     })
 
     it('matches against BOTH local and remote workspace ids (remote-mirror case)', () => {
@@ -86,25 +86,17 @@ describe('browser pane atoms', () => {
       expect(visible.map((i) => i.id).sort()).toEqual(['local-tab', 'remote-tab'])
     })
 
-    it('returns everything when both workspace ids are null (safe default)', () => {
+    it('returns nothing until a workspace identity is resolved', () => {
       const all = [
         makeInstance('ws-a-bound', { workspaceId: 'ws-a' }),
         makeInstance('unbound', { workspaceId: null }),
       ]
-      expect(filterInstancesForWorkspace(all, null, null).map((i) => i.id).sort()).toEqual([
-        'unbound',
-        'ws-a-bound',
-      ])
+      expect(filterInstancesForWorkspace(all, null, null)).toEqual([])
     })
 
-    it('treats undefined workspaceId on an instance as unbound (old-server compat)', () => {
-      // Simulate an older main process that doesn't emit workspaceId yet.
-      const legacyInstance: BrowserInstanceInfo = makeInstance('legacy')
-      delete legacyInstance.workspaceId
-
-      expect(filterInstancesForWorkspace([legacyInstance], 'ws-a', null).map((i) => i.id)).toEqual([
-        'legacy',
-      ])
+    it('rejects missing workspace identity from legacy state', () => {
+      const legacyInstance = { ...makeInstance('legacy'), workspaceId: undefined } as unknown as BrowserInstanceInfo
+      expect(filterInstancesForWorkspace([legacyInstance], 'ws-a', null)).toEqual([])
     })
 
     it('works with only the remote id (local id null)', () => {
@@ -116,5 +108,15 @@ describe('browser pane atoms', () => {
         'remote-tab',
       ])
     })
+  })
+
+  it('does not store null-workspace state updates or list entries', () => {
+    const store = createStore()
+    const phantom = makeInstance('phantom', { workspaceId: null })
+
+    store.set(updateBrowserInstanceAtom, phantom)
+    expect(store.get(browserInstancesAtom)).toEqual([])
+    store.set(setBrowserInstancesAtom, [phantom, makeInstance('real')])
+    expect(store.get(browserInstancesAtom).map(instance => instance.id)).toEqual(['real'])
   })
 })

@@ -1,6 +1,7 @@
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
+import { shouldRejectUnauthorizedTls, type RemoteTlsPolicy } from '../../shared/remote-tls'
 
 export const GUI_HANDLED_CHANNELS = [
   RPC_CHANNELS.remote.TEST_CONNECTION,
@@ -19,13 +20,17 @@ export const GUI_HANDLED_CHANNELS = [
  * workspace-context RPC handlers (for example sessions:export) can resolve it.
  * Returns the connected client or null + error message.
  */
-export async function connectToRemote(url: string, token: string, workspaceId?: string) {
+export interface RemoteConnectionOptions extends RemoteTlsPolicy {
+  workspaceId?: string
+}
+
+export async function connectToRemote(url: string, token: string, options: RemoteConnectionOptions = {}) {
   const { WsRpcClient } = await import('@craft-agent/server-core/transport')
   const client = new WsRpcClient(url, {
     token,
-    workspaceId,
+    workspaceId: options.workspaceId,
     autoReconnect: false,
-    tlsRejectUnauthorized: false,
+    tlsRejectUnauthorized: shouldRejectUnauthorizedTls(options),
   })
 
   const connected = await new Promise<boolean>((resolve) => {
@@ -59,8 +64,8 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
   // Test connection to a remote Craft Agent Server.
   // Pure discovery — returns list of existing workspaces or needsWorkspace flag.
   // Workspace creation is handled separately via invokeOnServer → server:createWorkspace.
-  server.handle(RPC_CHANNELS.remote.TEST_CONNECTION, async (_ctx, url: string, token: string) => {
-    const { client, error } = await connectToRemote(url, token)
+  server.handle(RPC_CHANNELS.remote.TEST_CONNECTION, async (_ctx, url: string, token: string, allowInsecureTls = false) => {
+    const { client, error } = await connectToRemote(url, token, { allowInsecureTls })
     if (!client) return { ok: false, error }
 
     // Read server version from handshake_ack (null for old servers)
@@ -112,6 +117,8 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
       workspaceId,
       focused: true,
       initialDeepLink: deepLink,
+      role: 'child-session',
+      sessionId,
     })
   })
 

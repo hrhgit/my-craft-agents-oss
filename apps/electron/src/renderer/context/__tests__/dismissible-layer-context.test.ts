@@ -2,6 +2,18 @@ import { describe, expect, it, mock } from 'bun:test'
 import { createDismissibleLayerRegistry } from '../DismissibleLayerContext'
 
 describe('createDismissibleLayerRegistry', () => {
+  it('notifies subscribers when the open-layer boundary changes', () => {
+    const registry = createDismissibleLayerRegistry()
+    const snapshots: boolean[] = []
+    const unsubscribe = registry.subscribe?.(() => snapshots.push(registry.hasOpenLayers()))
+
+    const unregister = registry.registerLayer({ id: 'popover', type: 'radix-popover', close: () => {} })
+    unregister()
+    unsubscribe?.()
+
+    expect(snapshots).toEqual([true, false])
+  })
+
   it('closes highest-priority open layer first', () => {
     const registry = createDismissibleLayerRegistry()
     const closeLow = mock(() => {})

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -19,12 +19,79 @@ async function runCli(args: string[]): Promise<{ code: number; json: any; stderr
 }
 
 describe('craft-ui CLI', () => {
+  it('keeps status and stop independent from profile-only Pi session imports', async () => {
+    const controllerSource = readFileSync(join(import.meta.dir, '..', 'controller.ts'), 'utf8')
+    expect(controllerSource).not.toMatch(/\bfrom\s+['"]\.\/profile\.ts['"]/)
+    expect(controllerSource).toContain("await import('./profile.ts')")
+
+    const runRoot = mkdtempSync(join(tmpdir(), 'craft-ui-cli-dead-run-')); roots.push(runRoot)
+    const runId = 'dead-run'
+    const runDir = join(runRoot, runId)
+    const profileDir = join(runDir, 'profile')
+    const artifactsDir = join(runDir, 'artifacts')
+    mkdirSync(profileDir, { recursive: true })
+    mkdirSync(artifactsDir, { recursive: true })
+    writeFileSync(join(runDir, 'run.json'), JSON.stringify({
+      protocolVersion: 1,
+      runId,
+      surface: 'electron',
+      status: 'failed',
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      controllerPid: 1,
+      profileMode: 'isolated',
+      windowMode: 'foreground',
+      containsClonedUserData: false,
+      runDir,
+      profileDir,
+      artifactsDir,
+      endpointManifestPath: join(runDir, 'endpoint.json'),
+      tokenPath: join(runDir, 'token'),
+      stdoutPath: join(artifactsDir, 'host.stdout.log'),
+      stderrPath: join(artifactsDir, 'host.stderr.log'),
+      adapterCommand: [],
+      lastResponseSeq: 0,
+      lastRevision: 0,
+      verificationLevel: 'scenario-verified',
+    }))
+    const status = await runCli(['status', '--run-root', runRoot, '--run', runId])
+    expect(status.code).toBe(0)
+    expect(status.json.result.processAlive).toBe(false)
+
+    const stopped = await runCli(['stop', '--run-root', runRoot, '--run', runId])
+    expect(stopped.code).toBe(0)
+    expect(stopped.json.result.manifest.status).toBe('stopped')
+    expect(stopped.json.result.manifest.profileCleanedAt).toBeString()
+  })
+
+  it('exposes the fixture schema before a run exists', async () => {
+    const result = await runCli(['fixture', 'schema', '--json'])
+    expect(result.code).toBe(0)
+    expectEnvelope(result.json, 'unassigned')
+    expect(result.json.result.schema).toMatchObject({
+      properties: { version: { const: 1 }, workspaces: { maxItems: 32 } },
+    })
+  })
+
   it('exposes the complete JSON command lifecycle', async () => {
     const runRoot = mkdtempSync(join(tmpdir(), 'craft-ui-cli-')); roots.push(runRoot)
     const adapter = JSON.stringify([process.execPath, join(import.meta.dir, '..', 'test-host.fixture.ts')])
-    const started = await runCli(['start', '--run-root', runRoot, '--adapter-command-json', adapter])
+    const fixturePath = join(runRoot, 'fixture.json')
+    writeFileSync(fixturePath, JSON.stringify({
+      version: 1,
+      active: { workspaceId: 'cli-workspace', sessionId: 'cli-session' },
+      workspaces: [{
+        id: 'cli-workspace', name: 'CLI Workspace',
+        files: [{ path: 'README.md', content: '# CLI fixture\n' }],
+        sessions: [{ id: 'cli-session', messages: [{ role: 'user', content: 'CLI history' }] }],
+      }],
+    }))
+    const started = await runCli(['start', '--run-root', runRoot, '--adapter-command-json', adapter, '--fixture', fixturePath, '--window-mode', 'background'])
     expect(started.code).toBe(0)
     expectEnvelope(started.json)
+    expect(started.json.result.manifest.profileMode).toBe('fixture')
+    expect(started.json.result.manifest.windowMode).toBe('background')
+    expect(started.json.result.manifest.fixture).toMatchObject({ workspaceCount: 1, sessionCount: 1, messageCount: 1, fileCount: 1 })
     const runId = started.json.result.manifest.runId as string
     try {
       for (const command of ['status', 'open', 'snapshot', 'action', 'wait', 'assert', 'evidence']) {
@@ -68,6 +135,19 @@ describe('craft-ui CLI', () => {
 
   it('returns typed V1 errors before a run exists', async () => {
     const result = await runCli(['start', '--surface', 'invalid'])
+    expect(result.code).toBe(1)
+    expectEnvelope(result.json, 'unassigned')
+    expect(result.json).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+  })
+
+  it('rejects background window mode for WebUI runs', async () => {
+    const result = await runCli(['start', '--surface', 'webui', '--window-mode', 'background'])
+    expect(result.code).toBe(1)
+    expect(result.json).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+  })
+
+  it('returns a typed request error for an unreadable fixture', async () => {
+    const result = await runCli(['start', '--fixture', join(tmpdir(), 'missing-craft-ui-fixture.json')])
     expect(result.code).toBe(1)
     expectEnvelope(result.json, 'unassigned')
     expect(result.json).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })

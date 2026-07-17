@@ -18,6 +18,7 @@ export interface DismissibleLayerSnapshot {
 
 export interface DismissibleLayerBridge {
   registerLayer: (layer: DismissibleLayerRegistration) => () => void
+  subscribe?: (listener: () => void) => () => void
   hasOpenLayers: () => boolean
   getTopLayer: () => DismissibleLayerSnapshot | null
   closeTop: () => boolean

@@ -1,11 +1,19 @@
 #!/usr/bin/env bun
 import { randomUUID } from 'node:crypto'
-import { UiValidationError, type UiValidationErrorCode, type UiValidationResponseEnvelope } from '@craft-agent/shared/ui-validation'
-import { DEFAULT_CRAFT_UI_RUN_ROOT, getCraftUiRunStatus, readRunManifest, resolveRunDir, startCraftUiRun, stopCraftUiRunDetailed, updateRunManifest } from './controller.ts'
+import {
+  UI_VALIDATION_DEFAULT_TIMEOUT_MS,
+  UI_VALIDATION_EXTENDED_TIMEOUT_MS,
+  UI_VALIDATION_MAX_WAIT_MS,
+  UiValidationError,
+  type UiValidationErrorCode,
+  type UiValidationResponseEnvelope,
+} from '@craft-agent/shared/ui-validation'
+import { DEFAULT_CRAFT_UI_RUN_ROOT, DEFAULT_CRAFT_UI_START_WAIT_MS, getCraftUiRunStatus, readRunManifest, resolveRunDir, startCraftUiRun, stopCraftUiRunDetailed, updateRunManifest } from './controller.ts'
 import { CraftUiClientError, requestCraftUiHost } from './client.ts'
-import { CRAFT_UI_PROTOCOL_VERSION, type CraftUiProfileMode, type CraftUiRunManifest, type CraftUiSurface } from './protocol.ts'
+import { CRAFT_UI_PROTOCOL_VERSION, type CraftUiProfileMode, type CraftUiRunManifest, type CraftUiSurface, type CraftUiWindowMode } from './protocol.ts'
 import { redactValue } from './redaction.ts'
 import { collectLocalEvidence, registerReturnedArtifacts } from './evidence.ts'
+import { CRAFT_UI_FIXTURE_SCHEMA, loadCraftUiFixtureSpec } from './fixture.ts'
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name)
@@ -17,7 +25,7 @@ function has(args: string[], name: string): boolean { return args.includes(name)
 function output(value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`) }
 
 function help(): void {
-  process.stdout.write(`craft-ui - deterministic Craft UI validation controller\n\nUsage:\n  craft-ui start [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile isolated|clone]\n                 [--scenario <id>] [--scenario-params <json>]\n                 [--source-craft-profile <path> --source-pi-profile <path>] [--json]\n  craft-ui status [--run <id>] [--run-root <path>] [--json]\n  craft-ui capabilities list [--kind route|scenario|action] [--run <id>] [--json]\n  craft-ui capabilities describe --kind route|scenario|action --id <id> [--run <id>] [--json]\n  craft-ui open|snapshot|action|wait|assert [--params <json>] [--run <id>] [--json]\n  craft-ui scenario apply [--id <id>] [--params <json>] [--run <id>] [--json]\n  craft-ui scenario reset [--params <json>] [--run <id>] [--json]\n  craft-ui clock advance --ms <milliseconds> [--run <id>] [--json]\n  craft-ui fault set|clear|status [--params <json>] [--run <id>] [--json]\n  craft-ui evidence [--params <json>] [--run <id>] [--json]\n  craft-ui request <command> [--params <json>] [--run <id>] [--json]\n  craft-ui stop [--run <id>] [--json]\n\nAll commands emit one V1 JSON response envelope; --json is accepted for explicit caller intent. Host requests accept --timeout-ms <1..300000>.\n\nElectron and WebUI use source-development adapters by default. Other adapters receive CRAFT_UI_* environment variables and must write the versioned endpoint manifest.\n`)
+  process.stdout.write(`craft-ui - deterministic Craft UI validation controller\n\nUsage:\n  craft-ui fixture schema [--json]\n  craft-ui start [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--scenario <id>]\n                 [--scenario-params <json>] [--wait-ms <1..600000>]\n                 [--source-craft-profile <path> --source-pi-profile <path>] [--json]\n  craft-ui status [--run <id>] [--run-root <path>] [--json]\n  craft-ui capabilities list [--kind route|scenario|action] [--run <id>] [--json]\n  craft-ui capabilities describe --kind route|scenario|action --id <id> [--run <id>] [--json]\n  craft-ui open|snapshot|action|wait|assert [--params <json>] [--run <id>] [--json]\n  craft-ui scenario apply [--id <id>] [--params <json>] [--run <id>] [--json]\n  craft-ui scenario reset [--params <json>] [--run <id>] [--json]\n  craft-ui clock advance --ms <milliseconds> [--run <id>] [--json]\n  craft-ui fault set|clear|status [--params <json>] [--run <id>] [--json]\n  craft-ui evidence [--params <json>] [--run <id>] [--json]\n  craft-ui request <command> [--params <json>] [--run <id>] [--json]\n  craft-ui stop [--run <id>] [--json]\n\nAll commands emit one V1 JSON response envelope; --json is accepted for explicit caller intent. Host requests accept --timeout-ms <1..600000>.\n\nElectron and WebUI use source-development adapters by default. The default fixture profile opens the disposable test workspace; pass --fixture to build bounded real workspace, file, session, and history data. Electron background mode keeps source-test windows minimized while renderer and background-safe UIA operations run. Isolated is the empty onboarding profile; clone copies explicitly selected user configuration. Other adapters receive CRAFT_UI_* environment variables and must write the versioned endpoint manifest.\n`)
 }
 
 function jsonOption(args: string[], name: string, fallback: Record<string, unknown> = {}): Record<string, unknown> {
@@ -33,31 +41,45 @@ export async function main(argv = process.argv): Promise<number> {
   const runRoot = option(args, '--run-root') ?? DEFAULT_CRAFT_UI_RUN_ROOT
   const localRequestId = randomUUID()
   try {
+    if (command === 'fixture') {
+      if ((args[1] ?? 'schema') !== 'schema') throw new Error('fixture requires schema')
+      output(localUnassignedSuccess(localRequestId, { schema: CRAFT_UI_FIXTURE_SCHEMA }))
+      return 0
+    }
     if (command === 'start') {
       const requestedSurface = option(args, '--surface') ?? 'electron'
       const surface = (requestedSurface === 'web' ? 'webui' : requestedSurface) as CraftUiSurface
-      const profileMode = (option(args, '--profile') ?? 'isolated') as CraftUiProfileMode
+      const profileMode = (option(args, '--profile') ?? 'fixture') as CraftUiProfileMode
+      const windowMode = (option(args, '--window-mode') ?? 'foreground') as CraftUiWindowMode
       if (!['electron', 'webui'].includes(surface)) throw new Error('--surface must be electron or webui')
-      if (!['isolated', 'clone'].includes(profileMode)) throw new Error('--profile must be isolated or clone')
+      if (!['fixture', 'isolated', 'clone'].includes(profileMode)) throw new Error('--profile must be fixture, isolated, or clone')
+      if (!['foreground', 'background'].includes(windowMode)) throw new Error('--window-mode must be foreground or background')
+      if (surface !== 'electron' && windowMode === 'background') throw new Error('--window-mode background requires --surface electron')
+      const fixturePath = option(args, '--fixture')
+      if (fixturePath && profileMode !== 'fixture') throw new Error('--fixture requires --profile fixture')
+      const fixtureSpec = fixturePath ? loadCraftUiFixtureSpec(fixturePath) : undefined
       const rawAdapter = option(args, '--adapter-command-json')
       const adapterCommand = rawAdapter ? JSON.parse(rawAdapter) : undefined
       if (adapterCommand !== undefined && (!Array.isArray(adapterCommand) || adapterCommand.some(part => typeof part !== 'string'))) throw new Error('--adapter-command-json must be a JSON string array')
+      const waitMs = Number(option(args, '--wait-ms') ?? DEFAULT_CRAFT_UI_START_WAIT_MS)
+      if (!Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > UI_VALIDATION_MAX_WAIT_MS) throw new Error(`--wait-ms must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}`)
       const scenarioId = option(args, '--scenario')
       const scenario = scenarioId
         ? { ...jsonOption(args, '--scenario-params'), name: scenarioId }
         : undefined
       let manifest = await startCraftUiRun({
-        surface, profileMode, adapterCommand, runRoot,
+        surface, profileMode, windowMode, adapterCommand, runRoot,
         sourceCraftConfigDir: option(args, '--source-craft-profile'),
         sourcePiAgentDir: option(args, '--source-pi-profile'),
         waitForReady: !has(args, '--no-wait'),
-        waitMs: Number(option(args, '--wait-ms') ?? 30_000),
+        waitMs,
         scenario,
+        fixtureSpec,
       })
       const response = await requestCraftUiHost({
         ...manifest,
         command: 'app.status',
-        timeoutMs: 10_000,
+        timeoutMs: UI_VALIDATION_DEFAULT_TIMEOUT_MS,
         minimumSeqExclusive: manifest.lastResponseSeq,
       })
       manifest = updateRunManifest(manifest.runDir, {
@@ -125,8 +147,8 @@ export async function main(argv = process.argv): Promise<number> {
         params.ms = Number(ms)
       }
       const manifest = (await import('./controller.ts')).readRunManifest(runDir)
-      const requestTimeoutMs = Number(option(args, '--timeout-ms') ?? params.timeoutMs ?? 30_000)
-      if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0 || requestTimeoutMs > 300_000) throw new Error('--timeout-ms must be between 1 and 300000')
+      const requestTimeoutMs = Number(option(args, '--timeout-ms') ?? params.timeoutMs ?? UI_VALIDATION_EXTENDED_TIMEOUT_MS)
+      if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0 || requestTimeoutMs > UI_VALIDATION_MAX_WAIT_MS) throw new Error(`--timeout-ms must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}`)
       const response = await requestCraftUiHost({ ...manifest, command: hostCommand, params, timeoutMs: requestTimeoutMs, minimumSeqExclusive: manifest.lastResponseSeq })
       updateRunManifest(runDir, { lastResponseSeq: response.seq })
       registerReturnedArtifacts(manifest, response.ok ? response.result : undefined)
@@ -167,6 +189,21 @@ function localSuccess(requestId: string, manifest: CraftUiRunManifest, result: R
     seq: manifest.lastResponseSeq ?? 0,
     revision: manifest.lastRevision ?? 0,
     verificationLevel: manifest.verificationLevel ?? 'scenario-verified',
+    ok: true,
+    result,
+  }
+}
+
+function localUnassignedSuccess(requestId: string, result: Record<string, unknown>): UiValidationResponseEnvelope {
+  return {
+    v: CRAFT_UI_PROTOCOL_VERSION,
+    kind: 'response',
+    id: requestId,
+    requestId,
+    runId: 'unassigned',
+    seq: 0,
+    revision: 0,
+    verificationLevel: 'scenario-verified',
     ok: true,
     result,
   }

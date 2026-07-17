@@ -77,16 +77,10 @@ export function SessionItem({
       if (ctx.isMultiSelectActive && !isInMultiSelect && onToggleSelect) onToggleSelect()
       return
     }
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
-      // Cmd+Shift+Click: open session in a new panel
+    if (e.button === 1 || e.metaKey || e.ctrlKey) {
+      // Modifier click and middle click always open a durable new tab.
       e.preventDefault()
       navigate(routes.view.allSessions(item.id), { newPanel: true })
-      return
-    }
-    if ((e.metaKey || e.ctrlKey) && onToggleSelect) {
-      // Cmd+Click: always toggle multi-select (standard OS behavior)
-      e.preventDefault()
-      onToggleSelect()
       return
     }
     if (e.shiftKey && onRangeSelect) {

@@ -86,8 +86,8 @@ export interface PanelHeaderProps {
   centerButton?: React.ReactNode
   /** Optional action buttons rendered on the right */
   actions?: React.ReactNode
-  /** Optional right sidebar button (rendered after actions) */
-  rightSidebarButton?: React.ReactNode
+  /** Optional trailing action rendered after the page actions. */
+  trailingAction?: React.ReactNode
   /** When true, animates left margin to avoid macOS traffic lights (use when this is the first panel on screen) */
   compensateForStoplight?: boolean
   /** Left padding override (e.g., for focused mode with traffic lights) */
@@ -109,7 +109,7 @@ export function PanelHeader({
   leadingAction: explicitLeadingAction,
   centerButton,
   actions,
-  rightSidebarButton,
+  trailingAction,
   compensateForStoplight,
   paddingLeft,
   className,
@@ -192,7 +192,7 @@ export function PanelHeader({
   // The side insets are based on the actual number of control slots so a long
   // title truncates before the right-side action cluster instead of overlapping it.
   const compactLeadingControlCount = leadingAction ? 1 : 0
-  const compactTrailingControlCount = [centerButton, actions, rightSidebarButton].filter(Boolean).length
+  const compactTrailingControlCount = [centerButton, actions, trailingAction].filter(Boolean).length
   const compactTitleInsetStyle = isCompactMode
     ? {
         left: compactTitleInset(compactLeadingControlCount),
@@ -218,9 +218,9 @@ export function PanelHeader({
           {actions}
         </div>
       )}
-      {rightSidebarButton && (
+      {trailingAction && (
         <div className="titlebar-no-drag shrink-0 z-[1]">
-          {rightSidebarButton}
+          {trailingAction}
         </div>
       )}
       <div
@@ -254,9 +254,9 @@ export function PanelHeader({
           {actions}
         </div>
       )}
-      {rightSidebarButton && (
+      {trailingAction && (
         <div className="titlebar-no-drag shrink-0">
-          {rightSidebarButton}
+          {trailingAction}
         </div>
       )}
     </>

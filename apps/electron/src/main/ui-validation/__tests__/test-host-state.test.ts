@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test'
-import { expectedRendererRoute, parseStateCondition, semanticReadyAppGate } from '../test-host-state'
+import { expectedRendererRoute, parseStateCondition, semanticReadyAppGate, UI_TEST_HOST_MAX_WAIT_MS } from '../test-host-state'
 
 describe('test host state predicates', () => {
+  it('allows extended source-development waits', () => {
+    expect(UI_TEST_HOST_MAX_WAIT_MS).toBe(600_000)
+  })
   it('maps public waits to scoped state predicates', () => {
     expect(parseStateCondition({ kind: 'app-phase', phase: 'ready' }, 12)).toEqual({
       kind: 'state', predicate: { scope: 'app', phase: 'ready', windowId: '12' },

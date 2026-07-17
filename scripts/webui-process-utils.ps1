@@ -41,6 +41,48 @@ function Test-WebuiHttpReady {
   }
 }
 
+function Get-CraftServerEndpoint {
+  param(
+    [string]$ConfigDir = $(if ($env:CRAFT_CONFIG_DIR) { $env:CRAFT_CONFIG_DIR } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.craft-agent' }),
+    [switch]$RequireWebuiAutoLogin
+  )
+
+  $endpointPath = Join-Path $ConfigDir '.server-endpoint.json'
+  if (-not (Test-Path -LiteralPath $endpointPath)) { return $null }
+
+  try {
+    $endpoint = Get-Content -LiteralPath $endpointPath -Raw | ConvertFrom-Json
+    if ($endpoint.schemaVersion -ne 1 -or
+        $null -eq $endpoint.pid -or
+        $null -eq $endpoint.startedAt -or
+        [string]::IsNullOrWhiteSpace([string]$endpoint.url) -or
+        [string]::IsNullOrWhiteSpace([string]$endpoint.tokenFile)) {
+      return $null
+    }
+
+    $uri = [Uri]([string]$endpoint.url)
+    if ($uri.Scheme -notin @('ws', 'wss') -or $uri.Port -lt 1) { return $null }
+
+    $owner = Get-Process -Id ([int]$endpoint.pid) -ErrorAction Stop
+    $ownerStartedAt = [DateTimeOffset]::new($owner.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()
+    if ($ownerStartedAt -gt ([long]$endpoint.startedAt + 2000)) { return $null }
+
+    if (-not (Test-Path -LiteralPath ([string]$endpoint.tokenFile) -PathType Leaf)) { return $null }
+    if (-not (Test-WebuiTcpPort -Port $uri.Port)) { return $null }
+
+    if ($RequireWebuiAutoLogin -and
+        ($null -eq $endpoint.webui -or
+         $endpoint.webui.enabled -ne $true -or
+         $endpoint.webui.autoLogin -ne $true)) {
+      return $null
+    }
+
+    return $endpoint
+  } catch {
+    return $null
+  }
+}
+
 function Get-WebuiPortmuxProjects {
   $statusText = (& portmux --json status 2>&1 | Out-String)
   if ($LASTEXITCODE -ne 0) {

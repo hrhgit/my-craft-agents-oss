@@ -2,7 +2,6 @@ import * as React from "react"
 import { useTranslation, Trans } from "react-i18next"
 import { useRef, useState, useEffect, useCallback, useMemo } from "react"
 import { useAtomValue, useStore } from "jotai"
-import { motion, AnimatePresence } from "motion/react"
 import {
   Archive,
   Settings,
@@ -13,33 +12,28 @@ import {
   Flag,
   ListFilter,
   Tag,
-  Check,
   X,
   Search,
   Plus,
   Trash2,
   DatabaseZap,
   Zap,
-  Inbox,
-  Globe,
-  FolderOpen,
+  MessageSquare,
   Cake,
   Calendar,
   Layers,
   ListTodo,
-  Clock,
-  Radio,
-  Bot,
   Info,
   MailOpen,
   Cloud,
   CloudOff,
+  Folder,
+  FolderOpen,
   FolderPlus,
 } from "lucide-react"
 import { SourceAvatar } from "@/components/ui/source-avatar"
 import { TopBar } from "./TopBar"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
-import { McpIcon } from "../icons/McpIcon"
 import { cn } from "@/lib/utils"
 import { isMac } from "@/lib/platform"
 import { Button } from "@/components/ui/button"
@@ -72,6 +66,7 @@ import {
   springTransition as collapsibleSpring,
 } from "@/components/ui/collapsible"
 import { SessionList, type ChatGroupingMode } from "./SessionList"
+import { SessionMenu } from "./SessionMenu"
 import { MainContentPanel } from "./MainContentPanel"
 import { PanelStackContainer } from "./PanelStackContainer"
 import type { ChatDisplayHandle } from "./ChatDisplay"
@@ -81,6 +76,7 @@ import { useSessionSelectionStore } from "@/hooks/useSession"
 import { createInitialState } from "@/hooks/useMultiSelect"
 import { ensureSessionMessagesLoadedAtom, sessionAtomFamily } from "@/atoms/sessions"
 import { AppShellProvider, type AppShellContextType } from "@/context/AppShellContext"
+import { WorkspaceElectronApiProvider } from "@/context/WorkspaceElectronApiContext"
 import { EscapeInterruptProvider, useEscapeInterrupt } from "@/context/EscapeInterruptContext"
 import { useTheme } from "@/context/ThemeContext"
 import { getResizeGradientStyle } from "@/hooks/useResizeGradient"
@@ -94,10 +90,11 @@ import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/ato
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
 import { dataSourcesEnabledAtom, sourcesAtom } from "@/atoms/sources"
 import { skillsAtom } from "@/atoms/skills"
-import { panelStackAtom, panelCountAtom, focusedPanelIdAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, parseSessionIdFromRoute } from "@/atoms/panel-stack"
+import { activeDockTabIdAtom, activeDockTabProtectionAtom, activeDockTabTypeAtom, emptyDockPageSessionRequestAtom, enterCompactDockDetailAtom, exitCompactDockDetailAtom, isEmptyDockPageTabId, panelStackAtom, panelCountAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, resetCompactDockViewIntentAtom, shouldReplaceActiveTabWithSession } from "@/atoms/panel-stack"
 import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { resolveEntityColor } from "@craft-agent/shared/colors"
 import * as storage from "@/lib/local-storage"
+import { resolveNavigatorWidth } from "@/lib/nav-helpers"
 import { toast } from "sonner"
 import { navigate, routes } from "@/lib/navigate"
 import {
@@ -114,9 +111,10 @@ import type { SettingsSubpage } from "../../../shared/types"
 import { SourcesListPanel } from "./SourcesListPanel"
 import { SkillsListPanel } from "./SkillsListPanel"
 import { AutomationsListPanel } from "../automations/AutomationsListPanel"
-import { APP_EVENTS, AGENT_EVENTS, type AutomationFilterKind, AUTOMATION_TYPE_TO_FILTER_KIND } from "../automations/types"
+import { type AutomationFilterKind, AUTOMATION_TYPE_TO_FILTER_KIND } from "../automations/types"
 import { useAutomations } from "@/hooks/useAutomations"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import { RenameDialog } from "@/components/ui/rename-dialog"
 import { PanelHeader } from "./PanelHeader"
 import { FabNewChat } from "./FabNewChat"
 import { SendToWorkspaceDialog } from "./SendToWorkspaceDialog"
@@ -137,8 +135,16 @@ import {
 import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { clearEntityIconCache } from "@/lib/icon-cache"
 import { dispatchFocusInputEvent } from "./input/focus-input-events"
-import { CrossfadeAvatar } from "@/components/ui/avatar"
 import { useWorkspaceNavigation } from "@/components/workspace/useWorkspaceNavigation"
+import { UnifiedDockWorkspace } from "./UnifiedDockWorkspace"
+import {
+  mergeWorkspaceSessionSummaries,
+  RECENT_WORKSPACE_SESSION_LIMIT,
+  removeWorkspaceSessionSummary,
+  toWorkspaceSessionSummary,
+  updateWorkspaceSessionSummary,
+  type WorkspaceSessionSummary,
+} from "./workspace-sidebar-model"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component
@@ -160,6 +166,15 @@ interface AppShellProps {
   menuNewChatTrigger?: number
   /** Focused mode - hides sidebars, shows only the chat content */
   isFocusedMode?: boolean
+}
+
+const SIDEBAR_DEFAULT_WIDTH = 260
+const SIDEBAR_MIN_WIDTH = 200
+const SIDEBAR_MAX_WIDTH = 320
+
+function clampSidebarWidth(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return SIDEBAR_DEFAULT_WIDTH
+  return Math.min(Math.max(Math.round(value), SIDEBAR_MIN_WIDTH), SIDEBAR_MAX_WIDTH)
 }
 
 export function AppShell(props: AppShellProps) {
@@ -187,6 +202,8 @@ function AppShellContent({
   const {
     workspaces,
     activeWorkspaceId,
+    workspaceTransition,
+    sessionsLoaded,
     sessionOptions,
     onSelectWorkspace,
     onRefreshWorkspaces,
@@ -211,12 +228,17 @@ function AppShellContent({
     return storage.get(storage.KEYS.sidebarVisible, !defaultCollapsed)
   })
   const [sidebarWidth, setSidebarWidth] = React.useState(() => {
-    return storage.get(storage.KEYS.sidebarWidth, 220)
+    return clampSidebarWidth(storage.get(storage.KEYS.sidebarWidth, SIDEBAR_DEFAULT_WIDTH))
   })
   // Session list width in pixels (min 240, max 480)
   const [sessionListWidth, setSessionListWidth] = React.useState(() => {
     return storage.get(storage.KEYS.sessionListWidth, 300)
   })
+  const [canvasLayoutToggleRequest, setCanvasLayoutToggleRequest] = React.useState(0)
+  const [isCanvasLayoutFocused, setIsCanvasLayoutFocused] = React.useState(false)
+  const enterCompactDockDetail = useSetAtom(enterCompactDockDetailAtom)
+  const exitCompactDockDetail = useSetAtom(exitCompactDockDetailAtom)
+  const resetCompactDockViewIntent = useSetAtom(resetCompactDockViewIntentAtom)
 
   // Hides both sidebar and navigator (CMD+. toggle)
   // Seed from either focused window param or persisted preference, then keep it toggleable.
@@ -231,17 +253,26 @@ function AppShellContent({
   const shellWidth = useContainerWidth(shellRef)
   const MOBILE_THRESHOLD = 768
   const isAutoCompact = shellWidth > 0 && shellWidth < MOBILE_THRESHOLD
+  const togglePanelLayout = React.useCallback(() => {
+    if (isAutoCompact) enterCompactDockDetail()
+    setCanvasLayoutToggleRequest(value => value + 1)
+  }, [enterCompactDockDetail, isAutoCompact])
+
+  const compactIntentWorkspace = useRef(activeWorkspaceId)
+  React.useEffect(() => {
+    if (compactIntentWorkspace.current === activeWorkspaceId) return
+    compactIntentWorkspace.current = activeWorkspaceId
+    resetCompactDockViewIntent()
+  }, [activeWorkspaceId, resetCompactDockViewIntent])
 
   const effectiveSidebarAndNavigatorHidden = isSidebarAndNavigatorHidden || isAutoCompact
 
-  // What's New overlay
   const [showWhatsNew, setShowWhatsNew] = React.useState(false)
   const [releaseNotesContent, setReleaseNotesContent] = React.useState('')
   const [hasUnseenReleaseNotes, setHasUnseenReleaseNotes] = React.useState(false)
 
-  // Check for unseen release notes on mount
   useEffect(() => {
-    window.electronAPI.getLatestReleaseVersion().then((latestVersion) => {
+    void window.electronAPI.getLatestReleaseVersion().then((latestVersion) => {
       if (!latestVersion) return
       const lastSeen = storage.get(storage.KEYS.whatsNewLastSeenVersion, '')
       setHasUnseenReleaseNotes(lastSeen !== latestVersion)
@@ -265,26 +296,29 @@ function AppShellContent({
   const navState = useNavigationState()
 
   const store = useStore()
+  const requestEmptyDockPageSession = useSetAtom(emptyDockPageSessionRequestAtom)
   const panelStack = useAtomValue(panelStackAtom)
   const panelCount = useAtomValue(panelCountAtom)
   const focusedSessionId = useAtomValue(focusedSessionIdAtom)
 
-  // Navigate the focused panel to a session.
-  // If the session is already open in another panel, focus that panel instead.
-  const setFocusedPanel = useSetAtom(focusedPanelIdAtom)
+  // Replace only an actively selected session tab. Every other tab type keeps
+  // its content and receives the requested session in a new tab.
   const navigateToSessionInPanel = useCallback((sessionId: string) => {
-    // Check if the session is already open in any panel — focus it instead of navigating
-    const stack = store.get(panelStackAtom)
-    for (const entry of stack) {
-      if (parseSessionIdFromRoute(entry.route) === sessionId) {
-        setFocusedPanel(entry.id)
-        return
-      }
+    enterCompactDockDetail()
+    const activeTabId = store.get(activeDockTabIdAtom)
+    if (isEmptyDockPageTabId(activeTabId)) {
+      requestEmptyDockPageSession({ tabId: activeTabId, sessionId })
+      return
     }
-
-    // Not open in any panel — navigate() updates the focused panel
-    navigateToSession(sessionId)
-  }, [store, setFocusedPanel, navigateToSession])
+    if (shouldReplaceActiveTabWithSession(
+      store.get(activeDockTabTypeAtom),
+      store.get(activeDockTabProtectionAtom),
+    )) {
+      navigateToSession(sessionId)
+      return
+    }
+    navigate(routes.view.allSessions(sessionId), { newPanel: true })
+  }, [enterCompactDockDetail, requestEmptyDockPageSession, store, navigateToSession])
 
   const sessionsContext = React.useMemo(() => {
     if (isSessionsNavigation(navState)) {
@@ -358,25 +392,29 @@ function AppShellContent({
   })
   const [focusedSidebarItemId, setFocusedSidebarItemId] = React.useState<string | null>(null)
   const sidebarItemRefs = React.useRef<Map<string, HTMLElement>>(new Map())
-  // Track which expandable sidebar items are collapsed
-  // Labels are collapsed by default; user preference is persisted once toggled
-  const [collapsedItems, setCollapsedItems] = React.useState<Set<string>>(() => {
-    const saved = storage.get<string[] | null>(storage.KEYS.collapsedSidebarItems, null)
-    if (saved !== null) return new Set(saved)
-    return new Set(['nav:labels'])
+  const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = React.useState<Set<string>>(() => {
+    return new Set(storage.get<string[]>(storage.KEYS.collapsedWorkspaceSections, []))
   })
-  const [workspaceListCollapsed, setWorkspaceListCollapsed] = React.useState(() => {
-    return storage.get(storage.KEYS.workspaceListCollapsed, false)
-  })
-  const workspaceListExpanded = !workspaceListCollapsed
-  const isExpanded = React.useCallback((id: string) => !collapsedItems.has(id), [collapsedItems])
-  const toggleExpanded = React.useCallback((id: string) => {
-    setCollapsedItems(prev => {
+  const [workspaceSessionSummaries, setWorkspaceSessionSummaries] = React.useState<Record<string, WorkspaceSessionSummary[]>>({})
+  const [workspaceSessionLimits, setWorkspaceSessionLimits] = React.useState<Record<string, number>>({})
+  const [sidebarRenameTarget, setSidebarRenameTarget] = React.useState<{
+    workspaceId: string
+    session: WorkspaceSessionSummary
+  } | null>(null)
+  const [sidebarRenameName, setSidebarRenameName] = React.useState('')
+  const toggleWorkspaceExpanded = React.useCallback((workspaceId: string) => {
+    setCollapsedWorkspaceIds(prev => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      if (next.has(workspaceId)) next.delete(workspaceId)
+      else next.add(workspaceId)
       return next
     })
+  }, [])
+  const showMoreWorkspaceSessions = React.useCallback((workspaceId: string) => {
+    setWorkspaceSessionLimits(previous => ({
+      ...previous,
+      [workspaceId]: (previous[workspaceId] ?? RECENT_WORKSPACE_SESSION_LIMIT) + 15,
+    }))
   }, [])
   // Sources state (workspace-scoped)
   const [sources, setSources] = React.useState<LoadedSource[]>([])
@@ -483,8 +521,6 @@ function AppShellContent({
       const newExpandedFolders = storage.get<string[]>(storage.KEYS.expandedFolders, [], activeWorkspaceId)
       setExpandedFolders(new Set(newExpandedFolders))
 
-      const newCollapsedItems = storage.get<string[] | null>(storage.KEYS.collapsedSidebarItems, null, activeWorkspaceId)
-      setCollapsedItems(newCollapsedItems !== null ? new Set(newCollapsedItems) : new Set(['nav:labels']))
     }
 
     previousWorkspaceRef.current = activeWorkspaceId
@@ -543,21 +579,24 @@ function AppShellContent({
   // Handle selecting a source from the list (preserves current filter type)
   const handleSourceSelect = React.useCallback((source: LoadedSource) => {
     if (!activeWorkspaceId) return
+    enterCompactDockDetail()
     navigateToSource(source.config.slug)
-  }, [activeWorkspaceId, navigateToSource])
+  }, [activeWorkspaceId, enterCompactDockDetail, navigateToSource])
 
   // Handle selecting a skill from the list
   const handleSkillSelect = React.useCallback((skill: LoadedSkill) => {
     if (!activeWorkspaceId) return
+    enterCompactDockDetail()
     navigate(routes.view.skills(skill.slug))
-  }, [activeWorkspaceId, navigate])
+  }, [activeWorkspaceId, enterCompactDockDetail, navigate])
 
   // Handle selecting an automation from the list
   const handleAutomationSelect = React.useCallback((automationId: string) => {
+    enterCompactDockDetail()
     // Preserve current automation filter when selecting an automation
     const type = isAutomationsNavigation(navState) ? navState.filter?.automationType : undefined
     navigate(routes.view.automations({ automationId, type }))
-  }, [navState, navigate])
+  }, [enterCompactDockDetail, navState, navigate])
 
   // Focus zone management
   const { focusZone, focusNextZone, focusPreviousZone } = useFocusContext()
@@ -734,7 +773,7 @@ function AppShellContent({
 
     const handleMouseMove = (e: MouseEvent) => {
       if (isResizing === 'sidebar') {
-        const newWidth = Math.min(Math.max(e.clientX, 180), 320)
+        const newWidth = clampSidebarWidth(e.clientX)
         setSidebarWidth(newWidth)
         if (resizeHandleRef.current) {
           const rect = resizeHandleRef.current.getBoundingClientRect()
@@ -776,19 +815,9 @@ function AppShellContent({
     isSidebarVisible,
   ])
 
-  // Spring transition config - shared between sidebar and header
-  // Critical damping (no bounce): damping = 2 * sqrt(stiffness * mass)
-  const springTransition = {
-    type: "spring" as const,
-    stiffness: 600,
-    damping: 49,
-  }
-
   // Use session metadata from Jotai atom (lightweight, no messages)
   // This prevents closures from retaining full message arrays
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
-  const setSessionMetaMap = useSetAtom(sessionMetaMapAtom)
-
   const hasPendingPrompt = React.useCallback((sessionId: string) => {
     return (pendingPermissions.get(sessionId)?.length ?? 0) > 0
   }, [pendingPermissions])
@@ -808,12 +837,12 @@ function AppShellContent({
   const refreshWorkspaceRemoteHealth = workspaceNavigation.refreshRemoteHealth
 
   React.useEffect(() => {
-    storage.set(storage.KEYS.workspaceListCollapsed, workspaceListCollapsed)
-  }, [workspaceListCollapsed])
+    storage.set(storage.KEYS.collapsedWorkspaceSections, [...collapsedWorkspaceIds])
+  }, [collapsedWorkspaceIds])
 
   React.useEffect(() => {
-    if (workspaceListExpanded) refreshWorkspaceRemoteHealth()
-  }, [workspaceListExpanded, refreshWorkspaceRemoteHealth])
+    refreshWorkspaceRemoteHealth()
+  }, [refreshWorkspaceRemoteHealth])
 
   // Skills are scoped to the workspace root under complete-unification semantics.
   // Keep the legacy variable name for downstream DTO compatibility.
@@ -844,6 +873,59 @@ function AppShellContent({
   }, [sessionMetaMap, activeWorkspaceId, remoteWorkspaceId])
 
   const activeSessionMetas = workspaceSessionMetas
+
+  React.useEffect(() => {
+    if (!activeWorkspaceId || !sessionsLoaded) return
+    const summaries = workspaceSessionMetas
+      .map(toWorkspaceSessionSummary)
+      .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
+    setWorkspaceSessionSummaries(previous => mergeWorkspaceSessionSummaries(previous, activeWorkspaceId, summaries, true))
+  }, [activeWorkspaceId, sessionsLoaded, workspaceSessionMetas])
+
+  React.useEffect(() => {
+    storage.remove(storage.KEYS.workspaceSessionSummaryCache)
+  }, [])
+
+  React.useEffect(() => {
+    if (typeof window.electronAPI.invokeWorkspaceApi !== 'function') return
+    let cancelled = false
+
+    void Promise.all(workspaces.map(async workspace => {
+      if (workspace.id === activeWorkspaceId) return null
+      try {
+        const sessions = await window.electronAPI.invokeWorkspaceApi(
+          {
+            serverId: workspace.remoteServer?.url ?? 'local',
+            workspaceId: workspace.id,
+          },
+          'getSessions',
+        ) as Session[]
+        const allowedWorkspaceIds = new Set([
+          workspace.id,
+          workspace.remoteServer?.remoteWorkspaceId,
+        ].filter((id): id is string => Boolean(id)))
+        return [workspace.id, sessions
+          .filter(session => !session.hidden && allowedWorkspaceIds.has(session.workspaceId))
+          .map(toWorkspaceSessionSummary)
+          .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))] as const
+      } catch (error) {
+        console.warn(`[AppShell] Failed to load recent sessions for workspace ${workspace.id}:`, error)
+        return null
+      }
+    })).then(entries => {
+      if (cancelled) return
+      setWorkspaceSessionSummaries(previous => {
+        const currentWorkspaceIds = new Set(workspaces.map(workspace => workspace.id))
+        const next = Object.fromEntries(Object.entries(previous).filter(([workspaceId]) => currentWorkspaceIds.has(workspaceId)))
+        for (const entry of entries) {
+          if (entry) next[entry[0]] = entry[1]
+        }
+        return next
+      })
+    })
+
+    return () => { cancelled = true }
+  }, [activeWorkspaceId, workspaces])
 
   const refreshWorkspaceUnreadMap = useCallback(async () => {
     try {
@@ -899,29 +981,6 @@ function AppShellContent({
     return cleanup
   }, [workspaces])
 
-  // Count sources by type for the Sources dropdown subcategories
-  const sourceTypeCounts = useMemo(() => {
-    const counts = { api: 0, mcp: 0, local: 0 }
-    for (const source of sources) {
-      const t = source.config.type
-      if (t === 'api' || t === 'mcp' || t === 'local') {
-        counts[t]++
-      }
-    }
-    return counts
-  }, [sources])
-
-  // Count automations by type for the Automations dropdown subcategories
-  const automationTypeCounts = useMemo(() => {
-    const counts = { scheduled: 0, event: 0, agentic: 0 }
-    for (const automation of automations) {
-      if (automation.event === 'SchedulerTick') counts.scheduled++
-      else if ((APP_EVENTS as string[]).includes(automation.event)) counts.event++
-      else if ((AGENT_EVENTS as string[]).includes(automation.event)) counts.agentic++
-    }
-    return counts
-  }, [automations])
-
   const filteredSessionMetas = sessionFilter ? activeSessionMetas : []
 
   // Ensure session messages are loaded when selected
@@ -941,6 +1000,116 @@ function AppShellContent({
     return onDeleteSession(sessionId, skipConfirmation)
   }, [session.selected, setSession, onDeleteSession])
 
+  const handleSidebarSessionDelete = useCallback(async (
+    workspaceId: string,
+    summary: WorkspaceSessionSummary,
+  ): Promise<boolean> => {
+    const workspace = workspaces.find(candidate => candidate.id === workspaceId)
+    if (!workspace) return false
+
+    try {
+      let deleted = false
+      if (workspaceId === activeWorkspaceId) {
+        deleted = await handleDeleteSession(summary.id)
+      } else {
+        const isEmpty = !summary.lastFinalMessageId && !summary.name
+        if (!isEmpty) {
+          const confirmed = await window.electronAPI.showDeleteSessionConfirmation(summary.name || 'Untitled')
+          if (!confirmed) return false
+        }
+        await window.electronAPI.invokeWorkspaceApi(
+          { serverId: workspace.remoteServer?.url ?? 'local', workspaceId },
+          'deleteSession',
+          summary.id,
+        )
+        deleted = true
+      }
+
+      if (deleted) {
+        setWorkspaceSessionSummaries(previous => removeWorkspaceSessionSummary(previous, workspaceId, summary.id))
+      }
+      return deleted
+    } catch (error) {
+      console.error(`[AppShell] Failed to delete sidebar session ${summary.id}:`, error)
+      toast.error(t('common.error'), {
+        description: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    }
+  }, [activeWorkspaceId, handleDeleteSession, t, workspaces])
+
+  const handleSidebarSessionMarkUnread = useCallback((
+    workspaceId: string,
+    summary: WorkspaceSessionSummary,
+  ) => {
+    const workspace = workspaces.find(candidate => candidate.id === workspaceId)
+    if (!workspace) return
+
+    setWorkspaceSessionSummaries(previous => updateWorkspaceSessionSummary(
+      previous,
+      workspaceId,
+      summary.id,
+      { hasUnread: true },
+    ))
+
+    if (workspaceId === activeWorkspaceId) {
+      onMarkSessionUnread(summary.id)
+      return
+    }
+
+    void window.electronAPI.invokeWorkspaceApi(
+      { serverId: workspace.remoteServer?.url ?? 'local', workspaceId },
+      'sessionCommand',
+      summary.id,
+      { type: 'markUnread' },
+    ).catch(error => {
+      console.error(`[AppShell] Failed to mark sidebar session ${summary.id} unread:`, error)
+      toast.error(t('common.error'), {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    })
+  }, [activeWorkspaceId, onMarkSessionUnread, t, workspaces])
+
+  const openSidebarSessionRename = useCallback((workspaceId: string, summary: WorkspaceSessionSummary) => {
+    setSidebarRenameTarget({ workspaceId, session: summary })
+    setSidebarRenameName(getSessionTitle(summary))
+  }, [])
+
+  const submitSidebarSessionRename = useCallback(() => {
+    if (!sidebarRenameTarget) return
+    const name = sidebarRenameName.trim()
+    if (!name) return
+
+    const { workspaceId, session: summary } = sidebarRenameTarget
+    const workspace = workspaces.find(candidate => candidate.id === workspaceId)
+    if (!workspace) return
+
+    setWorkspaceSessionSummaries(previous => updateWorkspaceSessionSummary(
+      previous,
+      workspaceId,
+      summary.id,
+      { name },
+    ))
+    setSidebarRenameTarget(null)
+
+    if (workspaceId === activeWorkspaceId) {
+      onRenameSession(summary.id, name)
+      return
+    }
+
+    void window.electronAPI.invokeWorkspaceApi(
+      { serverId: workspace.remoteServer?.url ?? 'local', workspaceId },
+      'sessionCommand',
+      summary.id,
+      { type: 'rename', name },
+    ).catch(error => {
+      console.error(`[AppShell] Failed to rename sidebar session ${summary.id}:`, error)
+      toast.error(t('common.error'), {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    })
+  }, [activeWorkspaceId, onRenameSession, sidebarRenameName, sidebarRenameTarget, t, workspaces])
+
   // Extend context value with local overrides.
   const appShellContextValue = React.useMemo<AppShellContextType>(() => ({
     ...contextValue,
@@ -952,7 +1121,7 @@ function AppShellContent({
     remoteUIRequest,
     respondRemoteUI,
     onSessionSourcesChange: dataSourcesEnabled ? handleSessionSourcesChange : undefined,
-    rightSidebarButton: null,
+    panelHeaderTrailingAction: null,
     isCompactMode: isAutoCompact,
     // Search state for ChatDisplay highlighting
     sessionListSearchQuery: searchActive ? searchQuery : undefined,
@@ -1000,75 +1169,46 @@ function AppShellContent({
     return cleanup
   }, [handleToggleSidebar])
 
-  // Persist per-view filter map to localStorage (workspace-scoped)
-  // Persist sidebar section collapsed states (workspace-scoped)
-  React.useEffect(() => {
-    if (!activeWorkspaceId) return
-    storage.set(storage.KEYS.collapsedSidebarItems, [...collapsedItems], activeWorkspaceId)
-  }, [collapsedItems, activeWorkspaceId])
-
   const handleAllSessionsClick = useCallback(() => {
+    exitCompactDockDetail()
     navigate(routes.view.allSessions())
-  }, [])
+  }, [exitCompactDockDetail])
 
   // Handler for sources view (all sources)
   const handleSourcesClick = useCallback(() => {
     if (!dataSourcesEnabled) return
+    exitCompactDockDetail()
     navigate(routes.view.sources())
-  }, [dataSourcesEnabled])
-
-  // Handlers for source type filter views (subcategories in Sources dropdown)
-  const handleSourcesApiClick = useCallback(() => {
-    navigate(routes.view.sourcesApi())
-  }, [])
-
-  const handleSourcesMcpClick = useCallback(() => {
-    navigate(routes.view.sourcesMcp())
-  }, [])
-
-  const handleSourcesLocalClick = useCallback(() => {
-    navigate(routes.view.sourcesLocal())
-  }, [])
+  }, [dataSourcesEnabled, exitCompactDockDetail])
 
   // Handler for skills view
   const handleSkillsClick = useCallback(() => {
+    exitCompactDockDetail()
     navigate(routes.view.skills())
-  }, [])
+  }, [exitCompactDockDetail])
 
   // Handlers for automations view
   const handleAutomationsClick = useCallback(() => {
-    navigate(routes.view.automations())
-  }, [])
-
-  const handleAutomationsScheduledClick = useCallback(() => {
-    navigate(routes.view.automationsScheduled())
-  }, [])
-
-  const handleAutomationsEventClick = useCallback(() => {
-    navigate(routes.view.automationsEvent())
-  }, [])
-
-  const handleAutomationsAgenticClick = useCallback(() => {
-    navigate(routes.view.automationsAgentic())
-  }, [])
+    if (automations[0]) enterCompactDockDetail()
+    else exitCompactDockDetail()
+    navigate(routes.view.automations(automations[0] ? { automationId: automations[0].id } : undefined))
+  }, [automations, enterCompactDockDetail, exitCompactDockDetail])
 
   // Handler for settings view. With no arg → bare `settings` route (navigator-only
   // in compact mode, App fallback on desktop). With an arg → `settings/<subpage>`.
   const handleSettingsClick = useCallback((subpage?: SettingsSubpage) => {
+    if (subpage) enterCompactDockDetail()
+    else exitCompactDockDetail()
     navigate(routes.view.settings(subpage))
-  }, [])
+  }, [enterCompactDockDetail, exitCompactDockDetail])
 
-  // Handler for What's New overlay
   const handleWhatsNewClick = useCallback(async () => {
     const content = await window.electronAPI.getReleaseNotes()
     setReleaseNotesContent(content)
     setShowWhatsNew(true)
     setHasUnseenReleaseNotes(false)
-    // Update last seen version
     const latestVersion = await window.electronAPI.getLatestReleaseVersion()
-    if (latestVersion) {
-      storage.set(storage.KEYS.whatsNewLastSeenVersion, latestVersion)
-    }
+    if (latestVersion) storage.set(storage.KEYS.whatsNewLastSeenVersion, latestVersion)
   }, [])
 
   // ============================================================================
@@ -1158,19 +1298,20 @@ function AppShellContent({
     setTimeout(() => focusZone('chat', { intent: 'programmatic' }), 50)
   }, [activeWorkspace, focusZone, navigate])
 
-  // Create a brand new dedicated browser window and focus it.
-  // Intentionally unbound: this action should always create a NEW window.
+  // Create a new workspace-owned dedicated browser window and focus it.
   const handleNewBrowserWindow = useCallback(async () => {
+    if (!activeWorkspace) return
     try {
       const instanceId = await window.electronAPI.browserPane.create({
         show: true,
+        workspaceId: activeWorkspace.id,
       })
       await window.electronAPI.browserPane.focus(instanceId)
     } catch (error) {
       console.error('[Chat] Failed to create browser window:', error)
       toast.error(t('toast.failedToCreateBrowser'))
     }
-  }, [])
+  }, [activeWorkspace])
 
   // Delete Source - simplified since agents system is removed
   const handleDeleteSource = useCallback(async (sourceSlug: string) => {
@@ -1200,79 +1341,191 @@ function AppShellContent({
     action?: () => void
   }
 
+  const selectedSidebarSessionId = focusedSessionId
+    ?? (isSessionsNavigation(navState) ? navState.details?.sessionId : null)
+  const hasRemoteWorkspaces = workspaces.some(workspace => Boolean(workspace.remoteServer))
+
   const workspaceSidebarItems = React.useMemo<LeftSidebarLinkItem[]>(() => [
-    ...workspaceNavigation.items.map((item) => ({
-      id: `workspace:${item.workspace.id}`,
-      title: item.workspace.name,
-      icon: (
-        <CrossfadeAvatar
-          src={item.iconUrl}
-          alt={item.workspace.name}
-          className="h-3.5 w-3.5 rounded-full ring-1 ring-border/50"
-          fallbackClassName="rounded-full bg-muted text-[9px]"
-          fallback={item.workspace.name.charAt(0) || 'W'}
-        />
-      ),
-      iconColorable: false,
-      variant: item.isActive ? 'default' as const : 'ghost' as const,
-      compact: true,
-      onClick: () => { void workspaceNavigation.selectWorkspace(item.workspace.id) },
-      accessory: (
-        <>
-          {item.isProcessing && <Spinner className="text-[9px]" />}
-          {item.workspace.remoteServer && (
-            <span title={item.isDisconnected ? item.disconnectLabel : item.workspace.remoteServer.url}>
-              {item.isDisconnected
-                ? <CloudOff className="h-3 w-3 text-destructive" />
-                : <Cloud className={cn('h-3 w-3', item.isChecking && 'animate-pulse')} />}
-            </span>
-          )}
-          {item.hasUnread && <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-label={t('sidebar.groupByUnread')} />}
-          {item.isActive && <Check className="h-3 w-3" aria-label={t('workspace.selectWorkspace')} />}
-        </>
-      ),
-      contextMenu: item.isActive ? undefined : {
-        type: 'workspace' as const,
-        isActiveWorkspace: false,
-        onOpenWorkspaceInNewWindow: () => { void workspaceNavigation.openWorkspaceInNewWindow(item.workspace.id) },
-        onRemoveWorkspace: () => { void workspaceNavigation.removeWorkspace(item.workspace) },
-      },
-    })),
+    ...workspaceNavigation.items.map((item) => {
+      const sessions = workspaceSessionSummaries[item.workspace.id] ?? []
+      const workspaceId = item.workspace.id
+      const sessionLimit = workspaceSessionLimits[workspaceId] ?? RECENT_WORKSPACE_SESSION_LIMIT
+      const recentSessions = sessions.slice(0, sessionLimit)
+      const nestedItems: LeftSidebarLinkItem[] = recentSessions.map(summary => ({
+        id: `session:${workspaceId}:${summary.id}`,
+        title: getSessionTitle(summary),
+        variant: item.isActive && selectedSidebarSessionId === summary.id ? 'default' : 'ghost',
+        tone: 'session',
+        compact: true,
+        onClick: () => {
+          if (item.isActive) navigateToSessionInPanel(summary.id)
+          else void workspaceNavigation.selectSession(workspaceId, summary.id)
+        },
+        accessory: (
+          <>
+            {summary.isProcessing && <Spinner className="text-[9px]" />}
+            {summary.hasUnread && (
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-accent"
+                aria-label={t('sidebar.groupByUnread')}
+              />
+            )}
+          </>
+        ),
+        menuContent: (
+          <WorkspaceElectronApiProvider
+            route={{ serverId: item.workspace.remoteServer?.url ?? 'local', workspaceId }}
+          >
+            <SessionMenu
+              item={summary}
+              hasRemoteWorkspaces={hasRemoteWorkspaces}
+              onRename={() => openSidebarSessionRename(workspaceId, summary)}
+              onMarkUnread={() => handleSidebarSessionMarkUnread(workspaceId, summary)}
+              onOpenInNewWindow={() => window.electronAPI.openSessionInNewWindow(workspaceId, summary.id)}
+              onSendToWorkspace={item.isActive && hasRemoteWorkspaces
+                ? () => setSendToWorkspaceIds([summary.id])
+                : undefined}
+              onDelete={() => { void handleSidebarSessionDelete(workspaceId, summary) }}
+            />
+          </WorkspaceElectronApiProvider>
+        ),
+      }))
+      if (sessions.length > sessionLimit) {
+        nestedItems.push({
+          id: `workspace:${workspaceId}:more`,
+          title: t('common.more'),
+          icon: MoreHorizontal,
+          variant: 'ghost',
+          compact: true,
+          onClick: () => showMoreWorkspaceSessions(workspaceId),
+        })
+      }
+
+      return {
+        id: `workspace:${workspaceId}`,
+        title: item.workspace.name,
+        label: sessions.length > 0 ? String(sessions.length) : undefined,
+        icon: collapsedWorkspaceIds.has(workspaceId) ? Folder : FolderOpen,
+        variant: item.isActive && isSessionsNavigation(navState) && !selectedSidebarSessionId ? 'default' as const : 'ghost' as const,
+        tone: 'workspace' as const,
+        compact: true,
+        expandable: true,
+        expanded: !collapsedWorkspaceIds.has(workspaceId),
+        onToggle: () => toggleWorkspaceExpanded(workspaceId),
+        items: nestedItems,
+        onClick: () => {
+          if (item.isActive) handleAllSessionsClick()
+          else void workspaceNavigation.selectWorkspace(workspaceId)
+        },
+        accessory: (
+          <>
+            {item.isProcessing && <Spinner className="text-[9px]" />}
+            {item.workspace.remoteServer && (
+              <span title={item.isDisconnected ? item.disconnectLabel : item.workspace.remoteServer.url}>
+                {item.isDisconnected
+                  ? <CloudOff className="h-3 w-3 text-destructive" />
+                  : <Cloud className={cn('h-3 w-3', item.isChecking && 'animate-pulse')} />}
+              </span>
+            )}
+            {item.hasUnread && <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-label={t('sidebar.groupByUnread')} />}
+          </>
+        ),
+        contextMenu: item.isActive ? undefined : {
+          type: 'workspace' as const,
+          isActiveWorkspace: false,
+          onOpenWorkspaceInNewWindow: () => { void workspaceNavigation.openWorkspaceInNewWindow(workspaceId) },
+          onRemoveWorkspace: () => { void workspaceNavigation.removeWorkspace(item.workspace) },
+        },
+      }
+    }),
+  ], [collapsedWorkspaceIds, handleAllSessionsClick, handleSidebarSessionDelete, handleSidebarSessionMarkUnread, hasRemoteWorkspaces, navState, navigateToSessionInPanel, openSidebarSessionRename, selectedSidebarSessionId, setSendToWorkspaceIds, showMoreWorkspaceSessions, t, toggleWorkspaceExpanded, workspaceNavigation, workspaceSessionLimits, workspaceSessionSummaries])
+
+  const bottomSidebarItems = React.useMemo<LeftSidebarLinkItem[]>(() => [
+    ...(dataSourcesEnabled ? [{
+      id: 'nav:sources',
+      title: t('sidebar.sources'),
+      label: String(sources.length),
+      icon: DatabaseZap,
+      variant: isSourcesNavigation(navState) ? 'default' as const : 'ghost' as const,
+      onClick: handleSourcesClick,
+      dataTutorial: 'sources-nav',
+      contextMenu: { type: 'sources' as const, onAddSource: () => openAddSource() },
+    }] : []),
     {
-      id: 'workspace:add',
-      title: t('workspace.addWorkspace'),
-      icon: FolderPlus,
-      variant: 'ghost' as const,
-      compact: true,
-      onClick: workspaceNavigation.openCreation,
+      id: 'nav:skills',
+      title: t('sidebar.skills'),
+      label: String(skills.length),
+      icon: Zap,
+      variant: isSkillsNavigation(navState) ? 'default' as const : 'ghost' as const,
+      onClick: handleSkillsClick,
+      contextMenu: { type: 'skills' as const, onAddSkill: openAddSkill },
     },
-  ], [t, workspaceNavigation])
+    {
+      id: 'nav:automations',
+      title: t('sidebar.automations'),
+      label: String(automations.length),
+      icon: ListTodo,
+      variant: isAutomationsNavigation(navState) ? 'default' as const : 'ghost' as const,
+      onClick: handleAutomationsClick,
+      contextMenu: { type: 'automations' as const, onAddAutomation: openAddAutomation },
+    },
+    {
+      id: 'nav:settings',
+      title: t('sidebar.settings'),
+      icon: Settings,
+      variant: isSettingsNavigation(navState) ? 'default' as const : 'ghost' as const,
+      onClick: () => handleSettingsClick(),
+    },
+    {
+      id: 'nav:whats-new',
+      title: t('sidebar.whatsNew'),
+      icon: hasUnseenReleaseNotes ? (
+        <span className="relative">
+          <Cake className="h-3.5 w-3.5" />
+          <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent" />
+        </span>
+      ) : Cake,
+      variant: 'ghost' as const,
+      onClick: handleWhatsNewClick,
+    },
+  ], [automations.length, dataSourcesEnabled, handleAutomationsClick, handleSettingsClick, handleSkillsClick, handleSourcesClick, handleWhatsNewClick, hasUnseenReleaseNotes, navState, openAddAutomation, openAddSkill, openAddSource, sources.length, skills.length, t])
 
   const unifiedSidebarItems = React.useMemo((): SidebarItem[] => {
     const result: SidebarItem[] = []
 
-    // Sessions are presented as one unified list.
-    result.push({ id: 'nav:allSessions', type: 'nav', action: handleAllSessionsClick })
-    if (workspaceListExpanded) {
-      for (const workspace of workspaceNavigation.items) {
-        result.push({
-          id: `workspace:${workspace.workspace.id}`,
-          type: 'nav',
-          action: () => { void workspaceNavigation.selectWorkspace(workspace.workspace.id) },
-        })
+    for (const workspace of workspaceNavigation.items) {
+      const workspaceId = workspace.workspace.id
+      result.push({
+        id: `workspace:${workspaceId}`,
+        type: 'nav',
+        action: () => { void workspaceNavigation.selectWorkspace(workspaceId) },
+      })
+      if (!collapsedWorkspaceIds.has(workspaceId)) {
+        const sessions = workspaceSessionSummaries[workspaceId] ?? []
+        const sessionLimit = workspaceSessionLimits[workspaceId] ?? RECENT_WORKSPACE_SESSION_LIMIT
+        for (const summary of sessions.slice(0, sessionLimit)) {
+          result.push({
+            id: `session:${workspaceId}:${summary.id}`,
+            type: 'nav',
+            action: () => {
+              if (workspace.isActive) navigateToSessionInPanel(summary.id)
+              else void workspaceNavigation.selectSession(workspaceId, summary.id)
+            },
+          })
+        }
+        if (sessions.length > sessionLimit) {
+          result.push({ id: `workspace:${workspaceId}:more`, type: 'nav', action: () => showMoreWorkspaceSessions(workspaceId) })
+        }
       }
-      result.push({ id: 'workspace:add', type: 'nav', action: workspaceNavigation.openCreation })
     }
-    if (dataSourcesEnabled) {
-      result.push({ id: 'nav:sources', type: 'nav', action: handleSourcesClick })
-    }
+    if (dataSourcesEnabled) result.push({ id: 'nav:sources', type: 'nav', action: handleSourcesClick })
     result.push({ id: 'nav:skills', type: 'nav', action: handleSkillsClick })
     result.push({ id: 'nav:automations', type: 'nav', action: handleAutomationsClick })
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick() })
     result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
 
     return result
-  }, [handleAllSessionsClick, workspaceListExpanded, workspaceNavigation, dataSourcesEnabled, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleSettingsClick, handleWhatsNewClick])
+  }, [collapsedWorkspaceIds, dataSourcesEnabled, handleAutomationsClick, handleSettingsClick, handleSkillsClick, handleSourcesClick, handleWhatsNewClick, navigateToSessionInPanel, showMoreWorkspaceSessions, workspaceNavigation, workspaceSessionLimits, workspaceSessionSummaries])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -1331,8 +1584,7 @@ function AppShellContent({
       }
       case 'ArrowRight': {
         e.preventDefault()
-        // Move to next zone (navigator) - keyboard navigation
-        focusZone('navigator', { intent: 'keyboard' })
+        focusZone(isAutoCompact ? 'navigator' : 'chat', { intent: 'keyboard' })
         break
       }
       case 'Enter':
@@ -1362,7 +1614,7 @@ function AppShellContent({
         break
       }
     }
-  }, [sidebarFocused, unifiedSidebarItems, focusedSidebarItemId, focusZone])
+  }, [sidebarFocused, unifiedSidebarItems, focusedSidebarItemId, focusZone, isAutoCompact])
 
   // Focus sidebar item when sidebar zone gains focus
   React.useEffect(() => {
@@ -1407,6 +1659,7 @@ function AppShellContent({
 
     return t("sidebar.allSessions")
   }, [navState, t, automationFilter])
+  const navigatorWidth = resolveNavigatorWidth(navState, isAutoCompact, sessionListWidth)
 
   return (
     <AppShellProvider value={appShellContextValue}>
@@ -1428,6 +1681,8 @@ function AppShellContent({
           onToggleFocusMode={() => setIsSidebarAndNavigatorHidden(prev => !prev)}
           onAddSessionPanel={() => handleNewChat(true)}
           onAddBrowserPanel={() => { void handleNewBrowserWindow() }}
+          onTogglePanelLayout={togglePanelLayout}
+          isCanvasLayoutFocused={isCanvasLayoutFocused}
           leftExtensionSlot={effectiveSessionId ? <ExtensionContributionZone sessionId={effectiveSessionId} surface="window.topLeft" /> : undefined}
           rightExtensionSlot={effectiveSessionId ? <ExtensionContributionZone sessionId={effectiveSessionId} surface="window.topRight" /> : undefined}
           isCompact={isAutoCompact}
@@ -1455,7 +1710,7 @@ function AppShellContent({
               tabIndex={sidebarFocused ? 0 : -1}
               onKeyDown={handleSidebarKeyDown}
             >
-            <div className="flex h-full flex-col select-none">
+            <div className="flex h-full flex-col select-none bg-foreground/[0.012]">
               {/* Sidebar Top Section */}
               <div className="flex-1 flex flex-col min-h-0">
                 {/* New Session Button - Gmail-style, with context menu for "Open in New Window" */}
@@ -1469,7 +1724,7 @@ function AppShellContent({
                               semanticId="app.new-session"
                               variant="ghost"
                               onClick={(e) => handleNewChat(e.metaKey || e.ctrlKey)}
-                              className="w-full justify-start gap-2 py-[7px] px-2 text-[13px] font-normal rounded-[6px] shadow-minimal bg-background"
+                              className="h-8 w-full justify-start gap-2 px-2 text-[13px] font-medium rounded-[6px] bg-foreground/[0.045] hover:bg-foreground/[0.075]"
                               data-tutorial="new-chat-button"
                             >
                               <SquarePenRounded className="h-3.5 w-3.5 shrink-0" />
@@ -1487,192 +1742,43 @@ function AppShellContent({
                     <TooltipContent side="right">{newChatHotkey}</TooltipContent>
                   </Tooltip>
                 </div>
-                {/* Primary Nav: All Sessions (▸ Statuses, Flagged, Archived), Labels | Sources, Skills | Settings */}
-                {/* pb-4 provides clearance so the last item scrolls above the mask-fade-bottom gradient */}
+                {/* Workspace-first navigation. Sessions stay directly under their owning workspace. */}
                 <div className="flex-1 overflow-y-auto min-h-0 mask-fade-bottom pb-4">
                 {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="sidebar.header" />}
                 {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="navigation.item" />}
+                <div className="flex h-7 items-center px-4 pt-1 text-[11px] font-medium text-muted-foreground/70">
+                  <span className="min-w-0 flex-1 truncate">{t('workspace.workspaces')}</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        data-craft-semantic-id="workspace.add"
+                        aria-label={t('workspace.addWorkspace')}
+                        onClick={workspaceNavigation.openCreation}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground outline-none hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                      >
+                        <FolderPlus className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">{t('workspace.addWorkspace')}</TooltipContent>
+                  </Tooltip>
+                </div>
                 <LeftSidebar
                   isCollapsed={false}
                   getItemProps={getSidebarItemProps}
                   focusedItemId={focusedSidebarItemId}
-                  links={[
-                    // --- Sessions Section ---
-                    // Unified sessions entry.
-                    {
-                      id: "nav:allSessions",
-                      title: t("sidebar.allSessions"),
-                      label: String(workspaceSessionMetas.length),
-                      icon: Inbox,
-                      variant: "ghost",
-                      onClick: handleAllSessionsClick,
-                      expandable: true,
-                      expanded: workspaceListExpanded,
-                      onToggle: () => setWorkspaceListCollapsed(previous => !previous),
-                      items: workspaceSidebarItems,
-                      contextMenu: {
-                        type: 'allSessions',
-                        onMarkAllRead: () => {
-                          if (!activeWorkspaceId) return
-                          // Optimistic: clear hasUnread on all workspace session metas
-                          setSessionMetaMap(prev => {
-                            const next = new Map(prev)
-                            for (const [id, meta] of next) {
-                              if (meta.workspaceId === activeWorkspaceId && meta.hasUnread) {
-                                next.set(id, { ...meta, hasUnread: false })
-                              }
-                            }
-                            return next
-                          })
-                          window.electronAPI.markAllSessionsRead(activeWorkspaceId)
-                        },
-                      },
-                    },
-                    // --- Separator ---
-                    { id: "separator:chats-sources", type: "separator" },
-                    // --- Sources & Skills Section ---
-                    ...(dataSourcesEnabled ? [{
-                      id: "nav:sources",
-                      title: t("sidebar.sources"),
-                      label: String(sources.length),
-                      icon: DatabaseZap,
-                      variant: (isSourcesNavigation(navState) && !sourceFilter) ? "default" : "ghost",
-                      onClick: handleSourcesClick,
-                      dataTutorial: "sources-nav",
-                      expandable: true,
-                      expanded: isExpanded('nav:sources'),
-                      onToggle: () => toggleExpanded('nav:sources'),
-                      contextMenu: {
-                        type: 'sources',
-                        onAddSource: () => openAddSource(),
-                      },
-                      items: [
-                        {
-                          id: "nav:sources:api",
-                          title: t("sidebar.apis"),
-                          label: String(sourceTypeCounts.api),
-                          icon: Globe,
-                          variant: (sourceFilter?.kind === 'type' && sourceFilter.sourceType === 'api') ? "default" : "ghost",
-                          onClick: handleSourcesApiClick,
-                          contextMenu: {
-                            type: 'sources' as const,
-                            onAddSource: () => openAddSource('api'),
-                            sourceType: 'api',
-                          },
-                        },
-                        {
-                          id: "nav:sources:mcp",
-                          title: t("sidebar.mcps"),
-                          label: String(sourceTypeCounts.mcp),
-                          icon: <McpIcon className="h-3.5 w-3.5" />,
-                          variant: (sourceFilter?.kind === 'type' && sourceFilter.sourceType === 'mcp') ? "default" : "ghost",
-                          onClick: handleSourcesMcpClick,
-                          contextMenu: {
-                            type: 'sources' as const,
-                            onAddSource: () => openAddSource('mcp'),
-                            sourceType: 'mcp',
-                          },
-                        },
-                        {
-                          id: "nav:sources:local",
-                          title: t("sidebar.localFolders"),
-                          label: String(sourceTypeCounts.local),
-                          icon: FolderOpen,
-                          variant: (sourceFilter?.kind === 'type' && sourceFilter.sourceType === 'local') ? "default" : "ghost",
-                          onClick: handleSourcesLocalClick,
-                          contextMenu: {
-                            type: 'sources' as const,
-                            onAddSource: () => openAddSource('local'),
-                            sourceType: 'local',
-                          },
-                        },
-                      ],
-                    }] as LeftSidebarLinkItem[] : []),
-                    {
-                      id: "nav:skills",
-                      title: t("sidebar.skills"),
-                      label: String(skills.length),
-                      icon: Zap,
-                      variant: isSkillsNavigation(navState) ? "default" : "ghost",
-                      onClick: handleSkillsClick,
-                      contextMenu: {
-                        type: 'skills',
-                        onAddSkill: openAddSkill,
-                      },
-                    },
-                    {
-                      id: "nav:automations",
-                      title: t("sidebar.automations"),
-                      label: String(automations.length),
-                      icon: ListTodo,
-                      variant: (isAutomationsNavigation(navState) && !automationFilter) ? "default" : "ghost",
-                      onClick: handleAutomationsClick,
-                      expandable: true,
-                      expanded: isExpanded('nav:automations'),
-                      onToggle: () => toggleExpanded('nav:automations'),
-                      contextMenu: {
-                        type: 'automations' as const,
-                        onAddAutomation: openAddAutomation,
-                      },
-                      items: [
-                        {
-                          id: "nav:automations:scheduled",
-                          title: t("sidebar.scheduled"),
-                          label: String(automationTypeCounts.scheduled),
-                          icon: Clock,
-                          variant: (automationFilter?.kind === 'type' && automationFilter.automationType === 'scheduled') ? "default" : "ghost",
-                          onClick: handleAutomationsScheduledClick,
-                          contextMenu: { type: 'automations' as const, onAddAutomation: openAddAutomation },
-                        },
-                        {
-                          id: "nav:automations:event",
-                          title: t("sidebar.eventBased"),
-                          label: String(automationTypeCounts.event),
-                          icon: Radio,
-                          variant: (automationFilter?.kind === 'type' && automationFilter.automationType === 'event') ? "default" : "ghost",
-                          onClick: handleAutomationsEventClick,
-                          contextMenu: { type: 'automations' as const, onAddAutomation: openAddAutomation },
-                        },
-                        {
-                          id: "nav:automations:agentic",
-                          title: t("sidebar.agentic"),
-                          label: String(automationTypeCounts.agentic),
-                          icon: Bot,
-                          variant: (automationFilter?.kind === 'type' && automationFilter.automationType === 'agentic') ? "default" : "ghost",
-                          onClick: handleAutomationsAgenticClick,
-                          contextMenu: { type: 'automations' as const, onAddAutomation: openAddAutomation },
-                        },
-                      ],
-                    },
-                    // --- Separator ---
-                    { id: "separator:skills-settings", type: "separator" },
-                    // --- Settings ---
-                    {
-                      id: "nav:settings",
-                      title: t("sidebar.settings"),
-                      icon: Settings,
-                      variant: isSettingsNavigation(navState) ? "default" : "ghost",
-                      onClick: () => handleSettingsClick(),
-                    },
-                    // --- What's New ---
-                    {
-                      id: "nav:whats-new",
-                      title: t("sidebar.whatsNew"),
-                      icon: hasUnseenReleaseNotes ? (
-                        <span className="relative">
-                          <Cake className="h-3.5 w-3.5" />
-                          <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-accent" />
-                        </span>
-                      ) : Cake,
-                      variant: "ghost" as const,
-                      onClick: handleWhatsNewClick,
-                    },
-                  ]}
+                  links={workspaceSidebarItems}
                 />
                 {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="sidebar.section" />}
                 {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="sidebar.footer" />}
-                {/* Agent Tree: Hierarchical list of agents */}
-                {/* Agents section removed */}
+                </div>
+                <div className="shrink-0 border-t border-foreground/[0.055] py-1.5">
+                  <LeftSidebar
+                    isCollapsed={false}
+                    getItemProps={getSidebarItemProps}
+                    focusedItemId={focusedSidebarItemId}
+                    links={bottomSidebarItems}
+                  />
                 </div>
               </div>
 
@@ -1703,7 +1809,7 @@ function AppShellContent({
               actions={
                 <>
                   {/* New chat button (only for sessions mode) */}
-                  {isSessionsNavigation(navState) && (
+                  {isAutoCompact && isSessionsNavigation(navState) && (
                     <HeaderIconButton
                       icon={<SquarePenRounded className="h-3.5 w-3.5" />}
                       tooltip={t("menu.newChat")}
@@ -1799,8 +1905,9 @@ function AppShellContent({
                 onSelectSubpage={(subpage) => handleSettingsClick(subpage)}
               />
             )}
-            {isSessionsNavigation(navState) && (
-              /* Sessions List */
+            {isAutoCompact && isSessionsNavigation(navState) && (
+              /* Compact navigation keeps the legacy list interaction; desktop
+                 conversations now live entirely in the workspace-first sidebar. */
               <>
                 {/* SessionList: Scrollable list of session cards */}
                 {/* Key on sidebarMode forces full remount when switching views, skipping animations */}
@@ -1814,7 +1921,7 @@ function AppShellContent({
                     focusChatInputForSession(targetSessionId ?? focusedSessionId ?? session.selected)
                   }}
                   onSessionSelect={(selectedMeta) => {
-                    navigateToSession(selectedMeta.id)
+                    navigateToSessionInPanel(selectedMeta.id)
                   }}
                   onOpenInNewWindow={(selectedMeta) => {
                     if (activeWorkspaceId) {
@@ -1832,7 +1939,7 @@ function AppShellContent({
                   groupingMode={chatGroupingMode}
                   workspaceId={activeWorkspaceId ?? undefined}
                   focusedSessionId={panelCount === 0 ? null : panelCount > 1 ? focusedSessionId : undefined}
-                  onNavigateToSession={panelCount > 1 ? navigateToSessionInPanel : undefined}
+                  onNavigateToSession={navigateToSessionInPanel}
                   hasPendingPrompt={hasPendingPrompt}
                   activeChatMatchInfo={chatMatchInfo}
                 />
@@ -1846,11 +1953,22 @@ function AppShellContent({
             )}
             </div>
           }
-          navigatorWidth={isAutoCompact ? sessionListWidth : (effectiveSidebarAndNavigatorHidden ? 0 : sessionListWidth)}
+          navigatorWidth={navigatorWidth}
           isSidebarAndNavigatorHidden={effectiveSidebarAndNavigatorHidden}
-          isRightSidebarVisible={false}
           isCompact={isAutoCompact}
           isResizing={!!isResizing}
+          unifiedDockSlot={(
+            <UnifiedDockWorkspace
+              key={activeWorkspaceId ?? 'no-workspace'}
+              activeWorkspaceId={activeWorkspaceId}
+              workspaceTransition={workspaceTransition}
+              serverId={activeWorkspace?.remoteServer?.url ?? 'local'}
+              sessionId={effectiveSessionId}
+              isSidebarAndNavigatorHidden={effectiveSidebarAndNavigatorHidden}
+              canvasLayoutToggleRequest={canvasLayoutToggleRequest}
+              onCanvasLayoutFocusChange={setIsCanvasLayoutFocused}
+            />
+          )}
         />
 
         {/* Sidebar Resize Handle (absolute, hidden in focused mode) */}
@@ -1886,8 +2004,9 @@ function AppShellContent({
         </div>
         )}
 
-        {/* Session List Resize Handle (absolute, hidden in focused mode) */}
-        {!effectiveSidebarAndNavigatorHidden && (
+        {/* Navigator resize handle. Desktop conversations no longer own a
+            second sidebar, so only management-module navigators expose it. */}
+        {!effectiveSidebarAndNavigatorHidden && navigatorWidth > 0 && (
         <div
           ref={sessionListHandleRef}
           onMouseDown={(e) => { e.preventDefault(); setIsResizing('session-list') }}
@@ -1992,12 +2111,21 @@ function AppShellContent({
 
       {workspaceNavigation.overlay}
 
-      {/* What's New overlay */}
       <DocumentFormattedMarkdownOverlay
         isOpen={showWhatsNew}
         onClose={() => setShowWhatsNew(false)}
         content={releaseNotesContent}
         onOpenUrl={(url) => window.electronAPI.openUrl(url)}
+      />
+
+      <RenameDialog
+        open={sidebarRenameTarget !== null}
+        onOpenChange={(open) => { if (!open) setSidebarRenameTarget(null) }}
+        title={t('chat.renameSession')}
+        value={sidebarRenameName}
+        onValueChange={setSidebarRenameName}
+        onSubmit={submitSidebarSessionRename}
+        placeholder={t('chat.enterSessionName')}
       />
 
       {/* Delete automation confirmation dialog */}

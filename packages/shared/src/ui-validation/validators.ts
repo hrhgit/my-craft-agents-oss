@@ -1,5 +1,6 @@
 import { UiValidationError } from './errors.ts'
 import { parseSemanticRef } from './semantic.ts'
+import { UI_VALIDATION_MAX_STABLE_FOR_MS, UI_VALIDATION_MAX_WAIT_MS } from './timeouts.ts'
 import {
   UI_VALIDATION_PROTOCOL_VERSION,
   type SemanticNode,
@@ -62,7 +63,7 @@ export function parseUiValidationActionRequest(input: unknown): UiValidationActi
   if (value.revision !== undefined) result.revision = nonNegativeInteger(value.revision, 'revision')
   if (value.value !== undefined) result.value = string(value.value, 'value', 100_000)
   if (value.key !== undefined) result.key = nonEmptyString(value.key, 'key', 128)
-  if (value.timeoutMs !== undefined) result.timeoutMs = positiveInteger(value.timeoutMs, 'timeoutMs', 300_000)
+  if (value.timeoutMs !== undefined) result.timeoutMs = positiveInteger(value.timeoutMs, 'timeoutMs', UI_VALIDATION_MAX_WAIT_MS)
   if (value.waitUntil !== undefined) result.waitUntil = parseUiValidationWaitRequest(value.waitUntil)
   if (value.input !== undefined) {
     if (!isExtension) invalid('input is supported only for extension actions')
@@ -201,8 +202,8 @@ export function parseUiValidationWaitRequest(input: unknown): UiValidationWaitRe
   }
   return {
     predicate: parsedPredicate,
-    ...(value.timeoutMs === undefined ? {} : { timeoutMs: positiveInteger(value.timeoutMs, 'timeoutMs', 300_000) }),
-    ...(value.stableForMs === undefined ? {} : { stableForMs: nonNegativeInteger(value.stableForMs, 'stableForMs', 60_000) }),
+    ...(value.timeoutMs === undefined ? {} : { timeoutMs: positiveInteger(value.timeoutMs, 'timeoutMs', UI_VALIDATION_MAX_WAIT_MS) }),
+    ...(value.stableForMs === undefined ? {} : { stableForMs: nonNegativeInteger(value.stableForMs, 'stableForMs', UI_VALIDATION_MAX_STABLE_FOR_MS) }),
     ...(value.afterSeq === undefined ? {} : { afterSeq: nonNegativeInteger(value.afterSeq, 'afterSeq') }),
   }
 }

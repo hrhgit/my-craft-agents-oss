@@ -5,7 +5,7 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from 
 import { Input } from '@/components/ui/input'
 import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { cn } from '@/lib/utils'
-import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
+import { SessionFilesSection } from '../session-files/SessionFilesSection'
 
 interface SessionInfoPopoverProps {
   sessionId: string

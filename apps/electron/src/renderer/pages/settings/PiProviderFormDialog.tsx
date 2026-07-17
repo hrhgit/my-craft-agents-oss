@@ -52,6 +52,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import type { PiGlobalProvider, PiGlobalModel, PiCustomApi, FetchedEndpointModel } from '../../../shared/types'
+import { parseContextWindowInput } from '@craft-agent/shared/config/pi-provider-models'
 
 const FLOATING_MENU_CLASS = 'z-floating-menu'
 
@@ -246,6 +247,7 @@ export function PiProviderFormDialog({
   const [expandedModels, setExpandedModels] = React.useState<Record<number, boolean>>({})
   const [apiKeyVisible, setApiKeyVisible] = React.useState(false)
   const [apiKeyLoading, setApiKeyLoading] = React.useState(false)
+  const [contextWindowDrafts, setContextWindowDrafts] = React.useState<Record<number, string>>({})
   const addProviderLabel = cleanAddLabel(t('settings.piProviders.addProvider'))
   const currentApiOption = getApiOption(state.api)
 
@@ -259,6 +261,7 @@ export function PiProviderFormDialog({
       setExpandedModels({})
       setApiKeyVisible(false)
       setApiKeyLoading(false)
+      setContextWindowDrafts({})
     }
   }, [open, editingKey, initialProvider])
 
@@ -413,6 +416,14 @@ export function PiProviderFormDialog({
     next[index] = { ...next[index], [field]: value }
     update('models', next)
   }, [state.models, update])
+
+  const handleContextWindowChange = React.useCallback((index: number, value: string) => {
+    setContextWindowDrafts(prev => ({ ...prev, [index]: value }))
+    const parsed = value.trim() ? parseContextWindowInput(value) : undefined
+    if (!value.trim() || parsed !== undefined) {
+      handleModelChange(index, 'contextWindow', parsed)
+    }
+  }, [handleModelChange])
 
   const handleRemoveModel = React.useCallback((index: number) => {
     const next = [...state.models]
@@ -805,10 +816,12 @@ export function PiProviderFormDialog({
                           <div className="space-y-1">
                             <Label className="text-xs">{t('settings.piProviders.contextWindow')}</Label>
                             <Input
-                              type="number"
-                              value={model.contextWindow ?? ''}
-                              onChange={e => handleModelChange(index, 'contextWindow', e.target.value ? Number(e.target.value) : undefined)}
-                              placeholder="200000"
+                              type="text"
+                              inputMode="decimal"
+                              value={contextWindowDrafts[index] ?? (model.contextWindow ?? '')}
+                              onChange={e => handleContextWindowChange(index, e.target.value)}
+                              placeholder="200K"
+                              aria-label={`${t('settings.piProviders.contextWindow')} (tokens, K/M)`}
                             />
                           </div>
                           <div className="space-y-1">

@@ -1,12 +1,13 @@
 /**
  * BrowserPaneManager
  *
- * Owns browser instances as dedicated BrowserWindow objects.
- * Each instance maps 1:1 to a full native window while preserving
- * shared session/cookie partition and CDP automation support.
+ * Owns browser instances backed by dedicated BrowserWindow objects. A page
+ * view can be temporarily reparented into a Craft workbench without changing
+ * its session, history, cookies, or CDP automation identity.
  */
 
-import { join, parse as parsePath } from 'path'
+import { join, parse as parsePath, resolve } from 'path'
+import { fileURLToPath } from 'url'
 import { existsSync, mkdirSync } from 'fs'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { BrowserView, BrowserWindow, app, ipcMain, nativeTheme, session, shell, type Session as ElectronSession } from 'electron'
@@ -14,9 +15,10 @@ import { observeWebRequests } from './web-request-observer-hub'
 import { mainLog } from './logger'
 import type { WindowManager } from './window-manager'
 import { BrowserCDP, type AccessibilitySnapshot, type ElementGeometry } from './browser-cdp'
+import { isKeyboardCloseShortcut } from './keyboard-close-shortcut'
+import { resolveEmbeddedBrowserHostShortcut } from './embedded-browser-host-shortcuts'
 import {
-  type BrowserEmptyStateLaunchPayload,
-  type BrowserEmptyStateLaunchResult,
+  type BrowserEmbedBounds,
   type BrowserInstanceInfo,
 } from '../shared/types'
 import { DEFAULT_THEME, loadAppTheme, getAllowRemoteEvaluate } from '@craft-agent/shared/config'
@@ -144,6 +146,9 @@ interface BrowserInstance {
   toolbarView: BrowserView
   pageView: BrowserView
   nativeOverlayView: BrowserView
+  embeddedHostWindow: BrowserWindow | null
+  embeddedRequestedBounds: BrowserEmbedBounds | null
+  embeddedBounds: BrowserEmbedBounds | null
   cdp: BrowserCDP
   currentUrl: string
   title: string
@@ -181,7 +186,13 @@ interface BrowserInstance {
   consoleLogs: BrowserConsoleEntry[]
   networkLogs: BrowserNetworkEntry[]
   downloads: BrowserDownloadEntry[]
-  lastLaunchToken: string | null
+}
+
+interface EmbeddedHostRegistration {
+  window: BrowserWindow
+  instanceIds: Set<string>
+  closedListener: () => void
+  zoomChangedListener: () => void
 }
 
 interface CreateBrowserInstanceOptions {
@@ -338,6 +349,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   private lastNetworkActivityByWebContentsId = new Map<number, number>()
   private popupWindowsByParentInstanceId = new Map<string, Set<BrowserWindow>>()
   private popupParentByWebContentsId = new Map<number, string>()
+  private embeddedHostsByWebContentsId = new Map<number, EmbeddedHostRegistration>()
   private windowManager: WindowManager | null = null
   private sessionPathResolver: ((sessionId: string) => string | null) | null = null
 
@@ -450,6 +462,9 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       toolbarView,
       pageView,
       nativeOverlayView,
+      embeddedHostWindow: null,
+      embeddedRequestedBounds: null,
+      embeddedBounds: null,
       cdp,
       currentUrl: 'about:blank',
       title: 'New Tab',
@@ -484,7 +499,6 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       consoleLogs: [],
       networkLogs: [],
       downloads: [],
-      lastLaunchToken: null,
     }
 
     const defaultUa = pageView.webContents.userAgent || ''
@@ -554,6 +568,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       }
     }
 
+    runCleanup('detachFromHost', () => this.detachFromHost(instance.id))
     runCleanup('closePopupsForParent', () => this.closePopupsForParent(instance.id, 'parent_destroy'))
     runCleanup('applyAgentControlLock', () => this.applyAgentControlLock(instance, false))
     runCleanup('updateNativeOverlayState', () => this.updateNativeOverlayState(instance))
@@ -596,89 +611,6 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     return instance
   }
 
-  async handleEmptyStateLaunchFromRenderer(
-    senderWebContentsId: number,
-    payload: BrowserEmptyStateLaunchPayload,
-  ): Promise<BrowserEmptyStateLaunchResult> {
-    const instance = this.findInstanceByPageWebContentsId(senderWebContentsId)
-    if (!instance) {
-      mainLog.warn(`[browser-pane] empty-state launch ignored: sender not mapped senderWebContentsId=${senderWebContentsId}`)
-      return { ok: false, handled: false, reason: 'instance_not_found' }
-    }
-
-    const route = payload.route?.trim()
-    if (!route) {
-      mainLog.warn(`[browser-pane] empty-state launch missing route id=${instance.id}`)
-      return { ok: false, handled: false, reason: 'missing_route' }
-    }
-
-    const token = payload.token ?? null
-    const handled = await this.triggerEmptyStateRouteLaunch(instance, route, token, 'ipc')
-    return {
-      ok: true,
-      handled,
-      reason: handled ? undefined : 'duplicate',
-    }
-  }
-
-  private findInstanceByPageWebContentsId(senderWebContentsId: number): BrowserInstance | undefined {
-    for (const instance of this.instances.values()) {
-      if (instance.pageView.webContents.id === senderWebContentsId) {
-        return instance
-      }
-    }
-    return undefined
-  }
-
-  private resolveLaunchWorkspaceId(): string | null {
-    if (!this.windowManager) return null
-
-    const focusedWindow = this.windowManager.getFocusedWindow()
-    if (focusedWindow) {
-      const focusedWorkspaceId = this.windowManager.getWorkspaceForWindow(focusedWindow.webContents.id)
-      if (focusedWorkspaceId) {
-        return focusedWorkspaceId
-      }
-    }
-
-    const managedWindows = this.windowManager.getAllWindows()
-    return managedWindows[0]?.workspaceId ?? null
-  }
-
-  private buildDeepLinkFromRoute(route: string): string {
-    const queryStart = route.indexOf('?')
-    const routePath = queryStart >= 0 ? route.slice(0, queryStart) : route
-    const routeQuery = queryStart >= 0 ? route.slice(queryStart + 1) : ''
-    let normalizedPath = routePath.replace(/^\/+/, '')
-
-    const workspaceId = this.resolveLaunchWorkspaceId()
-    if (workspaceId && !normalizedPath.startsWith('workspace/')) {
-      normalizedPath = `workspace/${encodeURIComponent(workspaceId)}/${normalizedPath}`
-    }
-
-    return `${CRAFT_DEEPLINK_SCHEME_PREFIX}${normalizedPath}${routeQuery ? `?${routeQuery}` : ''}`
-  }
-
-  private async triggerEmptyStateRouteLaunch(
-    instance: BrowserInstance,
-    route: string,
-    token: string | null,
-    source: 'hash' | 'ipc',
-  ): Promise<boolean> {
-    const dedupeToken = token ?? route
-    if (dedupeToken && instance.lastLaunchToken === dedupeToken) {
-      mainLog.info(`[browser-pane] ignoring duplicate empty-state launch id=${instance.id} source=${source} token=${dedupeToken}`)
-      return false
-    }
-
-    instance.lastLaunchToken = dedupeToken
-    const deepLink = this.buildDeepLinkFromRoute(route)
-    mainLog.info(`[browser-pane] handling empty-state launch id=${instance.id} source=${source} route=${route} deepLink=${deepLink}`)
-
-    await this.handleDeepLinkUrl(deepLink)
-    return true
-  }
-
   listInstances(): BrowserInstanceInfo[] {
     const infos: BrowserInstanceInfo[] = []
     for (const instance of this.instances.values()) {
@@ -689,6 +621,26 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       infos.push(this.toInfo(instance))
     }
     return infos
+  }
+
+  listInstancesForWorkspace(workspaceId: string | null): BrowserInstanceInfo[] {
+    return this.listInstancesForWorkspaceAliases([workspaceId])
+  }
+
+  listInstancesForWorkspaceAliases(workspaceIds: readonly (string | null)[]): BrowserInstanceInfo[] {
+    const allowed = new Set(workspaceIds)
+    return this.listInstances().filter(instance => allowed.has(instance.workspaceId ?? null))
+  }
+
+  assertInstanceOwnedByWorkspace(id: string, workspaceId: string | null): void {
+    this.assertInstanceOwnedByWorkspaceAliases(id, [workspaceId])
+  }
+
+  assertInstanceOwnedByWorkspaceAliases(id: string, workspaceIds: readonly (string | null)[]): void {
+    const instance = this.requireAliveInstance(id)
+    if (!new Set(workspaceIds).has(instance.workspaceId)) {
+      throw new Error(`Browser instance does not belong to the active workspace: ${id}`)
+    }
   }
 
   async listInstancesAsync(): Promise<BrowserInstanceInfo[]> {
@@ -790,12 +742,177 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     instance.pageView.webContents.stop()
   }
 
+  embedInHost(id: string, hostWebContentsId: number, bounds: BrowserEmbedBounds): void {
+    const instance = this.requireAliveInstance(id)
+    const hostWindow = BrowserWindow.getAllWindows().find(window =>
+      !window.isDestroyed() && window.webContents.id === hostWebContentsId)
+    if (!hostWindow) throw new Error(`Workbench host window not found: ${hostWebContentsId}`)
+
+    if (instance.embeddedHostWindow && instance.embeddedHostWindow !== hostWindow) {
+      this.detachFromHost(id)
+    }
+
+    this.forceCloseToolbarMenu(instance, 'workbench-embed')
+    const normalizedBounds = this.normalizeEmbeddedBounds(hostWindow, bounds)
+    if (instance.embeddedHostWindow !== hostWindow) {
+      instance.window.removeBrowserView(instance.pageView)
+      instance.window.removeBrowserView(instance.nativeOverlayView)
+      hostWindow.addBrowserView(instance.pageView)
+      hostWindow.addBrowserView(instance.nativeOverlayView)
+      instance.embeddedHostWindow = hostWindow
+      this.retainEmbeddedHost(instance.id, hostWindow)
+    }
+    instance.embeddedRequestedBounds = { ...bounds }
+    instance.embeddedBounds = normalizedBounds
+    if (!instance.window.isDestroyed() && instance.window.isVisible()) instance.window.hide()
+    instance.isVisible = true
+    this.layoutEmbeddedViews(instance)
+    this.emitStateChange(instance)
+  }
+
+  updateEmbeddedBounds(id: string, hostWebContentsId: number, bounds: BrowserEmbedBounds): void {
+    const instance = this.requireAliveInstance(id)
+    const hostWindow = instance.embeddedHostWindow
+    if (!hostWindow || hostWindow.isDestroyed() || hostWindow.webContents.id !== hostWebContentsId) return
+    instance.embeddedRequestedBounds = { ...bounds }
+    instance.embeddedBounds = this.normalizeEmbeddedBounds(hostWindow, bounds)
+    this.layoutEmbeddedViews(instance)
+  }
+
+  detachFromHost(id: string, hostWebContentsId?: number): void {
+    const instance = this.instances.get(id)
+    if (!instance?.embeddedHostWindow) return
+    const hostWindow = instance.embeddedHostWindow
+    if (hostWebContentsId !== undefined && hostWindow.webContents.id !== hostWebContentsId) return
+
+    this.releaseEmbeddedHost(instance.id, hostWindow)
+    if (!hostWindow.isDestroyed()) {
+      hostWindow.removeBrowserView(instance.nativeOverlayView)
+      hostWindow.removeBrowserView(instance.pageView)
+    }
+    instance.embeddedHostWindow = null
+    instance.embeddedRequestedBounds = null
+    instance.embeddedBounds = null
+
+    if (!instance.window.isDestroyed()) {
+      instance.window.addBrowserView(instance.pageView)
+      instance.window.addBrowserView(instance.nativeOverlayView)
+      instance.window.setTopBrowserView(instance.toolbarView)
+      this.layoutAllViews(instance)
+      instance.isVisible = instance.window.isVisible()
+    }
+    this.emitStateChange(instance)
+  }
+
+  detachAllFromHost(hostWebContentsId: number): void {
+    for (const instance of this.instances.values()) {
+      if (instance.embeddedHostWindow?.webContents.id === hostWebContentsId) {
+        this.detachFromHost(instance.id, hostWebContentsId)
+      }
+    }
+  }
+
+  private retainEmbeddedHost(instanceId: string, hostWindow: BrowserWindow): void {
+    const hostWebContentsId = hostWindow.webContents.id
+    let registration = this.embeddedHostsByWebContentsId.get(hostWebContentsId)
+    if (registration && registration.window !== hostWindow) {
+      this.cleanupEmbeddedHostRegistration(hostWebContentsId, registration)
+      registration = undefined
+    }
+    if (!registration) {
+      const closedListener = () => this.handleEmbeddedHostClosed(hostWebContentsId, hostWindow)
+      const zoomChangedListener = () => this.handleEmbeddedHostZoomChanged(hostWebContentsId, hostWindow)
+      registration = {
+        window: hostWindow,
+        instanceIds: new Set(),
+        closedListener,
+        zoomChangedListener,
+      }
+      this.embeddedHostsByWebContentsId.set(hostWebContentsId, registration)
+      hostWindow.once('closed', closedListener)
+      hostWindow.webContents.on('zoom-changed', zoomChangedListener)
+    }
+    registration.instanceIds.add(instanceId)
+  }
+
+  private releaseEmbeddedHost(instanceId: string, hostWindow: BrowserWindow): void {
+    const hostWebContentsId = hostWindow.webContents.id
+    const registration = this.embeddedHostsByWebContentsId.get(hostWebContentsId)
+    if (!registration || registration.window !== hostWindow) return
+    registration.instanceIds.delete(instanceId)
+    if (registration.instanceIds.size === 0) {
+      this.cleanupEmbeddedHostRegistration(hostWebContentsId, registration)
+    }
+  }
+
+  private cleanupEmbeddedHostRegistration(
+    hostWebContentsId: number,
+    registration: EmbeddedHostRegistration,
+  ): void {
+    if (this.embeddedHostsByWebContentsId.get(hostWebContentsId) === registration) {
+      this.embeddedHostsByWebContentsId.delete(hostWebContentsId)
+    }
+    if (!registration.window.isDestroyed()) {
+      registration.window.removeListener('closed', registration.closedListener)
+    }
+    if (!registration.window.webContents.isDestroyed()) {
+      registration.window.webContents.removeListener('zoom-changed', registration.zoomChangedListener)
+    }
+    registration.instanceIds.clear()
+  }
+
+  private handleEmbeddedHostClosed(hostWebContentsId: number, hostWindow: BrowserWindow): void {
+    const registration = this.embeddedHostsByWebContentsId.get(hostWebContentsId)
+    if (!registration || registration.window !== hostWindow) return
+    this.embeddedHostsByWebContentsId.delete(hostWebContentsId)
+    if (!hostWindow.webContents.isDestroyed()) {
+      hostWindow.webContents.removeListener('zoom-changed', registration.zoomChangedListener)
+    }
+    const instanceIds = [...registration.instanceIds]
+    registration.instanceIds.clear()
+    for (const instanceId of instanceIds) {
+      this.detachFromHost(instanceId, hostWebContentsId)
+    }
+  }
+
+  private handleEmbeddedHostZoomChanged(hostWebContentsId: number, hostWindow: BrowserWindow): void {
+    setTimeout(() => {
+      const registration = this.embeddedHostsByWebContentsId.get(hostWebContentsId)
+      if (!registration || registration.window !== hostWindow || hostWindow.isDestroyed()) return
+      for (const instanceId of registration.instanceIds) {
+        const instance = this.instances.get(instanceId)
+        if (instance?.embeddedHostWindow !== hostWindow || !instance.embeddedRequestedBounds) continue
+        instance.embeddedBounds = this.normalizeEmbeddedBounds(hostWindow, instance.embeddedRequestedBounds)
+        this.layoutEmbeddedViews(instance)
+      }
+    }, 0)
+  }
+
+  private normalizeEmbeddedBounds(hostWindow: BrowserWindow, bounds: BrowserEmbedBounds): BrowserEmbedBounds {
+    const [hostWidth, hostHeight] = hostWindow.getContentSize()
+    const rawZoomFactor = hostWindow.webContents.getZoomFactor()
+    const zoomFactor = Number.isFinite(rawZoomFactor) && rawZoomFactor > 0 ? rawZoomFactor : 1
+    const x = Math.max(0, Math.min(hostWidth - 1, Math.round((Number(bounds.x) || 0) * zoomFactor)))
+    const y = Math.max(0, Math.min(hostHeight - 1, Math.round((Number(bounds.y) || 0) * zoomFactor)))
+    const width = Math.max(1, Math.min(hostWidth - x, Math.round((Number(bounds.width) || 1) * zoomFactor)))
+    const height = Math.max(1, Math.min(hostHeight - y, Math.round((Number(bounds.height) || 1) * zoomFactor)))
+    return { x, y, width, height }
+  }
+
   focus(id: string): void {
     const instance = this.instances.get(id)
     if (!instance) return
 
     const win = instance.window
     if (win.isDestroyed()) return
+
+    if (instance.embeddedHostWindow && !instance.embeddedHostWindow.isDestroyed()) {
+      instance.embeddedHostWindow.show()
+      instance.embeddedHostWindow.focus()
+      instance.pageView.webContents.focus()
+      this.interactedCallback?.(instance.id)
+      return
+    }
 
     // If toolbar hasn't painted yet, defer showing until markToolbarReady runs.
     // Token guard prevents stale deferred focus from showing after hide/destroy.
@@ -818,6 +935,11 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   hide(id: string): void {
     const instance = this.instances.get(id)
     if (!instance) return
+
+    if (instance.embeddedHostWindow) {
+      this.detachFromHost(id)
+      return
+    }
 
     // Re-entrancy guard: bail if a hide is already in progress. Prevents the
     // 'close' listener from re-entering hide() during teardown, which can crash
@@ -1589,6 +1711,19 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     } as any)
   }
 
+  async sendKeyToEmbeddedHost(
+    id: string,
+    hostWebContentsId: number,
+    args: BrowserKeyArgs,
+  ): Promise<void> {
+    const instance = this.requireAliveInstance(id)
+    const host = instance.embeddedHostWindow
+    if (!host || host.isDestroyed() || host.webContents.id !== hostWebContentsId) {
+      throw new Error(`Browser instance is not embedded in host ${hostWebContentsId}: ${id}`)
+    }
+    await this.sendKey(id, args)
+  }
+
   async getDownloads(id: string, options?: BrowserDownloadOptions): Promise<BrowserDownloadEntry[]> {
     const instance = this.requireAliveInstance(id)
 
@@ -1612,11 +1747,15 @@ export class BrowserPaneManager implements IBrowserPaneManager {
 
   async uploadFile(id: string, ref: string, filePaths: string[]): Promise<ElementGeometry> {
     const instance = this.requireAliveInstance(id)
+    const workspaceId = instance.workspaceId?.trim()
+    if (!workspaceId) throw new Error('Browser file upload requires a workspaceId')
 
     const safePaths: string[] = []
     for (const p of filePaths) {
-      const workspaceId = this.resolveLaunchWorkspaceId()
-      const safePath = await validateFilePath(p, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(p, getWorkspaceAllowedDirs(workspaceId), {
+        allowHome: false,
+        allowTmp: false,
+      })
       if (!existsSync(safePath)) throw new Error(`File not found: ${p}`)
       safePaths.push(safePath)
     }
@@ -2010,22 +2149,32 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   private updateNativeOverlayState(instance: BrowserInstance): void {
     const control = instance.agentControl
     const agentActive = !!control?.active
-    const menuActive = !!instance.toolbarMenuOverlayActive
+    const embeddedHost = instance.embeddedHostWindow
+    const embeddedBounds = instance.embeddedBounds
+    const isEmbedded = Boolean(embeddedHost && embeddedBounds && !embeddedHost.isDestroyed())
+    const viewHost = isEmbedded ? embeddedHost : instance.window
+    const menuActive = !isEmbedded && !!instance.toolbarMenuOverlayActive
     const shouldShow = agentActive || menuActive
 
-    if (!shouldShow || !instance.nativeOverlayReady || instance.window.isDestroyed()) {
+    if (!viewHost || viewHost.isDestroyed()) return
+
+    if (!shouldShow || !instance.nativeOverlayReady) {
       instance.nativeOverlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-      if (!instance.window.isDestroyed()) {
-        instance.window.setTopBrowserView(instance.toolbarView)
-      }
+      viewHost.setTopBrowserView(isEmbedded ? instance.pageView : instance.toolbarView)
       return
     }
 
-    const [width, height] = instance.window.getContentSize()
-    const overlayHeight = Math.max(100, height - TOOLBAR_HEIGHT)
-    instance.nativeOverlayView.setBounds({ x: 0, y: TOOLBAR_HEIGHT, width, height: overlayHeight })
-    instance.nativeOverlayView.setAutoResize({ width: true, height: true })
-    instance.window.setTopBrowserView(instance.toolbarView)
+    if (isEmbedded && embeddedBounds) {
+      instance.nativeOverlayView.setBounds(embeddedBounds)
+      instance.nativeOverlayView.setAutoResize({ width: false, height: false })
+      viewHost.setTopBrowserView(instance.nativeOverlayView)
+    } else {
+      const [width, height] = instance.window.getContentSize()
+      const overlayHeight = Math.max(100, height - TOOLBAR_HEIGHT)
+      instance.nativeOverlayView.setBounds({ x: 0, y: TOOLBAR_HEIGHT, width, height: overlayHeight })
+      instance.nativeOverlayView.setAutoResize({ width: true, height: true })
+      instance.window.setTopBrowserView(instance.toolbarView)
+    }
 
     if (agentActive) {
       const label = this.getAgentControlLabel(control)
@@ -2103,27 +2252,50 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       return
     }
 
+    const runCleanup = (label: string, action: () => void): void => {
+      try {
+        action()
+      } catch (error) {
+        mainLog.warn(`[browser-pane] finalize cleanup failed id=${instance.id} step=${label} error=${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
     this.destroyingIds.delete(instance.id)
-    this.closePopupsForParent(instance.id, 'parent_destroy')
-    this.applyAgentControlLock(instance, false)
-    this.updateNativeOverlayState(instance)
-    instance.cdp.detach()
+    runCleanup('detachFromHost', () => this.detachFromHost(instance.id))
+    runCleanup('closePopupsForParent', () => this.closePopupsForParent(instance.id, 'parent_destroy'))
+    runCleanup('applyAgentControlLock', () => this.applyAgentControlLock(instance, false))
+    runCleanup('updateNativeOverlayState', () => this.updateNativeOverlayState(instance))
+    runCleanup('cdp.detach', () => instance.cdp.detach())
     this.instances.delete(instance.id)
     this.removedCallback?.(instance.id)
     mainLog.info(`[browser-pane] Destroyed instance: ${instance.id} (${source})`)
   }
 
   private layoutPageView(instance: BrowserInstance): void {
+    if (instance.embeddedHostWindow && instance.embeddedBounds) {
+      this.layoutEmbeddedViews(instance)
+      return
+    }
     const [width, height] = instance.window.getContentSize()
     instance.pageView.setBounds({ x: 0, y: TOOLBAR_HEIGHT, width, height: Math.max(100, height - TOOLBAR_HEIGHT) })
     instance.pageView.setAutoResize({ width: true, height: true })
     this.updateNativeOverlayState(instance)
   }
 
+  private layoutEmbeddedViews(instance: BrowserInstance): void {
+    const hostWindow = instance.embeddedHostWindow
+    const bounds = instance.embeddedBounds
+    if (!hostWindow || !bounds || hostWindow.isDestroyed()) return
+    instance.pageView.setBounds(bounds)
+    instance.pageView.setAutoResize({ width: false, height: false })
+    hostWindow.setTopBrowserView(instance.pageView)
+    this.updateNativeOverlayState(instance)
+  }
+
   private layoutAllViews(instance: BrowserInstance): void {
     this.layoutToolbarView(instance)
     this.layoutPageView(instance)
-    if (!instance.window.isDestroyed()) {
+    if (!instance.window.isDestroyed() && !instance.embeddedHostWindow) {
       instance.window.setTopBrowserView(instance.toolbarView)
     }
   }
@@ -2143,13 +2315,39 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     }
   }
 
-  private isBrowserEmptyStateUrl(url: string): boolean {
+  private isTrustedBrowserEmptyStateUrl(url: string): boolean {
     if (!url) return false
-    return url.includes(`/${BROWSER_EMPTY_STATE_PAGE}`) || url.includes(`\\${BROWSER_EMPTY_STATE_PAGE}`)
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return false
+    }
+    if (parsed.search) return false
+
+    if (VITE_DEV_SERVER_URL) {
+      try {
+        const expected = new URL(`/${BROWSER_EMPTY_STATE_PAGE}`, VITE_DEV_SERVER_URL)
+        return parsed.origin === expected.origin && parsed.pathname === expected.pathname
+      } catch {
+        return false
+      }
+    }
+
+    if (parsed.protocol !== 'file:') return false
+    try {
+      const actualPath = resolve(fileURLToPath(parsed))
+      const expectedPath = resolve(join(__dirname, `renderer/${BROWSER_EMPTY_STATE_PAGE}`))
+      return process.platform === 'win32'
+        ? actualPath.toLowerCase() === expectedPath.toLowerCase()
+        : actualPath === expectedPath
+    } catch {
+      return false
+    }
   }
 
   private normalizePageState(url: string, title: string): { url: string; title: string } {
-    if (this.isBrowserEmptyStateUrl(url)) {
+    if (this.isTrustedBrowserEmptyStateUrl(url)) {
       return { url: 'about:blank', title: 'New Tab' }
     }
     return { url, title }
@@ -2157,7 +2355,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
 
   private async loadEmptyStatePage(instance: BrowserInstance): Promise<void> {
     if (VITE_DEV_SERVER_URL) {
-      await instance.pageView.webContents.loadURL(`${VITE_DEV_SERVER_URL}/${BROWSER_EMPTY_STATE_PAGE}`)
+      await instance.pageView.webContents.loadURL(new URL(`/${BROWSER_EMPTY_STATE_PAGE}`, VITE_DEV_SERVER_URL).toString())
       return
     }
 
@@ -2185,44 +2383,6 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       mainLog.warn(`[browser-pane] deep-link handling threw, falling back to shell.openExternal: ${error instanceof Error ? error.message : String(error)}`)
       await shell.openExternal(url)
     }
-  }
-
-  private async maybeHandleEmptyStateLaunch(instance: BrowserInstance, url: string): Promise<boolean> {
-    if (!this.isBrowserEmptyStateUrl(url) || !url.includes('#launch=')) {
-      return false
-    }
-
-    let parsed: URL
-    try {
-      parsed = new URL(url)
-    } catch {
-      return false
-    }
-
-    const hash = parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash
-    const launchPayload = hash.startsWith('launch=') ? hash.slice('launch='.length) : hash
-    if (!launchPayload) return false
-
-    const params = new URLSearchParams(launchPayload)
-    const route = params.get('route')
-    const token = params.get('ts') ?? route ?? null
-
-    if (!route) {
-      mainLog.warn(`[browser-pane] empty-state launch missing route id=${instance.id}`)
-      return false
-    }
-
-    const handled = await this.triggerEmptyStateRouteLaunch(instance, route, token, 'hash')
-
-    try {
-      await instance.pageView.webContents.executeJavaScript(
-        "if (window.location.hash.includes('launch=')) history.replaceState(null, '', window.location.pathname + window.location.search);",
-      )
-    } catch {
-      // Best effort cleanup only
-    }
-
-    return handled
   }
 
   private async loadToolbarPage(instance: BrowserInstance): Promise<void> {
@@ -3295,6 +3455,42 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     }
   }
 
+  private forwardEmbeddedHostShortcut(
+    instance: BrowserInstance,
+    event: Electron.Event,
+    input: Electron.Input,
+  ): boolean {
+    const hostWindow = instance.embeddedHostWindow
+    if (!hostWindow || hostWindow.isDestroyed()) return false
+
+    if (isKeyboardCloseShortcut(input)) {
+      if (!this.windowManager) return false
+      const handled = this.windowManager.requestKeyboardClose(hostWindow.webContents.id)
+      if (handled) event.preventDefault()
+      return handled
+    }
+
+    const shortcut = resolveEmbeddedBrowserHostShortcut(input, {
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+    })
+    if (!shortcut) return false
+
+    if (shortcut.type === 'reload-host') {
+      hostWindow.webContents.reload()
+      event.preventDefault()
+      return true
+    }
+
+    if (!this.windowManager) return false
+    const handled = this.windowManager.requestBrowserHostDockNavigation(
+      hostWindow.webContents.id,
+      shortcut.command,
+    )
+    if (handled) event.preventDefault()
+    return handled
+  }
+
   private setupWindowListeners(instance: BrowserInstance): void {
     const pageWc = instance.pageView.webContents
     const toolbarWc = instance.toolbarView.webContents
@@ -3362,18 +3558,21 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     })
 
     pageWc.on('before-input-event', (_event, _input) => {
+      if (this.forwardEmbeddedHostShortcut(instance, _event, _input)) return
       if (instance.lockState.active) {
         _event.preventDefault()
       }
     })
 
-    toolbarWc.on('before-input-event', (event) => {
+    toolbarWc.on('before-input-event', (event, input) => {
+      if (this.forwardEmbeddedHostShortcut(instance, event, input)) return
       if (instance.lockState.active) {
         event.preventDefault()
       }
     })
 
     overlayWc.on('before-input-event', (event, input) => {
+      if (this.forwardEmbeddedHostShortcut(instance, event, input)) return
       if (!instance.toolbarMenuOverlayActive) return
 
       const inputType = input.type || ''
@@ -3420,25 +3619,15 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       instance.canGoBack = pageWc.canGoBack()
       instance.canGoForward = pageWc.canGoForward()
 
-      void this.maybeHandleEmptyStateLaunch(instance, url).then((handled) => {
-        if (handled) {
-          this.emitStateChange(instance)
-          void this.pushToolbarState(instance)
-          return
-        }
-
-        // SPA route change — re-extract theme color (debounced)
-        if (instance.inPageThemeTimer) clearTimeout(instance.inPageThemeTimer)
-        instance.themeObserverToken = null
-        instance.themeColor = null
-        this.emitStateChange(instance)
-        void this.pushToolbarState(instance)
-        this.installThemeObserver(instance)
-        instance.inPageThemeTimer = setTimeout(() => { void this.extractThemeColor(instance) }, 300)
-        this.reapplyAgentControlVisual(instance)
-      }).catch((error) => {
-        mainLog.warn(`[browser-pane] empty-state launch handling failed id=${instance.id}: ${error instanceof Error ? error.message : String(error)}`)
-      })
+      // SPA route change — re-extract theme color (debounced)
+      if (instance.inPageThemeTimer) clearTimeout(instance.inPageThemeTimer)
+      instance.themeObserverToken = null
+      instance.themeColor = null
+      this.emitStateChange(instance)
+      void this.pushToolbarState(instance)
+      this.installThemeObserver(instance)
+      instance.inPageThemeTimer = setTimeout(() => { void this.extractThemeColor(instance) }, 300)
+      this.reapplyAgentControlVisual(instance)
     })
 
     pageWc.on('page-title-updated', (_event, title) => {
@@ -3594,6 +3783,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       ownerType: instance.ownerType,
       ownerSessionId: instance.ownerSessionId,
       isVisible: instance.isVisible,
+      isEmbedded: Boolean(instance.embeddedHostWindow),
       agentControlActive: !!instance.agentControl?.active,
       themeColor: instance.themeColor,
       workspaceId: instance.workspaceId,

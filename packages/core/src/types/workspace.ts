@@ -16,6 +16,8 @@ export interface RemoteServerConfig {
   url: string;              // ws://host:port or wss://host:port
   token: string;            // Auth token for the remote server
   remoteWorkspaceId: string; // ID of the workspace on the remote server
+  /** Explicit opt-in for self-signed or otherwise untrusted TLS certificates. */
+  allowInsecureTls?: boolean;
 }
 
 /**

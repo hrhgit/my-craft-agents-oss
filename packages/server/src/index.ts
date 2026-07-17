@@ -29,7 +29,13 @@ import { join } from 'node:path'
 import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { version as packageVersion } from '../package.json'
 import { enableDebug } from '@craft-agent/shared/utils/debug'
-import { bootstrapServer, startHealthHttpServer, generateServerToken } from '@craft-agent/server-core/bootstrap'
+import {
+  bootstrapServer,
+  generateServerToken,
+  publishServerEndpoint,
+  removeServerEndpoint,
+  startHealthHttpServer,
+} from '@craft-agent/server-core/bootstrap'
 import { validateSession, createWebuiHandler, nodeHttpAdapter } from '@craft-agent/server-core/webui'
 import type { WebuiHandler } from '@craft-agent/server-core/webui'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
@@ -43,7 +49,7 @@ if (process.argv.includes('--generate-token')) {
   process.exit(0)
 }
 import type { WsRpcTlsOptions } from '@craft-agent/server-core/transport'
-import { registerCoreRpcHandlers, cleanupSessionFileWatchForClient } from '@craft-agent/server-core/handlers/rpc'
+import { registerCoreRpcHandlers, cleanupClientFileWatches } from '@craft-agent/server-core/handlers/rpc'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@craft-agent/server-core/sessions'
 import { initModelRefreshService, setFetcherPlatform } from '@craft-agent/server-core/model-fetchers'
 import { setSearchPlatform, setImageProcessor } from '@craft-agent/server-core/services'
@@ -249,7 +255,7 @@ const instance = await (async () => {
           await sessionManager.cleanup()
         }
       },
-      cleanupClientResources: cleanupSessionFileWatchForClient,
+      cleanupClientResources: cleanupClientFileWatches,
     })
   } catch (error) {
     console.error(errorMessage(error))
@@ -313,11 +319,6 @@ const serverProto = instance.protocol === 'wss' ? 'https' : 'http'
 // because container/logging systems often persist stdout and would leak the token.
 const tokenFilePath = join(CONFIG_DIR, '.server-token')
 writeFileSync(tokenFilePath, instance.token, { mode: 0o600 })
-console.log(`CRAFT_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
-console.log(`CRAFT_SERVER_TOKEN_FILE=${tokenFilePath}`)
-if (webuiHandler) {
-  console.log(`CRAFT_WEBUI_URL=${serverProto}://0.0.0.0:${instance.port}`)
-}
 
 // Block binding to a non-localhost address without TLS — tokens would be sent in cleartext.
 // Override with --allow-insecure-bind for explicitly trusted networks.
@@ -342,7 +343,26 @@ if (!isLocalBind && instance.protocol === 'ws') {
   }
 }
 
+const webuiAutoLogin = Boolean(webuiEnabled
+  && process.env.CRAFT_WEBUI_AUTO_LOGIN === 'true'
+  && isLocalBind)
+publishServerEndpoint({
+  host: instance.host,
+  port: instance.port,
+  protocol: instance.protocol,
+  tokenFile: tokenFilePath,
+  ...(webuiEnabled
+    ? { webui: { enabled: true as const, autoLogin: webuiAutoLogin } }
+    : {}),
+})
+console.log(`CRAFT_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
+console.log(`CRAFT_SERVER_TOKEN_FILE=${tokenFilePath}`)
+if (webuiHandler) {
+  console.log(`CRAFT_WEBUI_URL=${serverProto}://0.0.0.0:${instance.port}`)
+}
+
 const shutdown = async () => {
+  removeServerEndpoint()
   webuiHandler?.dispose()
   healthServer?.stop()
   if (messagingHandle) {

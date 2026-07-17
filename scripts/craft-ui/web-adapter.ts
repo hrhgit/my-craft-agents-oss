@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { chromium, type Browser, type BrowserContext, type CDPSession, type Page } from 'playwright-core'
 import {
+  UI_VALIDATION_DEFAULT_TIMEOUT_MS,
+  UI_VALIDATION_EXTENDED_TIMEOUT_MS,
+  UI_VALIDATION_MAX_WAIT_MS,
   UI_VALIDATION_PROTOCOL_VERSION,
   UiValidationError,
   UI_VALIDATION_APP_SHELL_SCENARIO_IDS,
@@ -48,7 +51,7 @@ const artifactsDir = resolve(requiredEnv('CRAFT_UI_ARTIFACTS_DIR'))
 const profileDir = resolve(requiredEnv('CRAFT_UI_PROFILE_DIR'))
 const craftConfigDir = resolve(requiredEnv('CRAFT_CONFIG_DIR'))
 const MAX_BODY_BYTES = 1_000_000
-const MAX_WAIT_MS = 300_000
+const MAX_WAIT_MS = UI_VALIDATION_MAX_WAIT_MS
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const bunExecutable = process.env.CRAFT_UI_BUN_EXECUTABLE || 'bun'
 
@@ -60,17 +63,6 @@ if (process.env.CRAFT_UI_PROTOCOL_VERSION !== String(UI_VALIDATION_PROTOCOL_VERS
 if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('CRAFT_UI_TOKEN must be 64 hexadecimal characters.')
 
 await mkdir(artifactsDir, { recursive: true })
-if (!existsSync(join(craftConfigDir, 'config.json'))) {
-  const workspaceId = randomUUID()
-  const isolatedWorkspace = join(profileDir, 'workspace')
-  await mkdir(isolatedWorkspace, { recursive: true })
-  writeJsonAtomic(join(craftConfigDir, 'config.json'), {
-    workspaces: [{ id: workspaceId, name: 'craft-ui-isolated', slug: 'craft-ui-isolated', rootPath: isolatedWorkspace, createdAt: Date.now() }],
-    activeWorkspaceId: workspaceId,
-    activeSessionId: null,
-    setupDeferred: true,
-  })
-}
 const rpcPort = await reservePort()
 const webPort = await reservePort()
 const webUrl = `http://127.0.0.1:${webPort}/`
@@ -110,7 +102,7 @@ try {
   }
   children.push(spawnLogged('rpc', bunExecutable, ['run', 'packages/server/src/index.ts'], commonEnv))
   children.push(spawnLogged('vite', bunExecutable, ['x', 'vite', '--config', 'apps/webui/vite.config.ts'], commonEnv))
-  await waitForHttp(`${webUrl}api/config`, 60_000)
+  await waitForHttp(`${webUrl}api/config`, UI_VALIDATION_EXTENDED_TIMEOUT_MS)
 
   const browserPort = await reservePort()
   children.push(spawnLogged('browser', findBrowserExecutable(), [
@@ -121,8 +113,8 @@ try {
     ...(process.env.CRAFT_UI_HEADED === '1' ? [] : ['--headless=new', '--hide-scrollbars', '--mute-audio']),
     'about:blank',
   ], commonEnv))
-  await waitForHttp(`http://127.0.0.1:${browserPort}/json/version`, 30_000)
-  browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`, { timeout: 30_000 })
+  await waitForHttp(`http://127.0.0.1:${browserPort}/json/version`, UI_VALIDATION_DEFAULT_TIMEOUT_MS)
+  browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`, { timeout: UI_VALIDATION_DEFAULT_TIMEOUT_MS })
   context = browser.contexts()[0]
   if (!context) throw new Error('Chrome did not expose a default browser context.')
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true })
@@ -172,8 +164,8 @@ try {
   page = context.pages()[0] ?? await context.newPage()
   attachPageEvidence(page)
   context.on('page', attachPageEvidence)
-  await page.goto(webUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 })
-  await waitForAppReady(60_000)
+  await page.goto(webUrl, { waitUntil: 'domcontentloaded', timeout: UI_VALIDATION_EXTENDED_TIMEOUT_MS })
+  await waitForAppReady(UI_VALIDATION_EXTENDED_TIMEOUT_MS)
 } catch (error) {
   await cleanup()
   throw error
@@ -414,8 +406,8 @@ async function applyScenario(raw: Record<string, unknown>): Promise<unknown> {
   if (request.theme) await browserPage.emulateMedia({ colorScheme: request.theme === 'system' ? null : request.theme })
   if (request.clock?.mode === 'frozen') throw new UiValidationError('UNSUPPORTED', 'Frozen application timers require the scenario service adapter.')
   if (request.reset) {
-    await browserPage.goto(webUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 })
-    await waitForAppReady(60_000)
+    await browserPage.goto(webUrl, { waitUntil: 'domcontentloaded', timeout: UI_VALIDATION_EXTENDED_TIMEOUT_MS })
+    await waitForAppReady(UI_VALIDATION_EXTENDED_TIMEOUT_MS)
     currentRoute = { surface: 'unknown' }
   }
   const next = await snapshot()
@@ -439,10 +431,10 @@ async function ensureWebScenarioHost(): Promise<void> {
   if (url.searchParams.get('__craftUiScenarioHost') !== '1') {
     url.search = ''
     url.searchParams.set('__craftUiScenarioHost', '1')
-    await browserPage.goto(url.toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
-    await waitForAppReady(60_000)
+    await browserPage.goto(url.toString(), { waitUntil: 'domcontentloaded', timeout: UI_VALIDATION_EXTENDED_TIMEOUT_MS })
+    await waitForAppReady(UI_VALIDATION_EXTENDED_TIMEOUT_MS)
   }
-  await browserPage.waitForFunction(() => Boolean((globalThis as Record<string, unknown>).__CRAFT_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__), undefined, { timeout: 30_000 })
+  await browserPage.waitForFunction(() => Boolean((globalThis as Record<string, unknown>).__CRAFT_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__), undefined, { timeout: UI_VALIDATION_DEFAULT_TIMEOUT_MS })
 }
 
 async function appShellScenarioCommand(method: WebScenarioMethod, input?: unknown): Promise<unknown> {
@@ -1231,7 +1223,7 @@ function recordParams(value: unknown): Record<string, unknown> {
 }
 
 function boundedTimeout(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.min(value, MAX_WAIT_MS) : 15_000
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.min(value, MAX_WAIT_MS) : UI_VALIDATION_DEFAULT_TIMEOUT_MS
 }
 
 function boundedLabel(value: unknown, fallback: string): string {

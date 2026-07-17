@@ -4,23 +4,30 @@ import { ArrowLeft, CheckCircle, XCircle, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { slugify } from "@/lib/slugify"
 import { Input } from "../ui/input"
+import { Switch } from "../ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select"
 import { AddWorkspaceContainer, AddWorkspaceStepHeader, AddWorkspacePrimaryButton, AddWorkspaceSecondaryButton } from "./primitives"
+import type { RemoteServerConfig } from "../../../shared/types"
+import { normalizeSecureWebSocketOrigin, reconcileInsecureTlsConsentOrigin } from "../../../shared/remote-tls"
 
 const CREATE_NEW_VALUE = '__create_new__'
+const INSECURE_TLS_LABEL_ID = 'workspace-remote-allow-insecure-tls-label'
+const INSECURE_TLS_DESCRIPTION_ID = 'workspace-remote-allow-insecure-tls-description'
 
 interface AddWorkspaceStep_ConnectRemoteProps {
   onBack: () => void
-  onCreate: (folderPath: string, name: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => Promise<void>
+  onCreate: (folderPath: string, name: string, remoteServer: RemoteServerConfig) => Promise<void>
   isCreating: boolean
   /** Pre-fill the server URL (for reconnect flow) */
   initialUrl?: string
   /** Pre-fill the token (for reconnect flow) */
   initialToken?: string
+  /** Existing explicit TLS exception when reconnecting a workspace. */
+  initialAllowInsecureTls?: boolean
   /** When set, updating an existing workspace's remote config instead of creating */
   reconnectWorkspace?: { id: string; name: string; remoteWorkspaceId: string }
   /** Called when reconnect updates the remote server config */
-  onUpdate?: (workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => Promise<void>
+  onUpdate?: (workspaceId: string, remoteServer: RemoteServerConfig) => Promise<void>
 }
 
 /**
@@ -62,6 +69,7 @@ export function AddWorkspaceStep_ConnectRemote({
   isCreating,
   initialUrl,
   initialToken,
+  initialAllowInsecureTls,
   reconnectWorkspace,
   onUpdate,
 }: AddWorkspaceStep_ConnectRemoteProps) {
@@ -69,6 +77,10 @@ export function AddWorkspaceStep_ConnectRemote({
   const isReconnectMode = !!reconnectWorkspace
   const [serverUrl, setServerUrl] = useState(initialUrl ?? '')
   const [token, setToken] = useState(initialToken ?? '')
+  // Consent is transient until save and is valid only for the exact normalized WSS origin.
+  const [insecureTlsConsentOrigin, setInsecureTlsConsentOrigin] = useState<string | null>(() => (
+    initialAllowInsecureTls === true ? normalizeSecureWebSocketOrigin(initialUrl) : null
+  ))
   const [homeDir, setHomeDir] = useState('')
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
@@ -83,9 +95,17 @@ export function AddWorkspaceStep_ConnectRemote({
   }, [])
 
   const isCreateNew = selectedValue === CREATE_NEW_VALUE
+  const secureWebSocketOrigin = normalizeSecureWebSocketOrigin(serverUrl)
+  const allowInsecureTls = secureWebSocketOrigin !== null && insecureTlsConsentOrigin === secureWebSocketOrigin
+  const isSecureWebSocket = secureWebSocketOrigin !== null
   const selectedWorkspace = !isCreateNew ? remoteWorkspaces.find(w => w.id === selectedValue) : null
   // Fresh server (no workspaces at all) — always in create mode
   const isFreshServer = testState === 'ok' && remoteWorkspaces.length === 0
+
+  const handleServerUrlChange = useCallback((nextUrl: string) => {
+    setServerUrl(nextUrl)
+    setInsecureTlsConsentOrigin(current => reconcileInsecureTlsConsentOrigin(nextUrl, current))
+  }, [])
 
   // Reset test state when URL or token changes
   useEffect(() => {
@@ -94,14 +114,14 @@ export function AddWorkspaceStep_ConnectRemote({
     setRemoteWorkspaces([])
     setSelectedValue(null)
     setNewWorkspaceName('')
-  }, [serverUrl, token])
+  }, [serverUrl, token, allowInsecureTls])
 
   const handleTestConnection = useCallback(async () => {
     if (!serverUrl || !token) return
     setTestState('testing')
     setTestError(null)
     try {
-      const result = await window.electronAPI.testRemoteConnection(serverUrl, token)
+      const result = await window.electronAPI.testRemoteConnection(serverUrl, token, allowInsecureTls)
       console.log('[ConnectRemote] testRemoteConnection result:', JSON.stringify(result, null, 2))
       if (result.ok) {
         setTestState('ok')
@@ -125,7 +145,7 @@ export function AddWorkspaceStep_ConnectRemote({
       setTestState('error')
       setTestError(err instanceof Error ? err.message : 'Connection failed')
     }
-  }, [serverUrl, token])
+  }, [serverUrl, token, allowInsecureTls])
 
   const handleConnect = useCallback(async () => {
     if (!serverUrl || !token) return
@@ -137,6 +157,7 @@ export function AddWorkspaceStep_ConnectRemote({
           url: serverUrl,
           token,
           remoteWorkspaceId: reconnectWorkspace!.remoteWorkspaceId,
+          ...(allowInsecureTls ? { allowInsecureTls: true } : {}),
         })
         return
       } catch (err) {
@@ -156,12 +177,17 @@ export function AddWorkspaceStep_ConnectRemote({
 
       try {
         const created = await window.electronAPI.invokeOnServer(
-          serverUrl, token, 'server:createWorkspace', name
+          serverUrl, token, 'server:createWorkspace', { allowInsecureTls }, name
         ) as { id: string; name: string }
 
         const { slug, path } = await resolveUniqueSlug(name)
         const finalPath = path || `${defaultBasePath}/${slug}`
-        await onCreate(finalPath, name, { url: serverUrl, token, remoteWorkspaceId: created.id })
+        await onCreate(finalPath, name, {
+          url: serverUrl,
+          token,
+          remoteWorkspaceId: created.id,
+          ...(allowInsecureTls ? { allowInsecureTls: true } : {}),
+        })
       } catch (err) {
         setTestState('error')
         setTestError(err instanceof Error ? err.message : 'Failed to create workspace on remote server')
@@ -171,9 +197,14 @@ export function AddWorkspaceStep_ConnectRemote({
       // Connect to existing workspace — auto-resolve local slug
       const { slug, path } = await resolveUniqueSlug(selectedWorkspace.name)
       const finalPath = path || `${defaultBasePath}/${slug}`
-      await onCreate(finalPath, selectedWorkspace.name, { url: serverUrl, token, remoteWorkspaceId: selectedWorkspace.id })
+      await onCreate(finalPath, selectedWorkspace.name, {
+        url: serverUrl,
+        token,
+        remoteWorkspaceId: selectedWorkspace.id,
+        ...(allowInsecureTls ? { allowInsecureTls: true } : {}),
+      })
     }
-  }, [serverUrl, token, homeDir, isCreateNew, isFreshServer, newWorkspaceName, selectedWorkspace, onCreate, isReconnectMode, onUpdate, reconnectWorkspace])
+  }, [serverUrl, token, allowInsecureTls, homeDir, isCreateNew, isFreshServer, newWorkspaceName, selectedWorkspace, onCreate, isReconnectMode, onUpdate, reconnectWorkspace])
 
   const canConnect = testState === 'ok' && !isCreating && (
     isReconnectMode ? true :
@@ -216,7 +247,7 @@ export function AddWorkspaceStep_ConnectRemote({
           <div className="bg-background shadow-minimal rounded-lg">
             <Input
               value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
+              onChange={(e) => handleServerUrlChange(e.target.value)}
               placeholder="ws://192.168.1.100:9100"
               disabled={isCreating}
               autoFocus
@@ -224,6 +255,30 @@ export function AddWorkspaceStep_ConnectRemote({
             />
           </div>
         </div>
+
+        {isSecureWebSocket && (
+          <div className="flex items-center justify-between gap-4 border-y border-border/60 py-3">
+            <span className="min-w-0">
+              <span id={INSECURE_TLS_LABEL_ID} className="block text-sm font-medium text-foreground">
+                {t("workspace.allowUntrustedCertificates")}
+              </span>
+              <span id={INSECURE_TLS_DESCRIPTION_ID} className="block text-xs text-muted-foreground">
+                {t("workspace.allowUntrustedCertificatesDescription")}
+              </span>
+            </span>
+            <Switch
+              semanticId="workspace.remote.allow-insecure-tls"
+              checked={allowInsecureTls}
+              onCheckedChange={(checked) => {
+                setInsecureTlsConsentOrigin(checked ? secureWebSocketOrigin : null)
+              }}
+              disabled={isCreating}
+              aria-label={t("workspace.allowUntrustedTlsCertificates")}
+              aria-labelledby={INSECURE_TLS_LABEL_ID}
+              aria-describedby={INSECURE_TLS_DESCRIPTION_ID}
+            />
+          </div>
+        )}
 
         {/* Token */}
         <div className="space-y-2">

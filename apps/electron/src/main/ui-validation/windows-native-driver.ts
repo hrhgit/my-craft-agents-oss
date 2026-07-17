@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@craft-agent/shared/ui-validation'
 import { ElectronUiDriverError, type UiVerificationLevel } from './electron-surface-driver'
 
 export interface WindowsNativeNode {
@@ -9,10 +10,12 @@ export interface WindowsNativeNode {
   role: string
   name: string
   automationId?: string
+  nativeWindowHandle?: number
   enabled: boolean
   focused: boolean
   bounds?: { x: number; y: number; width: number; height: number }
   actions: Array<'click' | 'fill' | 'select' | 'focus' | 'minimize' | 'maximize' | 'restore' | 'close'>
+  backgroundActions: Array<'click' | 'fill' | 'select' | 'minimize' | 'close'>
 }
 
 export interface WindowsNativeSnapshot {
@@ -20,6 +23,15 @@ export interface WindowsNativeSnapshot {
   processId: number
   windows: Array<{ name: string; role: string; nodes: WindowsNativeNode[] }>
   truncated: boolean
+  verificationLevel: 'native-verified'
+  windowMode?: 'foreground' | 'background'
+}
+
+export interface WindowsNativeActionRequest {
+  revision: number
+  ref: string
+  action: 'click' | 'fill' | 'select' | 'focus' | 'minimize' | 'maximize' | 'restore' | 'close'
+  value?: string
 }
 
 export interface WindowsNativeActionReceipt {
@@ -37,6 +49,7 @@ interface RawNativeNode {
   role: string
   name: string
   automationId?: string
+  nativeWindowHandle?: number
   enabled: boolean
   focused: boolean
   bounds?: { x: number; y: number; width: number; height: number }
@@ -64,7 +77,7 @@ export class WindowsNativeUiDriver {
     private readonly platform = process.platform,
   ) {}
 
-  ready(): boolean { return this.platform === 'win32' && Number.isSafeInteger(this.processId) && this.processId > 0 }
+  available(): boolean { return this.platform === 'win32' && Number.isSafeInteger(this.processId) && this.processId > 0 }
 
   async snapshot(): Promise<WindowsNativeSnapshot> {
     this.ensureSupported()
@@ -89,19 +102,27 @@ export class WindowsNativeUiDriver {
           role: bounded(rawNode.role, 100),
           name: bounded(rawNode.name, 500),
           ...(rawNode.automationId ? { automationId: bounded(rawNode.automationId, 300) } : {}),
+          ...(validNativeWindowHandle(rawNode.nativeWindowHandle) ? { nativeWindowHandle: rawNode.nativeWindowHandle } : {}),
           enabled: rawNode.enabled !== false,
           focused: rawNode.focused === true,
           ...(validBounds(rawNode.bounds) ? { bounds: rawNode.bounds } : {}),
           actions: nativeActions(rawNode),
+          backgroundActions: backgroundNativeActions(rawNode),
         }
         this.refs.set(ref, node)
         return [node]
       }),
     }))
-    return { revision: this.revision, processId: this.processId, windows, truncated: raw.truncated === true || count > MAX_NATIVE_NODES }
+    return {
+      revision: this.revision,
+      processId: this.processId,
+      windows,
+      truncated: raw.truncated === true || count > MAX_NATIVE_NODES,
+      verificationLevel: 'native-verified',
+    }
   }
 
-  async action(request: { revision: number; ref: string; action: 'click' | 'fill' | 'select' | 'focus' | 'minimize' | 'maximize' | 'restore' | 'close'; value?: string }): Promise<WindowsNativeActionReceipt> {
+  async action(request: WindowsNativeActionRequest): Promise<WindowsNativeActionReceipt> {
     if (request.revision !== this.revision || !request.ref.startsWith(`n${this.revision}:`)) {
       throw new ElectronUiDriverError('STALE_REF', `Native ref does not belong to revision ${this.revision}.`)
     }
@@ -136,9 +157,9 @@ export class WindowsNativeUiDriver {
     predicate: (node: WindowsNativeNode) => boolean,
     options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<{ snapshot: WindowsNativeSnapshot; node: WindowsNativeNode }> {
-    const timeoutMs = options.timeoutMs ?? 10_000
-    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
-      throw new ElectronUiDriverError('INVALID_REQUEST', 'Native wait timeout must be between 1 and 120000ms.')
+    const timeoutMs = options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > UI_VALIDATION_MAX_WAIT_MS) {
+      throw new ElectronUiDriverError('INVALID_REQUEST', `Native wait timeout must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}ms.`)
     }
     const deadline = Date.now() + timeoutMs
     let delayMs = 10
@@ -156,7 +177,7 @@ export class WindowsNativeUiDriver {
 
   private ensureSupported(): void {
     if (this.platform !== 'win32') throw new ElectronUiDriverError('UNSUPPORTED', `Windows UI Automation is unavailable on ${this.platform}.`)
-    if (!this.ready()) throw new ElectronUiDriverError('NOT_READY', 'Windows UI Automation driver is not ready.')
+    if (!this.available()) throw new ElectronUiDriverError('NOT_READY', 'Windows UI Automation driver is not available.')
   }
 }
 
@@ -168,6 +189,17 @@ function nativeActions(node: RawNativeNode): WindowsNativeNode['actions'] {
   if (patterns.has('Value')) actions.push('fill')
   if (patterns.has('SelectionItem')) actions.push('select')
   if (patterns.has('Window')) actions.push('minimize', 'maximize', 'restore', 'close')
+  return actions
+}
+
+function backgroundNativeActions(node: RawNativeNode): WindowsNativeNode['backgroundActions'] {
+  if (node.enabled === false) return []
+  const patterns = new Set(node.patterns ?? [])
+  const actions: WindowsNativeNode['backgroundActions'] = []
+  if (patterns.has('Invoke')) actions.push('click')
+  if (patterns.has('Value')) actions.push('fill')
+  if (patterns.has('SelectionItem')) actions.push('select')
+  if (patterns.has('Window')) actions.push('minimize', 'close')
   return actions
 }
 
@@ -184,6 +216,10 @@ function validBounds(value: RawNativeNode['bounds']): value is NonNullable<RawNa
   return !!value && [value.x, value.y, value.width, value.height].every(Number.isFinite) && value.width >= 0 && value.height >= 0
 }
 
+function validNativeWindowHandle(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
 async function runPowerShellUiAutomation(request: Record<string, unknown>): Promise<unknown> {
   const executable = process.env.CRAFT_UI_POWERSHELL || 'powershell.exe'
   const script = resolve(process.cwd(), 'scripts', 'craft-ui', 'windows-uia-driver.ps1')
@@ -192,7 +228,7 @@ async function runPowerShellUiAutomation(request: Record<string, unknown>): Prom
     windowsHide: true,
   })
   child.stdin.end(JSON.stringify(request))
-  const timeout = setTimeout(() => child.kill(), 15_000)
+  const timeout = setTimeout(() => child.kill(), UI_VALIDATION_DEFAULT_TIMEOUT_MS)
   const [exitCode, stdout, stderr] = await Promise.all([
     new Promise<number | null>(resolveExit => child.once('exit', resolveExit)),
     streamText(child.stdout),

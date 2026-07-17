@@ -28,7 +28,7 @@ for (const surface of surfaces) {
     try {
       manifest = await startCraftUiRun({
         surface,
-        profileMode: 'isolated',
+        profileMode: 'fixture',
         waitMs: surface === 'electron' ? 180_000 : 90_000,
         ...(surface === 'electron' && iteration > 1 ? { extraEnv: { CRAFT_UI_SKIP_BUILD: '1' } } : {}),
       })

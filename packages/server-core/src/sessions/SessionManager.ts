@@ -806,6 +806,9 @@ interface ManagedSession {
   authRetryInProgress?: boolean
   // Whether this session is hidden from session list (e.g., mini edit sessions)
   hidden?: boolean
+  // User-created sessions stay hidden until their first message is durable.
+  // This is runtime-only: abandoned drafts remain hidden after a restart.
+  deferListUntilFirstMessage?: boolean
   branchFromMessageId?: string
   // Branch context strategy:
   // - sdk-fork: provider-level fork from parent SDK session
@@ -2927,12 +2930,16 @@ export class SessionManager implements ISessionManager {
       })
     }
 
+    // New chat tabs need a real session immediately, but should not clutter the
+    // list until the user has actually sent a durable first message.
+    const deferListUntilFirstMessage = options?.deferListUntilFirstMessage === true && !options?.hidden
+
     // Use storage layer to create and persist the session
     const storedSession = await createStoredSession(workspaceRootPath, {
       name: options?.name,
       permissionMode: defaultPermissionMode,
       workingDirectory: resolvedWorkingDir,
-      hidden: options?.hidden,
+      hidden: options?.hidden || deferListUntilFirstMessage,
     })
 
     // Branch: project the active Pi path up to the selected entry, then append
@@ -3020,6 +3027,7 @@ export class SessionManager implements ISessionManager {
       branchFromMessageId: validatedBranch?.sourceMessageId,
       branchContextStrategy: validatedBranch?.branchContextStrategy,
       branchSeedApplied: validatedBranch ? true : undefined,
+      deferListUntilFirstMessage,
       messagesLoaded: !isBranch,  // Branched sessions: lazy-load messages from JSONL
     })
 
@@ -5175,8 +5183,18 @@ export class SessionManager implements ISessionManager {
       options?.badges,
       false,
     )
+    const revealInSessionList = managed.deferListUntilFirstMessage === true
+    if (revealInSessionList) {
+      managed.hidden = false
+      managed.deferListUntilFirstMessage = false
+    }
     this.persistSession(managed)
     await this.flushSession(managed.id)
+    if (revealInSessionList) {
+      // Existing clients already hydrate this lifecycle event. Re-emitting it
+      // after the durable visibility change keeps every open window in sync.
+      this.sendEvent({ type: 'session_created', sessionId }, managed.workspace.id)
+    }
     if (!existingMessageId) {
       onAck?.(messageId)
       writeRuntimeLog('info', {

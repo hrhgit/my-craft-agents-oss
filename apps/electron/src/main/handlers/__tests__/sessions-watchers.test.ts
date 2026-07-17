@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { RPC_CHANNELS } from '../../../shared/types'
@@ -145,5 +145,36 @@ describe('sessions file watchers', () => {
     await wait(300)
 
     expect(pushed.length).toBe(0)
+  })
+
+  it('reads and conflict-checks files only inside the requested session directory', async () => {
+    const read = handlers.get(RPC_CHANNELS.sessions.READ_FILE)
+    const write = handlers.get(RPC_CHANNELS.sessions.WRITE_FILE)
+    const fileA = join(sessionDirA, 'notes.txt')
+    const fileB = join(sessionDirB, 'private.txt')
+    writeFileSync(fileA, 'before', 'utf-8')
+    writeFileSync(fileB, 'other session', 'utf-8')
+    const ctx = { clientId: 'client-a', workspaceId: 'ws-1' }
+
+    await expect(read!(ctx, 'session-a', fileA)).resolves.toBe('before')
+    await expect(write!(ctx, 'session-a', fileA, 'after', 'before')).resolves.toEqual({ status: 'saved' })
+    expect(readFileSync(fileA, 'utf-8')).toBe('after')
+    await expect(write!(ctx, 'session-a', fileA, 'stale', 'before')).resolves.toEqual({
+      status: 'conflict',
+      currentContent: 'after',
+    })
+    expect(readFileSync(fileA, 'utf-8')).toBe('after')
+    await expect(read!(ctx, 'session-a', fileB)).rejects.toThrow('outside allowed directories')
+  })
+
+  it('rejects oversized files at the session RPC boundary', async () => {
+    const read = handlers.get(RPC_CHANNELS.sessions.READ_FILE)
+    const write = handlers.get(RPC_CHANNELS.sessions.WRITE_FILE)
+    const oversized = join(sessionDirA, 'oversized.txt')
+    writeFileSync(oversized, Buffer.alloc(2 * 1024 * 1024 + 1, 97))
+    const ctx = { clientId: 'client-a', workspaceId: 'ws-1' }
+
+    await expect(read!(ctx, 'session-a', oversized)).rejects.toThrow('2 MiB')
+    await expect(write!(ctx, 'session-a', oversized, 'small', 'stale')).rejects.toThrow('2 MiB')
   })
 })

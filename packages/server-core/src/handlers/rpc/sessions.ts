@@ -1,5 +1,5 @@
 import { existsSync } from 'fs'
-import { stat } from 'fs/promises'
+import { readFile, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { RPC_CHANNELS, type FileAttachment, type SendMessageOptions, type SessionEvent, type Session } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
@@ -20,6 +20,7 @@ import type { ISessionManager } from '../session-manager-interface'
 import { getWorkspaceOrNull, resolveWorkspaceId } from '../utils'
 import { setTransferableHandler } from './transfer'
 import { collectSessionSearchRoots, serializeExtensionCommandArgs } from './session-route-helpers'
+import { validateFilePath } from '../utils'
 
 interface ClientSessionWatchState {
   watcher: import('fs').FSWatcher
@@ -200,6 +201,8 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS,
   RPC_CHANNELS.sessions.SEARCH_CONTENT,
   RPC_CHANNELS.sessions.GET_FILES,
+  RPC_CHANNELS.sessions.READ_FILE,
+  RPC_CHANNELS.sessions.WRITE_FILE,
   RPC_CHANNELS.sessions.WATCH_FILES,
   RPC_CHANNELS.sessions.UNWATCH_FILES,
   RPC_CHANNELS.sessions.EXPORT,
@@ -207,6 +210,16 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER,
   RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER,
 ] as const
+
+const SESSION_TEXT_FILE_LIMIT = 2 * 1024 * 1024
+
+async function assertEditableSessionTextFile(path: string): Promise<void> {
+  const fileStats = await stat(path)
+  if (!fileStats.isFile()) throw new Error('Session file path must reference a file')
+  if (fileStats.size > SESSION_TEXT_FILE_LIMIT) {
+    throw new Error('File exceeds the 2 MiB editor limit')
+  }
+}
 
 export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const { sessionManager, platform } = deps
@@ -636,6 +649,44 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       log.error('Failed to get session files:', error)
       return []
     }
+  })
+
+  server.handle(RPC_CHANNELS.sessions.READ_FILE, async (ctx, sessionId: string, path: string) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    const sessionPath = resolveSessionDirectory(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
+    if (!sessionPath) throw new Error(`Session directory not found: ${sessionId}`)
+    const safePath = await validateFilePath(path, [sessionPath], { allowHome: false, allowTmp: false })
+    await assertEditableSessionTextFile(safePath)
+    return readFile(safePath, 'utf-8')
+  })
+
+  server.handle(RPC_CHANNELS.sessions.WRITE_FILE, async (
+    ctx,
+    sessionId: string,
+    path: string,
+    content: string,
+    expectedContent: string,
+  ) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    if (typeof content !== 'string' || typeof expectedContent !== 'string') {
+      throw new Error('File content and expected content must be strings')
+    }
+    if (
+      Buffer.byteLength(content, 'utf-8') > SESSION_TEXT_FILE_LIMIT
+      || Buffer.byteLength(expectedContent, 'utf-8') > SESSION_TEXT_FILE_LIMIT
+    ) {
+      throw new Error('File content exceeds the 2 MiB editor limit')
+    }
+    const sessionPath = resolveSessionDirectory(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
+    if (!sessionPath) throw new Error(`Session directory not found: ${sessionId}`)
+    const safePath = await validateFilePath(path, [sessionPath], { allowHome: false, allowTmp: false })
+    await assertEditableSessionTextFile(safePath)
+    const currentContent = await readFile(safePath, 'utf-8')
+    if (currentContent !== expectedContent) {
+      return { status: 'conflict' as const, currentContent }
+    }
+    await writeFile(safePath, content, 'utf-8')
+    return { status: 'saved' as const }
   })
 
   // Start watching a session directory for file changes (per client)

@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next"
 import * as Icons from "lucide-react"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@craft-agent/ui"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
+import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { TopBarButton } from "../ui/TopBarButton"
 import { isMac, isWebUI } from "@/lib/platform"
 import { useActionLabel } from "@/actions"
@@ -49,6 +50,8 @@ interface TopBarProps {
   onToggleFocusMode: () => void
   onAddSessionPanel: () => void
   onAddBrowserPanel: () => void
+  onTogglePanelLayout: () => void
+  isCanvasLayoutFocused: boolean
   leftExtensionSlot?: ReactNode
   rightExtensionSlot?: ReactNode
   /** When true, hides controls that don't apply in compact/mobile layout */
@@ -72,6 +75,8 @@ export function TopBar({
   onToggleFocusMode,
   onAddSessionPanel,
   onAddBrowserPanel,
+  onTogglePanelLayout,
+  isCanvasLayoutFocused,
   leftExtensionSlot,
   rightExtensionSlot,
   isCompact,
@@ -82,6 +87,8 @@ export function TopBar({
 
   const goBackHotkey = useActionLabel('nav.goBackAlt').hotkey
   const goForwardHotkey = useActionLabel('nav.goForwardAlt').hotkey
+  const panelControlLabel = t('workbench.toggleCanvasLayout')
+  const panelControlActive = isCanvasLayoutFocused
 
   useEffect(() => {
     const slotEl = rightSlotRef.current
@@ -157,6 +164,22 @@ export function TopBar({
           onToggleFocusMode={onToggleFocusMode}
           workspaceNavigation={workspaceNavigation}
         />
+        {isCompact && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <TopBarButton
+                onClick={onTogglePanelLayout}
+                isActive={panelControlActive}
+                aria-label={panelControlLabel}
+                aria-pressed={panelControlActive}
+                data-craft-semantic-id="workspace.toggle-panel-layout"
+              >
+                <PanelRightRounded className="h-[18px] w-[18px] text-foreground/70" />
+              </TopBarButton>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{panelControlLabel}</TooltipContent>
+          </Tooltip>
+        )}
         {leftExtensionSlot && <div className="titlebar-no-drag ml-1 flex h-8 max-w-[min(240px,20vw)] min-w-0 items-center">{leftExtensionSlot}</div>}
         </div>
 
@@ -208,6 +231,22 @@ export function TopBar({
             </StyledDropdownMenuItem>
           </StyledDropdownMenuContent>
         </DropdownMenu>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <TopBarButton
+              onClick={onTogglePanelLayout}
+              isActive={panelControlActive}
+              aria-label={panelControlLabel}
+              aria-pressed={panelControlActive}
+              data-craft-semantic-id="workspace.toggle-panel-layout"
+              className="h-[26px] w-[26px] rounded-lg"
+            >
+              <PanelRightRounded className="h-[18px] w-[18px] text-foreground/70" />
+            </TopBarButton>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{panelControlLabel}</TooltipContent>
+        </Tooltip>
 
         {/* Help button */}
         <DropdownMenu>

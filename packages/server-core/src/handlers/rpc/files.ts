@@ -1,9 +1,20 @@
-import { readFile, writeFile, unlink, mkdir, readdir, stat, realpath } from 'fs/promises'
-import { isAbsolute, join, dirname, parse as parsePath } from 'path'
+import { chmod, readFile, writeFile, unlink, mkdir, readdir, rename, stat, lstat, realpath, rm } from 'fs/promises'
+import { isAbsolute, join, dirname, extname, parse as parsePath, relative } from 'path'
 import { homedir } from 'os'
 import { validatePathFormat } from '../../utils/path-validation'
-import { randomUUID } from 'crypto'
-import { RPC_CHANNELS, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
+import { createHash, randomUUID } from 'crypto'
+import {
+  RPC_CHANNELS,
+  type FileAttachment,
+  type DirectoryListingResult,
+  type WorkspaceDirectoryListing,
+  type WorkspaceFileEntry,
+  type WorkspaceFilePreview,
+  type WorkspaceFileDraft,
+  type WorkspaceEntryMutationResult,
+  type WorkspaceEntryRenameResult,
+  type FileTextWriteResult,
+} from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import {
   ATTACHMENT_SINGLE_FILE_LIMIT_BYTES,
@@ -15,9 +26,10 @@ import {
 import { getSessionAttachmentsPath, validateSessionId } from '@craft-agent/shared/sessions'
 import { getWorkspaceOrThrow } from '../utils'
 import { resizeImageForAPI, inspectImageBuffer } from '@craft-agent/server-core/services'
-import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs, isSensitivePath } from '@craft-agent/server-core/handlers'
+import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs, isSensitivePath } from '../utils'
 import { MarkItDown } from 'markitdown-js'
-import type { HandlerFn, RpcServer } from '@craft-agent/server-core/transport'
+import chokidar, { type FSWatcher as ChokidarWatcher } from 'chokidar'
+import { pushTyped, type HandlerFn, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
 import { setTransferableHandler } from './transfer'
@@ -34,7 +46,767 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.file.GENERATE_THUMBNAIL,
   RPC_CHANNELS.fs.SEARCH,
   RPC_CHANNELS.fs.LIST_DIRECTORY,
+  RPC_CHANNELS.fs.LIST_WORKSPACE_DIRECTORY,
+  RPC_CHANNELS.fs.SEARCH_WORKSPACE,
+  RPC_CHANNELS.fs.READ_WORKSPACE_PREVIEW,
+  RPC_CHANNELS.fs.READ_WORKSPACE_DRAFT,
+  RPC_CHANNELS.fs.SET_WORKSPACE_DRAFT,
+  RPC_CHANNELS.fs.DELETE_WORKSPACE_DRAFT,
+  RPC_CHANNELS.fs.WRITE_WORKSPACE_TEXT,
+  RPC_CHANNELS.fs.CREATE_WORKSPACE_ENTRY,
+  RPC_CHANNELS.fs.RENAME_WORKSPACE_ENTRY,
+  RPC_CHANNELS.fs.DELETE_WORKSPACE_ENTRY,
+  RPC_CHANNELS.fs.WATCH_WORKSPACE,
+  RPC_CHANNELS.fs.UNWATCH_WORKSPACE,
 ] as const
+
+const WORKSPACE_DIRECTORY_ENTRY_LIMIT = 1000
+const WORKSPACE_SEARCH_RESULT_LIMIT = 200
+const WORKSPACE_SEARCH_ENTRY_LIMIT = 20_000
+const WORKSPACE_SEARCH_DIRECTORY_BATCH_SIZE = 32
+const WORKSPACE_TEXT_PREVIEW_MAX_BYTES = 2 * 1024 * 1024
+const WORKSPACE_RICH_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
+const WORKSPACE_OFFICE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024
+const WORKSPACE_CONVERTED_PREVIEW_MAX_CHARS = 2_000_000
+const WORKSPACE_TEXT_EDITOR_MAX_BYTES = 2 * 1024 * 1024
+const WORKSPACE_FILE_DRAFT_VERSION = 1
+const WORKSPACE_WATCH_DEBOUNCE_MS = 120
+
+const WORKSPACE_IMAGE_MIME_TYPES: Record<string, string> = {
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  gif: 'image/gif',
+  ico: 'image/x-icon',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  svg: 'image/svg+xml',
+  webp: 'image/webp',
+}
+
+const WORKSPACE_OFFICE_EXTENSIONS = new Set(['docx', 'pptx', 'xlsx'])
+const WORKSPACE_BINARY_EXTENSIONS = new Set([
+  '7z', 'avi', 'class', 'dll', 'dmg', 'dylib', 'exe', 'gz', 'heic', 'heif', 'jar',
+  'mov', 'mp3', 'mp4', 'o', 'psd', 'so', 'tar', 'tif', 'tiff', 'webm', 'zip',
+])
+const WORKSPACE_SEARCH_SKIPPED_DIRECTORIES = new Set([
+  '.git', '.hg', '.next', '.nuxt', '.nyc_output', '.svn', '.turbo',
+  '__pycache__', 'build', 'coverage', 'dist', 'node_modules', 'out', 'vendor',
+])
+
+export function normalizeWorkspaceRelativePath(value: unknown): string {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value !== 'string') throw new Error('Workspace file path must be a string')
+  const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '')
+  if (normalized.includes('\0')) throw new Error('Workspace file path cannot contain null bytes')
+  if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) {
+    throw new Error('Workspace file path must be relative')
+  }
+  const parts = normalized.split('/').filter(part => part !== '' && part !== '.')
+  if (parts.some(part => part === '..')) throw new Error('Workspace file path cannot traverse outside the workspace')
+  return parts.join('/')
+}
+
+function getRequestWorkspaceRoot(
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+  deps: HandlerDeps,
+): { workspaceId: string; rootPath: string } {
+  const workspaceId = ctx.workspaceId
+    ?? (ctx.webContentsId != null ? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId) : undefined)
+  if (!workspaceId) throw new Error('A workspace is required')
+  const workspace = deps.sessionManager.getWorkspaces().find(candidate => candidate.id === workspaceId)
+    ?? getWorkspaceOrThrow(workspaceId)
+  return { workspaceId, rootPath: workspace.rootPath }
+}
+
+async function resolveWorkspaceRelativePath(
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+  deps: HandlerDeps,
+  value: unknown,
+): Promise<{ relativePath: string; candidatePath: string; safePath: string; rootPath: string }> {
+  const relativePath = normalizeWorkspaceRelativePath(value)
+  const { rootPath } = getRequestWorkspaceRoot(ctx, deps)
+  const candidatePath = relativePath ? join(rootPath, ...relativePath.split('/')) : rootPath
+  const safePath = await validateFilePath(candidatePath, [rootPath], { allowHome: false, allowTmp: false })
+  return { relativePath, candidatePath, safePath, rootPath }
+}
+
+async function resolveWorkspaceMutationPath(
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+  deps: HandlerDeps,
+  value: unknown,
+) {
+  const resolved = await resolveWorkspaceRelativePath(ctx, deps, value)
+  if (!resolved.relativePath) throw new Error('The workspace root cannot be modified')
+  if (
+    isSensitivePath(resolved.candidatePath)
+    || isSensitivePath(`${resolved.candidatePath}/`)
+    || isSensitivePath(resolved.safePath)
+    || isSensitivePath(`${resolved.safePath}/`)
+  ) {
+    throw new Error('Access denied: cannot modify sensitive files')
+  }
+  return resolved
+}
+
+async function resolveWorkspaceMutationSourcePath(
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+  deps: HandlerDeps,
+  value: unknown,
+) {
+  const relativePath = normalizeWorkspaceRelativePath(value)
+  if (!relativePath) throw new Error('The workspace root cannot be modified')
+  const { rootPath } = getRequestWorkspaceRoot(ctx, deps)
+  const candidatePath = join(rootPath, ...relativePath.split('/'))
+  await validateFilePath(dirname(candidatePath), [rootPath], { allowHome: false, allowTmp: false })
+  if (isSensitivePath(candidatePath) || isSensitivePath(`${candidatePath}/`)) {
+    throw new Error('Access denied: cannot modify sensitive files')
+  }
+  const entry = await lstat(candidatePath)
+  if (!entry.isSymbolicLink()) {
+    return { ...await resolveWorkspaceMutationPath(ctx, deps, relativePath), symlinkTargetValidated: true }
+  }
+  try {
+    const safePath = await validateFilePath(candidatePath, [rootPath], { allowHome: false, allowTmp: false })
+    return { relativePath, candidatePath, safePath, rootPath, symlinkTargetValidated: true }
+  } catch {
+    // The lexical parent is workspace-owned, so mutation may safely operate on
+    // the link itself even when its target escapes, is sensitive, or is broken.
+    return { relativePath, candidatePath, safePath: candidatePath, rootPath, symlinkTargetValidated: false }
+  }
+}
+
+async function assertWorkspaceEntryMissing(candidatePath: string): Promise<void> {
+  try {
+    await lstat(candidatePath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  throw new Error('A workspace entry already exists at the destination path')
+}
+
+async function workspaceMutationResult(
+  relativePath: string,
+  candidatePath: string,
+  safePath: string,
+  symlinkTargetValidated = true,
+): Promise<WorkspaceEntryMutationResult> {
+  const entry = await lstat(candidatePath)
+  const isSymlink = entry.isSymbolicLink()
+  let type: WorkspaceFileEntry['type'] | null = entry.isDirectory()
+    ? 'directory'
+    : entry.isFile()
+      ? 'file'
+      : null
+  if (isSymlink && symlinkTargetValidated) {
+    const target = await stat(safePath).catch(() => null)
+    type = target?.isDirectory() ? 'directory' : 'file'
+  } else if (isSymlink) {
+    type = 'file'
+  }
+  if (!type) throw new Error('Workspace entry type is not supported')
+  return { relativePath, type, isSymlink }
+}
+
+interface WorkspaceWatchRegistration {
+  watcher: ChokidarWatcher
+  workspaceId: string
+  rootPath: string
+  clientIds: Set<string>
+  debounceTimers: Map<string, ReturnType<typeof setTimeout>>
+  ready: Promise<void>
+}
+
+const workspaceWatchRegistrations = new Map<string, WorkspaceWatchRegistration>()
+const clientWorkspaceWatchKeys = new Map<string, string>()
+type WorkspaceWatcherFactory = (
+  rootPath: string,
+  options: Parameters<typeof chokidar.watch>[1],
+) => ChokidarWatcher
+const defaultWorkspaceWatcherFactory: WorkspaceWatcherFactory = (rootPath, options) =>
+  chokidar.watch(rootPath, options)
+let workspaceWatcherFactory = defaultWorkspaceWatcherFactory
+
+function workspaceWatchKey(workspaceId: string, rootPath: string): string {
+  return `${workspaceId}\0${rootPath}`
+}
+
+function shouldIgnoreWorkspaceWatchPath(rootPath: string, watchedPath: string): boolean {
+  const nestedPath = relative(rootPath, watchedPath)
+  if (!nestedPath) return false
+  const segments = nestedPath.split(/[\\/]/).filter(Boolean)
+  return segments.some(segment => WORKSPACE_SEARCH_SKIPPED_DIRECTORIES.has(segment))
+    || isSensitivePath(watchedPath)
+    || isSensitivePath(`${watchedPath}/`)
+}
+
+function closeWorkspaceWatchRegistration(key: string, state: WorkspaceWatchRegistration): void {
+  if (workspaceWatchRegistrations.get(key) === state) workspaceWatchRegistrations.delete(key)
+  for (const clientId of state.clientIds) {
+    if (clientWorkspaceWatchKeys.get(clientId) === key) clientWorkspaceWatchKeys.delete(clientId)
+  }
+  for (const timer of state.debounceTimers.values()) clearTimeout(timer)
+  state.debounceTimers.clear()
+  state.clientIds.clear()
+  void state.watcher.close().catch(() => {})
+}
+
+/** @internal Test seam for deterministic watcher lifecycle coverage. */
+export function setWorkspaceWatcherFactoryForTesting(factory?: WorkspaceWatcherFactory): void {
+  for (const [key, state] of workspaceWatchRegistrations) {
+    closeWorkspaceWatchRegistration(key, state)
+  }
+  workspaceWatcherFactory = factory ?? defaultWorkspaceWatcherFactory
+}
+
+export function cleanupWorkspaceFileWatchForClient(clientId: string): void {
+  const key = clientWorkspaceWatchKeys.get(clientId)
+  if (!key) return
+  clientWorkspaceWatchKeys.delete(clientId)
+  const state = workspaceWatchRegistrations.get(key)
+  if (!state) return
+  const timer = state.debounceTimers.get(clientId)
+  if (timer) clearTimeout(timer)
+  state.debounceTimers.delete(clientId)
+  state.clientIds.delete(clientId)
+  if (state.clientIds.size === 0) closeWorkspaceWatchRegistration(key, state)
+}
+
+function createWorkspaceWatchRegistration(
+  server: RpcServer,
+  deps: HandlerDeps,
+  workspaceId: string,
+  rootPath: string,
+): WorkspaceWatchRegistration {
+  let resolveReady!: () => void
+  let rejectReady!: (error: Error) => void
+  let readySettled = false
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve
+    rejectReady = reject
+  })
+  const watcher = workspaceWatcherFactory(rootPath, {
+    ignored: watchedPath => shouldIgnoreWorkspaceWatchPath(rootPath, watchedPath),
+    ignoreInitial: true,
+    followSymlinks: false,
+    persistent: true,
+  })
+  const state: WorkspaceWatchRegistration = {
+    watcher,
+    workspaceId,
+    rootPath,
+    clientIds: new Set(),
+    debounceTimers: new Map(),
+    ready,
+  }
+  watcher.once('ready', () => {
+    if (readySettled) return
+    readySettled = true
+    resolveReady()
+  })
+  watcher.on('error', error => {
+    deps.platform.logger.error('Workspace file watcher error:', workspaceId, error)
+    if (!readySettled) {
+      readySettled = true
+      rejectReady(error instanceof Error ? error : new Error(String(error)))
+    }
+    closeWorkspaceWatchRegistration(workspaceWatchKey(workspaceId, rootPath), state)
+  })
+  watcher.on('all', () => {
+    for (const clientId of state.clientIds) {
+      const pending = state.debounceTimers.get(clientId)
+      if (pending) clearTimeout(pending)
+      state.debounceTimers.set(clientId, setTimeout(() => {
+        state.debounceTimers.delete(clientId)
+        if (!state.clientIds.has(clientId)) return
+        pushTyped(server, RPC_CHANNELS.fs.WORKSPACE_CHANGED, { to: 'client', clientId }, workspaceId)
+      }, WORKSPACE_WATCH_DEBOUNCE_MS))
+    }
+  })
+  return state
+}
+
+function workspaceChildPath(parent: string, name: string): string {
+  return parent ? `${parent}/${name}` : name
+}
+
+function sortWorkspaceEntries(entries: WorkspaceFileEntry[]): void {
+  entries.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  })
+}
+
+async function readWorkspaceDirectoryEntries(
+  safePath: string,
+  rootPath: string,
+  relativePath: string,
+): Promise<WorkspaceFileEntry[]> {
+  const rawEntries = await readdir(safePath, { withFileTypes: true })
+  const entries: WorkspaceFileEntry[] = []
+  for (const entry of rawEntries) {
+    const childPath = join(safePath, entry.name)
+    if (isSensitivePath(childPath) || isSensitivePath(`${childPath}/`)) continue
+    let type: WorkspaceFileEntry['type'] | null = entry.isDirectory()
+      ? 'directory'
+      : entry.isFile()
+        ? 'file'
+        : null
+    const isSymlink = entry.isSymbolicLink()
+    if (isSymlink) {
+      try {
+        await validateFilePath(childPath, [rootPath], { allowHome: false, allowTmp: false })
+        const target = await stat(childPath)
+        type = target.isDirectory() ? 'directory' : target.isFile() ? 'file' : null
+      } catch {
+        // Keep the lexical link manageable even when its target is broken or
+        // outside the workspace. Read/preview APIs still reject the target.
+        type = 'file'
+      }
+    }
+    if (!type) continue
+    entries.push({
+      name: entry.name,
+      relativePath: workspaceChildPath(relativePath, entry.name),
+      type,
+      isSymlink,
+    })
+  }
+  sortWorkspaceEntries(entries)
+  return entries
+}
+
+async function assertWorkspaceMutationSubtreeSafe(rootPath: string): Promise<void> {
+  const queue = [rootPath]
+  while (queue.length > 0) {
+    const directoryPath = queue.shift()!
+    const entries = await readdir(directoryPath, { withFileTypes: true })
+    for (const entry of entries) {
+      const childPath = join(directoryPath, entry.name)
+      if (isSensitivePath(childPath) || isSensitivePath(`${childPath}/`)) {
+        throw new Error('Access denied: cannot modify a directory containing sensitive files')
+      }
+      if (entry.isDirectory() && !entry.isSymbolicLink()) queue.push(childPath)
+    }
+  }
+}
+
+function previewBase(relativePath: string, size: number) {
+  const name = relativePath.split('/').pop() || relativePath
+  const extension = extname(name).slice(1).toLowerCase()
+  return { name, relativePath, extension, size, truncated: false as boolean }
+}
+
+function unsupportedWorkspacePreview(
+  relativePath: string,
+  size: number,
+  reason: 'unsupported-format' | 'too-large' | 'binary',
+  maxBytes?: number,
+): WorkspaceFilePreview {
+  return {
+    ...previewBase(relativePath, size),
+    kind: 'unsupported',
+    reason,
+    ...(maxBytes !== undefined ? { maxBytes } : {}),
+  }
+}
+
+interface StoredWorkspaceFileDraft extends WorkspaceFileDraft {
+  version: typeof WORKSPACE_FILE_DRAFT_VERSION
+  workspaceScope: string
+  revision?: string
+}
+
+interface StoredWorkspaceFileDraftDeletionMarker {
+  version: typeof WORKSPACE_FILE_DRAFT_VERSION
+  workspaceScope: string
+  relativePath: string
+  draftSha256: string
+  deletedAt: number
+}
+
+/** @internal Exported for focused persistence tests. */
+export interface WorkspaceFileDraftStorageIdentity {
+  relativePath: string
+  workspaceScope: string
+  directoryPath: string
+  filePath: string
+}
+
+function workspaceDraftIdentity(
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+  deps: HandlerDeps,
+  value: unknown,
+): WorkspaceFileDraftStorageIdentity {
+  const relativePath = normalizeWorkspaceRelativePath(value)
+  if (!relativePath) throw new Error('A workspace file path is required')
+  const { workspaceId, rootPath } = getRequestWorkspaceRoot(ctx, deps)
+  const candidate = join(rootPath, ...relativePath.split('/'))
+  if (isSensitivePath(candidate)) throw new Error('Access denied: cannot read sensitive files')
+
+  // CONFIG_DIR identifies the server/profile. Hashing workspace + root prevents
+  // a recycled workspace id from restoring a draft for a different directory.
+  const workspaceScope = createHash('sha256')
+    .update(`${workspaceId}\0${rootPath}`)
+    .digest('hex')
+  const resourceId = createHash('sha256').update(relativePath).digest('hex')
+  const serverConfigDir = process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent')
+  const directoryPath = join(serverConfigDir, 'workspaces', workspaceScope, 'file-drafts.v1')
+  return {
+    relativePath,
+    workspaceScope,
+    directoryPath,
+    filePath: join(directoryPath, `${resourceId}.json`),
+  }
+}
+
+function validateWorkspaceDraftText(value: unknown, name: string): string {
+  if (typeof value !== 'string') throw new Error(`${name} must be a string`)
+  if (Buffer.byteLength(value, 'utf-8') > WORKSPACE_TEXT_EDITOR_MAX_BYTES) {
+    throw new Error(`${name} exceeds the 2 MiB editor limit`)
+  }
+  return value
+}
+
+function isValidUtf8(buffer: Uint8Array): boolean {
+  try {
+    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function assertEditableWorkspaceTextFile(path: string): Promise<void> {
+  const fileStats = await stat(path)
+  if (!fileStats.isFile()) throw new Error('Workspace path is not a file')
+  if (fileStats.size > WORKSPACE_TEXT_EDITOR_MAX_BYTES) {
+    throw new Error('File exceeds the 2 MiB editor limit')
+  }
+  const extension = extname(path).slice(1).toLowerCase()
+  if (
+    extension === 'pdf'
+    || WORKSPACE_IMAGE_MIME_TYPES[extension]
+    || WORKSPACE_OFFICE_EXTENSIONS.has(extension)
+    || WORKSPACE_BINARY_EXTENSIONS.has(extension)
+  ) {
+    throw new Error('This file cannot be edited as text')
+  }
+  const buffer = await readFile(path)
+  if (buffer.includes(0) || !isValidUtf8(buffer)) {
+    throw new Error('This file cannot be edited as text')
+  }
+}
+
+async function assertPreviewReadSize(path: string, maxBytes: number): Promise<void> {
+  const fileStats = await stat(path)
+  if (!fileStats.isFile()) throw new Error('Preview path is not a file')
+  if (fileStats.size > maxBytes) {
+    throw new Error(`File exceeds the ${maxBytes / (1024 * 1024)} MiB preview limit`)
+  }
+}
+
+function isStoredWorkspaceFileDraft(
+  value: unknown,
+  expected: { relativePath: string; workspaceScope: string },
+): value is StoredWorkspaceFileDraft {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Partial<StoredWorkspaceFileDraft>
+  return record.version === WORKSPACE_FILE_DRAFT_VERSION
+    && record.workspaceScope === expected.workspaceScope
+    && record.relativePath === expected.relativePath
+    && typeof record.content === 'string'
+    && Buffer.byteLength(record.content, 'utf-8') <= WORKSPACE_TEXT_EDITOR_MAX_BYTES
+    && typeof record.baseContent === 'string'
+    && Buffer.byteLength(record.baseContent, 'utf-8') <= WORKSPACE_TEXT_EDITOR_MAX_BYTES
+    && typeof record.updatedAt === 'number'
+    && Number.isFinite(record.updatedAt)
+    && (record.revision === undefined || typeof record.revision === 'string')
+}
+
+function workspaceFileDraftDeletionMarkerPath(identity: WorkspaceFileDraftStorageIdentity): string {
+  return `${identity.filePath}.deleted`
+}
+
+function isStoredWorkspaceFileDraftDeletionMarker(
+  value: unknown,
+  expected: WorkspaceFileDraftStorageIdentity,
+): value is StoredWorkspaceFileDraftDeletionMarker {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Partial<StoredWorkspaceFileDraftDeletionMarker>
+  return record.version === WORKSPACE_FILE_DRAFT_VERSION
+    && record.workspaceScope === expected.workspaceScope
+    && record.relativePath === expected.relativePath
+    && typeof record.draftSha256 === 'string'
+    && /^[a-f0-9]{64}$/.test(record.draftSha256)
+    && typeof record.deletedAt === 'number'
+    && Number.isFinite(record.deletedAt)
+}
+
+async function readOptionalUtf8(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, 'utf-8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+async function writePrivateJsonFileAtomically(
+  directoryPath: string,
+  filePath: string,
+  value: unknown,
+): Promise<void> {
+  await mkdir(directoryPath, { recursive: true, mode: 0o700 })
+  await chmod(directoryPath, 0o700).catch(() => {})
+  const temporary = `${filePath}.tmp-${process.pid}-${randomUUID()}`
+  try {
+    await writeFile(temporary, JSON.stringify(value), { encoding: 'utf-8', flag: 'wx', mode: 0o600 })
+    await rename(temporary, filePath)
+    await chmod(filePath, 0o600).catch(() => {})
+  } catch (error) {
+    await unlink(temporary).catch(() => {})
+    throw error
+  }
+}
+
+/** @internal Exported for focused persistence tests. */
+export async function readWorkspaceFileDraftRecord(
+  identity: WorkspaceFileDraftStorageIdentity,
+): Promise<WorkspaceFileDraft | null> {
+  const rawDraft = await readOptionalUtf8(identity.filePath)
+  if (rawDraft === null) return null
+
+  const rawMarker = await readOptionalUtf8(workspaceFileDraftDeletionMarkerPath(identity))
+  if (rawMarker !== null) {
+    const marker = JSON.parse(rawMarker) as unknown
+    if (!isStoredWorkspaceFileDraftDeletionMarker(marker, identity)) {
+      throw new Error('Invalid workspace file draft deletion marker')
+    }
+    const draftSha256 = createHash('sha256').update(rawDraft).digest('hex')
+    if (marker.draftSha256 === draftSha256) return null
+  }
+
+  const parsed = JSON.parse(rawDraft) as unknown
+  if (!isStoredWorkspaceFileDraft(parsed, identity)) return null
+  const { relativePath, content, baseContent, updatedAt } = parsed
+  return { relativePath, content, baseContent, updatedAt }
+}
+
+/** @internal Exported for focused persistence tests. */
+export async function writeWorkspaceFileDraftRecord(
+  identity: WorkspaceFileDraftStorageIdentity,
+  content: string,
+  baseContent: string,
+): Promise<WorkspaceFileDraft> {
+  const record: StoredWorkspaceFileDraft = {
+    version: WORKSPACE_FILE_DRAFT_VERSION,
+    workspaceScope: identity.workspaceScope,
+    relativePath: identity.relativePath,
+    content,
+    baseContent,
+    updatedAt: Date.now(),
+    revision: randomUUID(),
+  }
+  await writePrivateJsonFileAtomically(identity.directoryPath, identity.filePath, record)
+  // A marker only suppresses the exact record it was written for. Cleanup is
+  // best-effort so a locked stale marker cannot make a new draft write fail.
+  await unlink(workspaceFileDraftDeletionMarkerPath(identity)).catch(() => {})
+  const { relativePath, updatedAt } = record
+  return { relativePath, content, baseContent, updatedAt }
+}
+
+type RemoveWorkspaceDraftFile = (path: string) => Promise<void>
+
+/**
+ * Marks the exact persisted record as deleted before unlinking it. If unlink
+ * fails (for example because Windows still has the file open), reads keep
+ * returning null and a later queue flush can retry physical cleanup safely.
+ * @internal Exported for focused persistence tests.
+ */
+export async function deleteWorkspaceFileDraftRecord(
+  identity: WorkspaceFileDraftStorageIdentity,
+  removeFile: RemoveWorkspaceDraftFile = unlink,
+): Promise<void> {
+  const markerPath = workspaceFileDraftDeletionMarkerPath(identity)
+  const rawDraft = await readOptionalUtf8(identity.filePath)
+  if (rawDraft !== null) {
+    const marker: StoredWorkspaceFileDraftDeletionMarker = {
+      version: WORKSPACE_FILE_DRAFT_VERSION,
+      workspaceScope: identity.workspaceScope,
+      relativePath: identity.relativePath,
+      draftSha256: createHash('sha256').update(rawDraft).digest('hex'),
+      deletedAt: Date.now(),
+    }
+    await writePrivateJsonFileAtomically(identity.directoryPath, markerPath, marker)
+    try {
+      await removeFile(identity.filePath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+
+  try {
+    await removeFile(markerPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+
+const workspaceFileDraftMutationChains = new Map<string, Promise<unknown>>()
+const workspaceTextWriteChains = new Map<string, Promise<unknown>>()
+const workspaceEntryMutationChains = new Map<string, Promise<unknown>>()
+
+function workspacePathMatchesPrefix(relativePath: string, prefix: string): boolean {
+  const comparablePath = process.platform === 'win32' ? relativePath.toLowerCase() : relativePath
+  const comparablePrefix = process.platform === 'win32' ? prefix.toLowerCase() : prefix
+  return comparablePath === comparablePrefix || comparablePath.startsWith(`${comparablePrefix}/`)
+}
+
+/** @internal Exported for cross-platform case-only rename tests. */
+export function isCaseOnlyWorkspaceRename(
+  previousPath: string,
+  nextPath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === 'win32'
+    && previousPath !== nextPath
+    && previousPath.toLowerCase() === nextPath.toLowerCase()
+}
+
+async function renameWorkspaceEntryCaseOnly(
+  sourcePath: string,
+  destinationPath: string,
+): Promise<void> {
+  const temporaryPath = join(
+    dirname(sourcePath),
+    `.${parsePath(sourcePath).base}.craft-case-rename-${process.pid}-${randomUUID()}`,
+  )
+  await assertWorkspaceEntryMissing(temporaryPath)
+  await rename(sourcePath, temporaryPath)
+  try {
+    await rename(temporaryPath, destinationPath)
+  } catch (error) {
+    try {
+      await rename(temporaryPath, sourcePath)
+    } catch (rollbackError) {
+      throw new Error(
+        `Case-only rename failed and rollback also failed: ${String(error)}; rollback: ${String(rollbackError)}`,
+      )
+    }
+    throw error
+  }
+}
+
+async function collectWorkspaceDraftIdentities(
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+  deps: HandlerDeps,
+  prefix: string,
+): Promise<WorkspaceFileDraftStorageIdentity[]> {
+  const anchor = workspaceDraftIdentity(ctx, deps, prefix)
+  let names: string[]
+  try {
+    names = await readdir(anchor.directoryPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+
+  const identities = new Map<string, WorkspaceFileDraftStorageIdentity>()
+  for (const name of names) {
+    const isDraft = name.endsWith('.json')
+    const isMarker = name.endsWith('.json.deleted')
+    if (!isDraft && !isMarker) continue
+    const recordPath = join(anchor.directoryPath, name)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(await readFile(recordPath, 'utf-8')) as unknown
+    } catch {
+      throw new Error('Invalid workspace file draft record blocks file mutation')
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Invalid workspace file draft record blocks file mutation')
+    }
+    const record = parsed as { workspaceScope?: unknown; relativePath?: unknown }
+    if (record.workspaceScope !== anchor.workspaceScope || typeof record.relativePath !== 'string') {
+      throw new Error('Invalid workspace file draft record blocks file mutation')
+    }
+    const identity = workspaceDraftIdentity(ctx, deps, record.relativePath)
+    const expectedName = parsePath(isMarker
+      ? workspaceFileDraftDeletionMarkerPath(identity)
+      : identity.filePath).base
+    if (expectedName !== name) {
+      throw new Error('Invalid workspace file draft identity blocks file mutation')
+    }
+    if (workspacePathMatchesPrefix(identity.relativePath, prefix)) {
+      identities.set(identity.filePath, identity)
+    }
+  }
+  return [...identities.values()]
+}
+
+async function assertNoActiveWorkspaceDraftsAndClearStaleRecords(
+  ctx: { workspaceId?: string | null; webContentsId?: number | null },
+  deps: HandlerDeps,
+  prefix: string,
+): Promise<void> {
+  const identities = await collectWorkspaceDraftIdentities(ctx, deps, prefix)
+  for (const identity of identities) {
+    if (await readWorkspaceFileDraftRecord(identity)) {
+      throw new Error('Save or discard recoverable drafts before renaming or deleting this workspace entry')
+    }
+  }
+  for (const identity of identities) {
+    await deleteWorkspaceFileDraftRecord(identity)
+  }
+}
+
+function serializePathMutation<T>(
+  chains: Map<string, Promise<unknown>>,
+  path: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = chains.get(path) ?? Promise.resolve()
+  const current = previous.catch(() => undefined).then(operation)
+  chains.set(path, current)
+  void current.finally(() => {
+    if (chains.get(path) === current) chains.delete(path)
+  }).catch(() => {})
+  return current
+}
+
+async function writeWorkspaceTextFileAtomically(
+  path: string,
+  content: string,
+  expectedContent: string,
+): Promise<FileTextWriteResult> {
+  const fileStats = await stat(path)
+  const temporary = join(dirname(path), `.${parsePath(path).base}.craft-save-${process.pid}-${randomUUID()}`)
+  let committed = false
+  try {
+    await writeFile(temporary, content, {
+      encoding: 'utf-8',
+      flag: 'wx',
+      mode: fileStats.mode,
+    })
+
+    // Re-check after the temporary file is fully prepared, immediately before
+    // replacement. Craft writes are serialized above this helper. A separate,
+    // uncooperative process can still write between this read and rename because
+    // portable filesystems do not expose an atomic compare-and-rename primitive.
+    const currentBuffer = await readFile(path)
+    if (!isValidUtf8(currentBuffer)) throw new Error('This file cannot be edited as text')
+    const currentContent = currentBuffer.toString('utf-8')
+    if (currentContent !== expectedContent) return { status: 'conflict', currentContent }
+
+    await rename(temporary, path)
+    committed = true
+    return { status: 'saved' }
+  } finally {
+    if (!committed) await unlink(temporary).catch(() => {})
+  }
+}
 
 function isTrustedLocalUserPathRequest(
   ctx: { workspaceId?: string | null; webContentsId?: number | null },
@@ -69,6 +841,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
       const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+      await assertPreviewReadSize(safePath, WORKSPACE_TEXT_PREVIEW_MAX_BYTES)
       const content = await readFile(safePath, 'utf-8')
       return content
     } catch (error) {
@@ -89,6 +862,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
       const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+      await assertPreviewReadSize(safePath, WORKSPACE_RICH_PREVIEW_MAX_BYTES)
       const buffer = await readFile(safePath)
       const ext = safePath.split('.').pop()?.toLowerCase() ?? ''
 
@@ -121,6 +895,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
       const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+      await assertPreviewReadSize(safePath, WORKSPACE_RICH_PREVIEW_MAX_BYTES)
       const size = Number.isFinite(maxSize) ? Math.max(16, Math.min(256, Math.floor(maxSize))) : 64
       const preview = await deps.platform.imageProcessor.process(safePath, {
         resize: { width: size, height: size },
@@ -141,6 +916,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
       const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+      await assertPreviewReadSize(safePath, WORKSPACE_RICH_PREVIEW_MAX_BYTES)
       const buffer = await readFile(safePath)
       // Return as Uint8Array (serializes to ArrayBuffer over IPC)
       return new Uint8Array(buffer)
@@ -624,6 +1400,303 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   }
   server.handle(RPC_CHANNELS.file.STORE_ATTACHMENT, storeAttachmentHandler)
   setTransferableHandler(RPC_CHANNELS.file.STORE_ATTACHMENT, storeAttachmentHandler)
+
+  server.handle(RPC_CHANNELS.fs.CREATE_WORKSPACE_ENTRY, async (
+    ctx,
+    requestedPath: string,
+    type: WorkspaceFileEntry['type'],
+  ): Promise<WorkspaceEntryMutationResult> => {
+    if (type !== 'file' && type !== 'directory') {
+      throw new Error('Workspace entry type must be file or directory')
+    }
+    const resolved = await resolveWorkspaceMutationPath(ctx, deps, requestedPath)
+    return serializePathMutation(workspaceEntryMutationChains, resolved.rootPath, async () => {
+      await assertWorkspaceEntryMissing(resolved.candidatePath)
+      if (type === 'directory') {
+        await mkdir(resolved.candidatePath)
+      } else {
+        await writeFile(resolved.candidatePath, '', { encoding: 'utf-8', flag: 'wx' })
+      }
+      return { relativePath: resolved.relativePath, type, isSymlink: false }
+    })
+  })
+
+  server.handle(RPC_CHANNELS.fs.RENAME_WORKSPACE_ENTRY, async (
+    ctx,
+    requestedPath: string,
+    requestedNextPath: string,
+  ): Promise<WorkspaceEntryRenameResult> => {
+    const source = await resolveWorkspaceMutationSourcePath(ctx, deps, requestedPath)
+    const destination = await resolveWorkspaceMutationPath(ctx, deps, requestedNextPath)
+    if (source.relativePath === destination.relativePath) {
+      throw new Error('The source and destination workspace paths are the same')
+    }
+    const caseOnlyRename = isCaseOnlyWorkspaceRename(source.relativePath, destination.relativePath)
+    if (!caseOnlyRename && workspacePathMatchesPrefix(destination.relativePath, source.relativePath)) {
+      throw new Error('A workspace directory cannot be moved inside itself')
+    }
+    return serializePathMutation(workspaceEntryMutationChains, source.rootPath, async () => {
+      await assertNoActiveWorkspaceDraftsAndClearStaleRecords(ctx, deps, source.relativePath)
+      await assertNoActiveWorkspaceDraftsAndClearStaleRecords(ctx, deps, destination.relativePath)
+      const sourceResult = await workspaceMutationResult(
+        source.relativePath,
+        source.candidatePath,
+        source.safePath,
+        source.symlinkTargetValidated,
+      )
+      if (sourceResult.type === 'directory' && !sourceResult.isSymlink) {
+        await assertWorkspaceMutationSubtreeSafe(source.candidatePath)
+      }
+      if (caseOnlyRename) {
+        await renameWorkspaceEntryCaseOnly(source.candidatePath, destination.candidatePath)
+      } else {
+        await assertWorkspaceEntryMissing(destination.candidatePath)
+        await rename(source.candidatePath, destination.candidatePath)
+      }
+      return {
+        ...sourceResult,
+        previousRelativePath: source.relativePath,
+        relativePath: destination.relativePath,
+      }
+    })
+  })
+
+  server.handle(RPC_CHANNELS.fs.DELETE_WORKSPACE_ENTRY, async (
+    ctx,
+    requestedPath: string,
+    recursive: boolean,
+  ): Promise<WorkspaceEntryMutationResult> => {
+    if (typeof recursive !== 'boolean') throw new Error('Directory deletion requires an explicit recursive flag')
+    const resolved = await resolveWorkspaceMutationSourcePath(ctx, deps, requestedPath)
+    return serializePathMutation(workspaceEntryMutationChains, resolved.rootPath, async () => {
+      await assertNoActiveWorkspaceDraftsAndClearStaleRecords(ctx, deps, resolved.relativePath)
+      const result = await workspaceMutationResult(
+        resolved.relativePath,
+        resolved.candidatePath,
+        resolved.safePath,
+        resolved.symlinkTargetValidated,
+      )
+      if (result.type === 'directory' && !result.isSymlink) {
+        await assertWorkspaceMutationSubtreeSafe(resolved.candidatePath)
+      }
+      if (result.type === 'directory' && !result.isSymlink && !recursive) {
+        throw new Error('Directory deletion requires recursive confirmation')
+      }
+      if (result.type === 'directory' && !result.isSymlink) {
+        await rm(resolved.candidatePath, { recursive: true, force: false })
+      } else {
+        await unlink(resolved.candidatePath)
+      }
+      return result
+    })
+  })
+
+  server.handle(RPC_CHANNELS.fs.WATCH_WORKSPACE, async ctx => {
+    const { workspaceId } = getRequestWorkspaceRoot(ctx, deps)
+    const { safePath: rootPath } = await resolveWorkspaceRelativePath(ctx, deps, '')
+    const key = workspaceWatchKey(workspaceId, rootPath)
+    const currentKey = clientWorkspaceWatchKeys.get(ctx.clientId)
+    if (currentKey === key) {
+      await workspaceWatchRegistrations.get(key)?.ready
+      return
+    }
+    cleanupWorkspaceFileWatchForClient(ctx.clientId)
+    let state = workspaceWatchRegistrations.get(key)
+    if (!state) {
+      state = createWorkspaceWatchRegistration(server, deps, workspaceId, rootPath)
+      workspaceWatchRegistrations.set(key, state)
+    }
+    state.clientIds.add(ctx.clientId)
+    clientWorkspaceWatchKeys.set(ctx.clientId, key)
+    await state.ready
+  })
+
+  server.handle(RPC_CHANNELS.fs.UNWATCH_WORKSPACE, async ctx => {
+    const { workspaceId } = getRequestWorkspaceRoot(ctx, deps)
+    const { safePath: rootPath } = await resolveWorkspaceRelativePath(ctx, deps, '')
+    if (clientWorkspaceWatchKeys.get(ctx.clientId) === workspaceWatchKey(workspaceId, rootPath)) {
+      cleanupWorkspaceFileWatchForClient(ctx.clientId)
+    }
+  })
+
+  server.handle(RPC_CHANNELS.fs.LIST_WORKSPACE_DIRECTORY, async (ctx, requestedPath?: string): Promise<WorkspaceDirectoryListing> => {
+    const { relativePath, safePath, rootPath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
+    const directory = await stat(safePath)
+    if (!directory.isDirectory()) throw new Error('Workspace path is not a directory')
+    const allEntries = await readWorkspaceDirectoryEntries(safePath, rootPath, relativePath)
+    return {
+      relativePath,
+      entries: allEntries.slice(0, WORKSPACE_DIRECTORY_ENTRY_LIMIT),
+      truncated: allEntries.length > WORKSPACE_DIRECTORY_ENTRY_LIMIT,
+      totalEntries: allEntries.length,
+    }
+  })
+
+  server.handle(RPC_CHANNELS.fs.SEARCH_WORKSPACE, async (ctx, rawQuery: string): Promise<WorkspaceFileEntry[]> => {
+    if (typeof rawQuery !== 'string') throw new Error('Workspace file search query must be a string')
+    const query = rawQuery.trim().toLowerCase()
+    if (!query) return []
+    if (query.length > 120) throw new Error('Workspace file search query is too long')
+
+    const { safePath: rootPath } = await resolveWorkspaceRelativePath(ctx, deps, '')
+    const results: WorkspaceFileEntry[] = []
+    const queue = ['']
+    let scannedEntries = 0
+    while (
+      queue.length > 0
+      && results.length < WORKSPACE_SEARCH_RESULT_LIMIT
+      && scannedEntries < WORKSPACE_SEARCH_ENTRY_LIMIT
+    ) {
+      const batch = queue.splice(0, WORKSPACE_SEARCH_DIRECTORY_BATCH_SIZE)
+      const directoryResults = await Promise.all(batch.map(async relativePath => {
+        const absolutePath = relativePath ? join(rootPath, ...relativePath.split('/')) : rootPath
+        try {
+          return { relativePath, entries: await readdir(absolutePath, { withFileTypes: true }) }
+        } catch {
+          return { relativePath, entries: [] as import('fs').Dirent[] }
+        }
+      }))
+
+      for (const directoryResult of directoryResults) {
+        for (const entry of directoryResult.entries) {
+          if (
+            results.length >= WORKSPACE_SEARCH_RESULT_LIMIT
+            || scannedEntries >= WORKSPACE_SEARCH_ENTRY_LIMIT
+          ) break
+          scannedEntries += 1
+          if (entry.isSymbolicLink()) continue
+          const type: WorkspaceFileEntry['type'] | null = entry.isDirectory()
+            ? 'directory'
+            : entry.isFile()
+              ? 'file'
+              : null
+          if (!type) continue
+          const relativePath = workspaceChildPath(directoryResult.relativePath, entry.name)
+          const absoluteEntryPath = join(rootPath, ...relativePath.split('/'))
+          if (isSensitivePath(absoluteEntryPath) || isSensitivePath(`${absoluteEntryPath}/`)) continue
+          if (type === 'directory' && !WORKSPACE_SEARCH_SKIPPED_DIRECTORIES.has(entry.name)) {
+            queue.push(relativePath)
+          }
+          if (entry.name.toLowerCase().includes(query) || relativePath.toLowerCase().includes(query)) {
+            results.push({ name: entry.name, relativePath, type, isSymlink: false })
+          }
+        }
+      }
+    }
+    sortWorkspaceEntries(results)
+    return results
+  })
+
+  server.handle(RPC_CHANNELS.fs.READ_WORKSPACE_PREVIEW, async (ctx, requestedPath: string): Promise<WorkspaceFilePreview> => {
+    const { relativePath, safePath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
+    if (!relativePath) throw new Error('A workspace file path is required')
+    const fileStats = await stat(safePath)
+    if (!fileStats.isFile()) throw new Error('Workspace path is not a file')
+
+    const base = previewBase(relativePath, fileStats.size)
+    const extension = base.extension
+    const imageMime = WORKSPACE_IMAGE_MIME_TYPES[extension]
+    if (imageMime) {
+      if (fileStats.size > WORKSPACE_RICH_PREVIEW_MAX_BYTES) {
+        return unsupportedWorkspacePreview(relativePath, fileStats.size, 'too-large', WORKSPACE_RICH_PREVIEW_MAX_BYTES)
+      }
+      const buffer = await readFile(safePath)
+      return { ...base, kind: 'image', dataUrl: `data:${imageMime};base64,${buffer.toString('base64')}` }
+    }
+
+    if (extension === 'pdf') {
+      if (fileStats.size > WORKSPACE_RICH_PREVIEW_MAX_BYTES) {
+        return unsupportedWorkspacePreview(relativePath, fileStats.size, 'too-large', WORKSPACE_RICH_PREVIEW_MAX_BYTES)
+      }
+      return { ...base, kind: 'pdf', data: new Uint8Array(await readFile(safePath)) }
+    }
+
+    if (WORKSPACE_OFFICE_EXTENSIONS.has(extension)) {
+      if (fileStats.size > WORKSPACE_OFFICE_PREVIEW_MAX_BYTES) {
+        return unsupportedWorkspacePreview(relativePath, fileStats.size, 'too-large', WORKSPACE_OFFICE_PREVIEW_MAX_BYTES)
+      }
+      const converted = await new MarkItDown().convert(safePath)
+      const content = converted?.textContent ?? ''
+      const truncated = content.length > WORKSPACE_CONVERTED_PREVIEW_MAX_CHARS
+      return {
+        ...base,
+        kind: 'markdown',
+        content: truncated ? content.slice(0, WORKSPACE_CONVERTED_PREVIEW_MAX_CHARS) : content,
+        source: 'converted',
+        truncated,
+      }
+    }
+
+    if (fileStats.size > WORKSPACE_TEXT_PREVIEW_MAX_BYTES) {
+      return unsupportedWorkspacePreview(relativePath, fileStats.size, 'too-large', WORKSPACE_TEXT_PREVIEW_MAX_BYTES)
+    }
+    if (WORKSPACE_BINARY_EXTENSIONS.has(extension)) {
+      return unsupportedWorkspacePreview(relativePath, fileStats.size, 'unsupported-format')
+    }
+
+    const buffer = await readFile(safePath)
+    if (buffer.includes(0)) return unsupportedWorkspacePreview(relativePath, fileStats.size, 'binary')
+    if (!isValidUtf8(buffer)) return unsupportedWorkspacePreview(relativePath, fileStats.size, 'binary')
+    const content = buffer.toString('utf-8')
+    if (extension === 'md' || extension === 'mdx') {
+      return { ...base, kind: 'markdown', content, source: 'native' }
+    }
+    if (extension === 'csv' || extension === 'tsv') {
+      return { ...base, kind: 'table', content, delimiter: extension === 'tsv' ? '\t' : ',' }
+    }
+    return { ...base, kind: 'text', content }
+  })
+
+  server.handle(RPC_CHANNELS.fs.READ_WORKSPACE_DRAFT, async (ctx, requestedPath: string): Promise<WorkspaceFileDraft | null> => {
+    const { safePath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
+    await assertEditableWorkspaceTextFile(safePath)
+    return readWorkspaceFileDraftRecord(workspaceDraftIdentity(ctx, deps, requestedPath))
+  })
+
+  server.handle(RPC_CHANNELS.fs.SET_WORKSPACE_DRAFT, async (
+    ctx,
+    requestedPath: string,
+    rawContent: string,
+    rawBaseContent: string,
+  ): Promise<WorkspaceFileDraft> => {
+    const content = validateWorkspaceDraftText(rawContent, 'Draft content')
+    const baseContent = validateWorkspaceDraftText(rawBaseContent, 'Draft base content')
+    const { safePath, rootPath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
+    const identity = workspaceDraftIdentity(ctx, deps, requestedPath)
+    return serializePathMutation(workspaceEntryMutationChains, rootPath, () =>
+      serializePathMutation(workspaceFileDraftMutationChains, identity.filePath, async () => {
+        await assertEditableWorkspaceTextFile(safePath)
+        return writeWorkspaceFileDraftRecord(identity, content, baseContent)
+      }))
+  })
+
+  server.handle(RPC_CHANNELS.fs.DELETE_WORKSPACE_DRAFT, async (ctx, requestedPath: string): Promise<void> => {
+    const identity = workspaceDraftIdentity(ctx, deps, requestedPath)
+    const { rootPath } = getRequestWorkspaceRoot(ctx, deps)
+    await serializePathMutation(workspaceEntryMutationChains, rootPath, () =>
+      serializePathMutation(workspaceFileDraftMutationChains, identity.filePath, () =>
+        deleteWorkspaceFileDraftRecord(identity)))
+  })
+
+  server.handle(RPC_CHANNELS.fs.WRITE_WORKSPACE_TEXT, async (
+    ctx,
+    requestedPath: string,
+    rawContent: string,
+    rawExpectedContent: string,
+  ): Promise<FileTextWriteResult> => {
+    const content = validateWorkspaceDraftText(rawContent, 'File content')
+    const expectedContent = validateWorkspaceDraftText(rawExpectedContent, 'Expected file content')
+    const { safePath, rootPath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
+    return serializePathMutation(workspaceEntryMutationChains, rootPath, () =>
+      serializePathMutation(workspaceTextWriteChains, safePath, async () => {
+        await assertEditableWorkspaceTextFile(safePath)
+        const currentBuffer = await readFile(safePath)
+        if (!isValidUtf8(currentBuffer)) throw new Error('This file cannot be edited as text')
+        const currentContent = currentBuffer.toString('utf-8')
+        if (currentContent !== expectedContent) return { status: 'conflict', currentContent }
+        return writeWorkspaceTextFileAtomically(safePath, content, expectedContent)
+      }))
+  })
 
   // Filesystem search for @ mention file selection.
   // Parallel BFS walk that skips ignored directories BEFORE entering them,

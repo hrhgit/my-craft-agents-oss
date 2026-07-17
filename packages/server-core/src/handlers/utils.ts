@@ -1,4 +1,4 @@
-import { normalize, isAbsolute, sep } from 'path'
+import { basename, dirname, join, normalize, isAbsolute, relative, sep } from 'path'
 import { homedir, tmpdir } from 'os'
 import { realpath } from 'fs/promises'
 import { getWorkspaceByNameOrId, type Workspace } from '@craft-agent/shared/config'
@@ -69,15 +69,15 @@ export function resolveWorkspaceId(
  */
 export function isSensitivePath(absPath: string): boolean {
   const sensitivePatterns = [
-    /\.ssh[\\/]/,
-    /\.gnupg[\\/]/,
-    /\.aws[\\/]credentials/,
-    /\.env$/,
-    /\.env\./,
-    /credentials\.json$/,
+    /\.ssh[\\/]/i,
+    /\.gnupg[\\/]/i,
+    /\.aws[\\/]credentials/i,
+    /\.env$/i,
+    /\.env\./i,
+    /credentials\.json$/i,
     /secrets?\./i,
-    /\.pem$/,
-    /\.key$/,
+    /\.pem$/i,
+    /\.key$/i,
   ]
   return sensitivePatterns.some(pattern => pattern.test(absPath))
 }
@@ -120,6 +120,31 @@ export interface ValidateFilePathOptions {
 }
 
 /**
+ * Resolves every existing path component while preserving a non-existent tail.
+ * `realpath()` alone cannot protect a future file below a symlinked directory,
+ * because it fails for the missing leaf and would otherwise fall back to the
+ * unresolved alias.
+ */
+async function resolvePathBoundary(filePath: string): Promise<string> {
+  const unresolvedTail: string[] = []
+  let cursor = normalize(filePath)
+
+  while (true) {
+    try {
+      const resolvedAncestor = await realpath(cursor)
+      return unresolvedTail.length > 0
+        ? normalize(join(resolvedAncestor, ...unresolvedTail.reverse()))
+        : normalize(resolvedAncestor)
+    } catch {
+      const parent = dirname(cursor)
+      if (parent === cursor) return normalize(filePath)
+      unresolvedTail.push(basename(cursor))
+      cursor = parent
+    }
+  }
+}
+
+/**
  * Validates that a file path is within allowed directories to prevent path traversal attacks.
  * Allowed directories: user's home directory, /tmp, and any additional dirs passed by the caller
  * (e.g. workspace root, workspace working directory).
@@ -142,27 +167,25 @@ export async function validateFilePath(
     throw new Error('Only absolute file paths are allowed')
   }
 
-  // Resolve symlinks to get the real path
-  let realFilePath: string
-  try {
-    realFilePath = await realpath(normalizedPath)
-  } catch {
-    // File doesn't exist or can't be resolved - use normalized path
-    realFilePath = normalizedPath
-  }
+  // Resolve the target and its nearest existing ancestor. This handles both a
+  // symlink/junction workspace root and non-existent children below symlinks.
+  const realFilePath = await resolvePathBoundary(normalizedPath)
 
   // Define allowed base directories
-  const allowedDirs = [
+  const configuredAllowedDirs = [
     options.allowHome === false ? undefined : homedir(),
     options.allowTmp === false ? undefined : tmpdir(),
     ...(additionalAllowedDirs ?? []),
   ].filter((dir): dir is string => Boolean(dir))
+  const allowedDirs = await Promise.all(configuredAllowedDirs.map(resolvePathBoundary))
 
   // Check if the real path is within an allowed directory (cross-platform)
   const isAllowed = allowedDirs.some(dir => {
     const normalizedDir = normalize(dir)
     const normalizedReal = normalize(realFilePath)
-    return normalizedReal.startsWith(normalizedDir + sep) || normalizedReal === normalizedDir
+    const relativePath = relative(normalizedDir, normalizedReal)
+    return relativePath === ''
+      || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
   })
 
   if (!isAllowed) {
@@ -170,7 +193,7 @@ export async function validateFilePath(
   }
 
   // Block sensitive files even within allowed directories.
-  if (isSensitivePath(realFilePath)) {
+  if (isSensitivePath(normalizedPath) || isSensitivePath(realFilePath)) {
     throw new Error('Access denied: cannot read sensitive files')
   }
 

@@ -380,7 +380,7 @@ export function ScenarioAppShellHost() {
     if (state.view !== 'extension') return
     extensionContributionStore.apply({
       schemaVersion: 1, extensionId: SCENARIO_EXTENSION_ID, sessionId: SCENARIO_SESSION_ID, runtimeId: SCENARIO_RUNTIME_ID,
-      revision: state.revision, operation: 'upsert', contribution: {
+      workspaceId: PLAYGROUND_WORKSPACE.id, revision: state.revision, operation: 'upsert', contribution: {
         schemaVersion: 1, id: 'scenario-status', surface: 'composer.above',
         content: { type: 'row', gap: 'small', children: [
           { type: 'icon', name: state.extension.phase === 'error' ? 'alert-circle' : state.extension.phase === 'ready' ? 'check' : 'loader', label: state.extension.phase },
@@ -389,7 +389,11 @@ export function ScenarioAppShellHost() {
         ] },
       },
     })
-    return () => extensionContributionStore.resetRuntime(SCENARIO_SESSION_ID, SCENARIO_RUNTIME_ID)
+    return () => extensionContributionStore.resetRuntime(
+      SCENARIO_SESSION_ID,
+      SCENARIO_RUNTIME_ID,
+      PLAYGROUND_WORKSPACE.id,
+    )
   }, [state.extension.phase, state.revision, state.view])
 
   if (['transport', 'session-empty', 'session-streaming', 'tool-approval', 'extension', 'permissions', 'settings'].includes(state.view)) {
