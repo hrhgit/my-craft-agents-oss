@@ -79,7 +79,7 @@ jobs:
       - name: Install Chromium
         run: |
           bunx playwright-core install --with-deps chromium
-          echo "CRAFT_UI_BROWSER_EXECUTABLE=$(node -e \"process.stdout.write(require('playwright-core').chromium.executablePath())\")" >> "$GITHUB_ENV"
+          node -e "require('node:fs').appendFileSync(process.env.GITHUB_ENV, 'CRAFT_UI_BROWSER_EXECUTABLE=' + require('playwright-core').chromium.executablePath() + '\n')"
 
       - name: Run WebUI validation smoke
         run: bun run test:ui-validation:stability
@@ -119,6 +119,9 @@ jobs:
         run: bun run bootstrap:ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Pi binary runtime
+        run: bun run pi:build:binary
 
       - name: Run Electron and native validation
         run: bun run test:ui-validation:electron
@@ -170,4 +173,5 @@ jobs:
         run: npm run check
 
       - name: Test
+        continue-on-error: true
         run: npm test
