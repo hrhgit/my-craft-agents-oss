@@ -84,6 +84,7 @@ jobs:
       - name: Run WebUI validation smoke
         run: bun run test:ui-validation:stability
         env:
+          CRAFT_UI_BROWSER_NO_SANDBOX: "1"
           CRAFT_UI_STABILITY_SURFACES: webui
           CRAFT_UI_STABILITY_ITERATIONS: "1"
 

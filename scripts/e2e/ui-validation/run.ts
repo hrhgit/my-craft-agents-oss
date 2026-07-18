@@ -41,6 +41,7 @@ interface NativeMenuSnapshotResult {
 const manifest = await startCraftUiRun({
   surface: 'electron',
   profileMode: 'fixture',
+  windowMode: 'foreground',
   waitMs: 180_000,
 })
 

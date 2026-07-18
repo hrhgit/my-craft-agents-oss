@@ -110,6 +110,7 @@ try {
     '--remote-allow-origins=*',
     `--user-data-dir=${join(profileDir, 'web-browser')}`,
     '--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-extensions', '--lang=en-US', '--window-size=1440,900',
+    ...(process.env.CRAFT_UI_BROWSER_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
     ...(process.env.CRAFT_UI_HEADED === '1' ? [] : ['--headless=new', '--hide-scrollbars', '--mute-audio']),
     'about:blank',
   ], commonEnv))
