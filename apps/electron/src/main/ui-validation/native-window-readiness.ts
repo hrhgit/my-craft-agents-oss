@@ -220,6 +220,7 @@ function matchesSelectedWindow(
 ): boolean {
   if (node.role !== 'Window') return false
   if (expected.expectedTitle.length > 0 && node.name !== expected.expectedTitle) return false
+  if (expected.windowMode === 'foreground' && !node.focused) return false
   if (expected.expectedNativeWindowHandle !== undefined && node.nativeWindowHandle !== undefined) {
     return node.nativeWindowHandle === expected.expectedNativeWindowHandle
   }

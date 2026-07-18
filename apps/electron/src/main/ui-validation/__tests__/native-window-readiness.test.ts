@@ -138,6 +138,41 @@ describe('ensureNativeWindowReady', () => {
     expect(second.revision).toBe(first.revision)
   })
 
+  it('waits for foreground focus before returning revision-bound native refs', async () => {
+    let snapshotReads = 0
+    const requests: Record<string, unknown>[] = []
+    const window = {
+      webContents: { id: 11, isLoading: () => false },
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      isVisible: () => true,
+      isFocused: () => true,
+      focus() {},
+      getTitle: () => 'Craft Agents',
+      getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
+    }
+    const driver = new WindowsNativeUiDriver(42, async request => {
+      requests.push(request)
+      if (request.operation === 'action') return { ok: true }
+      snapshotReads += 1
+      return { windows: [{
+        runtimeId: 'root', role: 'Window', name: 'Craft Agents', enabled: true, focused: snapshotReads > 1,
+        bounds: { x: 120, y: 60, width: 960, height: 720 }, patterns: ['Window'], children: [],
+      }] }
+    }, 'win32')
+    const controller = new ElectronNativeWindowController(driver)
+
+    const snapshot = await controller.snapshot(window as never, { timeoutMs: 500 })
+    const root = snapshot.windows[0]!.nodes.find(node => node.name === 'Craft Agents')!
+    const receipt = await controller.action(window as never, {
+      revision: snapshot.revision, ref: root.ref, action: 'focus',
+    }, { timeoutMs: 500 })
+
+    expect(snapshotReads).toBeGreaterThanOrEqual(3)
+    expect(receipt.verificationLevel).toBe('native-verified')
+    expect(requests.some(request => request.operation === 'action' && request.action === 'focus')).toBeTrue()
+  })
+
   it('keeps a minimized window in the background and filters foreground-only native actions', async () => {
     const requests: Record<string, unknown>[] = []
     const window = {
