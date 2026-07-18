@@ -38,6 +38,7 @@
     "./pi": "./src/pi/index.ts",
     "./pi/skill-resolver": "./src/pi/pi-skill-resolver.ts",
     "./sessions": "./src/sessions/index.ts",
+    "./storage": "./src/storage/index.ts",
     "./sources": "./src/sources/index.ts",
     "./sources/types": "./src/sources/types.ts",
     "./skills": "./src/skills/index.ts",
@@ -86,6 +87,7 @@
     "date-fns": "^4.1.0",
     "i18next": "^26.0.3",
     "incr-regex-package": "^1.0.4",
+    "proper-lockfile": "4.1.2",
     "shell-quote": "^1.8.3",
     "@earendil-works/pi-agent-core": "workspace:*",
     "@earendil-works/pi-ai": "workspace:*",
@@ -96,6 +98,7 @@
     "zod": ">=4.0.0"
   },
   "devDependencies": {
+    "@types/proper-lockfile": "4.1.4",
     "@types/shell-quote": "^1.7.5",
     "@types/uuid": "^11.0.0"
   }

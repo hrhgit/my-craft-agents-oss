@@ -15,7 +15,7 @@
  * - SessionManager uses ~30 lines instead of ~300
  */
 
-import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveAutomationsConfigPath, generateShortId } from './resolve-config-path.ts';
 import { compactAutomationHistorySync } from './history-store.ts';
@@ -26,6 +26,8 @@ import { type AutomationsConfig, type AutomationEvent, type AutomationMatcher, t
 import { validateAutomationsConfig } from './validation.ts';
 import { matcherMatchesAgentEvent } from './utils.ts';
 import { SchedulerService, type SchedulerTickPayload } from '../scheduler/scheduler-service.ts';
+import { atomicWriteFileSync } from '../utils/files.ts';
+import { withFileLockSync } from '../storage/index.ts';
 
 const log = createLogger('automation-system');
 
@@ -174,13 +176,14 @@ export class AutomationSystem implements AutomationsConfigProvider {
    * Returns the raw parsed JSON alongside validation results (avoids re-reading for backfillIds).
    */
   private readAndValidateConfig(configPath: string): { raw: unknown; validation: import('./types.ts').AutomationsValidationResult } {
-    const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
-    if (cleanRetiredOrganizationAutomations(raw)) {
-      const temporaryPath = `${configPath}.tmp`;
-      writeFileSync(temporaryPath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
-      renameSync(temporaryPath, configPath);
-      log.debug('[AutomationSystem] Removed retired organization automations');
-    }
+    const raw = withFileLockSync(configPath, () => {
+      const latest = JSON.parse(readFileSync(configPath, 'utf-8'));
+      if (cleanRetiredOrganizationAutomations(latest)) {
+        atomicWriteFileSync(configPath, JSON.stringify(latest, null, 2) + '\n');
+        log.debug('[AutomationSystem] Removed retired organization automations');
+      }
+      return latest;
+    });
     const validation = validateAutomationsConfig(raw);
     return { raw, validation };
   }
@@ -255,22 +258,25 @@ export class AutomationSystem implements AutomationsConfigProvider {
    */
   private backfillIds(configPath: string, raw: unknown): void {
     try {
-      const obj = raw as Record<string, unknown>;
-      const eventMap = (obj.automations ?? obj.tasks ?? obj.hooks) as Record<string, unknown[]> | undefined;
-      if (!eventMap) return;
+      void raw;
+      withFileLockSync(configPath, () => {
+        const latest = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+        const eventMap = (latest.automations ?? latest.tasks ?? latest.hooks) as Record<string, unknown[]> | undefined;
+        if (!eventMap) return;
 
-      let changed = false;
-      for (const matchers of Object.values(eventMap)) {
-        if (!Array.isArray(matchers)) continue;
-        for (const m of matchers as Record<string, unknown>[]) {
-          if (!m.id) { m.id = generateShortId(); changed = true; }
+        let changed = false;
+        for (const matchers of Object.values(eventMap)) {
+          if (!Array.isArray(matchers)) continue;
+          for (const m of matchers as Record<string, unknown>[]) {
+            if (!m.id) { m.id = generateShortId(); changed = true; }
+          }
         }
-      }
 
-      if (changed) {
-        writeFileSync(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
-        log.debug('[AutomationSystem] Backfilled missing matcher IDs');
-      }
+        if (changed) {
+          atomicWriteFileSync(configPath, JSON.stringify(latest, null, 2) + '\n');
+          log.debug('[AutomationSystem] Backfilled missing matcher IDs');
+        }
+      });
     } catch {
       // Non-critical — IDs will be backfilled on next mutation via IPC
     }

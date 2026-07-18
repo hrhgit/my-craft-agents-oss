@@ -1,8 +1,9 @@
-import { existsSync, writeFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { ensureConfigDir } from './storage.ts';
 import { CONFIG_DIR } from './paths.ts';
-import { readJsonFileSync } from '../utils/files.ts';
+import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
+import { withFileLockSync } from '../storage/index.ts';
 import { i18n, SUPPORTED_LANGUAGE_CODES } from '../i18n/index.ts';
 import { LOCALE_REGISTRY, type LanguageCode } from '../i18n/registry.ts';
 
@@ -45,7 +46,7 @@ export interface UserPreferences {
 
 const PREFERENCES_FILE = join(CONFIG_DIR, 'preferences.json');
 
-export function loadPreferences(): UserPreferences {
+function loadPreferencesUnlocked(): UserPreferences {
   try {
     if (!existsSync(PREFERENCES_FILE)) {
       return {};
@@ -63,28 +64,39 @@ export function loadPreferences(): UserPreferences {
   }
 }
 
+export function loadPreferences(): UserPreferences {
+  return loadPreferencesUnlocked();
+}
+
+function savePreferencesUnlocked(prefs: UserPreferences): void {
+  prefs.updatedAt = Date.now();
+  atomicWriteFileSync(PREFERENCES_FILE, JSON.stringify(prefs, null, 2));
+}
+
 export function savePreferences(prefs: UserPreferences): void {
   ensureConfigDir();
-  prefs.updatedAt = Date.now();
-  writeFileSync(PREFERENCES_FILE, JSON.stringify(prefs, null, 2), 'utf-8');
+  withFileLockSync(PREFERENCES_FILE, () => savePreferencesUnlocked(prefs));
 }
 
 export function updatePreferences(updates: Partial<UserPreferences>): UserPreferences {
-  const current = loadPreferences();
-  const updated = {
-    ...current,
-    ...updates,
-    // Merge location if provided
-    location: updates.location
-      ? { ...current.location, ...updates.location }
-      : current.location,
-    // Merge diffViewer if provided
-    diffViewer: updates.diffViewer
-      ? { ...current.diffViewer, ...updates.diffViewer }
-      : current.diffViewer,
-  };
-  savePreferences(updated);
-  return updated;
+  ensureConfigDir();
+  return withFileLockSync(PREFERENCES_FILE, () => {
+    const current = loadPreferencesUnlocked();
+    const updated = {
+      ...current,
+      ...updates,
+      // Merge location if provided
+      location: updates.location
+        ? { ...current.location, ...updates.location }
+        : current.location,
+      // Merge diffViewer if provided
+      diffViewer: updates.diffViewer
+        ? { ...current.diffViewer, ...updates.diffViewer }
+        : current.diffViewer,
+    };
+    savePreferencesUnlocked(updated);
+    return updated;
+  });
 }
 
 export function getPreferencesPath(): string {
@@ -109,9 +121,12 @@ export function getPersistedUiLanguage(): LanguageCode | undefined {
  * the config watcher on startup syncs and duplicate IPC calls.
  */
 export function setPersistedUiLanguage(code: LanguageCode): void {
-  const current = loadPreferences();
-  if (current.uiLanguage === code) return;
-  savePreferences({ ...current, uiLanguage: code });
+  ensureConfigDir();
+  withFileLockSync(PREFERENCES_FILE, () => {
+    const current = loadPreferencesUnlocked();
+    if (current.uiLanguage === code) return;
+    savePreferencesUnlocked({ ...current, uiLanguage: code });
+  });
 }
 
 /**

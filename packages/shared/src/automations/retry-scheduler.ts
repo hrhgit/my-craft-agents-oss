@@ -12,9 +12,12 @@
  * entry is written. Queue entries survive app restarts.
  */
 
-import { readFile, writeFile, appendFile } from 'fs/promises';
+import { readFile, appendFile } from 'fs/promises';
 import { join } from 'path';
+import { randomUUID } from 'node:crypto';
 import { createLogger } from '../utils/debug.ts';
+import { atomicWriteFileSync } from '../utils/files.ts';
+import { withFileLock } from '../storage/index.ts';
 import { executeWebhookRequest, createWebhookHistoryEntry } from './webhook-utils.ts';
 import { AUTOMATIONS_RETRY_QUEUE_FILE } from './constants.ts';
 import { appendAutomationHistoryEntry } from './history-store.ts';
@@ -55,6 +58,9 @@ export interface RetryQueueEntry {
   createdAt: number;
   /** Last error message */
   lastError?: string;
+  /** Cross-process claim lease. Expired leases are reclaimable after crashes. */
+  leaseOwner?: string;
+  leaseExpiresAt?: number;
 }
 
 // ============================================================================
@@ -69,6 +75,7 @@ export class RetryScheduler {
   private readonly workspaceRootPath: string;
   private timer: ReturnType<typeof setInterval> | null = null;
   private processing = false;
+  private readonly workerId = `retry-${process.pid}-${randomUUID()}`;
 
   constructor(options: RetrySchedulerOptions) {
     this.workspaceRootPath = options.workspaceRootPath;
@@ -118,7 +125,7 @@ export class RetryScheduler {
     };
 
     const queuePath = join(this.workspaceRootPath, AUTOMATIONS_RETRY_QUEUE_FILE);
-    await appendFile(queuePath, JSON.stringify(entry) + '\n', 'utf-8');
+    await withFileLock(queuePath, () => appendFile(queuePath, JSON.stringify(entry) + '\n', 'utf-8'));
     log.debug(`[RetryScheduler] Enqueued ${entry.id} — next retry in ${DEFERRED_DELAYS_MS[0]! / 60_000}m`);
   }
 
@@ -132,38 +139,26 @@ export class RetryScheduler {
     try {
       const queuePath = join(this.workspaceRootPath, AUTOMATIONS_RETRY_QUEUE_FILE);
 
-      // Read queue
-      let raw: string;
-      try {
-        raw = await readFile(queuePath, 'utf-8');
-      } catch {
-        // No queue file — nothing to do
-        return;
-      }
-
-      const lines = raw.trim().split('\n').filter(Boolean);
-      if (lines.length === 0) return;
-
-      const entries: RetryQueueEntry[] = [];
-      for (const line of lines) {
-        try {
-          entries.push(JSON.parse(line) as RetryQueueEntry);
-        } catch {
-          // Skip malformed lines
-        }
-      }
-
-      if (entries.length === 0) return;
-
       const now = Date.now();
-      const remaining: RetryQueueEntry[] = [];
+      const claimed = await withFileLock(queuePath, async () => {
+        const entries = await this.readQueue(queuePath);
+        const selected: RetryQueueEntry[] = [];
+        const leased = entries.map(entry => {
+          const leaseExpired = !entry.leaseExpiresAt || entry.leaseExpiresAt <= now;
+          if (entry.nextRetryAt > now || !leaseExpired) return entry;
+          const claimedEntry = {
+            ...entry,
+            leaseOwner: this.workerId,
+            leaseExpiresAt: now + 120_000,
+          };
+          selected.push(claimedEntry);
+          return claimedEntry;
+        });
+        if (selected.length > 0) this.writeQueue(queuePath, leased);
+        return selected;
+      });
 
-      for (const entry of entries) {
-        if (entry.nextRetryAt > now) {
-          // Not due yet — keep in queue
-          remaining.push(entry);
-          continue;
-        }
+      for (const entry of claimed) {
 
         // Attempt retry
         log.debug(`[RetryScheduler] Retrying ${entry.id} (deferred attempt ${entry.deferredAttempt + 1}/${MAX_DEFERRED_ATTEMPTS})`);
@@ -197,7 +192,7 @@ export class RetryScheduler {
           } catch (e) {
             log.debug(`[RetryScheduler] Failed to write history: ${e}`);
           }
-          // Don't add to remaining — drop from queue
+          await this.settleClaim(queuePath, entry, null);
         } else if (entry.deferredAttempt + 1 >= MAX_DEFERRED_ATTEMPTS) {
           // Final attempt failed — write permanent failure to history
           log.debug(`[RetryScheduler] ${entry.id} permanently failed after ${MAX_DEFERRED_ATTEMPTS} deferred attempts`);
@@ -216,32 +211,65 @@ export class RetryScheduler {
           } catch (e) {
             log.debug(`[RetryScheduler] Failed to write history: ${e}`);
           }
-          // Don't add to remaining — drop from queue
+          await this.settleClaim(queuePath, entry, null);
         } else {
           // Still retryable — schedule next deferred attempt
           const nextDelay = DEFERRED_DELAYS_MS[entry.deferredAttempt + 1]!;
-          remaining.push({
+          const retry: RetryQueueEntry = {
             ...entry,
             deferredAttempt: entry.deferredAttempt + 1,
             nextRetryAt: Date.now() + nextDelay,
             lastError: result.error,
-          });
+          };
+          delete retry.leaseOwner;
+          delete retry.leaseExpiresAt;
+          await this.settleClaim(queuePath, entry, retry);
           log.debug(`[RetryScheduler] ${entry.id} failed — next retry in ${nextDelay / 60_000}m`);
         }
-      }
-
-      // Rewrite queue file with remaining entries
-      if (remaining.length === 0) {
-        await writeFile(queuePath, '', 'utf-8');
-      } else {
-        const content = remaining.map(e => JSON.stringify(e)).join('\n') + '\n';
-        await writeFile(queuePath, content, 'utf-8');
       }
     } catch (err) {
       log.debug(`[RetryScheduler] Tick error: ${err}`);
     } finally {
       this.processing = false;
     }
+  }
+
+  private async readQueue(queuePath: string): Promise<RetryQueueEntry[]> {
+    let raw: string;
+    try {
+      raw = await readFile(queuePath, 'utf-8');
+    } catch {
+      return [];
+    }
+    const entries: RetryQueueEntry[] = [];
+    for (const line of raw.trim().split('\n').filter(Boolean)) {
+      try { entries.push(JSON.parse(line) as RetryQueueEntry); } catch { /* drop malformed lines */ }
+    }
+    return entries;
+  }
+
+  private writeQueue(queuePath: string, entries: RetryQueueEntry[]): void {
+    const content = entries.length > 0
+      ? entries.map(entry => JSON.stringify(entry)).join('\n') + '\n'
+      : '';
+    atomicWriteFileSync(queuePath, content);
+  }
+
+  private async settleClaim(
+    queuePath: string,
+    claimed: RetryQueueEntry,
+    replacement: RetryQueueEntry | null,
+  ): Promise<void> {
+    await withFileLock(queuePath, async () => {
+      const entries = await this.readQueue(queuePath);
+      const index = entries.findIndex(entry =>
+        entry.id === claimed.id && entry.leaseOwner === this.workerId
+      );
+      if (index < 0) return;
+      if (replacement) entries[index] = replacement;
+      else entries.splice(index, 1);
+      this.writeQueue(queuePath, entries);
+    });
   }
 
 }

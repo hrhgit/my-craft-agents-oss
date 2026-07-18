@@ -31,6 +31,7 @@ import { validateAutomationsConfig } from '../automations/validation.ts'
 import { generateShortId } from '../automations/resolve-config-path.ts'
 import { VALID_EVENTS } from '../automations/schemas.ts'
 import { debug } from '../utils/debug.ts'
+import { withFileLockSync } from '../storage/index.ts'
 
 import type { FolderSourceConfig } from '../sources/types.ts'
 import type { AutomationMatcher } from '../automations/types.ts'
@@ -969,8 +970,10 @@ function importAutomations(
       automations: existingConfig.automations,
     }
     const tmpPath = configPath + `.tmp-${randomUUID().slice(0, 8)}`
-    writeFileSync(tmpPath, JSON.stringify(configObj, null, 2) + '\n', 'utf-8')
-    renameSync(tmpPath, configPath)
+    withFileLockSync(configPath, () => {
+      writeFileSync(tmpPath, JSON.stringify(configObj, null, 2) + '\n', 'utf-8')
+      renameSync(tmpPath, configPath)
+    })
   } catch (err) {
     const errorMsg = `Failed to write automations.json: ${err}`
     result.imported = []

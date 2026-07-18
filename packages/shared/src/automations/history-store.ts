@@ -16,6 +16,7 @@ import { appendFile, readFile, writeFile } from 'fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'path';
 import { createLogger } from '../utils/debug.ts';
+import { withFileLock, withFileLockSync } from '../storage/index.ts';
 import {
   AUTOMATIONS_HISTORY_FILE,
   AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER,
@@ -61,15 +62,17 @@ export async function appendAutomationHistoryEntry(
   const historyPath = join(workspaceRootPath, AUTOMATIONS_HISTORY_FILE);
 
   await withMutex(workspaceRootPath, async () => {
-    await appendFile(historyPath, JSON.stringify(entry) + '\n', 'utf-8');
+    await withFileLock(historyPath, async () => {
+      await appendFile(historyPath, JSON.stringify(entry) + '\n', 'utf-8');
 
-    const count = (appendCounters.get(workspaceRootPath) ?? 0) + 1;
-    appendCounters.set(workspaceRootPath, count);
+      const count = (appendCounters.get(workspaceRootPath) ?? 0) + 1;
+      appendCounters.set(workspaceRootPath, count);
 
-    if (count >= AUTOMATION_HISTORY_MAX_ENTRIES) {
-      appendCounters.set(workspaceRootPath, 0);
-      await runCompaction(historyPath);
-    }
+      if (count >= AUTOMATION_HISTORY_MAX_ENTRIES) {
+        appendCounters.set(workspaceRootPath, 0);
+        await runCompaction(historyPath);
+      }
+    });
   });
 }
 
@@ -87,7 +90,10 @@ export async function compactAutomationHistory(
 ): Promise<void> {
   const historyPath = join(workspaceRootPath, AUTOMATIONS_HISTORY_FILE);
 
-  await withMutex(workspaceRootPath, () => runCompaction(historyPath, maxPerMatcher, maxTotal));
+  await withMutex(workspaceRootPath, () => withFileLock(
+    historyPath,
+    () => runCompaction(historyPath, maxPerMatcher, maxTotal),
+  ));
 }
 
 /**
@@ -101,16 +107,18 @@ export function compactAutomationHistorySync(
   maxTotal: number = AUTOMATION_HISTORY_MAX_ENTRIES,
 ): void {
   const historyPath = join(workspaceRootPath, AUTOMATIONS_HISTORY_FILE);
-  if (!existsSync(historyPath)) return;
+  withFileLockSync(historyPath, () => {
+    if (!existsSync(historyPath)) return;
 
-  let content: string;
-  try { content = readFileSync(historyPath, 'utf-8'); } catch { return; }
+    let content: string;
+    try { content = readFileSync(historyPath, 'utf-8'); } catch { return; }
 
-  const result = compactEntries(content, maxPerMatcher, maxTotal);
-  if (!result) return;
+    const result = compactEntries(content, maxPerMatcher, maxTotal);
+    if (!result) return;
 
-  writeFileSync(historyPath, result, 'utf-8');
-  log.debug(`[HistoryStore] Startup compaction complete`);
+    writeFileSync(historyPath, result, 'utf-8');
+    log.debug(`[HistoryStore] Startup compaction complete`);
+  });
 }
 
 /**

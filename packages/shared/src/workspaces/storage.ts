@@ -16,10 +16,11 @@ import {
   statSync,
 } from 'fs';
 import { join } from 'path';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
 import { CONFIG_DIR, PI_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
+import { MultiWriterStore, type JsonValue } from '../storage/index.ts';
 import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
 import type {
   WorkspaceConfig,
@@ -31,6 +32,56 @@ import type {
 const DEFAULT_WORKSPACES_DIR = join(CONFIG_DIR, 'workspaces');
 const LEGACY_WORKSPACE_AI_DEFAULT_KEYS = ['provider', 'model', 'thinkingLevel'] as const;
 const RETIRED_WORKSPACE_ORGANIZATION_PATHS = ['labels', 'statuses', 'views.json'] as const;
+const WORKSPACE_STORE_FILE = join(CONFIG_DIR, 'state.sqlite');
+const WORKSPACE_SNAPSHOT = Symbol('craftWorkspaceSnapshot');
+const WORKSPACE_WRITER_VERSION = 1;
+let workspaceStore: MultiWriterStore | null = null;
+
+interface WorkspaceSnapshot {
+  version: number;
+  value: WorkspaceConfig;
+}
+
+type WorkspaceWithSnapshot = WorkspaceConfig & { [WORKSPACE_SNAPSHOT]?: WorkspaceSnapshot };
+
+function getWorkspaceStore(): MultiWriterStore {
+  if (!workspaceStore) {
+    workspaceStore = MultiWriterStore.openSync({
+      databasePath: WORKSPACE_STORE_FILE,
+      writerId: `workspace-${process.pid}-${randomUUID()}`,
+      writerVersion: WORKSPACE_WRITER_VERSION,
+    });
+  }
+  return workspaceStore;
+}
+
+export function closeWorkspaceStorage(): void {
+  workspaceStore?.close();
+  workspaceStore = null;
+}
+
+function workspaceRecordKey(rootPath: string): string {
+  return rootPath.replace(/\\/g, '/');
+}
+
+function workspaceHash(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function materializeWorkspaceConfig(rootPath: string, config: WorkspaceConfig): void {
+  atomicWriteFileSync(join(rootPath, 'config.json'), JSON.stringify(config, null, 2));
+  atomicWriteFileSync(join(rootPath, '.craft-config.sync'), JSON.stringify(config));
+}
+
+function attachWorkspaceSnapshot(config: WorkspaceConfig, snapshot: WorkspaceSnapshot): WorkspaceConfig {
+  Object.defineProperty(config, WORKSPACE_SNAPSHOT, {
+    configurable: true,
+    enumerable: false,
+    value: snapshot,
+    writable: true,
+  });
+  return config;
+}
 
 function removeRetiredWorkspaceOrganization(rootPath: string): void {
   for (const relativePath of RETIRED_WORKSPACE_ORGANIZATION_PATHS) {
@@ -160,12 +211,62 @@ export function countSessionsByCwd(rootPath: string): number {
  */
 export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
   const configPath = join(rootPath, 'config.json');
-  if (!existsSync(configPath)) return null;
-
   removeRetiredWorkspaceOrganization(rootPath);
 
   try {
-    const config = readJsonFileSync<WorkspaceConfig>(configPath);
+    const store = getWorkspaceStore();
+    const key = workspaceRecordKey(rootPath);
+    const stored = store.getRecord(key, 'root');
+    let version: number;
+    let config: WorkspaceConfig;
+    if (stored) {
+      config = JSON.parse(JSON.stringify(stored.value)) as WorkspaceConfig;
+      version = stored.version;
+
+      // A pre-protocol backend may have edited the compatibility JSON. Import
+      // it only against the version observed here; a concurrent new writer
+      // then produces a conflict instead of silently overwriting its update.
+      if (existsSync(configPath)) {
+        try {
+          const fileConfig = readJsonFileSync<WorkspaceConfig>(configPath);
+          const syncPath = join(rootPath, '.craft-config.sync');
+          const baseline = existsSync(syncPath)
+            ? JSON.parse(readFileSync(syncPath, 'utf8')) as WorkspaceConfig
+            : null;
+          if (baseline && workspaceHash(fileConfig) !== workspaceHash(baseline)
+            && workspaceHash(fileConfig) !== workspaceHash(config)) {
+            const imported = store.mutateRecord({
+              namespace: key,
+              key: 'root',
+              value: fileConfig as unknown as JsonValue,
+              expectedVersion: version,
+              operationId: `legacy-workspace-${workspaceHash(fileConfig)}`,
+            });
+            if (imported.status === 'applied') {
+              config = imported.value as unknown as WorkspaceConfig;
+              version = imported.version;
+            }
+          }
+        } catch {
+          // Keep the SQLite authority when the compatibility file is invalid.
+        }
+      }
+      materializeWorkspaceConfig(rootPath, config);
+    } else {
+      if (!existsSync(configPath)) return null;
+      config = readJsonFileSync<WorkspaceConfig>(configPath);
+      const imported = store.mutateRecord({
+        namespace: key,
+        key: 'root',
+        value: config as unknown as JsonValue,
+        expectedVersion: null,
+        operationId: `import-workspace-${workspaceHash(config)}`,
+      });
+      if (imported.status !== 'applied') return null;
+      config = imported.value as unknown as WorkspaceConfig;
+      version = imported.version;
+      materializeWorkspaceConfig(rootPath, config);
+    }
 
     // Compatibility: accept canonical or legacy permission mode names on read
     if (config.defaults?.permissionMode && typeof config.defaults.permissionMode === 'string') {
@@ -187,13 +288,24 @@ export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
     if (removeLegacyWorkspaceAiDefaults(config)) {
       config.updatedAt = Date.now();
       try {
-        atomicWriteFileSync(configPath, JSON.stringify(config, null, 2));
+        const normalized = store.mutateRecord({
+          namespace: key,
+          key: 'root',
+          value: config as unknown as JsonValue,
+          expectedVersion: version,
+          operationId: `normalize-workspace-${workspaceHash(config)}`,
+        });
+        if (normalized.status === 'applied') {
+          config = normalized.value as unknown as WorkspaceConfig;
+          version = normalized.version;
+          materializeWorkspaceConfig(rootPath, config);
+        }
       } catch {
         // Keep the cleaned in-memory config when a read-only workspace cannot be migrated.
       }
     }
 
-    return config;
+    return attachWorkspaceSnapshot(config, { version, value: config });
   } catch {
     return null;
   }
@@ -215,8 +327,23 @@ export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): 
   };
   removeLegacyWorkspaceAiDefaults(storageConfig);
 
-  // Use atomic write to prevent corruption on crash/interrupt
-  atomicWriteFileSync(join(rootPath, 'config.json'), JSON.stringify(storageConfig, null, 2));
+  const store = getWorkspaceStore();
+  const key = workspaceRecordKey(rootPath);
+  const snapshot = (config as WorkspaceWithSnapshot)[WORKSPACE_SNAPSHOT];
+  const current = store.getRecord(key, 'root');
+  const result = store.mutateRecord({
+    namespace: key,
+    key: 'root',
+    value: storageConfig as unknown as JsonValue,
+    expectedVersion: snapshot?.version ?? current?.version ?? null,
+    operationId: `workspace-config-${randomUUID()}`,
+  });
+  if (result.status !== 'applied') {
+    throw new Error(`Workspace configuration write conflicted for ${rootPath}`);
+  }
+  const persisted = result.value as unknown as WorkspaceConfig;
+  materializeWorkspaceConfig(rootPath, persisted);
+  attachWorkspaceSnapshot(config, { version: result.version, value: persisted });
 }
 
 // ============================================================

@@ -345,9 +345,11 @@
         "glob": "^13.0.0",
         "i18next": "^26.0.3",
         "incr-regex-package": "^1.0.4",
+        "proper-lockfile": "4.1.2",
         "shell-quote": "^1.8.3",
       },
       "devDependencies": {
+        "@types/proper-lockfile": "4.1.4",
         "@types/shell-quote": "^1.7.5",
         "@types/uuid": "^11.0.0",
       },

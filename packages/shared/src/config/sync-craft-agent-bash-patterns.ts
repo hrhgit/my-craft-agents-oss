@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { getCraftAgentReadOnlyBashPatterns } from './cli-domains.ts'
+import { withFileLockSync } from '../storage/index.ts'
 
 interface AllowedBashEntry {
   pattern: string
@@ -47,7 +48,7 @@ function main() {
   const config = JSON.parse(readFileSync(targetPath, 'utf-8')) as PermissionsConfig
   const nextConfig = syncCraftAgentPatterns(config)
 
-  writeFileSync(targetPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf-8')
+  withFileLockSync(targetPath, () => writeFileSync(targetPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf-8'))
   process.stdout.write(`Synced craft-agent bash patterns in ${targetPath}\n`)
 }
 

@@ -9,6 +9,7 @@ import { appendFile } from 'fs/promises';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import type { ActionExecutionResult } from './types.ts';
+import { withFileLock } from '../storage/index.ts';
 
 // ============================================================================
 // Types
@@ -121,7 +122,7 @@ export class AutomationEventLogger {
     // Retry with exponential backoff
     for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
       try {
-        await appendFile(this.logPath, lines, 'utf-8');
+        await withFileLock(this.logPath, () => appendFile(this.logPath, lines, 'utf-8'));
         this.flushInProgress = false;
         return; // Success
       } catch (error) {

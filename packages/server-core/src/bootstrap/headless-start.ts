@@ -1,12 +1,13 @@
-import { timingSafeEqual } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs'
+import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { uptime as osUptime } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { OAuthFlowStore } from '@craft-agent/shared/auth'
 import { ensureConfigDir, getWorkspaceByNameOrId, loadStoredConfig, saveConfig } from '@craft-agent/shared/config'
 import { CONFIG_DIR } from '@craft-agent/shared/config/paths'
 import { setBundledAssetsRoot } from '@craft-agent/shared/utils'
+import { withFileLockSync } from '@craft-agent/shared/storage'
 import { WsRpcServer, type WsRpcTlsOptions } from '../transport/server'
 import type { EventSink, RpcServer, WorkspaceAuthorizationRequest } from '../transport/types'
 import { createHeadlessPlatform } from '../runtime/platform-headless'
@@ -133,12 +134,15 @@ const DEFAULT_LOCK_NAME = '.server.lock'
 interface LockPayload {
   pid: number
   startedAt: number
+  protocolVersion?: number
   /** OS process creation time, used to detect same-boot PID reuse on Windows. */
   processStartedAt?: number
 }
 
 const WINDOWS_EPOCH_TICKS = 116444736000000000
 const PROCESS_START_TIME_TOLERANCE_MS = 2_000
+const SERVER_REGISTRY_PROTOCOL = 2
+const activeServerRegistrations = new Map<string, string>()
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -190,7 +194,13 @@ function parseLockContent(raw: string): LockPayload | null {
     const processStartedAt = typeof parsed.processStartedAt === 'number' && Number.isFinite(parsed.processStartedAt)
       ? parsed.processStartedAt
       : undefined
-    if (!isNaN(pid)) return { pid, startedAt, ...(processStartedAt !== undefined ? { processStartedAt } : {}) }
+    const protocolVersion = typeof parsed.protocolVersion === 'number' ? parsed.protocolVersion : undefined
+    if (!isNaN(pid)) return {
+      pid,
+      startedAt,
+      ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+      ...(processStartedAt !== undefined ? { processStartedAt } : {}),
+    }
   } catch { /* invalid JSON */ }
   return null
 }
@@ -230,54 +240,69 @@ function resolveServerLockFile(lockName?: string): string {
   return isAbsolute(name) ? name : join(CONFIG_DIR, name)
 }
 
-function acquireServerLock(logger: PlatformServices['logger'], lockFile: string): void {
-  if (existsSync(lockFile)) {
-    try {
-      const content = readFileSync(lockFile, 'utf-8')
-      const lock = parseLockContent(content)
+function registrationDirectory(lockFile: string): string {
+  return `${lockFile}.d`
+}
 
-      if (lock) {
-        // In Docker, PID 1 is reused across container restarts.
-        // If the lock holds our own PID, it's stale from a previous run.
-        if (lock.pid === process.pid) {
-          logger.warn(`[bootstrap] Lock file holds current PID ${lock.pid} (stale from previous container lifecycle), overwriting`)
-        } else if (isProcessAlive(lock.pid)) {
-          const observedProcessStartedAt = getProcessStartTime(lock.pid)
-          if (isProcessIdentityMismatch(lock, observedProcessStartedAt)) {
-            logger.warn(`[bootstrap] Lock PID ${lock.pid} belongs to a different process, overwriting stale lock`)
-          } else {
-            // PID is alive — but is it actually from a previous boot?
-            // If the lock was written before the current boot, the OS has
-            // recycled the PID and the process is unrelated.
-            if (isLockFromPreviousBoot(lock.startedAt)) {
-              logger.warn(`[bootstrap] Lock PID ${lock.pid} is alive but lock predates current boot (stale due to PID reuse), overwriting`)
-            } else {
-              throw new Error(
-                `Another server instance is already running (PID ${lock.pid}). ` +
-                `If this is stale, delete ${lockFile} and retry. ` +
-                `To run a parallel instance (e.g. for dev), set CRAFT_CONFIG_DIR to a different path.`
-              )
-            }
-          }
-        } else {
-          logger.warn(`[bootstrap] Stale lock file found (PID ${lock.pid}), overwriting`)
-        }
-      } else {
-        logger.warn('[bootstrap] Could not parse lock file, overwriting')
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('Another server instance')) throw err
-      logger.warn('[bootstrap] Could not read lock file, overwriting')
+function registrationFiles(lockFile: string): string[] {
+  const directory = registrationDirectory(lockFile)
+  if (!existsSync(directory)) return []
+  return readdirSync(directory)
+    .filter(name => name.endsWith('.json'))
+    .map(name => join(directory, name))
+}
+
+function readRegistration(filePath: string): LockPayload | null {
+  try { return parseLockContent(readFileSync(filePath, 'utf8')) } catch { return null }
+}
+
+function registrationIsLive(payload: LockPayload | null): boolean {
+  if (!payload || !isProcessAlive(payload.pid)) return false
+  return !isProcessIdentityMismatch(payload, getProcessStartTime(payload.pid))
+    && !isLockFromPreviousBoot(payload.startedAt)
+}
+
+function writeCoordinator(lockFile: string, payload: LockPayload): void {
+  writeFileSync(lockFile, JSON.stringify({ ...payload, protocolVersion: SERVER_REGISTRY_PROTOCOL }), 'utf8')
+}
+
+export function acquireServerLock(logger: PlatformServices['logger'], lockFile: string): void {
+  void logger
+  withFileLockSync(`${lockFile}.registry`, () => {
+    const existing = existsSync(lockFile) ? parseLockContent(readFileSync(lockFile, 'utf8')) : null
+    // A pre-protocol backend cannot participate in multi-writer persistence.
+    // Keep the compatibility sentinel so it is fenced until upgraded.
+    if (existing && existing.protocolVersion !== SERVER_REGISTRY_PROTOCOL && registrationIsLive(existing)) {
+      throw new Error(
+        `Another legacy server instance is already running (PID ${existing.pid}). Upgrade that backend before sharing this config directory.`
+      )
     }
-  }
+    if (existing && existing.protocolVersion !== SERVER_REGISTRY_PROTOCOL) {
+      try { unlinkSync(lockFile) } catch { /* stale legacy sentinel */ }
+    }
 
-  const processStartedAt = getProcessStartTime(process.pid)
-  const payload: LockPayload = {
-    pid: process.pid,
-    startedAt: Date.now(),
-    ...(processStartedAt != null ? { processStartedAt } : {}),
-  }
-  writeFileSync(lockFile, JSON.stringify(payload), 'utf-8')
+    const directory = registrationDirectory(lockFile)
+    mkdirSync(directory, { recursive: true })
+    for (const filePath of registrationFiles(lockFile)) {
+      if (!registrationIsLive(readRegistration(filePath))) {
+        try { unlinkSync(filePath) } catch { /* concurrent cleanup */ }
+      }
+    }
+
+    const processStartedAt = getProcessStartTime(process.pid)
+    const payload: LockPayload = {
+      pid: process.pid,
+      startedAt: Date.now(),
+      protocolVersion: SERVER_REGISTRY_PROTOCOL,
+      ...(processStartedAt != null ? { processStartedAt } : {}),
+    }
+    const registrationPath = join(directory, `${process.pid}-${payload.startedAt}-${randomUUID()}.json`)
+    writeFileSync(registrationPath, JSON.stringify(payload), 'utf8')
+    activeServerRegistrations.set(lockFile, registrationPath)
+    const first = registrationFiles(lockFile)[0]
+    const firstPayload = first ? readRegistration(first) : null
+    writeCoordinator(lockFile, firstPayload ?? payload)
+  })
 
   // Safety net: release the lock on unexpected exits (SIGKILL, uncaught exceptions, etc.).
   // process.on('exit') only allows synchronous code — releaseServerLock is fully sync.
@@ -291,13 +316,20 @@ function acquireServerLock(logger: PlatformServices['logger'], lockFile: string)
  */
 export function releaseServerLock(lockFile = resolveServerLockFile()): void {
   try {
-    if (existsSync(lockFile)) {
-      const lock = parseLockContent(readFileSync(lockFile, 'utf-8'))
-      // Only delete if it's our lock
-      if (lock && lock.pid === process.pid) {
-        unlinkSync(lockFile)
+    const registrationPath = activeServerRegistrations.get(lockFile)
+    if (!registrationPath) return
+    withFileLockSync(`${lockFile}.registry`, () => {
+      try { unlinkSync(registrationPath) } catch { /* already cleaned */ }
+      activeServerRegistrations.delete(lockFile)
+      const remaining = registrationFiles(lockFile)
+        .map(filePath => ({ filePath, payload: readRegistration(filePath) }))
+        .filter(entry => registrationIsLive(entry.payload))
+      if (remaining.length === 0) {
+        try { unlinkSync(lockFile) } catch { /* already removed */ }
+      } else {
+        writeCoordinator(lockFile, remaining[0]!.payload!)
       }
-    }
+    })
   } catch {
     // Best-effort cleanup
   }

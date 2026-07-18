@@ -1,8 +1,10 @@
-import { readFile, writeFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { appendAutomationHistoryEntry } from '@craft-agent/shared/automations/history-store'
 import { AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER } from '@craft-agent/shared/automations/constants'
+import { withFileLock } from '@craft-agent/shared/storage'
+import { atomicWriteFileSync } from '@craft-agent/shared/utils'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
@@ -66,19 +68,21 @@ export async function setWorkspaceAutomationEnabledById(workspaceRoot: string, i
   await withConfigMutex(workspaceRoot, async () => {
     const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
     const configPath = resolveAutomationsConfigPath(workspaceRoot)
-    const config = JSON.parse(await readFile(configPath, 'utf-8')) as AutomationsConfigJson
-    let found = false
-    for (const matchers of Object.values(config.automations ?? {})) {
-      if (!Array.isArray(matchers)) continue
-      const matcher = matchers.find(candidate => candidate.id === id)
-      if (!matcher) continue
-      if (found) throw new Error('Automation ID is not unique')
-      found = true
-      if (enabled) delete matcher.enabled
-      else matcher.enabled = false
-    }
-    if (!found) throw new Error('Automation not found')
-    await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8')
+    await withFileLock(configPath, async () => {
+      const config = JSON.parse(await readFile(configPath, 'utf-8')) as AutomationsConfigJson
+      let found = false
+      for (const matchers of Object.values(config.automations ?? {})) {
+        if (!Array.isArray(matchers)) continue
+        const matcher = matchers.find(candidate => candidate.id === id)
+        if (!matcher) continue
+        if (found) throw new Error('Automation ID is not unique')
+        found = true
+        if (enabled) delete matcher.enabled
+        else matcher.enabled = false
+      }
+      if (!found) throw new Error('Automation not found')
+      atomicWriteFileSync(configPath, JSON.stringify(config, null, 2) + '\n')
+    })
   })
 }
 async function withAutomationMatcher(workspaceId: string, eventName: string, matcherIndex: number, mutate: (matchers: Record<string, unknown>[], index: number, config: AutomationsConfigJson, genId: () => string) => void) {
@@ -88,26 +92,28 @@ async function withAutomationMatcher(workspaceId: string, eventName: string, mat
     const { resolveAutomationsConfigPath, generateShortId } = await import('@craft-agent/shared/automations/resolve-config-path')
     const configPath = resolveAutomationsConfigPath(workspace.rootPath)
 
-    const raw = await readFile(configPath, 'utf-8')
-    const config = JSON.parse(raw)
+    await withFileLock(configPath, async () => {
+      const raw = await readFile(configPath, 'utf-8')
+      const config = JSON.parse(raw)
 
-    const eventMap = config.automations ?? {}
-    const matchers = eventMap[eventName]
-    if (!Array.isArray(matchers) || matcherIndex < 0 || matcherIndex >= matchers.length) {
-      throw new Error(`Invalid automation reference: ${eventName}[${matcherIndex}]`)
-    }
-
-    mutate(matchers, matcherIndex, config, generateShortId)
-
-    // Backfill missing IDs on all matchers before writing
-    for (const eventMatchers of Object.values(eventMap)) {
-      if (!Array.isArray(eventMatchers)) continue
-      for (const m of eventMatchers as Record<string, unknown>[]) {
-        if (!m.id) m.id = generateShortId()
+      const eventMap = config.automations ?? {}
+      const matchers = eventMap[eventName]
+      if (!Array.isArray(matchers) || matcherIndex < 0 || matcherIndex >= matchers.length) {
+        throw new Error(`Invalid automation reference: ${eventName}[${matcherIndex}]`)
       }
-    }
 
-    await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8')
+      mutate(matchers, matcherIndex, config, generateShortId)
+
+      // Backfill missing IDs on all matchers before writing
+      for (const eventMatchers of Object.values(eventMap)) {
+        if (!Array.isArray(eventMatchers)) continue
+        for (const m of eventMatchers as Record<string, unknown>[]) {
+          if (!m.id) m.id = generateShortId()
+        }
+      }
+
+      atomicWriteFileSync(configPath, JSON.stringify(config, null, 2) + '\n')
+    })
   })
 }
 

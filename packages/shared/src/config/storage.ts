@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync, readdirSync } from 'fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { join, dirname, basename } from 'path';
 import { clearAllCraftCredentials, getCredentialManager } from '../credentials/index.ts';
 import {
@@ -12,6 +13,7 @@ import {
   saveWorkspaceConfig,
   createWorkspaceAtPath,
   isValidWorkspace,
+  closeWorkspaceStorage,
 } from '../workspaces/storage.ts';
 import { findIconFile } from '../utils/icon.ts';
 import { extractWorkspaceSlugFromPath } from '../utils/workspace-slug.ts';
@@ -35,6 +37,12 @@ import {
   type StoredPiExtensionSettings,
 } from './pi-extension-settings.ts';
 import { isValidThemeFile } from './validators.ts';
+import {
+  MultiWriterStore,
+  withFileLockSync,
+  type JsonValue,
+  type RecordPatchOperation,
+} from '../storage/index.ts';
 
 // Re-export CONFIG_DIR for convenience (centralized in paths.ts)
 export { CONFIG_DIR } from './paths.ts';
@@ -215,6 +223,151 @@ export interface StoredConfig {
 
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 const CONFIG_DEFAULTS_FILE = join(CONFIG_DIR, 'config-defaults.json');
+const CONFIG_DATABASE_FILE = join(CONFIG_DIR, 'state.sqlite');
+const CONFIG_SYNC_BASELINE_FILE = join(CONFIG_DIR, '.config.json.sync');
+const CONFIG_RECORD_NAMESPACE = 'config';
+const CONFIG_RECORD_KEY = 'root';
+const CONFIG_SNAPSHOT = Symbol('craftConfigSnapshot');
+const CONFIG_WRITER_VERSION = 1;
+
+interface ConfigSnapshot {
+  version: number;
+  value: StoredConfig;
+}
+
+type ConfigWithSnapshot = StoredConfig & { [CONFIG_SNAPSHOT]?: ConfigSnapshot };
+
+let configStore: MultiWriterStore | null = null;
+
+function getConfigStore(): MultiWriterStore {
+  if (!configStore) {
+    const writerId = `craft-${process.pid}-${process.env.CRAFT_WRITER_ID ?? randomUUID()}`;
+    configStore = MultiWriterStore.openSync({
+      databasePath: CONFIG_DATABASE_FILE,
+      writerId,
+      writerVersion: CONFIG_WRITER_VERSION,
+    });
+  }
+  return configStore;
+}
+
+function canonicalConfigJson(value: unknown): string {
+  if (value === undefined) return 'undefined';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalConfigJson).join(',')}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalConfigJson(entry)}`)
+    .join(',')}}`;
+}
+
+function configHash(value: unknown): string {
+  return createHash('sha256').update(canonicalConfigJson(value)).digest('hex');
+}
+
+function pointerPart(value: string): string {
+  return value.replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
+function configDiff(base: unknown, next: unknown, path = ''): RecordPatchOperation[] {
+  if (canonicalConfigJson(base) === canonicalConfigJson(next)) return [];
+  const baseObject = base !== null && typeof base === 'object' && !Array.isArray(base)
+    ? base as Record<string, unknown>
+    : null;
+  const nextObject = next !== null && typeof next === 'object' && !Array.isArray(next)
+    ? next as Record<string, unknown>
+    : null;
+  if (baseObject && nextObject) {
+    const keys = new Set([...Object.keys(baseObject), ...Object.keys(nextObject)]);
+    return [...keys].sort().flatMap(key => {
+      const childPath = `${path}/${pointerPart(key)}`;
+      const inBase = Object.prototype.hasOwnProperty.call(baseObject, key);
+      const inNext = Object.prototype.hasOwnProperty.call(nextObject, key);
+      if (!inNext) {
+        return [{
+          path: childPath,
+          expectedExists: true,
+          expectedValue: baseObject[key] as JsonValue,
+          remove: true,
+        }];
+      }
+      if (!inBase) {
+        return [{
+          path: childPath,
+          expectedExists: false,
+          value: nextObject[key] as JsonValue,
+        }];
+      }
+      return configDiff(baseObject[key], nextObject[key], childPath);
+    });
+  }
+  return [{
+    path,
+    expectedExists: base !== undefined,
+    ...(base !== undefined ? { expectedValue: base as JsonValue } : {}),
+    value: next as JsonValue,
+  }];
+}
+
+function readSyncBaseline(): StoredConfig | null {
+  try {
+    if (!existsSync(CONFIG_SYNC_BASELINE_FILE)) return null;
+    return JSON.parse(readFileSync(CONFIG_SYNC_BASELINE_FILE, 'utf8')) as StoredConfig;
+  } catch (error) {
+    debug('[config] Ignoring unreadable config sync baseline:', error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+function materializeConfig(value: StoredConfig): void {
+  atomicWriteFileSync(CONFIG_FILE, JSON.stringify(value, null, 2));
+  atomicWriteFileSync(CONFIG_SYNC_BASELINE_FILE, JSON.stringify(value));
+}
+
+function attachConfigSnapshot(config: StoredConfig, snapshot: ConfigSnapshot): StoredConfig {
+  Object.defineProperty(config, CONFIG_SNAPSHOT, {
+    configurable: true,
+    enumerable: false,
+    value: snapshot,
+    writable: true,
+  });
+  return config;
+}
+
+function reconcileLegacyConfigFile(record: ConfigSnapshot): ConfigSnapshot {
+  if (!existsSync(CONFIG_FILE)) {
+    materializeConfig(record.value);
+    return record;
+  }
+  let fileValue: StoredConfig;
+  try {
+    fileValue = JSON.parse(readFileSync(CONFIG_FILE, 'utf8')) as StoredConfig;
+  } catch {
+    materializeConfig(record.value);
+    return record;
+  }
+  const baseline = readSyncBaseline();
+  if (baseline && configHash(fileValue) !== configHash(baseline)) {
+    const operations = configDiff(baseline, fileValue);
+    if (operations.length > 0) {
+      const result = getConfigStore().mutateRecordPatch({
+        namespace: CONFIG_RECORD_NAMESPACE,
+        key: CONFIG_RECORD_KEY,
+        operations,
+        expectedVersion: record.version,
+        operationId: `legacy-config-${configHash(fileValue)}`,
+      });
+      if (result.status === 'applied') {
+        const value = result.value as unknown as StoredConfig;
+        materializeConfig(value);
+        return { version: result.version, value };
+      }
+      debug('[config] Legacy config.json edit conflicted with SQLite authority; preserving SQLite value');
+    }
+  }
+  if (configHash(fileValue) !== configHash(record.value)) materializeConfig(record.value);
+  return record;
+}
 
 // Track if config-defaults have been synced this session (prevents re-sync on hot reload)
 let configDefaultsSynced = false;
@@ -262,24 +415,28 @@ function syncConfigDefaults(): void {
   const bundledDir = getBundledAssetsDir('.');
   if (!bundledDir) {
     debug('[config] No bundled assets dir found - using fallback config-defaults');
-    if (!existsSync(CONFIG_DEFAULTS_FILE)) {
-      writeFileSync(CONFIG_DEFAULTS_FILE, JSON.stringify(FALLBACK_CONFIG_DEFAULTS, null, 2), 'utf-8');
-    }
+    withFileLockSync(CONFIG_DEFAULTS_FILE, () => {
+      if (!existsSync(CONFIG_DEFAULTS_FILE)) {
+        writeFileSync(CONFIG_DEFAULTS_FILE, JSON.stringify(FALLBACK_CONFIG_DEFAULTS, null, 2), 'utf-8');
+      }
+    });
     return;
   }
 
   const bundledFile = join(bundledDir, 'config-defaults.json');
   if (!existsSync(bundledFile)) {
     debug('[config] Bundled config-defaults.json not found at: ' + bundledFile + ' - using fallback');
-    if (!existsSync(CONFIG_DEFAULTS_FILE)) {
-      writeFileSync(CONFIG_DEFAULTS_FILE, JSON.stringify(FALLBACK_CONFIG_DEFAULTS, null, 2), 'utf-8');
-    }
+    withFileLockSync(CONFIG_DEFAULTS_FILE, () => {
+      if (!existsSync(CONFIG_DEFAULTS_FILE)) {
+        writeFileSync(CONFIG_DEFAULTS_FILE, JSON.stringify(FALLBACK_CONFIG_DEFAULTS, null, 2), 'utf-8');
+      }
+    });
     return;
   }
 
   // Sync from bundled file (same pattern as docs)
   const content = readFileSync(bundledFile, 'utf-8');
-  writeFileSync(CONFIG_DEFAULTS_FILE, content, 'utf-8');
+  withFileLockSync(CONFIG_DEFAULTS_FILE, () => writeFileSync(CONFIG_DEFAULTS_FILE, content, 'utf-8'));
   debug('[config] Synced config-defaults.json from bundled assets');
 }
 
@@ -406,14 +563,51 @@ export function ensureConfigDir(): void {
 
 export function loadStoredConfig(): StoredConfig | null {
   try {
-    if (!existsSync(CONFIG_FILE)) {
-      return null;
-    }
-    const config = readJsonFileSync<StoredConfig & {
+    ensureConfigDir();
+    const store = getConfigStore();
+    let record: ConfigSnapshot | null = null;
+    const storedRecord = store.getRecord(CONFIG_RECORD_NAMESPACE, CONFIG_RECORD_KEY);
+    if (storedRecord) {
+      record = reconcileLegacyConfigFile({
+        version: storedRecord.version,
+        value: storedRecord.value as unknown as StoredConfig,
+      });
+    } else {
+      if (!existsSync(CONFIG_FILE)) return null;
+      const imported = readJsonFileSync<StoredConfig & {
       defaultLlmConnection?: string;
       llmConnections?: LegacyProviderEntry[];
       migrationsApplied?: unknown;
-    }>(CONFIG_FILE);
+      }>(CONFIG_FILE);
+      const importedStorage: StoredConfig = Array.isArray(imported.workspaces)
+        ? {
+            ...imported,
+            workspaces: imported.workspaces.map(ws => ({
+              ...ws,
+              rootPath: toPortablePath(ws.rootPath),
+            })),
+          }
+        : imported as StoredConfig;
+      const importedResult = store.mutateRecord({
+        namespace: CONFIG_RECORD_NAMESPACE,
+        key: CONFIG_RECORD_KEY,
+        value: importedStorage as unknown as JsonValue,
+        expectedVersion: null,
+        operationId: `import-config-${configHash(importedStorage)}`,
+      });
+      if (importedResult.status !== 'applied') return null;
+      record = {
+        version: importedResult.version,
+        value: importedResult.value as unknown as StoredConfig,
+      };
+      materializeConfig(record.value);
+    }
+
+    const config = JSON.parse(JSON.stringify(record.value)) as StoredConfig & {
+      defaultLlmConnection?: string;
+      llmConnections?: LegacyProviderEntry[];
+      migrationsApplied?: unknown;
+    };
 
     let legacyMigrationSucceeded = true;
     try {
@@ -465,7 +659,10 @@ export function loadStoredConfig(): StoredConfig | null {
       }
     }
 
-    return config;
+    return attachConfigSnapshot(config, {
+      version: record.version,
+      value: record.value,
+    });
   } catch (error) {
     debug('[config] loadStoredConfig failed:', error instanceof Error ? error.message : error);
     backupCorruptConfigFile(error);
@@ -494,7 +691,37 @@ export function saveConfig(config: StoredConfig): void {
     })),
   };
 
-  atomicWriteFileSync(CONFIG_FILE, JSON.stringify(storageConfig, null, 2));
+  const store = getConfigStore();
+  const snapshot = (config as ConfigWithSnapshot)[CONFIG_SNAPSHOT];
+  let result;
+  if (snapshot) {
+    const operations = configDiff(snapshot.value, storageConfig);
+    if (operations.length === 0) return;
+    result = store.mutateRecordPatch({
+      namespace: CONFIG_RECORD_NAMESPACE,
+      key: CONFIG_RECORD_KEY,
+      operations,
+      expectedVersion: snapshot.version,
+      operationId: `config-patch-${randomUUID()}`,
+    });
+  } else {
+    const current = store.getRecord(CONFIG_RECORD_NAMESPACE, CONFIG_RECORD_KEY);
+    result = store.mutateRecord({
+      namespace: CONFIG_RECORD_NAMESPACE,
+      key: CONFIG_RECORD_KEY,
+      value: storageConfig as unknown as JsonValue,
+      expectedVersion: current?.version ?? null,
+      operationId: `config-replace-${randomUUID()}`,
+    });
+  }
+  if (result.status !== 'applied') {
+    throw new Error(`Configuration write conflicted with another backend (version ${result.currentVersion ?? 'missing'})`);
+  }
+  materializeConfig(result.value as unknown as StoredConfig);
+  attachConfigSnapshot(config, {
+    version: result.version,
+    value: result.value as unknown as StoredConfig,
+  });
 }
 
 export function getMidStreamBehavior(): MidStreamBehavior {
@@ -881,9 +1108,17 @@ export function getConfigPath(): string {
  * Deletes config file and credentials file.
  */
 export async function clearAllConfig(): Promise<void> {
+  closeWorkspaceStorage();
+  if (configStore) {
+    configStore.close();
+    configStore = null;
+  }
   // Delete config file
   if (existsSync(CONFIG_FILE)) {
     rmSync(CONFIG_FILE);
+  }
+  for (const stateFile of [CONFIG_DATABASE_FILE, `${CONFIG_DATABASE_FILE}-wal`, `${CONFIG_DATABASE_FILE}-shm`, CONFIG_SYNC_BASELINE_FILE]) {
+    if (existsSync(stateFile)) rmSync(stateFile);
   }
 
   // Delete credentials file
@@ -1206,7 +1441,7 @@ export function saveWorkspaceConversation(
   };
 
   try {
-    writeFileSync(filePath, JSON.stringify(conversation, null, 2), 'utf-8');
+    withFileLockSync(filePath, () => writeFileSync(filePath, JSON.stringify(conversation, null, 2), 'utf-8'));
   } catch (e) {
     // Handle cyclic structures or other serialization errors
     console.error(`[storage] [CYCLIC STRUCTURE] Failed to save workspace conversation:`, e);
@@ -1230,7 +1465,7 @@ export function saveWorkspaceConversation(
         tokenUsage,
         savedAt: Date.now(),
       };
-      writeFileSync(filePath, JSON.stringify(sanitizedConversation, null, 2), 'utf-8');
+      withFileLockSync(filePath, () => writeFileSync(filePath, JSON.stringify(sanitizedConversation, null, 2), 'utf-8'));
       console.error(`[storage] Saved sanitized workspace conversation successfully`);
     } catch (e2) {
       console.error(`[storage] Failed to save even sanitized workspace conversation:`, e2);
@@ -1261,7 +1496,7 @@ export function getWorkspaceDataPath(workspaceId: string): string {
 export function clearWorkspaceConversation(workspaceId: string): void {
   const filePath = join(WORKSPACES_DIR, workspaceId, 'conversation.json');
   if (existsSync(filePath)) {
-    writeFileSync(filePath, '{}', 'utf-8');
+    withFileLockSync(filePath, () => writeFileSync(filePath, '{}', 'utf-8'));
   }
 
   // Also clear any active plan (plans are session-scoped)
@@ -1281,7 +1516,7 @@ export function clearWorkspaceConversation(workspaceId: string): void {
 export function saveWorkspacePlan(workspaceId: string, plan: Plan): void {
   const dir = ensureWorkspaceDir(workspaceId);
   const filePath = join(dir, 'plan.json');
-  writeFileSync(filePath, JSON.stringify(plan, null, 2), 'utf-8');
+  withFileLockSync(filePath, () => writeFileSync(filePath, JSON.stringify(plan, null, 2), 'utf-8'));
 }
 
 /**
@@ -1323,6 +1558,9 @@ export function clearWorkspacePlan(workspaceId: string): void {
 // ============================================
 
 const DRAFTS_FILE = join(CONFIG_DIR, 'drafts.json');
+const DRAFTS_SYNC_BASELINE_FILE = join(CONFIG_DIR, '.drafts.json.sync');
+const DRAFTS_RECORD_NAMESPACE = 'drafts';
+const DRAFTS_RECORD_KEY = 'root';
 
 export interface DraftAttachmentContent {
   type: 'image' | 'pdf' | 'text' | 'office' | 'audio' | 'unknown';
@@ -1349,6 +1587,11 @@ export interface SessionDraft {
 interface DraftsData {
   drafts: Record<string, SessionDraft>;
   updatedAt: number;
+}
+
+interface DraftsRecord {
+  version: number;
+  value: DraftsData;
 }
 
 const ATTACHMENT_CONTENT_TYPES = new Set(['image', 'pdf', 'text', 'office', 'audio', 'unknown']);
@@ -1403,28 +1646,104 @@ function isEmptyDraft(draft: SessionDraft): boolean {
  * Load all drafts from disk. Entries that don't parse as SessionDraft
  * (e.g. pre-upgrade string drafts) are discarded silently.
  */
-function loadDraftsData(): DraftsData {
+function normalizeDraftsData(raw: unknown): DraftsData {
+  const candidate = raw && typeof raw === 'object' ? raw as { drafts?: Record<string, unknown>; updatedAt?: number } : {};
+  const drafts: Record<string, SessionDraft> = {};
+  for (const [sessionId, value] of Object.entries(candidate.drafts ?? {})) {
+    if (isSessionDraft(value)) drafts[sessionId] = value;
+  }
+  return {
+    drafts,
+    updatedAt: typeof candidate.updatedAt === 'number' ? candidate.updatedAt : 0,
+  };
+}
+
+function materializeDrafts(data: DraftsData): void {
+  atomicWriteFileSync(DRAFTS_FILE, JSON.stringify(data, null, 2));
+  atomicWriteFileSync(DRAFTS_SYNC_BASELINE_FILE, JSON.stringify(data));
+}
+
+function loadLegacyDrafts(): DraftsData {
   try {
-    if (!existsSync(DRAFTS_FILE)) {
-      return { drafts: {}, updatedAt: 0 };
-    }
-    const raw = readJsonFileSync<{ drafts?: Record<string, unknown>; updatedAt?: number }>(DRAFTS_FILE);
-    const drafts: Record<string, SessionDraft> = {};
-    for (const [sessionId, value] of Object.entries(raw.drafts ?? {})) {
-      if (isSessionDraft(value)) {
-        drafts[sessionId] = value;
-      }
-    }
-    return { drafts, updatedAt: raw.updatedAt ?? 0 };
+    if (!existsSync(DRAFTS_FILE)) return { drafts: {}, updatedAt: 0 };
+    return normalizeDraftsData(readJsonFileSync<unknown>(DRAFTS_FILE));
   } catch {
     return { drafts: {}, updatedAt: 0 };
   }
 }
 
-function saveDraftsData(data: DraftsData): void {
+function loadDraftRecord(): DraftsRecord | null {
   ensureConfigDir();
-  data.updatedAt = Date.now();
-  writeFileSync(DRAFTS_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  const store = getConfigStore();
+  const stored = store.getRecord(DRAFTS_RECORD_NAMESPACE, DRAFTS_RECORD_KEY);
+  if (stored) {
+    const value = normalizeDraftsData(stored.value);
+    let fileValue: DraftsData | null = null;
+    try {
+      if (existsSync(DRAFTS_FILE)) fileValue = normalizeDraftsData(readJsonFileSync<unknown>(DRAFTS_FILE));
+    } catch {
+      fileValue = null;
+    }
+    let baseline: DraftsData | null = null;
+    try {
+      if (existsSync(DRAFTS_SYNC_BASELINE_FILE)) baseline = normalizeDraftsData(JSON.parse(readFileSync(DRAFTS_SYNC_BASELINE_FILE, 'utf8')));
+    } catch {
+      baseline = null;
+    }
+    if (fileValue && baseline && configHash(fileValue) !== configHash(baseline)) {
+      const operations = configDiff(baseline, fileValue);
+      if (operations.length > 0) {
+        const result = store.mutateRecordPatch({
+          namespace: DRAFTS_RECORD_NAMESPACE,
+          key: DRAFTS_RECORD_KEY,
+          operations,
+          expectedVersion: stored.version,
+          operationId: `legacy-drafts-${configHash(fileValue)}`,
+        });
+        if (result.status === 'applied') {
+          const next = normalizeDraftsData(result.value);
+          materializeDrafts(next);
+          return { version: result.version, value: next };
+        }
+      }
+    }
+    if (!fileValue || configHash(fileValue) !== configHash(value)) materializeDrafts(value);
+    return { version: stored.version, value };
+  }
+
+  if (!existsSync(DRAFTS_FILE)) return null;
+  const imported = loadLegacyDrafts();
+  const result = store.mutateRecord({
+    namespace: DRAFTS_RECORD_NAMESPACE,
+    key: DRAFTS_RECORD_KEY,
+    value: imported as unknown as JsonValue,
+    expectedVersion: null,
+    operationId: `import-drafts-${configHash(imported)}`,
+  });
+  if (result.status !== 'applied') return null;
+  const value = normalizeDraftsData(result.value);
+  materializeDrafts(value);
+  return { version: result.version, value };
+}
+
+function ensureDraftRecord(): DraftsRecord {
+  const existing = loadDraftRecord();
+  if (existing) return existing;
+  const empty: DraftsData = { drafts: {}, updatedAt: 0 };
+  const result = getConfigStore().mutateRecord({
+    namespace: DRAFTS_RECORD_NAMESPACE,
+    key: DRAFTS_RECORD_KEY,
+    value: empty as unknown as JsonValue,
+    expectedVersion: null,
+    operationId: `create-drafts-${randomUUID()}`,
+  });
+  if (result.status !== 'applied') throw new Error('Unable to initialize draft storage');
+  materializeDrafts(empty);
+  return { version: result.version, value: empty };
+}
+
+function loadDraftsData(): DraftsData {
+  return loadDraftRecord()?.value ?? { drafts: {}, updatedAt: 0 };
 }
 
 /**
@@ -1440,18 +1759,32 @@ export function getSessionDraft(sessionId: string): SessionDraft | null {
  * are removed from disk.
  */
 export function setSessionDraft(sessionId: string, draft: SessionDraft): void {
-  const data = loadDraftsData();
-  if (isEmptyDraft(draft)) {
-    delete data.drafts[sessionId];
-  } else {
-    data.drafts[sessionId] = {
-      text: draft.text,
-      ...(draft.attachments && draft.attachments.length > 0
-        ? { attachments: draft.attachments.map(normalizeDraftAttachment) }
-        : {}),
-    };
-  }
-  saveDraftsData(data);
+  const record = ensureDraftRecord();
+  const existing = record.value.drafts[sessionId];
+  const next = isEmptyDraft(draft)
+    ? undefined
+    : {
+        text: draft.text,
+        ...(draft.attachments && draft.attachments.length > 0
+          ? { attachments: draft.attachments.map(normalizeDraftAttachment) }
+          : {}),
+      };
+  if (configHash(existing) === configHash(next)) return;
+
+  const result = getConfigStore().mutateRecordPatch({
+    namespace: DRAFTS_RECORD_NAMESPACE,
+    key: DRAFTS_RECORD_KEY,
+    operations: [{
+      path: `/drafts/${pointerPart(sessionId)}`,
+      expectedExists: existing !== undefined,
+      ...(existing !== undefined ? { expectedValue: existing as unknown as JsonValue } : {}),
+      ...(next === undefined ? { remove: true } : { value: next as unknown as JsonValue }),
+    }],
+    expectedVersion: record.version,
+    operationId: `draft-${randomUUID()}`,
+  });
+  if (result.status !== 'applied') throw new Error(`Draft write conflicted for session ${sessionId}`);
+  materializeDrafts(normalizeDraftsData(result.value));
 }
 
 function normalizeDraftAttachment(ref: DraftAttachmentRef): DraftAttachmentRef {
@@ -1471,9 +1804,23 @@ function normalizeDraftAttachment(ref: DraftAttachmentRef): DraftAttachmentRef {
 }
 
 export function deleteSessionDraft(sessionId: string): void {
-  const data = loadDraftsData();
-  delete data.drafts[sessionId];
-  saveDraftsData(data);
+  const record = loadDraftRecord();
+  const existing = record?.value.drafts[sessionId];
+  if (!record || existing === undefined) return;
+  const result = getConfigStore().mutateRecordPatch({
+    namespace: DRAFTS_RECORD_NAMESPACE,
+    key: DRAFTS_RECORD_KEY,
+    operations: [{
+      path: `/drafts/${pointerPart(sessionId)}`,
+      expectedExists: true,
+      expectedValue: existing as unknown as JsonValue,
+      remove: true,
+    }],
+    expectedVersion: record.version,
+    operationId: `delete-draft-${randomUUID()}`,
+  });
+  if (result.status !== 'applied') throw new Error(`Draft delete conflicted for session ${sessionId}`);
+  materializeDrafts(normalizeDraftsData(result.value));
 }
 
 /**
@@ -1530,7 +1877,7 @@ export function loadAppTheme(): ThemeOverrides | null {
  */
 export function saveAppTheme(theme: ThemeOverrides): void {
   ensureConfigDir();
-  writeFileSync(APP_THEME_FILE, JSON.stringify(theme, null, 2), 'utf-8');
+  withFileLockSync(APP_THEME_FILE, () => writeFileSync(APP_THEME_FILE, JSON.stringify(theme, null, 2), 'utf-8'));
 }
 
 
@@ -1970,7 +2317,6 @@ export function ensureToolIcons(): void {
 // ============================================
 
 import { DEFAULT_SERVER_CONFIG, type ServerConfig } from './server-config.ts';
-import { randomUUID } from 'crypto';
 
 /**
  * Get the current server configuration.

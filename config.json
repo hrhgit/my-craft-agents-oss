@@ -1,18 +1,18 @@
 {
-  "id": "ws_ba8f0450",
-  "name": "craft-agent",
-  "slug": "craft-agent",
+  "createdAt": 1783415164451,
   "defaults": {
-    "permissionMode": "allow-all",
     "cyclablePermissionModes": [
       "safe",
       "allow-all"
     ],
-    "enabledSourceSlugs": []
+    "enabledSourceSlugs": [],
+    "permissionMode": "allow-all"
   },
+  "id": "ws_ba8f0450",
   "localMcpServers": {
     "enabled": true
   },
-  "createdAt": 1783415164451,
+  "name": "craft-agent",
+  "slug": "craft-agent",
   "updatedAt": 1783775888144
 }

@@ -12,10 +12,12 @@
  */
 
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'fs';
+import { createHash } from 'node:crypto';
 import { homedir } from 'os';
 import { join } from 'path';
 import { debug } from '../utils/debug.ts';
-import { readJsonFileSync, safeJsonParse } from '../utils/files.ts';
+import { atomicWriteFileSync, readJsonFileSync, safeJsonParse } from '../utils/files.ts';
+import { withFileLockSync } from '../storage/index.ts';
 import { CONFIG_DIR } from '../config/paths.ts';
 import { getBundledAssetsDir } from '../utils/paths.ts';
 import { getSourcePath } from '../sources/storage.ts';
@@ -32,6 +34,12 @@ import {
   type BlockedCommandHintRule,
   type PermissionPaths,
 } from './mode-types.ts';
+
+const permissionSnapshots = new WeakMap<object, string>();
+
+function permissionsHash(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
 
 // ============================================================
 // App-level Permissions Directory
@@ -92,7 +100,7 @@ export function ensureDefaultPermissions(): void {
   if (!existsSync(destPath) || !isValidPermissionsFile(destPath)) {
     try {
       const content = readFileSync(srcPath, 'utf-8');
-      writeFileSync(destPath, content, 'utf-8');
+      withFileLockSync(destPath, () => writeFileSync(destPath, content, 'utf-8'));
       debug('[Permissions] Installed default.json');
     } catch (error) {
       debug('[Permissions] Error installing default.json:', error);
@@ -113,7 +121,7 @@ export function ensureDefaultPermissions(): void {
 
     if (bundledVersion > installedVersion) {
       const merged = migratePermissions(installed, bundled);
-      writeFileSync(destPath, JSON.stringify(merged, null, 2), 'utf-8');
+      withFileLockSync(destPath, () => writeFileSync(destPath, JSON.stringify(merged, null, 2), 'utf-8'));
       debug('[Permissions] Migrated from', installedVersion, 'to', bundledVersion);
     } else {
       debug('[Permissions] Already up to date:', installedVersion);
@@ -512,7 +520,9 @@ export function loadRawWorkspacePermissions(workspaceRootPath: string): Permissi
   const content = readFileSync(filePath, 'utf-8');
   const json = safeJsonParse(content);
   const result = PermissionsConfigSchema.safeParse(json);
-  return result.success ? result.data : null;
+  if (!result.success) return null;
+  permissionSnapshots.set(result.data, permissionsHash(result.data));
+  return result.data;
 }
 
 /**
@@ -525,7 +535,9 @@ export function loadRawSourcePermissions(workspaceRootPath: string, sourceSlug: 
   const content = readFileSync(filePath, 'utf-8');
   const json = safeJsonParse(content);
   const result = PermissionsConfigSchema.safeParse(json);
-  return result.success ? result.data : null;
+  if (!result.success) return null;
+  permissionSnapshots.set(result.data, permissionsHash(result.data));
+  return result.data;
 }
 
 /**
@@ -534,7 +546,7 @@ export function loadRawSourcePermissions(workspaceRootPath: string, sourceSlug: 
 export function saveWorkspacePermissions(workspaceRootPath: string, config: PermissionsConfigFile): void {
   const filePath = getWorkspacePermissionsPath(workspaceRootPath);
   mkdirSync(workspaceRootPath, { recursive: true });
-  writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+  persistPermissions(filePath, config);
   permissionsConfigCache.invalidateWorkspace(workspaceRootPath);
 }
 
@@ -545,8 +557,22 @@ export function saveSourcePermissions(workspaceRootPath: string, sourceSlug: str
   const filePath = getSourcePermissionsPath(workspaceRootPath, sourceSlug);
   const sourceDir = getSourcePath(workspaceRootPath, sourceSlug);
   mkdirSync(sourceDir, { recursive: true });
-  writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+  persistPermissions(filePath, config);
   permissionsConfigCache.invalidateSource(workspaceRootPath, sourceSlug);
+}
+
+function persistPermissions(filePath: string, config: PermissionsConfigFile): void {
+  const snapshot = permissionSnapshots.get(config);
+  withFileLockSync(filePath, () => {
+    if (snapshot && existsSync(filePath)) {
+      const current = safeJsonParse(readFileSync(filePath, 'utf8'));
+      if (permissionsHash(current) !== snapshot) {
+        throw new Error(`Permissions configuration write conflicted: ${filePath}`);
+      }
+    }
+    atomicWriteFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`);
+  });
+  permissionSnapshots.set(config, permissionsHash(config));
 }
 
 // ============================================================

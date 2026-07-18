@@ -10,7 +10,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'fs';
 import { join, basename } from 'path';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type {
   FolderSourceConfig,
   SourceGuide,
@@ -23,7 +23,8 @@ import {
 } from './auth-state.ts';
 import { validateSourceConfig } from '../config/validators.ts';
 import { debug } from '../utils/debug.ts';
-import { readJsonFileSync } from '../utils/files.ts';
+import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
+import { withFileLockSync } from '../storage/index.ts';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { getWorkspaceSourcesPath } from '../workspaces/storage.ts';
 // Circular import (credential-manager imports from this file) is safe here:
@@ -37,6 +38,23 @@ import {
   needsIconDownload,
   isIconUrl,
 } from '../utils/icon.ts';
+
+const SOURCE_SNAPSHOT = Symbol('craftSourceSnapshot');
+type SourceWithSnapshot = FolderSourceConfig & { [SOURCE_SNAPSHOT]?: string };
+
+function sourceHash(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function attachSourceSnapshot(config: FolderSourceConfig, hash: string): FolderSourceConfig {
+  Object.defineProperty(config, SOURCE_SNAPSHOT, {
+    configurable: true,
+    enumerable: false,
+    value: hash,
+    writable: true,
+  });
+  return config;
+}
 
 // ============================================================
 // Directory Utilities
@@ -75,13 +93,14 @@ export function loadSourceConfig(
 
   try {
     const config = readJsonFileSync<FolderSourceConfig>(configPath);
+    const snapshotHash = sourceHash(config);
 
     // Expand path variables in local source paths for portability
     if (config.type === 'local' && config.local?.path) {
       config.local.path = expandPath(config.local.path);
     }
 
-    return config;
+    return attachSourceSnapshot(config, snapshotHash);
   } catch {
     return null;
   }
@@ -140,7 +159,18 @@ export function saveSourceConfig(
     };
   }
 
-  writeFileSync(join(dir, 'config.json'), JSON.stringify(storageConfig, null, 2));
+  const configPath = join(dir, 'config.json');
+  const snapshotHash = (config as SourceWithSnapshot)[SOURCE_SNAPSHOT];
+  withFileLockSync(configPath, () => {
+    if (snapshotHash && existsSync(configPath)) {
+      const current = readJsonFileSync<FolderSourceConfig>(configPath);
+      if (sourceHash(current) !== snapshotHash) {
+        throw new Error(`Source configuration write conflicted for ${config.slug}`);
+      }
+    }
+    atomicWriteFileSync(configPath, JSON.stringify(storageConfig, null, 2));
+  });
+  attachSourceSnapshot(config, sourceHash(storageConfig));
 
   // Orphan-credential cleanup: when an API source is set to authType:'none',
   // any credential previously stored for this slug (e.g. from authType:'header')
