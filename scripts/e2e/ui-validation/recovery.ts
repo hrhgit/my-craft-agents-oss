@@ -96,6 +96,26 @@ try {
   const composer = nodes(primarySession).find(node => node.semanticId?.startsWith('composer.') && node.semanticId.endsWith('.input'))
   if (!composer?.semanticId) throw new Error('Created session did not expose a semantic composer input.')
   const sessionId = composer.semanticId.slice('composer.'.length, -'.input'.length)
+  await command('ui.action', {
+    webContentsId: first.webContentsId,
+    revision: primarySession.revision,
+    target: { ref: composer.ref },
+    action: 'fill',
+    mode: 'semantic',
+    value: 'Persist this recovery validation session.',
+  })
+  const filledSession = await command<Snapshot>('ui.snapshot', { webContentsId: first.webContentsId })
+  const send = nodes(filledSession).find(node => node.semanticId === `composer.${sessionId}.send`)
+  if (!send) throw new Error('Created session did not expose its semantic send action.')
+  await command('ui.action', {
+    webContentsId: first.webContentsId,
+    revision: filledSession.revision,
+    target: { ref: send.ref },
+    action: 'click',
+    mode: 'physical',
+    waitUntil: { kind: 'state', scope: 'sessions', phase: 'ready', detail: { count: 1 }, timeoutMs: 60_000 },
+    timeoutMs: 60_000,
+  })
 
   const opened = await command<{ webContentsId: number; workspaceId: string; role: string; sessionId: string }>(
     'diagnostics.window.open',
