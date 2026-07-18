@@ -173,6 +173,41 @@ describe('ensureNativeWindowReady', () => {
     expect(requests.some(request => request.operation === 'action' && request.action === 'focus')).toBeTrue()
   })
 
+  it('does not invalidate a published ref with a redundant readiness snapshot', async () => {
+    let snapshotReads = 0
+    const window = {
+      webContents: { id: 12, isLoading: () => false },
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      isVisible: () => true,
+      isFocused: () => true,
+      focus() {},
+      getTitle: () => 'Craft Agents',
+      getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
+    }
+    const driver = new WindowsNativeUiDriver(42, async request => {
+      if (request.operation === 'action') return { ok: true }
+      snapshotReads += 1
+      return { windows: [{
+        runtimeId: 'root', role: 'Window', name: 'Craft Agents', enabled: true, focused: true,
+        bounds: { x: 120, y: 60, width: 960, height: 720 }, patterns: ['Window'], children: [{
+          runtimeId: 'dynamic', role: 'Text', name: `Dynamic ${snapshotReads}`, enabled: true, focused: false,
+        }],
+      }] }
+    }, 'win32')
+    const controller = new ElectronNativeWindowController(driver)
+
+    const snapshot = await controller.snapshot(window as never, { timeoutMs: 500 })
+    const root = snapshot.windows[0]!.nodes.find(node => node.name === 'Craft Agents')!
+    const receipt = await controller.action(window as never, {
+      revision: snapshot.revision, ref: root.ref, action: 'focus',
+    }, { timeoutMs: 500 })
+
+    expect(receipt.beforeRevision).toBe(snapshot.revision)
+    expect(receipt.afterRevision).toBeGreaterThan(snapshot.revision)
+    expect(snapshotReads).toBe(2)
+  })
+
   it('keeps a minimized window in the background and filters foreground-only native actions', async () => {
     const requests: Record<string, unknown>[] = []
     const window = {

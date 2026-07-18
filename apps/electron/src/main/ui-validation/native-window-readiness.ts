@@ -99,13 +99,11 @@ export class ElectronNativeWindowController {
     request: WindowsNativeActionRequest,
     options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<WindowsNativeActionReceipt> {
-    return await this.withReadyWindow(window, options, async (ready) => {
-      const target = ready.snapshot.windows.flatMap(entry => entry.nodes).find(node => node.ref === request.ref)
+    return await this.runExclusive(async () => {
+      if (!this.status(window).ready) await this.ensureNow(window, options)
+      const target = this.driver.resolvePublishedTarget(request)
       if (this.windowMode === 'background') {
-        if (request.revision !== ready.snapshot.revision || !target) {
-          throw new ElectronUiDriverError('STALE_REF', `Native ref does not belong to revision ${ready.snapshot.revision}.`)
-        }
-        if (!target.actions.includes(request.action)) {
+        if (!target.backgroundActions.some(action => action === request.action)) {
           throw new ElectronUiDriverError(
             'UNSUPPORTED',
             `${request.action} requires a foreground window and is unavailable in background mode.`,

@@ -123,11 +123,7 @@ export class WindowsNativeUiDriver {
   }
 
   async action(request: WindowsNativeActionRequest): Promise<WindowsNativeActionReceipt> {
-    if (request.revision !== this.revision || !request.ref.startsWith(`n${this.revision}:`)) {
-      throw new ElectronUiDriverError('STALE_REF', `Native ref does not belong to revision ${this.revision}.`)
-    }
-    const target = this.refs.get(request.ref)
-    if (!target) throw new ElectronUiDriverError('TARGET_NOT_FOUND', `Unknown native target ${request.ref}.`)
+    const target = this.resolvePublishedTarget(request)
     if (!target.enabled) throw new ElectronUiDriverError('DISABLED', `Native target ${request.ref} is disabled.`)
     if (!target.actions.includes(request.action)) throw new ElectronUiDriverError('UNSUPPORTED', `${request.action} is not valid for native ${target.role}.`)
     if ((request.action === 'fill' || request.action === 'select') && request.value === undefined) {
@@ -151,6 +147,15 @@ export class WindowsNativeUiDriver {
       settledBy: ['windows-uia-action', 'windows-uia-snapshot'],
       warnings: [],
     }
+  }
+
+  resolvePublishedTarget(request: Pick<WindowsNativeActionRequest, 'revision' | 'ref'>): WindowsNativeNode {
+    if (request.revision !== this.revision || !request.ref.startsWith(`n${this.revision}:`)) {
+      throw new ElectronUiDriverError('STALE_REF', `Native ref does not belong to revision ${this.revision}.`)
+    }
+    const target = this.refs.get(request.ref)
+    if (!target) throw new ElectronUiDriverError('TARGET_NOT_FOUND', `Unknown native target ${request.ref}.`)
+    return target
   }
 
   async waitForNode(
