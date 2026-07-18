@@ -20,12 +20,28 @@ describe('ElectronEvidenceCollector', () => {
       revision,
       window: { webContentsId: 4, workspaceId: 'w1', role: 'main', title: 'Craft', url: 'https://host.test/?key=raw', bounds: { x: 0, y: 0, width: 800, height: 600 } },
       regions: { navigation: [], sidebar: [], dialog: [], notification: [], main: [{ ref: `r${revision}:node`, role: 'button', name: revision === 1 ? 'Send' : 'Sent', state: {}, actions: ['click'] }] },
+      embeddedSurfaces: [{
+        kind: 'browser-view', surfaceId: 'browser:browser-1', instanceId: 'browser-1',
+        hostWebContentsId: 4, pageWebContentsId: 8, workspaceId: 'w1', visible: true, agentControlActive: false,
+        bounds: { x: 100, y: 80, width: 600, height: 400 }, requestedBounds: { x: 100, y: 80, width: 600, height: 400 },
+        url: 'https://example.com/', title: 'Example', revision,
+        nodes: [{ ref: `b${revision}:browser-1:e1`, role: 'button', name: revision === 1 ? 'Continue' : 'Done', state: {}, actions: ['click'], actionModes: { semantic: [], physical: ['click'] } }],
+        truncated: false,
+      }],
       truncated: false,
     })
     const collector = new ElectronEvidenceCollector({
       artifactsDir: join(root, 'artifacts'), runId: 'run-1', runtimeLogPath,
       secrets: ['runtime-secret'], snapshot: async () => snapshot(),
-      screenshot: async (_selector, path) => { await writeFile(path, Buffer.from('png')) },
+      screenshot: async (_selector, path) => {
+        const browserPath = join(root, 'browser.png')
+        await writeFile(path, Buffer.from('renderer'))
+        await writeFile(browserPath, Buffer.from('browser'))
+        return { artifacts: [
+          { kind: 'renderer-screenshot', path, mimeType: 'image/png' },
+          { kind: 'browser-view-screenshot', path: browserPath, mimeType: 'image/png' },
+        ], surfaces: [{ surfaceId: 'browser:browser-1', instanceId: 'browser-1', requestedBounds: { x: 100, y: 80, width: 600, height: 400 } }] }
+      },
       state: () => ({ revision: 3, latestSeq: 2, states: [{ scope: 'app', phase: 'ready', revision: 3, updatedAt: 1 }] }),
       events: ({ afterSeq = 0 } = {}) => ({ latestSeq: 2, events: [{ v: 1 as const, kind: 'event' as const, seq: 2, type: 'state.app.changed', timestamp: 1, revision: 3, payload: { token: 'raw' } }].filter(event => event.seq > afterSeq) }),
       driver: { name: 'test-driver' },
@@ -36,6 +52,8 @@ describe('ElectronEvidenceCollector', () => {
     collector.record('network', { timestamp: 2, webContentsId: 4, status: 200, url: 'file:///app/playground.html?scenario=secret' })
     const first = await collector.capture({ label: 'first', selector: { webContentsId: 4 }, verificationLevel: 'renderer-verified', clocks: { application: 'real', os: 'real', network: 'real' } })
     expect(first.artifacts.some(item => item.path.endsWith('snapshot.incremental.json'))).toBe(true)
+    expect(first.artifacts.filter(item => item.kind.endsWith('screenshot'))).toHaveLength(2)
+    expect(first.artifacts.some(item => item.kind === 'screenshot-metadata')).toBe(true)
     revision = 2
     const second = await collector.capture({ label: 'second', selector: { webContentsId: 4 }, verificationLevel: 'renderer-verified', clocks: { application: 'real', os: 'real', network: 'real' } })
     expect(first.artifacts.every(item => /^[a-f0-9]{64}$/.test(item.sha256))).toBe(true)

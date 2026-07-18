@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { BrowserWindow, dialog, Menu } from 'electron'
 import type { ManagedWindowRole, WindowManager } from '../window-manager'
 import type { BrowserPaneManager } from '../browser-pane-manager'
@@ -30,6 +30,7 @@ import { findRendererSnapshotTargets, resolveRendererSnapshotTarget } from './sn
 import { parseElectronActionParams, parseElectronWaitParams } from './test-host-request'
 import { ElectronBackgroundWindowController, parseElectronUiWindowMode } from './background-window-mode'
 import { parseBrowserViewKeyAction } from './browser-view-key-action'
+import { ElectronBrowserViewSurfaceAdapter } from './browser-view-surface-adapter'
 
 const MAX_REQUEST_BYTES = 1_000_000
 const MAX_WAIT_MS = UI_TEST_HOST_MAX_WAIT_MS
@@ -84,6 +85,54 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
 
   await mkdir(artifactsDir, { recursive: true })
   const driver = new ElectronUiSurfaceDriver(options.windowManager)
+  const browserSurfaces = options.browserPaneManager
+    ? new ElectronBrowserViewSurfaceAdapter(options.browserPaneManager)
+    : undefined
+  const compositeSnapshot = async (selector: UiDriverWindowSelector): Promise<UiDriverSnapshot> => {
+    const snapshot = await driver.snapshot(selector)
+    if (!browserSurfaces) return snapshot
+    const embeddedSurfaces = await browserSurfaces.snapshot(snapshot.window.webContentsId)
+    return embeddedSurfaces.length > 0 ? { ...snapshot, embeddedSurfaces } : snapshot
+  }
+  const compositeScreenshot = async (selector: UiDriverWindowSelector, path: string) => {
+    const renderer = await driver.screenshot(selector, path)
+    const artifacts = [{ kind: 'renderer-screenshot', path: renderer.path, mimeType: 'image/png' }]
+    const surfaces: Array<Record<string, unknown>> = []
+    if (options.browserPaneManager && browserSurfaces) {
+      const snapshots = await browserSurfaces.snapshot(renderer.webContentsId)
+      for (const surface of snapshots.filter(item => item.visible)) {
+        try {
+          const captured = await options.browserPaneManager.screenshot(surface.instanceId, { mode: 'raw' })
+          const extension = captured.imageFormat === 'jpeg' ? 'jpg' : 'png'
+          const surfacePath = join(dirname(path), `${basename(path, '.png')}-${sanitizeArtifactPart(surface.instanceId)}.${extension}`)
+          await writeFile(surfacePath, captured.imageBuffer)
+          artifacts.push({ kind: 'browser-view-screenshot', path: surfacePath, mimeType: captured.imageFormat === 'jpeg' ? 'image/jpeg' : 'image/png' })
+          surfaces.push({
+            surfaceId: surface.surfaceId,
+            instanceId: surface.instanceId,
+            bounds: surface.bounds,
+            requestedBounds: surface.requestedBounds,
+            artifactPath: surfacePath,
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const requiresForeground = windowMode === 'background' && /display surface is unavailable|focus(?:ing)? the browser window/i.test(message)
+          surfaces.push({
+            surfaceId: surface.surfaceId,
+            instanceId: surface.instanceId,
+            bounds: surface.bounds,
+            requestedBounds: surface.requestedBounds,
+            error: message,
+            ...(requiresForeground ? {
+              requiresForeground: true,
+              retry: { windowMode: 'foreground', reason: 'BrowserView pixel capture requires a visible native display surface.' },
+            } : {}),
+          })
+        }
+      }
+    }
+    return { renderer, artifacts, surfaces }
+  }
   const nativeDriver = new WindowsNativeUiDriver(process.pid)
   const nativeMenus = new ElectronNativeMenuAdapter(Menu, () => BrowserWindow.getFocusedWindow())
   const stateBridge = getUiValidationStateBridge()!
@@ -129,8 +178,8 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     runId,
     runtimeLogPath: options.runtimeLogPath,
     secrets: [token],
-    snapshot: selector => driver.snapshot(selector),
-    screenshot: (selector, path) => driver.screenshot(selector, path),
+    snapshot: compositeSnapshot,
+    screenshot: compositeScreenshot,
     state: webContentsId => stateBridge.snapshot(webContentsId),
     events: eventOptions => stateBridge.events(eventOptions),
     driver: { name: 'electron-webcontents-debugger', cdpVersion: '1.3', native: process.platform === 'win32' ? 'windows-uia' : 'unsupported', rawProtocolExposed: false },
@@ -263,11 +312,13 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     if (command === 'screenshot') {
       const label = boundedArtifactLabel(params.label, 'screenshot')
       const outputPath = join(artifactsDir, 'driver', `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}-${label}.png`)
-      const captured = await driver.screenshot(selector, outputPath)
+      const captured = await compositeScreenshot(selector, outputPath)
       return {
-        artifact: { kind: 'screenshot', path: captured.path, mimeType: 'image/png' },
-        width: captured.width,
-        height: captured.height,
+        artifact: captured.artifacts[0],
+        artifacts: captured.artifacts,
+        width: captured.renderer.width,
+        height: captured.renderer.height,
+        embeddedSurfaces: captured.surfaces,
       }
     }
     if (command === 'logs') {
@@ -300,7 +351,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         if (extensionTarget.definitionId && selected.length === 0) throw new ElectronUiDriverError('TARGET_NOT_FOUND', 'Extension validation definition was not found.')
         return { kind: 'extension', definitions: selected, revision: stateBridge.snapshot().revision, verificationLevel: 'scenario-verified' }
       }
-      const snapshot = rememberSnapshot(await driver.snapshot(selector))
+      const snapshot = rememberSnapshot(await compositeSnapshot(selector))
       if (typeof params.sinceRevision === 'number') {
         const previous = snapshotHistory.get(params.sinceRevision)
         if (previous) return incrementalSnapshot(previous, snapshot)
@@ -309,9 +360,21 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       return snapshot
     }
     if (command === 'action') {
-      parseElectronActionParams(params)
+      const parsedAction = parseElectronActionParams(params)
       const actionWindow = resolveManagedWindow(options.windowManager, selector)
       const actionSelector = { ...selector, webContentsId: actionWindow.webContents.id }
+      if ('kind' in parsedAction.target && parsedAction.target.kind === 'browser') {
+        if (!browserSurfaces) throw new ElectronUiDriverError('UNSUPPORTED', 'BrowserView validation adapter is unavailable.')
+        const beforeEventSeq = stateBridge.events().latestSeq
+        const browserReceipt = await browserSurfaces.action(actionWindow.webContents.id, {
+          instanceId: parsedAction.target.instanceId,
+          revision: requiredNumber(parsedAction.revision, 'revision'),
+          ref: parsedAction.target.ref,
+          action: requiredBrowserViewAction(parsedAction.action),
+          ...(parsedAction.value === undefined ? {} : { value: parsedAction.value }),
+        })
+        return await settleActionReceipt(browserReceipt, params, actionSelector, beforeEventSeq, signal)
+      }
       if (params.mode === 'native' || (isRecord(params.target) && params.target.kind === 'native')) {
         const target = isRecord(params.target) ? params.target : params
         const beforeEventSeq = stateBridge.events().latestSeq
@@ -367,7 +430,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
           || typeof target.role === 'string'
         )
       ) {
-        const current = rememberSnapshot(await driver.snapshot(actionSelector))
+        const current = rememberSnapshot(await compositeSnapshot(actionSelector))
         const matched = resolveRendererSnapshotTarget(Object.values(current.regions).flat(), target)
         actionRevision = current.revision
         actionRef = matched.ref
@@ -383,7 +446,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         ...(Array.isArray(params.modifiers) ? { modifiers: params.modifiers as never } : {}),
         ...(isPoint(params.to) ? { to: params.to } : {}),
       })
-      lastSnapshot = rememberSnapshot(await driver.snapshot(actionSelector))
+      lastSnapshot = rememberSnapshot(await compositeSnapshot(actionSelector))
       return await settleActionReceipt({ ...action, afterRevision: lastSnapshot.revision }, params, actionSelector, beforeEventSeq, signal)
     }
     if (command === 'browser-key') {
@@ -536,7 +599,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
           }, waitOptions)
         }
       }
-      lastSnapshot = rememberSnapshot(await driver.snapshot(selector))
+      lastSnapshot = rememberSnapshot(await compositeSnapshot(selector))
       return {
         opened,
         revision: Math.max(lastSnapshot.revision, stateBridge.snapshot().revision),
@@ -914,7 +977,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       const read = stateBridge.events({ afterSeq, types: [parsed.type] })
       return { matched: read.events.length > 0, observed: read }
     }
-    const snapshot = await driver.snapshot(selector)
+    const snapshot = await compositeSnapshot(selector)
     rememberSnapshot(snapshot)
     return matchSnapshotCondition(snapshot, condition)
   }
@@ -961,6 +1024,17 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       }
     }
     if (condition.kind === 'text' || condition.kind === 'node' || condition.kind === 'semantic-ready') {
+      const conditionTarget = isRecord(condition.target) ? condition.target : undefined
+      if (conditionTarget?.kind === 'browser') {
+        const deadline = Date.now() + snapshotTimeoutMs
+        while (Date.now() < deadline) {
+          if (signal?.aborted) throw new ElectronUiDriverError('TIMEOUT', 'BrowserView wait was aborted.')
+          const observed = await evaluateCondition(params, selector)
+          if (observed.matched) return { ...observed, elapsedMs: Date.now() - startedAt, stableForMs }
+          await delayForStability(Math.min(100, Math.max(1, deadline - Date.now())))
+        }
+        throw new ElectronUiDriverError('TIMEOUT', `BrowserView condition was not met within ${timeoutMs}ms.`)
+      }
       const snapshot = await driver.waitForSnapshot(
         selector,
         (candidate) => matchSnapshotCondition(candidate, condition).matched,
@@ -1099,7 +1173,13 @@ function conditionParams(params: Record<string, unknown>): Record<string, unknow
 
 function incrementalSnapshot(previous: UiDriverSnapshot, current: UiDriverSnapshot): Record<string, unknown> {
   const flatten = (snapshot: UiDriverSnapshot) => new Map(
-    Object.entries(snapshot.regions).flatMap(([region, nodes]) => nodes.map((node) => [stableNodeId(node.ref), { region, node }] as const)),
+    [
+      ...Object.entries(snapshot.regions).flatMap(([region, nodes]) => nodes.map((node) => [`renderer:${stableNodeId(node.ref)}`, { region, node }] as const)),
+      ...(snapshot.embeddedSurfaces ?? []).flatMap(surface => surface.nodes.map(node => [
+        `${surface.surfaceId}:${stableNodeId(node.ref)}`,
+        { region: `embedded:${surface.surfaceId}`, node },
+      ] as const)),
+    ],
   )
   const before = flatten(previous)
   const after = flatten(current)
@@ -1131,7 +1211,9 @@ function stableNodeId(ref: string): string {
 }
 
 function matchSnapshotCondition(snapshot: UiDriverSnapshot, condition: Record<string, unknown>): { matched: boolean; observed: unknown } {
-  const nodes = Object.values(snapshot.regions).flat()
+  const rendererNodes = Object.values(snapshot.regions).flat()
+  const embeddedNodes = (snapshot.embeddedSurfaces ?? []).flatMap(surface => surface.nodes)
+  const nodes = [...rendererNodes, ...embeddedNodes]
   if (condition.kind === 'text') {
     const expected = requiredString(condition.value, 'value')
     const exact = condition.exact === true
@@ -1145,13 +1227,18 @@ function matchSnapshotCondition(snapshot: UiDriverSnapshot, condition: Record<st
     const target = typeof condition.target === 'object' && condition.target !== null
       ? condition.target as Record<string, unknown>
       : condition
+    const targetNodes = target.kind === 'browser'
+      ? (snapshot.embeddedSurfaces ?? [])
+          .filter(surface => surface.instanceId === target.instanceId)
+          .flatMap(surface => surface.nodes)
+      : rendererNodes
     const role = typeof target.role === 'string' ? target.role : undefined
     const name = typeof target.name === 'string' ? target.name : undefined
     const ref = typeof target.ref === 'string' ? target.ref : undefined
     const semanticId = typeof target.semanticId === 'string' ? target.semanticId : undefined
     const testId = typeof target.testId === 'string' ? target.testId : undefined
     const exact = typeof target.exact === 'boolean' ? target.exact : undefined
-    const matches = findRendererSnapshotTargets(nodes, { role, name, ref, semanticId, testId, exact })
+    const matches = findRendererSnapshotTargets(targetNodes, { role, name, ref, semanticId, testId, exact })
     if (matches.length > 1) {
       throw new ElectronUiDriverError('AMBIGUOUS_TARGET', 'The renderer target matched more than one node.', {
         count: matches.length,
@@ -1456,6 +1543,15 @@ function failureEnvelope(
 function boundedPush(target: Array<Record<string, unknown>>, entry: Record<string, unknown>): void {
   target.push(entry)
   if (target.length > 1_000) target.splice(0, target.length - 1_000)
+}
+
+function sanitizeArtifactPart(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 128) || 'browser-view'
+}
+
+function requiredBrowserViewAction(value: string): 'click' | 'fill' | 'select' {
+  if (value === 'click' || value === 'fill' || value === 'select') return value
+  throw new ElectronUiDriverError('UNSUPPORTED', `Unsupported BrowserView action: ${value}`)
 }
 
 function redactDiagnosticText(value: string, maxLength = 10_000): string {

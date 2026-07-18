@@ -8,6 +8,7 @@ import { UiValidationBrowserCDP } from './browser-cdp-driver'
 import { captureRendererDriverDiagnosticFallback } from './main-process-diagnostics'
 import type { ManagedWindow, ManagedWindowRole, WindowManager } from '../window-manager'
 import { ElectronUiDriverError } from './electron-ui-driver-error'
+import type { BrowserViewSurfaceSnapshot } from './browser-view-surface-adapter'
 
 export { ElectronUiDriverError } from './electron-ui-driver-error'
 
@@ -62,6 +63,7 @@ export interface UiDriverSnapshot {
     notification: UiDriverSnapshotNode[]
   }
   truncated: boolean
+  embeddedSurfaces?: BrowserViewSurfaceSnapshot[]
 }
 
 export interface UiDriverActionRequest {
@@ -442,13 +444,13 @@ export class ElectronUiSurfaceDriver {
     }
   }
 
-  async screenshot(selector: UiDriverWindowSelector, outputPath: string): Promise<{ path: string; width: number; height: number }> {
+  async screenshot(selector: UiDriverWindowSelector, outputPath: string): Promise<{ path: string; width: number; height: number; webContentsId: number }> {
     const window = this.resolveWindow(selector)
     await mkdir(dirname(outputPath), { recursive: true })
     const image = await window.webContents.capturePage()
     const size = image.getSize()
     await writeFile(outputPath, image.toPNG())
-    return { path: outputPath, width: size.width, height: size.height }
+    return { path: outputPath, width: size.width, height: size.height, webContentsId: window.webContents.id }
   }
 
   resize(selector: UiDriverWindowSelector, width: number, height: number): void {

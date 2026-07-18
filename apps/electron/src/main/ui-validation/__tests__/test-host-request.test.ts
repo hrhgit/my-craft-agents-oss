@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { parseElectronActionParams, parseElectronWaitParams } from '../test-host-request'
 
 describe('Electron Test Host public request parsing', () => {
@@ -15,6 +17,21 @@ describe('Electron Test Host public request parsing', () => {
       revision: 3,
       action: 'click',
     })).toThrow('exactly one')
+  })
+
+  it('preserves BrowserView surface identity for action routing', () => {
+    expect(parseElectronActionParams({
+      revision: 4,
+      target: { kind: 'browser', instanceId: 'browser-1', ref: 'b4:browser-1:e2' },
+      action: 'click',
+      mode: 'physical',
+    }).target).toEqual({ kind: 'browser', instanceId: 'browser-1', ref: 'b4:browser-1:e2' })
+  })
+
+  it('builds composite snapshots from the base renderer driver without recursion', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'test-host.ts'), 'utf8')
+    expect(source).toContain('const snapshot = await driver.snapshot(selector)')
+    expect(source).not.toContain('const snapshot = await compositeSnapshot(selector)\n    if (!browserSurfaces)')
   })
 
   it('normalizes legacy wait predicates and rejects multiple node selectors', () => {

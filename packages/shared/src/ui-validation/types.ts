@@ -171,6 +171,7 @@ export type UiValidationTarget =
   | { testId: string }
   | { role: string; name?: string; exact?: boolean }
   | { kind: 'native'; ref: string }
+  | { kind: 'browser'; instanceId: string; ref: string }
   | {
       kind: 'extension'
       sessionId: string
@@ -216,9 +217,15 @@ interface UiValidationActionRequestBase {
 }
 
 export interface UiValidationRendererActionRequest extends UiValidationActionRequestBase {
-  target: Exclude<UiValidationTarget, { kind: 'native' | 'extension' }>
+  target: Exclude<UiValidationTarget, { kind: 'native' | 'browser' | 'extension' }>
   action: UiValidationRendererAction
   mode?: 'semantic' | 'physical'
+}
+
+export interface UiValidationBrowserActionRequest extends UiValidationActionRequestBase {
+  target: Extract<UiValidationTarget, { kind: 'browser' }>
+  action: Extract<UiValidationRendererAction, 'click' | 'fill' | 'select'>
+  mode?: 'physical'
 }
 
 export interface UiValidationNativeActionRequest extends UiValidationActionRequestBase {
@@ -236,6 +243,7 @@ export interface UiValidationExtensionActionRequest extends UiValidationActionRe
 
 export type UiValidationActionRequest =
   | UiValidationRendererActionRequest
+  | UiValidationBrowserActionRequest
   | UiValidationNativeActionRequest
   | UiValidationExtensionActionRequest
 
@@ -250,7 +258,8 @@ export interface UiValidationActionResult {
     testId?: string
     role?: string
     name?: string
-    kind?: 'native' | 'extension'
+    kind?: 'native' | 'browser' | 'extension'
+    instanceId?: string
     sessionId?: string
     extensionId?: string
     runtimeId?: string

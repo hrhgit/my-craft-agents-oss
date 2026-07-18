@@ -272,6 +272,20 @@ export interface BrowserKeyArgs {
   modifiers?: Array<'shift' | 'control' | 'alt' | 'meta'>
 }
 
+export interface BrowserEmbeddedValidationSurface {
+  surfaceId: string
+  instanceId: string
+  hostWebContentsId: number
+  pageWebContentsId: number
+  workspaceId: string | null
+  visible: boolean
+  agentControlActive: boolean
+  bounds: BrowserEmbedBounds
+  requestedBounds: BrowserEmbedBounds
+  url: string
+  title: string
+}
+
 export interface BrowserDownloadEntry {
   id: string
   timestamp: number
@@ -630,6 +644,35 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   listInstancesForWorkspaceAliases(workspaceIds: readonly (string | null)[]): BrowserInstanceInfo[] {
     const allowed = new Set(workspaceIds)
     return this.listInstances().filter(instance => allowed.has(instance.workspaceId ?? null))
+  }
+
+  listEmbeddedValidationSurfaces(hostWebContentsId: number): BrowserEmbeddedValidationSurface[] {
+    const surfaces: BrowserEmbeddedValidationSurface[] = []
+    for (const instance of this.instances.values()) {
+      if (instance.window.isDestroyed()) {
+        this.cleanupDestroyedInstance(instance, 'listEmbeddedValidationSurfaces')
+        continue
+      }
+      if (
+        instance.embeddedHostWindow?.webContents.id !== hostWebContentsId
+        || !instance.embeddedBounds
+        || !instance.embeddedRequestedBounds
+      ) continue
+      surfaces.push({
+        surfaceId: `browser:${instance.id}`,
+        instanceId: instance.id,
+        hostWebContentsId,
+        pageWebContentsId: instance.pageView.webContents.id,
+        workspaceId: instance.workspaceId,
+        visible: instance.isVisible,
+        agentControlActive: !!instance.agentControl?.active,
+        bounds: { ...instance.embeddedBounds },
+        requestedBounds: { ...instance.embeddedRequestedBounds },
+        url: instance.currentUrl,
+        title: instance.title,
+      })
+    }
+    return surfaces
   }
 
   assertInstanceOwnedByWorkspace(id: string, workspaceId: string | null): void {

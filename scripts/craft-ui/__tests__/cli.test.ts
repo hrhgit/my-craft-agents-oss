@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -140,6 +140,58 @@ describe('craft-ui CLI', () => {
     expect(result.json).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
   })
 
+  it('returns the real run and diagnostics when startup fails', async () => {
+    const runRoot = mkdtempSync(join(tmpdir(), 'craft-ui-cli-failed-start-')); roots.push(runRoot)
+    const adapter = JSON.stringify([process.execPath, '-e', "console.error('fixture startup failed'); process.exit(9)"])
+    const result = await runCli(['start', '--run-root', runRoot, '--adapter-command-json', adapter, '--wait-ms', '1000'])
+    expect(result.code).toBe(1)
+    expect(result.json.runId).not.toBe('unassigned')
+    expect(result.json.error.details.diagnostics).toMatchObject({
+      phase: 'endpoint',
+      stderrTail: expect.stringContaining('fixture startup failed'),
+      cleanup: { attempted: true, remainingPids: [], profileRemoved: true },
+    })
+    expect(result.json.error.details.nextCommands).toContain(`craft-ui status --run ${result.json.runId}`)
+    const evidence = await runCli(['evidence', '--run-root', runRoot, '--run', result.json.runId])
+    expect(evidence.code).toBe(0)
+    expect(evidence.json.result).toMatchObject({ hostAvailable: false, manifest: { status: 'failed' } })
+    expect(evidence.json.result.artifactManifest.artifacts.some((item: { path: string }) => item.path.endsWith('host.stderr.redacted.log'))).toBe(true)
+  }, 10_000)
+
+  it('closes the diagnostic loop when the final ready-host status fails', async () => {
+    const runRoot = mkdtempSync(join(tmpdir(), 'craft-ui-cli-final-status-')); roots.push(runRoot)
+    const adapter = JSON.stringify([process.execPath, join(import.meta.dir, '..', 'test-host.fixture.ts'), '--fail-final-status'])
+    const result = await runCli(['start', '--run-root', runRoot, '--adapter-command-json', adapter, '--wait-ms', '5000'])
+    expect(result.code).toBe(1)
+    expect(result.json.runId).not.toBe('unassigned')
+    expect(result.json.error.details.diagnostics).toMatchObject({
+      phase: 'app-readiness',
+      cleanup: { remainingPids: [], profileRemoved: true },
+    })
+  }, 10_000)
+
+  it('makes --no-wait immediate, defaults Electron to background, and stops the full adapter tree', async () => {
+    const runRoot = mkdtempSync(join(tmpdir(), 'craft-ui-cli-no-wait-')); roots.push(runRoot)
+    const adapterPath = join(import.meta.dir, 'process-tree.fixture.ts')
+    const adapter = JSON.stringify([process.execPath, adapterPath])
+    const started = await runCli(['start', '--run-root', runRoot, '--adapter-command-json', adapter, '--no-wait'])
+    expect(started.code).toBe(0)
+    expect(started.json.result).toMatchObject({ accepted: true, ready: false, manifest: { windowMode: 'background', status: 'starting' } })
+    const manifest = started.json.result.manifest
+    const descendantPath = join(manifest.artifactsDir, 'descendant.pid')
+    const deadline = Date.now() + 5_000
+    while (!existsSync(descendantPath) && Date.now() < deadline) await Bun.sleep(25)
+    expect(existsSync(descendantPath)).toBe(true)
+    const descendantPid = Number(readFileSync(descendantPath, 'utf8'))
+    expect(isPidAlive(descendantPid)).toBe(true)
+
+    const stopped = await runCli(['stop', '--run-root', runRoot, '--run', manifest.runId])
+    expect(stopped.code).toBe(0)
+    expect(stopped.json.result.manifest.status).toBe('stopped')
+    expect(isPidAlive(descendantPid)).toBe(false)
+    expect(isPidAlive(manifest.launcherPid)).toBe(false)
+  }, 15_000)
+
   it('rejects background window mode for WebUI runs', async () => {
     const result = await runCli(['start', '--surface', 'webui', '--window-mode', 'background'])
     expect(result.code).toBe(1)
@@ -174,4 +226,8 @@ function expectEnvelope(value: any, runId?: string): void {
   expect(Number.isSafeInteger(value.revision)).toBe(true)
   expect(['scenario-verified', 'renderer-verified', 'native-verified']).toContain(value.verificationLevel)
   expect(typeof value.ok).toBe('boolean')
+}
+
+function isPidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch { return false }
 }

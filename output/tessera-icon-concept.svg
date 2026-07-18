@@ -1,0 +1,42 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  role="img"
+  aria-labelledby="title description"
+>
+  <title id="title">Tessera icon concept</title>
+  <desc id="description">
+    Five asymmetric tiles form an open letter T, with a detached mint tile
+    representing an extension joining the workspace.
+  </desc>
+
+  <!-- Top-left tessera: the primary brand signal. -->
+  <path
+    fill="#F05243"
+    d="M70 118Q70 96 92 94L181 86Q204 84 206 108L212 193Q214 216 190 216H92Q70 216 70 194Z"
+  />
+
+  <!-- The dark keystone keeps the mark grounded at small sizes. -->
+  <path
+    fill="#181A1F"
+    d="M224 91Q224 68 247 68H331Q354 68 354 91V191Q354 214 331 214H247Q224 214 224 191Z"
+  />
+
+  <!-- A visibly separate tile signals that new capabilities can join. -->
+  <path
+    fill="#35C89A"
+    d="M374 80Q375 58 397 60L451 65Q472 67 470 89L462 173Q460 194 438 192L385 186Q364 184 366 162Z"
+  />
+
+  <!-- Two offset tesserae complete the T without becoming a rigid grid. -->
+  <path
+    fill="#F05243"
+    d="M228 234Q228 220 242 220H338Q352 220 352 234L347 332Q346 346 332 346H242Q228 346 228 332Z"
+  />
+  <path
+    fill="#B9342B"
+    d="M215 364Q216 350 230 350H322Q336 350 335 364L326 449Q324 463 310 463H225Q211 463 212 449Z"
+  />
+</svg>

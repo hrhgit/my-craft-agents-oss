@@ -9,7 +9,7 @@ export function registerReturnedArtifacts(manifest: CraftUiRunManifest, result: 
   for (const artifact of (result as { artifacts: Array<Record<string, unknown>> }).artifacts) {
     if (typeof artifact.path !== 'string') continue
     const sourceKind = String(artifact.kind ?? 'other')
-    const kind = sourceKind === 'screenshot' ? 'screenshot'
+    const kind = sourceKind === 'screenshot' || sourceKind.endsWith('-screenshot') ? 'screenshot'
       : sourceKind === 'trace' ? 'trace'
       : sourceKind === 'semantic-snapshot' ? 'snapshot'
       : ['log', 'events', 'console', 'page-errors', 'network-summary', 'driver-info', 'runtime-log', 'state-manifest'].includes(sourceKind) ? 'log'

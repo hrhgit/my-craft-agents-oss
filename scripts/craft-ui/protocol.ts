@@ -11,6 +11,32 @@ export type CraftUiSurface = 'electron' | 'webui'
 export type CraftUiProfileMode = 'fixture' | 'isolated' | 'clone'
 export type CraftUiWindowMode = 'foreground' | 'background'
 
+export type CraftUiStartupPhase =
+  | 'profile'
+  | 'spawn'
+  | 'endpoint'
+  | 'app-readiness'
+  | 'semantic-readiness'
+  | 'initial-scenario'
+
+export interface CraftUiFailureDiagnostics {
+  phase: CraftUiStartupPhase
+  message: string
+  stderrTail: string
+  paths: {
+    runManifest: string
+    stdout: string
+    stderr: string
+    artifacts: string
+  }
+  cleanup: {
+    attempted: boolean
+    remainingPids: number[]
+    profileRemoved: boolean
+    error?: string
+  }
+}
+
 export interface CraftUiEndpointManifest {
   protocolVersion: typeof CRAFT_UI_PROTOCOL_VERSION
   runId: string
@@ -48,6 +74,7 @@ export interface CraftUiRunManifest {
   verificationLevel?: import('@craft-agent/shared/ui-validation').UiValidationVerificationLevel
   profileCleanedAt?: string
   cleanupError?: string
+  failure?: CraftUiFailureDiagnostics
   initialScenario?: { name: string; seed?: number }
   fixture?: CraftUiFixtureSummary
 }

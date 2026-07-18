@@ -46,14 +46,18 @@ const scenarioSchema = objectSchema({
 const rendererActions = ['click', 'fill', 'select', 'press', 'drag', 'shortcut', 'clipboard', 'ime', 'rich-text'] as const
 const nativeActions = ['click', 'fill', 'select', 'focus', 'minimize', 'maximize', 'restore', 'close'] as const
 
-const rendererTargetSchema = {
-  oneOf: [
-    objectSchema({ ref: { type: 'string', minLength: 1 } }, ['ref']),
-    objectSchema({ semanticId: { type: 'string', minLength: 1 } }, ['semanticId']),
-    objectSchema({ testId: { type: 'string', minLength: 1 } }, ['testId']),
-    objectSchema({ role: { type: 'string', minLength: 1 }, name: { type: 'string' }, exact: { type: 'boolean' } }, ['role']),
-  ],
-}
+const rendererTargetSchemas = [
+  objectSchema({ ref: { type: 'string', minLength: 1 } }, ['ref']),
+  objectSchema({ semanticId: { type: 'string', minLength: 1 } }, ['semanticId']),
+  objectSchema({ testId: { type: 'string', minLength: 1 } }, ['testId']),
+  objectSchema({ role: { type: 'string', minLength: 1 }, name: { type: 'string' }, exact: { type: 'boolean' } }, ['role']),
+]
+
+const browserTargetSchema = objectSchema({
+  kind: { const: 'browser' },
+  instanceId: { type: 'string', minLength: 1 },
+  ref: { type: 'string', minLength: 1 },
+}, ['kind', 'instanceId', 'ref'])
 
 function actionSchema(id: string, native: boolean): Record<string, unknown> {
   const required = ['target', 'action']
@@ -63,7 +67,9 @@ function actionSchema(id: string, native: boolean): Record<string, unknown> {
   if (id === 'drag') required.push('to')
   return objectSchema({
     revision: { type: 'integer', minimum: 0 },
-    target: native ? objectSchema({ kind: { const: 'native' }, ref: { type: 'string', minLength: 1 } }, ['kind', 'ref']) : rendererTargetSchema,
+    target: native
+      ? objectSchema({ kind: { const: 'native' }, ref: { type: 'string', minLength: 1 } }, ['kind', 'ref'])
+      : { oneOf: rendererTargetSchemas },
     action: { const: id },
     mode: native ? { const: 'native' } : { enum: ['semantic', 'physical'] },
     value: { type: 'string', maxLength: 100_000 },
@@ -122,7 +128,9 @@ export function queryUiValidationCapabilities(surface: UiValidationCapabilitySur
   if (operation !== 'list' && operation !== 'describe') throw new UiValidationError('INVALID_REQUEST', 'Capability operation must be list or describe.')
   if (query.kind !== undefined && !['route', 'scenario', 'action'].includes(query.kind)) throw new UiValidationError('INVALID_REQUEST', 'Capability kind must be route, scenario, or action.')
   if (operation === 'describe' && (!query.kind || !query.id)) throw new UiValidationError('INVALID_REQUEST', 'Capability describe requires kind and id.')
-  const items = definitions.filter(item => item.surfaces.includes(surface) && (!query.kind || item.kind === query.kind) && (!query.id || item.id === query.id))
+  const items = definitions
+    .filter(item => item.surfaces.includes(surface) && (!query.kind || item.kind === query.kind) && (!query.id || item.id === query.id))
+    .map(item => surface === 'electron' ? withElectronBrowserTarget(item) : item)
   if (operation === 'describe' && items.length === 0) throw new UiValidationError('TARGET_NOT_FOUND', `Capability ${query.kind}:${query.id} was not found on ${surface}.`)
   return {
     protocolVersion: UI_VALIDATION_PROTOCOL_VERSION,
@@ -141,4 +149,14 @@ export function queryUiValidationCapabilities(surface: UiValidationCapabilitySur
       },
     },
   }
+}
+
+function withElectronBrowserTarget(item: UiValidationCapabilityDefinition): UiValidationCapabilityDefinition {
+  if (item.kind !== 'action' || !['click', 'fill', 'select'].includes(item.id)) return item
+  const inputSchema = structuredClone(item.inputSchema) as Record<string, unknown>
+  const properties = inputSchema.properties as Record<string, unknown> | undefined
+  const target = properties?.target as { oneOf?: unknown[] } | undefined
+  if (!target?.oneOf) return item
+  target.oneOf.push(browserTargetSchema)
+  return { ...item, inputSchema }
 }

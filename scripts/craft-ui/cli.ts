@@ -8,7 +8,7 @@ import {
   type UiValidationErrorCode,
   type UiValidationResponseEnvelope,
 } from '@craft-agent/shared/ui-validation'
-import { DEFAULT_CRAFT_UI_RUN_ROOT, DEFAULT_CRAFT_UI_START_WAIT_MS, getCraftUiRunStatus, readRunManifest, resolveRunDir, startCraftUiRun, stopCraftUiRunDetailed, updateRunManifest } from './controller.ts'
+import { CraftUiStartError, DEFAULT_CRAFT_UI_RUN_ROOT, DEFAULT_CRAFT_UI_START_WAIT_MS, getCraftUiRunStatus, readRunManifest, recordCraftUiStartFailure, resolveRunDir, startCraftUiRun, stopCraftUiRunDetailed, updateRunManifest } from './controller.ts'
 import { CraftUiClientError, requestCraftUiHost } from './client.ts'
 import { CRAFT_UI_PROTOCOL_VERSION, type CraftUiProfileMode, type CraftUiRunManifest, type CraftUiSurface, type CraftUiWindowMode } from './protocol.ts'
 import { redactValue } from './redaction.ts'
@@ -25,7 +25,7 @@ function has(args: string[], name: string): boolean { return args.includes(name)
 function output(value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`) }
 
 function help(): void {
-  process.stdout.write(`craft-ui - deterministic Craft UI validation controller\n\nUsage:\n  craft-ui fixture schema [--json]\n  craft-ui start [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--scenario <id>]\n                 [--scenario-params <json>] [--wait-ms <1..600000>]\n                 [--source-craft-profile <path> --source-pi-profile <path>] [--json]\n  craft-ui status [--run <id>] [--run-root <path>] [--json]\n  craft-ui capabilities list [--kind route|scenario|action] [--run <id>] [--json]\n  craft-ui capabilities describe --kind route|scenario|action --id <id> [--run <id>] [--json]\n  craft-ui open|snapshot|action|wait|assert [--params <json>] [--run <id>] [--json]\n  craft-ui scenario apply [--id <id>] [--params <json>] [--run <id>] [--json]\n  craft-ui scenario reset [--params <json>] [--run <id>] [--json]\n  craft-ui clock advance --ms <milliseconds> [--run <id>] [--json]\n  craft-ui fault set|clear|status [--params <json>] [--run <id>] [--json]\n  craft-ui evidence [--params <json>] [--run <id>] [--json]\n  craft-ui request <command> [--params <json>] [--run <id>] [--json]\n  craft-ui stop [--run <id>] [--json]\n\nAll commands emit one V1 JSON response envelope; --json is accepted for explicit caller intent. Host requests accept --timeout-ms <1..600000>.\n\nElectron and WebUI use source-development adapters by default. The default fixture profile opens the disposable test workspace; pass --fixture to build bounded real workspace, file, session, and history data. Electron background mode keeps source-test windows minimized while renderer and background-safe UIA operations run. Isolated is the empty onboarding profile; clone copies explicitly selected user configuration. Other adapters receive CRAFT_UI_* environment variables and must write the versioned endpoint manifest.\n`)
+  process.stdout.write(`craft-ui - deterministic Craft UI validation controller\n\nUsage:\n  craft-ui fixture schema [--json]\n  craft-ui start [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--scenario <id>]\n                 [--scenario-params <json>] [--wait-ms <1..600000>] [--no-wait]\n                 [--source-craft-profile <path> --source-pi-profile <path>] [--json]\n  craft-ui status [--run <id>] [--run-root <path>] [--json]\n  craft-ui capabilities list [--kind route|scenario|action] [--run <id>] [--json]\n  craft-ui capabilities describe --kind route|scenario|action --id <id> [--run <id>] [--json]\n  craft-ui open|snapshot|action|wait|assert [--params <json>] [--run <id>] [--json]\n  craft-ui scenario apply [--id <id>] [--params <json>] [--run <id>] [--json]\n  craft-ui scenario reset [--params <json>] [--run <id>] [--json]\n  craft-ui clock advance --ms <milliseconds> [--run <id>] [--json]\n  craft-ui fault set|clear|status [--params <json>] [--run <id>] [--json]\n  craft-ui evidence [--params <json>] [--run <id>] [--json]\n  craft-ui request <command> [--params <json>] [--run <id>] [--json]\n  craft-ui stop [--run <id>] [--json]\n\nAll commands emit one V1 JSON response envelope; --json is accepted for explicit caller intent. Host requests accept --timeout-ms <1..600000>.\n\nElectron and WebUI use source-development adapters by default. The default fixture profile opens the disposable test workspace; pass --fixture to build bounded real workspace, file, session, and history data. Electron runs in background mode by default; pass --window-mode foreground only for validation that requires a visible native window, menu, or system dialog. --no-wait returns after the adapter process is accepted without contacting the host. Isolated is the empty onboarding profile; clone copies explicitly selected user configuration. Other adapters receive CRAFT_UI_* environment variables and must write the versioned endpoint manifest.\n`)
 }
 
 function jsonOption(args: string[], name: string, fallback: Record<string, unknown> = {}): Record<string, unknown> {
@@ -40,6 +40,7 @@ export async function main(argv = process.argv): Promise<number> {
   if (command === 'help' || command === '--help' || command === '-h') { help(); return 0 }
   const runRoot = option(args, '--run-root') ?? DEFAULT_CRAFT_UI_RUN_ROOT
   const localRequestId = randomUUID()
+  let activeManifest: CraftUiRunManifest | undefined
   try {
     if (command === 'fixture') {
       if ((args[1] ?? 'schema') !== 'schema') throw new Error('fixture requires schema')
@@ -50,7 +51,7 @@ export async function main(argv = process.argv): Promise<number> {
       const requestedSurface = option(args, '--surface') ?? 'electron'
       const surface = (requestedSurface === 'web' ? 'webui' : requestedSurface) as CraftUiSurface
       const profileMode = (option(args, '--profile') ?? 'fixture') as CraftUiProfileMode
-      const windowMode = (option(args, '--window-mode') ?? 'foreground') as CraftUiWindowMode
+      const windowMode = (option(args, '--window-mode') ?? (surface === 'electron' ? 'background' : 'foreground')) as CraftUiWindowMode
       if (!['electron', 'webui'].includes(surface)) throw new Error('--surface must be electron or webui')
       if (!['fixture', 'isolated', 'clone'].includes(profileMode)) throw new Error('--profile must be fixture, isolated, or clone')
       if (!['foreground', 'background'].includes(windowMode)) throw new Error('--window-mode must be foreground or background')
@@ -76,22 +77,46 @@ export async function main(argv = process.argv): Promise<number> {
         scenario,
         fixtureSpec,
       })
-      const response = await requestCraftUiHost({
-        ...manifest,
-        command: 'app.status',
-        timeoutMs: UI_VALIDATION_DEFAULT_TIMEOUT_MS,
-        minimumSeqExclusive: manifest.lastResponseSeq,
-      })
+      activeManifest = manifest
+      if (has(args, '--no-wait')) {
+        output(localSuccess(localRequestId, manifest, {
+          manifest,
+          accepted: true,
+          ready: false,
+          next: `craft-ui status --run ${manifest.runId}`,
+        }))
+        return 0
+      }
+      let response: Awaited<ReturnType<typeof requestCraftUiHost>>
+      try {
+        response = await requestCraftUiHost({
+          ...manifest,
+          command: 'app.status',
+          timeoutMs: UI_VALIDATION_DEFAULT_TIMEOUT_MS,
+          minimumSeqExclusive: manifest.lastResponseSeq,
+        })
+      } catch (error) {
+        const message = `Craft UI became ready but final status failed: ${error instanceof Error ? error.message : String(error)}`
+        const failed = await recordCraftUiStartFailure(manifest.runDir, 'app-readiness', message)
+        throw new CraftUiStartError(message, failed)
+      }
+      if (!response.ok) {
+        const message = `Craft UI final status failed: ${response.error.code}: ${response.error.message}`
+        const failed = await recordCraftUiStartFailure(manifest.runDir, 'app-readiness', message)
+        throw new CraftUiStartError(message, failed)
+      }
       manifest = updateRunManifest(manifest.runDir, {
         lastResponseSeq: response.seq,
         lastRevision: response.revision,
         verificationLevel: response.verificationLevel,
       })
-      output(withResult(response, { manifest, host: response.ok ? response.result : undefined }))
+      activeManifest = manifest
+      output(withResult(response, { manifest, host: response.result }))
       return 0
     }
-    const runDir = resolveRunDir(runRoot, option(args, '--run'))
     if (command === 'status') {
+      const runDir = resolveRunDir(runRoot, option(args, '--run'))
+      activeManifest = readRunManifest(runDir)
       const status = await getCraftUiRunStatus(runDir)
       const manifest = status.manifest as CraftUiRunManifest
       const host = status.host
@@ -101,6 +126,8 @@ export async function main(argv = process.argv): Promise<number> {
       return 0
     }
     if (command === 'stop') {
+      const runDir = resolveRunDir(runRoot, option(args, '--run'))
+      activeManifest = readRunManifest(runDir)
       const stopped = await stopCraftUiRunDetailed(runDir)
       output(stopped.response
         ? withResult(stopped.response, { manifest: stopped.manifest, host: stopped.response.ok ? stopped.response.result : undefined })
@@ -146,19 +173,37 @@ export async function main(argv = process.argv): Promise<number> {
         if (ms === undefined || !Number.isFinite(Number(ms))) throw new Error('clock advance requires --ms or params.ms')
         params.ms = Number(ms)
       }
+      const runDir = resolveRunDir(runRoot, option(args, '--run'))
       const manifest = (await import('./controller.ts')).readRunManifest(runDir)
+      activeManifest = manifest
+      if (command === 'evidence' && (manifest.status === 'failed' || manifest.status === 'stopped')) {
+        const artifactManifest = collectLocalEvidence(manifest)
+        output(localSuccess(localRequestId, manifest, {
+          manifest,
+          artifactManifest,
+          hostAvailable: false,
+        }))
+        return 0
+      }
       const requestTimeoutMs = Number(option(args, '--timeout-ms') ?? params.timeoutMs ?? UI_VALIDATION_EXTENDED_TIMEOUT_MS)
       if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0 || requestTimeoutMs > UI_VALIDATION_MAX_WAIT_MS) throw new Error(`--timeout-ms must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}`)
       const response = await requestCraftUiHost({ ...manifest, command: hostCommand, params, timeoutMs: requestTimeoutMs, minimumSeqExclusive: manifest.lastResponseSeq })
-      updateRunManifest(runDir, { lastResponseSeq: response.seq })
+      updateRunManifest(runDir, {
+        lastResponseSeq: response.seq,
+        lastRevision: response.revision,
+        verificationLevel: response.verificationLevel,
+      })
       registerReturnedArtifacts(manifest, response.ok ? response.result : undefined)
       output(command === 'evidence' ? { ...response, artifactManifest: collectLocalEvidence(manifest) } : response)
       return response.ok ? 0 : 2
     }
     throw new Error(`Unknown command: ${command}`)
   } catch (error) {
-    const manifest = tryReadManifest(runRoot, option(args, '--run'))
+    const manifest = error instanceof CraftUiStartError
+      ? error.manifest
+      : activeManifest ?? tryReadManifest(runRoot, option(args, '--run'))
     const code = cliErrorCode(error)
+    const diagnostics = manifest?.failure
     output({
       v: CRAFT_UI_PROTOCOL_VERSION,
       kind: 'response',
@@ -169,7 +214,20 @@ export async function main(argv = process.argv): Promise<number> {
       revision: manifest?.lastRevision ?? 0,
       verificationLevel: manifest?.verificationLevel ?? 'scenario-verified',
       ok: false,
-      error: redactValue({ code, message: error instanceof Error ? error.message : String(error) }),
+      error: redactValue({
+        code,
+        message: error instanceof Error ? error.message : String(error),
+        ...(diagnostics ? {
+          details: {
+            diagnostics,
+            nextCommands: [
+              `craft-ui status --run ${manifest.runId}`,
+              `craft-ui evidence --run ${manifest.runId}`,
+              `craft-ui stop --run ${manifest.runId}`,
+            ],
+          },
+        } : {}),
+      }),
     } satisfies UiValidationResponseEnvelope)
     return 1
   }
@@ -224,7 +282,7 @@ function cliErrorCode(error: unknown): UiValidationErrorCode {
     if (['HOST_UNREACHABLE', 'ENDPOINT_NOT_READY'].includes(error.code)) return 'DRIVER_DISCONNECTED'
     if (error.code === 'PROTOCOL_MISMATCH') return 'UNSUPPORTED_VERSION'
   }
-  return error instanceof SyntaxError || (error instanceof Error && /must|require(?:d|s)?|unknown|not found|escapes/i.test(error.message))
+  return error instanceof SyntaxError || (error instanceof Error && /must|require(?:d|s)?|unknown|not found|escapes|provide --run|no active/i.test(error.message))
     ? 'INVALID_REQUEST'
     : 'INTERNAL_ERROR'
 }

@@ -16,7 +16,10 @@ export interface EvidenceCollectorSources {
   runtimeLogPath: string
   secrets?: readonly string[]
   snapshot(selector: UiDriverWindowSelector): Promise<UiDriverSnapshot>
-  screenshot(selector: UiDriverWindowSelector, path: string): Promise<unknown>
+  screenshot(selector: UiDriverWindowSelector, path: string): Promise<void | {
+    artifacts?: Array<{ kind: string; path: string; mimeType: string }>
+    surfaces?: Array<Record<string, unknown>>
+  }>
   state(webContentsId?: number): UiValidationScopedStateSnapshot
   events(options?: { afterSeq?: number; limit?: number }): UiValidationEventReadResult
   driver: Record<string, unknown>
@@ -197,8 +200,13 @@ export class ElectronEvidenceCollector {
     const state = this.sources.state(webContentsId)
     const screenshotPath = join(bundleDir, 'screenshot.png')
     try {
-      await this.sources.screenshot(context.selector, screenshotPath)
-      artifacts.push(await artifact('screenshot', screenshotPath, 'image/png'))
+      const captured = await this.sources.screenshot(context.selector, screenshotPath)
+      if (captured && captured.artifacts?.length) {
+        for (const item of captured.artifacts) artifacts.push(await artifact(item.kind, item.path, item.mimeType))
+      } else {
+        artifacts.push(await artifact('screenshot', screenshotPath, 'image/png'))
+      }
+      if (captured?.surfaces?.length) await addJson('screenshot-metadata', 'screenshot-surfaces.json', captured.surfaces)
     } catch (error) {
       await addJson('screenshot-error', 'screenshot.error.json', errorRecord(error))
     }
@@ -283,7 +291,13 @@ function urlOrigin(value?: string): string {
 }
 
 function incrementalSnapshot(previous: UiDriverSnapshot, current: UiDriverSnapshot): unknown {
-  const flatten = (snapshot: UiDriverSnapshot) => new Map(Object.entries(snapshot.regions).flatMap(([region, nodes]) => nodes.map(node => [stableNodeId(node.ref), { region, node }] as const)))
+  const flatten = (snapshot: UiDriverSnapshot) => new Map([
+    ...Object.entries(snapshot.regions).flatMap(([region, nodes]) => nodes.map(node => [`renderer:${stableNodeId(node.ref)}`, { region, node }] as const)),
+    ...(snapshot.embeddedSurfaces ?? []).flatMap(surface => surface.nodes.map(node => [
+      `${surface.surfaceId}:${stableNodeId(node.ref)}`,
+      { region: `embedded:${surface.surfaceId}`, node },
+    ] as const)),
+  ])
   const before = flatten(previous)
   const after = flatten(current)
   const added: unknown[] = []

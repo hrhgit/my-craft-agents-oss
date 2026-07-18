@@ -50,14 +50,17 @@ export function parseUiValidationActionRequest(input: unknown): UiValidationActi
   const action = nonEmptyString(value.action, 'action')
   const target = parseTarget(value.target)
   const isNative = 'kind' in target && target.kind === 'native'
+  const isBrowser = 'kind' in target && target.kind === 'browser'
   const isExtension = 'kind' in target && target.kind === 'extension'
   if (isNative && !NATIVE_ACTIONS.has(action)) invalid(`Unsupported native action: ${action}`)
+  if (isBrowser && !['click', 'fill', 'select'].includes(action)) invalid(`Unsupported BrowserView action: ${action}`)
   if (isExtension && !/^[a-z][a-z0-9._-]{0,127}$/.test(action)) invalid('Extension action must be a stable bounded identifier')
-  if (!isNative && !isExtension && !RENDERER_ACTIONS.has(action)) invalid(`Unsupported renderer action: ${action}`)
+  if (!isNative && !isBrowser && !isExtension && !RENDERER_ACTIONS.has(action)) invalid(`Unsupported renderer action: ${action}`)
   if (isNative && value.mode !== 'native') invalid('Native targets require mode native')
   if (!isNative && value.mode === 'native') invalid('mode native requires a native target')
+  if (isBrowser && value.mode !== undefined && value.mode !== 'physical') invalid('BrowserView targets support only physical mode')
   if (isExtension && value.mode !== undefined && value.mode !== 'semantic') invalid('Extension targets support only semantic mode')
-  if (!isNative && !isExtension && value.mode !== undefined && value.mode !== 'semantic' && value.mode !== 'physical') invalid('Renderer mode must be semantic or physical')
+  if (!isNative && !isBrowser && !isExtension && value.mode !== undefined && value.mode !== 'semantic' && value.mode !== 'physical') invalid('Renderer mode must be semantic or physical')
   const result: Record<string, unknown> = { target, action }
   if (value.mode !== undefined) result.mode = value.mode
   if (value.revision !== undefined) result.revision = nonNegativeInteger(value.revision, 'revision')
@@ -283,6 +286,15 @@ function parseTarget(input: unknown): UiValidationTarget {
     if (unexpected) invalid(`target.${unexpected} is unsupported for a native target`)
     return { kind: 'native', ref: nonEmptyString(target.ref, 'target.ref') }
   }
+  if (target.kind === 'browser') {
+    const unexpected = Object.keys(target).find(key => !['kind', 'instanceId', 'ref'].includes(key))
+    if (unexpected) invalid(`target.${unexpected} is unsupported for a BrowserView target`)
+    return {
+      kind: 'browser',
+      instanceId: nonEmptyString(target.instanceId, 'target.instanceId'),
+      ref: nonEmptyString(target.ref, 'target.ref'),
+    }
+  }
   if (target.kind === 'extension') {
     const unexpected = Object.keys(target).find(key => !['kind', 'sessionId', 'extensionId', 'runtimeId', 'definitionId'].includes(key))
     if (unexpected) invalid(`target.${unexpected} is unsupported for an extension target`)
@@ -294,7 +306,7 @@ function parseTarget(input: unknown): UiValidationTarget {
       ...(target.definitionId === undefined ? {} : { definitionId: nonEmptyString(target.definitionId, 'target.definitionId') }),
     }
   }
-  if (target.kind !== undefined) invalid('target.kind must be native or extension')
+  if (target.kind !== undefined) invalid('target.kind must be native, browser, or extension')
   const keys = ['ref', 'semanticId', 'testId', 'role'].filter(key => target[key] !== undefined)
   if (keys.length !== 1) invalid('target must specify exactly one of ref, semanticId, testId, or role')
   if (target.ref !== undefined) return { ref: nonEmptyString(target.ref, 'target.ref') }

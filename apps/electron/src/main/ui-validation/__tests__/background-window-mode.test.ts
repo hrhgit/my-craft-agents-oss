@@ -6,7 +6,7 @@ import { ElectronBackgroundWindowController, parseElectronUiWindowMode } from '.
 
 describe('ElectronBackgroundWindowController', () => {
   it('validates the run window mode', () => {
-    expect(parseElectronUiWindowMode(undefined)).toBe('foreground')
+    expect(parseElectronUiWindowMode(undefined)).toBe('background')
     expect(parseElectronUiWindowMode('background')).toBe('background')
     expect(() => parseElectronUiWindowMode('hidden')).toThrow('foreground or background')
   })

@@ -139,7 +139,7 @@ function acquireManifestLock(manifestPath: string): ManifestLock {
     }
 
     if (Date.now() >= deadline) {
-      throw Object.assign(new Error(`Timed out waiting for artifact manifest lock: ${manifestPath}`), {
+      throw Object.assign(new Error(`Timed out waiting for file lock: ${manifestPath}`), {
         code: 'ELOCKED',
       })
     }
@@ -147,7 +147,7 @@ function acquireManifestLock(manifestPath: string): ManifestLock {
   }
 }
 
-function withManifestLock<T>(manifestPath: string, update: () => T): T {
+export function withFileLock<T>(manifestPath: string, update: () => T): T {
   const lock = acquireManifestLock(manifestPath)
   try {
     return update()
@@ -181,7 +181,7 @@ export function recordArtifact(args: {
     path: absolutePath,
     createdAt: new Date().toISOString(),
   }, args.secrets) as CraftUiArtifact
-  withManifestLock(args.manifestPath, () => {
+  withFileLock(args.manifestPath, () => {
     const manifest = readArtifactManifest(args.manifestPath, args.runId)
     manifest.updatedAt = new Date().toISOString()
     manifest.artifacts = manifest.artifacts.filter(item => item.path !== artifact.path)

@@ -8,6 +8,7 @@ const surface = process.env.CRAFT_UI_SURFACE as 'electron' | 'webui'
 const token = process.env.CRAFT_UI_TOKEN!
 const endpointPath = process.env.CRAFT_UI_ENDPOINT_MANIFEST!
 const artifactsDir = process.env.CRAFT_UI_ARTIFACTS_DIR!
+const failFinalStatus = process.argv.includes('--fail-final-status')
 
 let server: ReturnType<typeof Bun.serve>
 let seq = 0
@@ -19,6 +20,20 @@ server = Bun.serve({
     if (request.headers.get('authorization') !== `Bearer ${token}`) return new Response('Unauthorized', { status: 401 })
     const body = await request.json() as CraftUiRequest
     seq += 1
+    if (failFinalStatus && body.method === 'app.status') {
+      return Response.json({
+        v: CRAFT_UI_PROTOCOL_VERSION,
+        kind: 'response',
+        id: body.id,
+        requestId: body.requestId,
+        runId,
+        seq,
+        revision: seq,
+        verificationLevel: 'native-verified',
+        ok: false,
+        error: { code: 'NOT_READY', message: 'fixture final status failure' },
+      } satisfies CraftUiResponse)
+    }
     const response: CraftUiResponse = {
       v: CRAFT_UI_PROTOCOL_VERSION,
       kind: 'response',

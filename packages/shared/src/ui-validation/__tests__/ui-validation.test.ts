@@ -75,6 +75,23 @@ describe('UI validation V1 protocol', () => {
       .toMatchObject({ target: { semanticId: 'composer.session.input' }, action: 'fill' })
   })
 
+  it('accepts BrowserView refs as isolated physical targets', () => {
+    expect(parseUiValidationActionRequest({
+      target: { kind: 'browser', instanceId: 'browser-1', ref: 'b2:browser-1:e4' },
+      revision: 2,
+      action: 'click',
+      mode: 'physical',
+    })).toMatchObject({
+      target: { kind: 'browser', instanceId: 'browser-1', ref: 'b2:browser-1:e4' },
+      revision: 2,
+      action: 'click',
+    })
+    expect(() => parseUiValidationActionRequest({
+      target: { kind: 'browser', instanceId: 'browser-1', ref: 'b2:browser-1:e4' },
+      action: 'drag',
+    })).toThrow('Unsupported BrowserView action')
+  })
+
   it('accepts semantic readiness as an event-driven wait contract', () => {
     expect(parseUiValidationWaitRequest({ predicate: { kind: 'semantic-ready' }, stableForMs: 25 }))
       .toEqual({ predicate: { kind: 'semantic-ready' }, stableForMs: 25 })
@@ -97,6 +114,13 @@ describe('UI validation V1 protocol', () => {
     expect(JSON.stringify(described)).not.toMatch(/selector|evaluate|cdp/i)
     expect(() => queryUiValidationCapabilities('webui', { operation: 'describe', kind: 'action', id: 'native.close' }))
       .toThrow(expect.objectContaining({ code: 'TARGET_NOT_FOUND' }))
+  })
+
+  it('advertises BrowserView action targets only on Electron', () => {
+    const electron = queryUiValidationCapabilities('electron', { operation: 'describe', kind: 'action', id: 'click' })
+    const webui = queryUiValidationCapabilities('webui', { operation: 'describe', kind: 'action', id: 'click' })
+    expect(JSON.stringify(electron.items[0]!.inputSchema)).toContain('browser')
+    expect(JSON.stringify(webui.items[0]!.inputSchema)).not.toContain('browser')
   })
 })
 

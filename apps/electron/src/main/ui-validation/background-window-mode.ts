@@ -4,8 +4,8 @@ import type { WindowManager } from '../window-manager'
 export type ElectronUiWindowMode = 'foreground' | 'background'
 
 export function parseElectronUiWindowMode(value: string | undefined): ElectronUiWindowMode {
-  if (value === undefined || value === 'foreground') return 'foreground'
-  if (value === 'background') return 'background'
+  if (value === undefined || value === 'background') return 'background'
+  if (value === 'foreground') return 'foreground'
   throw new Error('CRAFT_UI_WINDOW_MODE must be foreground or background.')
 }
 
