@@ -70,6 +70,18 @@ describe('UI validation V1 protocol', () => {
     })).toMatchObject({ action: 'update', input: { count: 2 } })
   })
 
+  it('accepts direct action wait conditions as a legacy shorthand', () => {
+    expect(parseUiValidationActionRequest({
+      revision: 3,
+      target: { ref: 'r3:save' },
+      action: 'click',
+      waitUntil: { kind: 'state', scope: 'sessions', phase: 'ready', detail: { count: 1 }, timeoutMs: 60_000 },
+    }).waitUntil).toEqual({
+      predicate: { kind: 'state', scope: 'sessions', phase: 'ready', detail: { count: 1 } },
+      timeoutMs: 60_000,
+    })
+  })
+
   it('accepts stable semantic ids as first-class targets', () => {
     expect(parseUiValidationActionRequest({ target: { semanticId: 'composer.session.input' }, action: 'fill', value: 'hello' }))
       .toMatchObject({ target: { semanticId: 'composer.session.input' }, action: 'fill' })

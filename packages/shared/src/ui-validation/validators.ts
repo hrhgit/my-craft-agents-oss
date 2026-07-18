@@ -67,7 +67,12 @@ export function parseUiValidationActionRequest(input: unknown): UiValidationActi
   if (value.value !== undefined) result.value = string(value.value, 'value', 100_000)
   if (value.key !== undefined) result.key = nonEmptyString(value.key, 'key', 128)
   if (value.timeoutMs !== undefined) result.timeoutMs = positiveInteger(value.timeoutMs, 'timeoutMs', UI_VALIDATION_MAX_WAIT_MS)
-  if (value.waitUntil !== undefined) result.waitUntil = parseUiValidationWaitRequest(value.waitUntil)
+  if (value.waitUntil !== undefined) {
+    const waitUntil = record(value.waitUntil, 'waitUntil')
+    result.waitUntil = parseUiValidationWaitRequest(waitUntil.predicate === undefined
+      ? { ...waitUntil, predicate: waitUntil }
+      : waitUntil)
+  }
   if (value.input !== undefined) {
     if (!isExtension) invalid('input is supported only for extension actions')
     result.input = record(value.input, 'input')
