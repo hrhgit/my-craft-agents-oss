@@ -7,20 +7,20 @@ Thank you for your interest in contributing to Craft Agents! This document provi
 ### Prerequisites
 
 - [Bun](https://bun.sh/) runtime
-- Node.js 18+ (for some tooling)
+- Node.js 22.19+ (for the Pi runtime)
 - macOS, Linux, or Windows
 
 ### Development Setup
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/lukilabs/craft-agents-oss.git
-   cd craft-agents-oss
+   git clone https://github.com/hrhgit/my-craft-agents-oss.git
+   cd my-craft-agents-oss
    ```
 
 2. Install dependencies:
    ```bash
-   bun install
+   bun run bootstrap
    ```
 
 3. Set up environment variables:
@@ -97,15 +97,17 @@ craft-agents/
 ├── apps/
 │   ├── electron/    # Desktop GUI (primary interface)
 │   └── tui/         # Terminal CLI (deprecated)
-└── packages/
-    ├── core/        # @craft-agent/core - Shared types
-    ├── shared/      # @craft-agent/shared - Business logic
-    └── ui/          # @craft-agent/ui - React components
+├── packages/
+│   ├── core/        # @craft-agent/core - Shared types
+│   ├── shared/      # @craft-agent/shared - Business logic
+│   └── ui/          # @craft-agent/ui - React components
+└── pi/              # Pi agent runtime and public host APIs
 ```
 
 ## Key Areas
 
 - **Agent Logic**: `packages/shared/src/agent/`
+- **Pi Runtime**: `pi/packages/`
 - **Authentication**: `packages/shared/src/auth/`
 - **MCP Integration**: `packages/shared/src/mcp/`
 - **UI Components**: `packages/ui/src/`

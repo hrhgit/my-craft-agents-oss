@@ -18,6 +18,7 @@
   "workspaces": [
     "packages/*",
     "apps/*",
+    "pi/packages/*",
     "!apps/online-docs"
   ],
   "scripts": {
@@ -54,6 +55,13 @@
     "test:doc-tools": "python3 -m unittest apps.electron.resources.scripts.tests.test_pdf_tool_smoke apps.electron.resources.scripts.tests.test_xlsx_tool_smoke apps.electron.resources.scripts.tests.test_docx_tool_smoke apps.electron.resources.scripts.tests.test_pptx_tool_smoke apps.electron.resources.scripts.tests.test_img_tool_smoke apps.electron.resources.scripts.tests.test_ical_tool_smoke apps.electron.resources.scripts.tests.test_doc_diff_smoke apps.electron.resources.scripts.tests.test_markitdown_smoke",
     "validate:dev": "bun run typecheck:all && bun run test:shared:all && bun run test:doc-tools",
     "validate:ci": "bun run validate:dev && bun run test:ui-validation:fast && bun run lint:i18n:parity && bun run lint:i18n:sorted",
+    "pi:install": "npm --prefix pi ci --ignore-scripts",
+    "pi:build": "npm --prefix pi run build:workspace",
+    "pi:check": "npm --prefix pi run check",
+    "pi:test": "cd pi && bash ./test.sh",
+    "bootstrap": "bun run pi:install && bun run pi:build && bun install",
+    "bootstrap:ci": "bun run pi:install && bun run pi:build && bun install --frozen-lockfile",
+    "validate:monorepo": "bun run pi:build && bun run pi:check && bun run pi:test && bun run validate:ci",
     "lint:electron": "cd apps/electron && bun run lint",
     "lint:shared": "cd packages/shared && npx eslint .",
     "lint:session-tools-core": "cd packages/session-tools-core && npx eslint .",
@@ -155,8 +163,8 @@
     "@dnd-kit/dom": "^0.4.0-beta-20260227032529",
     "@dnd-kit/helpers": "^0.4.0-beta-20260227032529",
     "@github/copilot-sdk": "^0.1.23",
-    "@earendil-works/pi-ai": "link:@earendil-works/pi-ai",
-    "@earendil-works/pi-coding-agent": "link:@earendil-works/pi-coding-agent",
+    "@earendil-works/pi-ai": "workspace:*",
+    "@earendil-works/pi-coding-agent": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-collapsible": "^1.1.12",

@@ -115,6 +115,7 @@
 		"generate-models": "node scripts/generate-models.ts",
 		"generate-image-models": "node scripts/generate-image-models.ts",
 		"build": "npm run generate-models && npm run generate-image-models && tsgo -p tsconfig.build.json",
+		"build:workspace": "tsgo -p tsconfig.build.json",
 		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
@@ -144,8 +145,8 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
-		"directory": "packages/ai"
+		"url": "git+https://github.com/hrhgit/my-craft-agents-oss.git",
+		"directory": "pi/packages/ai"
 	},
 	"engines": {
 		"node": ">=22.19.0"

@@ -87,9 +87,9 @@
     "i18next": "^26.0.3",
     "incr-regex-package": "^1.0.4",
     "shell-quote": "^1.8.3",
-    "@earendil-works/pi-agent-core": "link:@earendil-works/pi-agent-core",
-    "@earendil-works/pi-ai": "link:@earendil-works/pi-ai",
-    "@earendil-works/pi-coding-agent": "link:@earendil-works/pi-coding-agent"
+    "@earendil-works/pi-agent-core": "workspace:*",
+    "@earendil-works/pi-ai": "workspace:*",
+    "@earendil-works/pi-coding-agent": "workspace:*"
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": ">=1.29.0",

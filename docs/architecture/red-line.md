@@ -12,8 +12,8 @@ and by code review.
 
 ## Bottom layer — owned by Pi, unified into Pi
 
-These concerns live in the Pi repo (`@earendil-works/pi-*`, currently a fork at
-`E:\_workSpace\_Agents\pi`) and their source of truth is `~/.pi/agent/`. Craft
+These concerns live in the monorepo's `pi/` subtree (`@earendil-works/pi-*`)
+and their source of truth is `~/.pi/agent/`. Craft
 must not reimplement them, must not monkey-patch their internals, and must not
 import them outside the sanctioned seam (see below).
 

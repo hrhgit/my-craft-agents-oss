@@ -29,8 +29,8 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
-		"directory": "packages/tui"
+		"url": "git+https://github.com/hrhgit/my-craft-agents-oss.git",
+		"directory": "pi/packages/tui"
 	},
 	"engines": {
 		"node": ">=22.19.0"
