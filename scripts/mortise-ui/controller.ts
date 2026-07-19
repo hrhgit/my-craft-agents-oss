@@ -3,20 +3,22 @@ import { closeSync, existsSync, openSync, readFileSync, readdirSync, rmSync, wri
 import { spawn, spawnSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
-import { MORTISE_UI_PROTOCOL_VERSION, type MortiseUiFailureDiagnostics, type MortiseUiProfileMode, type MortiseUiResponse, type MortiseUiRunManifest, type MortiseUiStartupPhase, type MortiseUiSurface, type MortiseUiWindowMode } from './protocol.ts'
+import { MORTISE_UI_PROTOCOL_VERSION, type MortiseUiFailureDiagnostics, type MortiseUiHistoryEntry, type MortiseUiProfileMode, type MortiseUiResponse, type MortiseUiRunManifest, type MortiseUiStartupPhase, type MortiseUiSurface, type MortiseUiWindowMode } from './protocol.ts'
 import { ensureDir, writeJsonAtomic } from './files.ts'
 import type { MortiseUiFixtureSpec } from './fixture.ts'
 import { redactText } from './redaction.ts'
 import { createMortiseUiSurfaceDriver, readEndpointManifest, requestMortiseUiHost } from './client.ts'
 import { withFileLock } from './artifacts.ts'
+import { getProcessStartTime, isProcessAlive, matchesProcessIdentity, type MortiseUiProcessIdentity } from './process-identity.ts'
 
-export const DEFAULT_MORTISE_UI_RUN_ROOT = resolve(process.cwd(), 'output', 'mortise-ui')
+export const DEFAULT_MORTISE_UI_RUN_ROOT = resolve(process.env.MORTISE_UI_RUN_ROOT ?? join(process.cwd(), 'output', 'mortise-ui'))
 export const DEFAULT_MORTISE_UI_START_WAIT_MS = 600_000
 const MORTISE_UI_RUN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/
 const MORTISE_UI_SHUTDOWN_REQUEST_TIMEOUT_MS = 30_000
 const MORTISE_UI_SHUTDOWN_GRACE_PERIOD_MS = 30_000
 const MORTISE_UI_FORCED_STOP_GRACE_PERIOD_MS = 10_000
 const MORTISE_UI_DIAGNOSTIC_TAIL_BYTES = 16_000
+const MORTISE_UI_HISTORY_LIMIT = 50
 
 export class MortiseUiStartError extends Error {
   constructor(message: string, readonly manifest: MortiseUiRunManifest) {
@@ -58,14 +60,6 @@ function makeRunId(): string {
   return `${stamp}-${randomBytes(4).toString('hex')}`
 }
 
-function isPidAlive(pid: number | undefined): boolean {
-  if (!pid || !Number.isInteger(pid) || pid <= 0) return false
-  try { process.kill(pid, 0); return true } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    return code === 'EPERM' || code === 'EACCES'
-  }
-}
-
 function validateRunLabel(label: string | undefined): string | undefined {
   if (label === undefined) return undefined
   if (!MORTISE_UI_RUN_LABEL_PATTERN.test(label)) {
@@ -76,10 +70,10 @@ function validateRunLabel(label: string | undefined): string | undefined {
 
 function isActiveRun(run: MortiseUiRunManifest): boolean {
   return (run.status === 'starting' || run.status === 'ready' || run.status === 'stopping')
-    && (isPidAlive(run.hostPid) || isPidAlive(run.launcherPid))
+    && (hostAlive(run) || launcherAlive(run))
 }
 
-function readRuns(root: string): MortiseUiRunManifest[] {
+export function listMortiseUiRuns(root = DEFAULT_MORTISE_UI_RUN_ROOT): MortiseUiRunManifest[] {
   if (!existsSync(root)) return []
   return readdirSync(root, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && existsSync(join(root, entry.name, 'run.json')))
@@ -94,10 +88,64 @@ export function readRunManifest(runDir: string): MortiseUiRunManifest {
 export function updateRunManifest(runDir: string, patch: Partial<MortiseUiRunManifest>): MortiseUiRunManifest {
   const path = join(runDir, 'run.json')
   return withFileLock(path, () => {
-    const manifest = { ...readRunManifest(runDir), ...patch, updatedAt: new Date().toISOString() }
+    const current = readRunManifest(runDir)
+    const manifest = {
+      ...current,
+      ...patch,
+      ...(patch.lastResponseSeq === undefined ? {} : { lastResponseSeq: Math.max(current.lastResponseSeq ?? 0, patch.lastResponseSeq) }),
+      ...(patch.lastRevision === undefined ? {} : { lastRevision: Math.max(current.lastRevision ?? 0, patch.lastRevision) }),
+      updatedAt: new Date().toISOString(),
+    }
     writeJsonAtomic(path, manifest)
     return manifest
   })
+}
+
+export function appendRunHistory(runDir: string, entry: MortiseUiHistoryEntry): MortiseUiRunManifest {
+  const path = join(runDir, 'run.json')
+  return withFileLock(path, () => {
+    const current = readRunManifest(runDir)
+    const manifest = {
+      ...current,
+      history: [...(current.history ?? []), entry].slice(-MORTISE_UI_HISTORY_LIMIT),
+      updatedAt: new Date().toISOString(),
+    }
+    writeJsonAtomic(path, manifest)
+    return manifest
+  })
+}
+
+export function pruneMortiseUiRuns(args: {
+  runRoot?: string
+  olderThanHours?: number
+  keep?: number
+  apply?: boolean
+} = {}): {
+  applied: boolean
+  protectedRunIds: string[]
+  candidateRunIds: string[]
+  removedRunIds: string[]
+  reclaimedBytes: number
+} {
+  const runRoot = resolve(args.runRoot ?? DEFAULT_MORTISE_UI_RUN_ROOT)
+  const olderThanHours = Number.isFinite(args.olderThanHours) && args.olderThanHours! >= 0 ? args.olderThanHours! : 168
+  const keep = Number.isSafeInteger(args.keep) && args.keep! >= 0 ? args.keep! : 20
+  const threshold = Date.now() - olderThanHours * 60 * 60 * 1_000
+  const runs = listMortiseUiRuns(runRoot)
+  const protectedRunIds = runs.filter(isActiveRun).map(run => run.runId)
+  const inactive = runs.filter(run => !isActiveRun(run))
+  const candidates = inactive.filter((run, index) => index >= keep && Date.parse(run.updatedAt || run.createdAt) <= threshold)
+  const candidateRunIds = candidates.map(run => run.runId)
+  let reclaimedBytes = 0
+  const removedRunIds: string[] = []
+  if (args.apply) {
+    for (const run of candidates) {
+      reclaimedBytes += directoryBytes(run.runDir)
+      rmSync(run.runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      if (!existsSync(run.runDir)) removedRunIds.push(run.runId)
+    }
+  }
+  return { applied: args.apply === true, protectedRunIds, candidateRunIds, removedRunIds, reclaimedBytes }
 }
 
 export function resolveRunDir(runRoot = DEFAULT_MORTISE_UI_RUN_ROOT, runSelector?: string): string {
@@ -106,7 +154,7 @@ export function resolveRunDir(runRoot = DEFAULT_MORTISE_UI_RUN_ROOT, runSelector
     const candidate = resolve(root, runSelector)
     if (!candidate.startsWith(`${root}\\`) && !candidate.startsWith(`${root}/`)) throw new Error('Run ID escapes the run root')
     if (existsSync(join(candidate, 'run.json'))) return candidate
-    const matches = readRuns(root).filter(run => run.label === runSelector)
+    const matches = listMortiseUiRuns(root).filter(run => run.label === runSelector)
     if (matches.length === 1) return matches[0]!.runDir
     if (matches.length > 1) {
       const active = matches.filter(isActiveRun)
@@ -117,7 +165,7 @@ export function resolveRunDir(runRoot = DEFAULT_MORTISE_UI_RUN_ROOT, runSelector
     throw new Error(`Mortise UI run not found: ${runSelector}`)
   }
   if (!existsSync(root)) throw new Error('No Mortise UI runs exist')
-  const runs = readRuns(root)
+  const runs = listMortiseUiRuns(root)
   const active = runs.filter(isActiveRun)
   if (active.length === 1) return active[0]!.runDir
   if (active.length > 1) throw new Error('More than one active Mortise UI run exists; provide --run explicitly')
@@ -269,7 +317,7 @@ export async function startMortiseUiRun(args: {
     throw new MortiseUiStartError(message, failed)
   }
   child.unref()
-  updateRunManifest(runDir, { launcherPid: child.pid })
+  updateRunManifest(runDir, { launcherPid: child.pid, launcherStartedAt: getProcessStartTime(child.pid) })
   if (args.waitForReady === false) return readRunManifest(runDir)
 
   const deadline = Date.now() + waitMs
@@ -280,14 +328,19 @@ export async function startMortiseUiRun(args: {
       if (
         endpoint.runId !== runId
         || endpoint.surface !== args.surface
-        || !isPidAlive(endpoint.pid)
+        || !isProcessAlive(endpoint.pid)
         || (currentManifest.buildId !== undefined && endpoint.buildId !== currentManifest.buildId)
       ) {
         const error = 'Host endpoint manifest identity does not match the controller run'
         const failed = await failMortiseUiStart(runDir, 'endpoint', error, [child.pid, endpoint.pid])
         throw new MortiseUiStartError(error, failed)
       }
-      let readyManifest = updateRunManifest(runDir, { launcherPid: child.pid, hostPid: endpoint.pid })
+      let readyManifest = updateRunManifest(runDir, {
+        launcherPid: child.pid,
+        launcherStartedAt: getProcessStartTime(child.pid),
+        hostPid: endpoint.pid,
+        hostStartedAt: getProcessStartTime(endpoint.pid),
+      })
       const appReadyTimeoutMs = Math.max(1, deadline - Date.now())
       const readiness = await requestMortiseUiHost({
         ...readyManifest,
@@ -341,7 +394,7 @@ export async function startMortiseUiRun(args: {
       }
       return readRunManifest(runDir)
     }
-    if (!isPidAlive(child.pid)) {
+    if (!isProcessAlive(child.pid)) {
       const latestManifest = readRunManifest(runDir)
       const phase: MortiseUiStartupPhase = latestManifest.buildError ? 'build' : 'endpoint'
       const error = latestManifest.buildError
@@ -362,16 +415,16 @@ export async function getMortiseUiRunStatus(runDir: string): Promise<Record<stri
   if (existsSync(manifest.endpointManifestPath)) {
     try {
       const endpoint = readEndpointManifest(manifest.endpointManifestPath)
-      if (endpoint.runId === manifest.runId && endpoint.surface === manifest.surface && isPidAlive(endpoint.pid) && endpoint.pid !== manifest.hostPid) {
-        manifest = updateRunManifest(runDir, { hostPid: endpoint.pid })
+      if (endpoint.runId === manifest.runId && endpoint.surface === manifest.surface && isProcessAlive(endpoint.pid) && endpoint.pid !== manifest.hostPid) {
+        manifest = updateRunManifest(runDir, { hostPid: endpoint.pid, hostStartedAt: getProcessStartTime(endpoint.pid) })
       }
     } catch {
       // A partially written or stale endpoint is reported through host status below.
     }
   }
-  const processAlive = isPidAlive(manifest.hostPid) || isPidAlive(manifest.launcherPid)
+  const processAlive = hostAlive(manifest) || launcherAlive(manifest)
   let host: unknown
-  if (existsSync(manifest.endpointManifestPath) && isPidAlive(manifest.hostPid)) {
+  if (existsSync(manifest.endpointManifestPath) && hostAlive(manifest)) {
     try {
       const endpoint = readEndpointManifest(manifest.endpointManifestPath)
       if (endpoint.pid !== manifest.hostPid || endpoint.surface !== manifest.surface) throw new Error('Host endpoint identity changed')
@@ -403,10 +456,10 @@ export async function recordMortiseUiStartFailure(
 
 export async function stopMortiseUiRunDetailed(runDir: string): Promise<{ manifest: MortiseUiRunManifest; response?: MortiseUiResponse }> {
   const original = readRunManifest(runDir)
-  if (original.status === 'stopped') return { manifest: original }
+  if (original.status === 'stopped' && !original.cleanupError && !existsSync(original.profileDir)) return { manifest: original }
   let manifest = updateRunManifest(runDir, { status: 'stopping' })
   let shutdownResponse: MortiseUiResponse | undefined
-  if (existsSync(manifest.endpointManifestPath) && isPidAlive(manifest.hostPid)) {
+  if (existsSync(manifest.endpointManifestPath) && hostAlive(manifest)) {
     const driver = createMortiseUiSurfaceDriver({ ...manifest, timeoutMs: MORTISE_UI_SHUTDOWN_REQUEST_TIMEOUT_MS, minimumSeqExclusive: manifest.lastResponseSeq })
     const response = await driver.dispose().catch(() => undefined)
     if (response) {
@@ -419,11 +472,11 @@ export async function stopMortiseUiRunDetailed(runDir: string): Promise<{ manife
     }
   }
   const deadline = Date.now() + MORTISE_UI_SHUTDOWN_GRACE_PERIOD_MS
-  while (isPidAlive(manifest.hostPid) && Date.now() < deadline) await Bun.sleep(100)
-  const ownedPids = original.status === 'failed' && original.failure?.cleanup.remainingPids.length === 0
+  while (hostAlive(manifest) && Date.now() < deadline) await Bun.sleep(100)
+  const ownedProcesses = original.status === 'failed' && original.failure?.cleanup.remainingPids.length === 0
     ? []
-    : uniquePids([manifest.launcherPid, manifest.hostPid])
-  const remainingPids = await terminateOwnedProcessTrees(ownedPids)
+    : processIdentities(manifest)
+  const remainingPids = await terminateOwnedProcessTrees(ownedProcesses)
   if (remainingPids.length > 0) {
     return {
       manifest: updateRunManifest(runDir, {
@@ -444,10 +497,9 @@ export async function stopMortiseUiRunDetailed(runDir: string): Promise<{ manife
       if (attempt < 4) await Bun.sleep(100 * (attempt + 1))
     }
   }
-  manifest = updateRunManifest(runDir, {
-    status: 'stopped',
-    ...(cleanupError ? { cleanupError } : { profileCleanedAt: new Date().toISOString(), cleanupError: undefined }),
-  })
+  manifest = updateRunManifest(runDir, cleanupError
+    ? { status: 'failed', cleanupError, error: `Mortise UI profile cleanup failed: ${cleanupError}` }
+    : { status: 'stopped', profileCleanedAt: new Date().toISOString(), cleanupError: undefined })
   return { manifest, response: shutdownResponse }
 }
 
@@ -483,9 +535,9 @@ async function terminateAndCleanFailedRun(
   runDir: string,
   pids: Array<number | undefined>,
 ): Promise<MortiseUiFailureDiagnostics['cleanup']> {
-  const ownedPids = uniquePids(pids)
-  const remainingPids = await terminateOwnedProcessTrees(ownedPids)
   const manifest = readRunManifest(runDir)
+  const identities = pids.map(pid => identityForPid(manifest, pid)).filter((value): value is MortiseUiProcessIdentity => !!value)
+  const remainingPids = await terminateOwnedProcessTrees(identities)
   let cleanupError: string | undefined
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
@@ -501,27 +553,24 @@ async function terminateAndCleanFailedRun(
     ? { cleanupError }
     : { profileCleanedAt: new Date().toISOString(), cleanupError: undefined })
   return {
-    attempted: ownedPids.length > 0 || existsSync(manifest.profileDir),
+    attempted: identities.length > 0 || existsSync(manifest.profileDir),
     remainingPids,
     profileRemoved: !existsSync(manifest.profileDir),
     ...(cleanupError ? { error: cleanupError } : {}),
   }
 }
 
-function uniquePids(pids: Array<number | undefined>): number[] {
-  return [...new Set(pids.filter((pid): pid is number => Number.isInteger(pid) && pid! > 0 && pid !== process.pid))]
-}
-
-async function terminateOwnedProcessTrees(pids: Array<number | undefined>): Promise<number[]> {
-  const roots = uniquePids(pids)
+async function terminateOwnedProcessTrees(processes: MortiseUiProcessIdentity[]): Promise<number[]> {
+  const identities = uniqueProcessIdentities(processes)
+  const roots = identities.filter(matchesProcessIdentity).map(identity => identity.pid!)
   if (process.platform === 'win32') {
     for (const pid of roots) {
-      if (!isPidAlive(pid)) continue
+      if (!matchesProcessIdentity(identities.find(identity => identity.pid === pid)!)) continue
       spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
     }
   } else {
     for (const pid of roots) {
-      if (!isPidAlive(pid)) continue
+      if (!matchesProcessIdentity(identities.find(identity => identity.pid === pid)!)) continue
       try { process.kill(-pid, 'SIGTERM') } catch {
         try { process.kill(pid, 'SIGTERM') } catch { /* already stopped */ }
       }
@@ -529,18 +578,50 @@ async function terminateOwnedProcessTrees(pids: Array<number | undefined>): Prom
   }
 
   let deadline = Date.now() + MORTISE_UI_FORCED_STOP_GRACE_PERIOD_MS
-  while (roots.some(isPidAlive) && Date.now() < deadline) await Bun.sleep(100)
+  while (identities.some(matchesProcessIdentity) && Date.now() < deadline) await Bun.sleep(100)
   if (process.platform !== 'win32') {
     for (const pid of roots) {
-      if (!isPidAlive(pid)) continue
+      if (!matchesProcessIdentity(identities.find(identity => identity.pid === pid)!)) continue
       try { process.kill(-pid, 'SIGKILL') } catch {
         try { process.kill(pid, 'SIGKILL') } catch { /* already stopped */ }
       }
     }
     deadline = Date.now() + MORTISE_UI_FORCED_STOP_GRACE_PERIOD_MS
-    while (roots.some(isPidAlive) && Date.now() < deadline) await Bun.sleep(100)
+    while (identities.some(matchesProcessIdentity) && Date.now() < deadline) await Bun.sleep(100)
   }
-  return roots.filter(isPidAlive)
+  return identities.filter(matchesProcessIdentity).map(identity => identity.pid!)
+}
+
+function launcherAlive(manifest: MortiseUiRunManifest): boolean {
+  return matchesProcessIdentity({ pid: manifest.launcherPid, startedAt: manifest.launcherStartedAt, recordedAt: Date.parse(manifest.createdAt) })
+}
+
+function hostAlive(manifest: MortiseUiRunManifest): boolean {
+  return matchesProcessIdentity({ pid: manifest.hostPid, startedAt: manifest.hostStartedAt, recordedAt: Date.parse(manifest.createdAt) })
+}
+
+function processIdentities(manifest: MortiseUiRunManifest): MortiseUiProcessIdentity[] {
+  return [
+    { pid: manifest.launcherPid, startedAt: manifest.launcherStartedAt, recordedAt: Date.parse(manifest.createdAt) },
+    { pid: manifest.hostPid, startedAt: manifest.hostStartedAt, recordedAt: Date.parse(manifest.createdAt) },
+  ]
+}
+
+function identityForPid(manifest: MortiseUiRunManifest, pid: number | undefined): MortiseUiProcessIdentity | undefined {
+  if (!pid) return undefined
+  if (pid === manifest.launcherPid) return { pid, startedAt: manifest.launcherStartedAt, recordedAt: Date.parse(manifest.createdAt) }
+  if (pid === manifest.hostPid) return { pid, startedAt: manifest.hostStartedAt, recordedAt: Date.parse(manifest.createdAt) }
+  return { pid, recordedAt: Date.parse(manifest.createdAt) }
+}
+
+function uniqueProcessIdentities(processes: MortiseUiProcessIdentity[]): MortiseUiProcessIdentity[] {
+  const byPid = new Map<number, MortiseUiProcessIdentity>()
+  for (const identity of processes) {
+    if (!identity.pid || identity.pid === process.pid) continue
+    const current = byPid.get(identity.pid)
+    if (!current || (current.startedAt === undefined && identity.startedAt !== undefined)) byPid.set(identity.pid, identity)
+  }
+  return [...byPid.values()]
 }
 
 function readLogTail(path: string): string {
@@ -550,4 +631,17 @@ function readLogTail(path: string): string {
   } catch (error) {
     return `stderr unavailable: ${error instanceof Error ? error.message : String(error)}`
   }
+}
+
+function directoryBytes(root: string): number {
+  if (!existsSync(root)) return 0
+  let total = 0
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) total += directoryBytes(path)
+    else {
+      try { total += readFileSync(path).byteLength } catch { /* Best-effort pruning estimate. */ }
+    }
+  }
+  return total
 }
