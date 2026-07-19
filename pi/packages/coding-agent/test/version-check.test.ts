@@ -40,7 +40,7 @@ describe("version checks", () => {
 	});
 
 	it("returns only newer versions", async () => {
-		process.env.PI_UPDATE_CHANNEL = "official";
+		process.env.PI_UPDATE_CHANNEL = "published";
 		delete process.env.PI_SKIP_VERSION_CHECK;
 		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
@@ -51,7 +51,7 @@ describe("version checks", () => {
 	});
 
 	it("uses the pi.dev version check api with a pi user agent", async () => {
-		process.env.PI_UPDATE_CHANNEL = "official";
+		process.env.PI_UPDATE_CHANNEL = "published";
 		delete process.env.PI_SKIP_VERSION_CHECK;
 		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
@@ -70,7 +70,7 @@ describe("version checks", () => {
 	});
 
 	it("returns the active package metadata from the version check api", async () => {
-		process.env.PI_UPDATE_CHANNEL = "official";
+		process.env.PI_UPDATE_CHANNEL = "published";
 		delete process.env.PI_SKIP_VERSION_CHECK;
 		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () =>
@@ -88,7 +88,7 @@ describe("version checks", () => {
 	});
 
 	it("returns update notes from the version check api", async () => {
-		process.env.PI_UPDATE_CHANNEL = "official";
+		process.env.PI_UPDATE_CHANNEL = "published";
 		delete process.env.PI_SKIP_VERSION_CHECK;
 		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () => Response.json({ note: " **Read this** ", version: "1.2.4" }));
@@ -106,7 +106,7 @@ describe("version checks", () => {
 	});
 
 	it("skips api calls when version checks are disabled", async () => {
-		process.env.PI_UPDATE_CHANNEL = "official";
+		process.env.PI_UPDATE_CHANNEL = "published";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);

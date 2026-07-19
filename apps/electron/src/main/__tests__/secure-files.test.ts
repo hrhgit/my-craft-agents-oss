@@ -14,7 +14,7 @@ afterEach(() => {
 
 describe('writeOwnerOnlyFileSync', () => {
   it('replaces existing content', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'craft-secure-file-'))
+    const dir = mkdtempSync(join(tmpdir(), 'mortise-secure-file-'))
     tempDirs.push(dir)
     const file = join(dir, 'secret')
     writeFileSync(file, 'old')
@@ -28,7 +28,7 @@ describe('writeOwnerOnlyFileSync', () => {
   it('forces owner-only permissions on POSIX', () => {
     if (process.platform === 'win32') return
 
-    const dir = mkdtempSync(join(tmpdir(), 'craft-secure-file-'))
+    const dir = mkdtempSync(join(tmpdir(), 'mortise-secure-file-'))
     tempDirs.push(dir)
     const file = join(dir, 'secret')
     writeFileSync(file, 'old', { mode: 0o644 })

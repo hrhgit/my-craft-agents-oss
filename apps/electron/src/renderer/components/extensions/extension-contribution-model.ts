@@ -1,4 +1,4 @@
-import type { ExtensionContributionV1 } from '@craft-agent/shared/protocol'
+import type { ExtensionContributionV1 } from '@mortise/shared/protocol'
 
 export interface ExtensionBlockContribution {
   key: string

@@ -19,7 +19,7 @@ describe('ElectronAppShellScenarioAdapter', () => {
     const target = fake({ ok: true, result: { scenarioId: 'app.loading' } })
     await new ElectronAppShellScenarioAdapter(target.contents).apply({ name: 'app.loading', seed: 1 })
     const expression = target.expressions[0] ?? ''
-    expect(expression).toContain('__CRAFT_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__')
+    expect(expression).toContain('__MORTISE_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__')
     expect(expression).toContain('bridge["apply"]')
     expect(expression).not.toContain('eval(')
   })

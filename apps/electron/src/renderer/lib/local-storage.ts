@@ -3,7 +3,7 @@
  * Provides type-safe access with consistent key prefixing.
  */
 
-const PREFIX = 'craft-'
+const PREFIX = 'mortise-'
 
 /**
  * All localStorage keys used in the app.
@@ -13,7 +13,6 @@ export const KEYS = {
   // Chat sidebar
   sidebarVisible: 'sidebar-visible',
   sidebarWidth: 'sidebar-width',
-  sessionListWidth: 'session-list-width',
   fileWorkbenchState: 'file-workbench.workspace',
   unifiedDockGeometry: 'layout.workspace.flexlayout-geometry.v1',
   sidebarMode: 'sidebar-mode',
@@ -55,6 +54,11 @@ export const KEYS = {
 
   // Settings navigation
   lastSettingsSubpage: 'last-settings-subpage',
+
+  // Agent settings recoverable drafts (global prompts and entity-scoped subagents)
+  agentSystemPromptDraft: 'settings.agents.global.system-prompt-draft.v1',
+  agentCompactionPromptDraft: 'settings.agents.global.compaction-prompt-draft.v1',
+  agentSubagentDraft: 'settings.agents.entity-draft.v1',
 
   // Appearance
   showProviderIcons: 'show-provider-icons',

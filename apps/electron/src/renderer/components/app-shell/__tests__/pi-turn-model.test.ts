@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { PiProjectionEntityV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEntityV1 } from '@mortise/shared/protocol'
 import type { Message } from '../../../../shared/types'
 import { buildPiTurnOverlay, buildPiTurns, getPiTurnSearchText } from '../pi-turn-model'
 
@@ -43,7 +43,7 @@ describe('buildPiTurns', () => {
       size: 42, storedPath: 'C:/workspace/photo.png', thumbnailBase64: 'preview',
     }
     const overlay = buildPiTurnOverlay([{
-      id: 'mutation-1', role: 'user', content: 'ignored Craft content', timestamp: 1234,
+      id: 'mutation-1', role: 'user', content: 'ignored Mortise content', timestamp: 1234,
       attachments: [localAttachment], isQueued: true,
     }])
     const turns = buildPiTurns([
@@ -502,7 +502,7 @@ describe('buildPiTurns', () => {
     expect(getPiTurnSearchText(turns[0]!)).toContain('pi-turn-model.ts')
   })
 
-  it('never reads Craft transcript content while building the overlay', () => {
+  it('never reads Mortise transcript content while building the overlay', () => {
     const message = {
       id: 'assistant-1', role: 'assistant', content: 'legacy text must not render', timestamp: 10,
       annotations: [annotation('assistant-1')],
@@ -514,7 +514,7 @@ describe('buildPiTurns', () => {
     expect(getPiTurnSearchText(turns[0]!)).not.toContain('legacy text')
   })
 
-  it('does not merge Craft overlays by timestamp aliases', () => {
+  it('does not merge Mortise overlays by timestamp aliases', () => {
     const message = {
       id: 'different-message', role: 'assistant', content: '', timestamp: 10,
       annotations: [annotation('different-message')],
@@ -533,7 +533,7 @@ describe('buildPiTurns', () => {
     expect(turns[0]?.type === 'assistant' ? turns[0].response?.annotations : undefined).toBeUndefined()
   })
 
-  it('does not merge Craft overlays through entity or client mutation aliases', () => {
+  it('does not merge Mortise overlays through entity or client mutation aliases', () => {
     const userAliasOverlay = {
       id: 'mutation-alias', role: 'user', content: '', timestamp: 999,
       badges: [{ type: 'command' as const, label: 'Alias', rawText: '/alias', start: 0, end: 6 }],

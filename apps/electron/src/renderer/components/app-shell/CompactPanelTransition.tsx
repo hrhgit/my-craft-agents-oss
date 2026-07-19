@@ -3,9 +3,8 @@
  *
  * iOS-style slide between navigator and detail in compact mode.
  *
- * Why a small wrapper instead of inlining motion config in PanelStackContainer:
- * - PanelStackContainer already juggles sidebar/navigator/content layouts;
- *   keeping the spring + reduced-motion plumbing here keeps that file readable.
+ * Shared by page-owned navigation surfaces that switch between a list and
+ * detail view at compact widths.
  * - Two slots (navigator and detail) need symmetric variants — easier to keep
  *   them aligned in one place.
  *

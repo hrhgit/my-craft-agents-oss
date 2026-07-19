@@ -2,9 +2,9 @@
 
 This guide explains how to configure custom permission rules for Explore mode.
 
-> **CLI-first workflow (recommended):** Use `craft-agent permission ...` commands instead of editing JSON directly.
-> - `craft-agent permission --help`
-> - Canonical command reference: [craft-cli.md](./craft-cli.md)
+> **CLI-first workflow (recommended):** Use `mortise permission ...` commands instead of editing JSON directly.
+> - `mortise permission --help`
+> - Canonical command reference: [mortise-cli.md](./mortise-cli.md)
 
 ## Overview
 
@@ -12,8 +12,8 @@ Explore mode is a read-only mode that blocks potentially destructive operations.
 Custom permission rules let you allow specific operations that would otherwise be blocked.
 
 Permission files are located at:
-- Workspace: `~/.craft-agent/workspaces/{slug}/permissions.json`
-- Source: `~/.craft-agent/workspaces/{slug}/sources/{source}/permissions.json`
+- Workspace: `~/.mortise/workspaces/{slug}/permissions.json`
+- Source: `~/.mortise/workspaces/{slug}/sources/{source}/permissions.json`
 
 ## Auto-Scoping for Source Permissions
 
@@ -50,7 +50,7 @@ The system converts it to `mcp__<sourceSlug>__.*list` internally. This means:
   ],
   "allowedWritePaths": [
     "/tmp/**",
-    "~/.craft-agent/**"
+    "~/.mortise/**"
   ],
   "blockedCommandHints": [
     {
@@ -144,7 +144,7 @@ Glob patterns for directories where writes are allowed.
 {
   "allowedWritePaths": [
     "/tmp/**",
-    "~/.craft-agent/**",
+    "~/.mortise/**",
     "/path/to/project/output/**"
   ]
 }
@@ -197,7 +197,7 @@ Fields:
 - Read, Glob, Grep
 - WebFetch, WebSearch
 - TodoWrite
-- Browser tools (`browser_*` and `mcp__session__browser_*`)
+- Browser tools (`browser_tool`; legacy session-prefixed names remain readable in stored history)
 - MCP tools with read semantics (list, get, search)
 - Plans folder writes (session plans only)
 

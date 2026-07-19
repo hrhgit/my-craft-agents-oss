@@ -47,7 +47,7 @@ if (mode === 'append') {
   const database = await openCraftSqliteDatabase(databasePath)
   database.exec('BEGIN IMMEDIATE')
   database.prepare(`
-    INSERT INTO craft_records
+    INSERT INTO mortise_records
       (namespace, record_key, version, value_json, updated_at, writer_id)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run('crash-probe', 'uncommitted', 1, '{"partial":true}', Date.now(), writerId)

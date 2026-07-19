@@ -9,16 +9,16 @@ export interface SqliteRunResult {
   lastInsertRowid: number | bigint
 }
 
-export interface CraftSqliteStatement {
+export interface MortiseSqliteStatement {
   run(...params: SqliteValue[]): SqliteRunResult
   get<T extends object>(...params: SqliteValue[]): T | undefined
   all<T extends object>(...params: SqliteValue[]): T[]
 }
 
-export interface CraftSqliteDatabase {
+export interface MortiseSqliteDatabase {
   readonly runtime: 'bun' | 'node'
   exec(sql: string): void
-  prepare(sql: string): CraftSqliteStatement
+  prepare(sql: string): MortiseSqliteStatement
   close(): void
 }
 
@@ -35,7 +35,7 @@ interface NativeStatement {
   finalize?(): void
 }
 
-function wrapStatement(statement: NativeStatement): CraftSqliteStatement {
+function wrapStatement(statement: NativeStatement): MortiseSqliteStatement {
   return {
     run(...params) {
       try {
@@ -72,7 +72,7 @@ function isBunRuntime(): boolean {
 function openCraftSqliteDatabaseNative(
   databasePath: string,
   options: { busyTimeoutMs?: number } = {},
-): CraftSqliteDatabase {
+): MortiseSqliteDatabase {
   if (databasePath !== ':memory:') {
     mkdirSync(dirname(databasePath), { recursive: true })
   }
@@ -96,7 +96,7 @@ function openCraftSqliteDatabaseNative(
     runtime = 'node'
   }
 
-  const database: CraftSqliteDatabase = {
+  const database: MortiseSqliteDatabase = {
     runtime,
     exec(sql) {
       native.exec(sql)
@@ -129,13 +129,13 @@ function openCraftSqliteDatabaseNative(
 export function openCraftSqliteDatabaseSync(
   databasePath: string,
   options: { busyTimeoutMs?: number } = {},
-): CraftSqliteDatabase {
+): MortiseSqliteDatabase {
   return openCraftSqliteDatabaseNative(databasePath, options)
 }
 
 export async function openCraftSqliteDatabase(
   databasePath: string,
   options: { busyTimeoutMs?: number } = {},
-): Promise<CraftSqliteDatabase> {
+): Promise<MortiseSqliteDatabase> {
   return openCraftSqliteDatabaseNative(databasePath, options)
 }

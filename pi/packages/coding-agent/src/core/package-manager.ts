@@ -35,10 +35,19 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { satisfies } from "semver";
+import { CONFIG_DIR_NAME, VERSION } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
+import {
+	assertValidExtensionManifest,
+	type ExtensionManifestDiagnostic,
+	type ExtensionManifestStatus,
+	type ExtensionManifestV1,
+	isExtensionManifestId,
+} from "./extension-manifest.ts";
+import { parseExtensionTargets } from "./extension-targets.ts";
 import type { ExtensionActivation, ExtensionManifestUIV1, ExtensionTarget } from "./extensions/types.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
@@ -62,6 +71,11 @@ export interface PathMetadata {
 	targets?: ExtensionTarget[];
 	extensionId?: string;
 	extensionUI?: ExtensionManifestUIV1;
+	extensionManifest?: ExtensionManifestV1;
+	extensionManifestStatus?: ExtensionManifestStatus;
+	extensionManifestDiagnostics?: ExtensionManifestDiagnostic[];
+	extensionHostVersion?: string;
+	extensionLoadable?: boolean;
 }
 
 export interface ResolvedResource {
@@ -125,6 +139,7 @@ interface PackageManagerOptions {
 	agentDir: string;
 	settingsManager: SettingsManager;
 	extensionTarget?: ExtensionTarget;
+	hostVersions?: Partial<Record<ExtensionTarget, string>>;
 }
 
 type SourceScope = "user" | "project" | "temporary";
@@ -163,6 +178,7 @@ export interface ExtensionManifestEntry {
 	path: string;
 	activation?: ExtensionActivation;
 	targets: ExtensionTarget[];
+	manifest?: ExtensionManifestV1;
 	ui?: ExtensionManifestUIV1;
 }
 
@@ -229,6 +245,7 @@ export type ResourcePathEntry =
 			path: string;
 			activation?: ExtensionActivation;
 			targets?: ExtensionTarget[];
+			manifest?: ExtensionManifestV1;
 			ui?: ExtensionManifestUIV1;
 	  };
 
@@ -237,17 +254,18 @@ interface ResolvedResourcePathEntry {
 	path: string;
 	activation?: ExtensionActivation;
 	targets?: ExtensionTarget[];
+	manifest?: ExtensionManifestV1;
 	ui?: ExtensionManifestUIV1;
 }
 
 interface ExtensionDiscoveryEntry extends ResolvedResourcePathEntry {
 	id: string;
 	targets: ExtensionTarget[];
+	manifest?: ExtensionManifestV1;
 	ui?: ExtensionManifestUIV1;
 }
 
 const EXTENSION_ACTIVATIONS: ExtensionActivation[] = ["startup", "beforeFirstRequest", "lazy"];
-const EXTENSION_TARGETS: ExtensionTarget[] = ["pi", "craft"];
 const DEFAULT_EXTENSION_TARGET: ExtensionTarget = "pi";
 
 function parseExtensionActivation(value: unknown): ExtensionActivation | undefined {
@@ -263,30 +281,16 @@ function getResourceEntryActivation(entry: ResourcePathEntry): ExtensionActivati
 	return typeof entry === "string" ? undefined : parseExtensionActivation(entry.activation);
 }
 
-function parseExtensionTargets(value: unknown): ExtensionTarget[] | undefined {
-	if (!Array.isArray(value)) return undefined;
-	const targets: ExtensionTarget[] = [];
-	for (const target of value) {
-		if (typeof target !== "string") {
-			continue;
-		}
-		if (!EXTENSION_TARGETS.includes(target as ExtensionTarget)) {
-			continue;
-		}
-		const extensionTarget = target as ExtensionTarget;
-		if (!targets.includes(extensionTarget)) {
-			targets.push(extensionTarget);
-		}
-	}
-	return targets;
-}
-
 function getResourceEntryTargets(entry: ResourcePathEntry): ExtensionTarget[] | undefined {
 	return typeof entry === "string" ? undefined : parseExtensionTargets(entry.targets);
 }
 
 function getResourceEntryUI(entry: ResourcePathEntry): ExtensionManifestUIV1 | undefined {
 	return typeof entry === "string" ? undefined : entry.ui;
+}
+
+function getResourceEntryManifest(entry: ResourcePathEntry): ExtensionManifestV1 | undefined {
+	return typeof entry === "string" ? undefined : entry.manifest;
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
@@ -415,7 +419,7 @@ function assertValidExtensionUI(value: unknown, context: string): asserts value 
 function getResourceEntryId(entry: ResourcePathEntry): string | undefined {
 	if (typeof entry === "string") return undefined;
 	const id = entry.id?.trim();
-	return id && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(id) ? id : undefined;
+	return id && isExtensionManifestId(id) ? id : undefined;
 }
 
 function assertStrictExtensionEntry(
@@ -425,13 +429,24 @@ function assertStrictExtensionEntry(
 	if (typeof entry === "string") {
 		throw new Error(`${context}: extension entries must be objects with id, path, and targets`);
 	}
-	if (!getResourceEntryId(entry)) {
-		throw new Error(`${context}: extension id must be a lowercase kebab-case slug`);
+	const extensionId = getResourceEntryId(entry);
+	if (!extensionId) {
+		throw new Error(`${context}: extension id must be a lowercase stable identifier`);
+	}
+	if (!hasOnlyKeys(entry as Record<string, unknown>, ["id", "path", "activation", "targets", "manifest", "ui"])) {
+		throw new Error(`${context}: extension entry contains unknown fields`);
+	}
+	if (typeof entry.path !== "string" || !entry.path.trim()) {
+		throw new Error(`${context}: extension path must be a non-empty string`);
+	}
+	if (entry.activation !== undefined && parseExtensionActivation(entry.activation) === undefined) {
+		throw new Error(`${context}: extension activation is invalid`);
 	}
 	const targets = parseExtensionTargets(entry.targets);
-	if (!targets || targets.length === 0 || targets.length !== entry.targets?.length) {
-		throw new Error(`${context}: extension targets must explicitly contain pi, craft, or both`);
+	if (!targets || targets.length === 0) {
+		throw new Error(`${context}: extension targets must explicitly contain pi, mortise, or both`);
 	}
+	if (entry.manifest !== undefined) assertValidExtensionManifest(entry.manifest, extensionId, targets, context);
 	if (entry.ui !== undefined) assertValidExtensionUI(entry.ui, context);
 }
 
@@ -461,6 +476,7 @@ function withExtensionMetadata(
 	targets: ExtensionTarget[] | undefined,
 	extensionId?: string,
 	extensionUI?: ExtensionManifestUIV1,
+	extensionManifest?: ExtensionManifestV1,
 ): PathMetadata {
 	const next: PathMetadata = { ...metadata };
 	if (activation) {
@@ -473,6 +489,7 @@ function withExtensionMetadata(
 		next.extensionId = extensionId;
 	}
 	if (extensionUI) next.extensionUI = extensionUI;
+	if (extensionManifest) next.extensionManifest = extensionManifest;
 	return next;
 }
 
@@ -836,6 +853,7 @@ function resolveExtensionEntries(dir: string): ExtensionDiscoveryEntry[] | null 
 						path: resolvedExtPath,
 						activation: getResourceEntryActivation(entry),
 						targets: getResourceEntryTargets(entry)!,
+						manifest: getResourceEntryManifest(entry),
 						ui: getResourceEntryUI(entry),
 					});
 				}
@@ -1098,6 +1116,7 @@ export class DefaultPackageManager implements PackageManager {
 	private agentDir: string;
 	private settingsManager: SettingsManager;
 	private extensionTarget: ExtensionTarget;
+	private hostVersions: Record<ExtensionTarget, string>;
 	private globalNpmRoot: string | undefined;
 	private globalNpmRootCommandKey: string | undefined;
 	private progressCallback: ProgressCallback | undefined;
@@ -1107,6 +1126,10 @@ export class DefaultPackageManager implements PackageManager {
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager;
 		this.extensionTarget = options.extensionTarget ?? DEFAULT_EXTENSION_TARGET;
+		this.hostVersions = {
+			pi: options.hostVersions?.pi ?? VERSION,
+			mortise: options.hostVersions?.mortise ?? process.env.MORTISE_AGENT_VERSION ?? VERSION,
+		};
 	}
 
 	setProgressCallback(callback: ProgressCallback | undefined): void {
@@ -2073,7 +2096,7 @@ export class DefaultPackageManager implements PackageManager {
 		// Extension packages run inside pi and resolve pi APIs through loader aliases/virtual modules.
 		// Disable peer dependency resolution for managed installs (npm's --legacy-peer-deps, and
 		// equivalent bun/pnpm settings) so package managers do not install or solve host-provided
-		// @earendil-works/pi-* peers. Stale auto-installed pi peers can otherwise block updates.
+		// @mortise/pi-* peers. Stale auto-installed pi peers can otherwise block updates.
 		if (packageManagerName === "bun") {
 			return ["install", ...specs, "--cwd", installRoot, "--omit=peer"];
 		}
@@ -2432,7 +2455,7 @@ export class DefaultPackageManager implements PackageManager {
 				this.addResource(
 					target,
 					entry.path,
-					withExtensionMetadata(metadata, entry.activation, entry.targets, entry.id, entry.ui),
+					withExtensionMetadata(metadata, entry.activation, entry.targets, entry.id, entry.ui, entry.manifest),
 					true,
 				);
 			}
@@ -2467,7 +2490,27 @@ export class DefaultPackageManager implements PackageManager {
 				const targets = conventionExtensionEntries
 					? this.findTargetsForResolvedPath(f, conventionExtensionEntries)
 					: undefined;
-				this.addResource(target, f, withExtensionMetadata(metadata, activation, targets), false);
+				const extensionId = manifestEntries
+					? this.findIdForPath(f, manifestEntries, packageRoot)
+					: conventionExtensionEntries
+						? this.findIdForResolvedPath(f, conventionExtensionEntries)
+						: undefined;
+				const extensionUI = manifestEntries
+					? this.findUIForPath(f, manifestEntries, packageRoot)
+					: conventionExtensionEntries
+						? this.findUIForResolvedPath(f, conventionExtensionEntries)
+						: undefined;
+				const extensionManifest = manifestEntries
+					? this.findManifestForPath(f, manifestEntries, packageRoot)
+					: conventionExtensionEntries
+						? this.findManifestForResolvedPath(f, conventionExtensionEntries)
+						: undefined;
+				this.addResource(
+					target,
+					f,
+					withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI, extensionManifest),
+					false,
+				);
 			}
 			return;
 		}
@@ -2493,7 +2536,32 @@ export class DefaultPackageManager implements PackageManager {
 							? this.findTargetsForResolvedPath(f, conventionExtensionEntries)
 							: undefined))
 					: undefined;
-			this.addResource(target, f, withExtensionMetadata(metadata, activation, targets), enabled);
+			const extensionId =
+				resourceType === "extensions"
+					? (this.findIdForPath(f, userPatterns, packageRoot) ??
+						(manifestEntries ? this.findIdForPath(f, manifestEntries, packageRoot) : undefined) ??
+						(conventionExtensionEntries ? this.findIdForResolvedPath(f, conventionExtensionEntries) : undefined))
+					: undefined;
+			const extensionUI =
+				resourceType === "extensions"
+					? (this.findUIForPath(f, userPatterns, packageRoot) ??
+						(manifestEntries ? this.findUIForPath(f, manifestEntries, packageRoot) : undefined) ??
+						(conventionExtensionEntries ? this.findUIForResolvedPath(f, conventionExtensionEntries) : undefined))
+					: undefined;
+			const extensionManifest =
+				resourceType === "extensions"
+					? (this.findManifestForPath(f, userPatterns, packageRoot) ??
+						(manifestEntries ? this.findManifestForPath(f, manifestEntries, packageRoot) : undefined) ??
+						(conventionExtensionEntries
+							? this.findManifestForResolvedPath(f, conventionExtensionEntries)
+							: undefined))
+					: undefined;
+			this.addResource(
+				target,
+				f,
+				withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI, extensionManifest),
+				enabled,
+			);
 		}
 	}
 
@@ -2562,10 +2630,12 @@ export class DefaultPackageManager implements PackageManager {
 				const targets = resourceType === "extensions" ? this.findTargetsForPath(f, entries, root) : undefined;
 				const extensionId = resourceType === "extensions" ? this.findIdForPath(f, entries, root) : undefined;
 				const extensionUI = resourceType === "extensions" ? this.findUIForPath(f, entries, root) : undefined;
+				const extensionManifest =
+					resourceType === "extensions" ? this.findManifestForPath(f, entries, root) : undefined;
 				this.addResource(
 					target,
 					f,
-					withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI),
+					withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI, extensionManifest),
 					true,
 				);
 			}
@@ -2642,6 +2712,19 @@ export class DefaultPackageManager implements PackageManager {
 		return undefined;
 	}
 
+	private findManifestForPath(
+		filePath: string,
+		entries: ResourcePathEntry[],
+		baseDir: string,
+	): ExtensionManifestV1 | undefined {
+		for (const entry of entries) {
+			if (typeof entry !== "string" && entry.manifest && entryMatchesPath(filePath, entry.path, baseDir)) {
+				return entry.manifest;
+			}
+		}
+		return undefined;
+	}
+
 	private resolveLocalEntries(
 		entries: ResourcePathEntry[],
 		resourceType: ResourceType,
@@ -2663,6 +2746,7 @@ export class DefaultPackageManager implements PackageManager {
 				path: this.resolvePathFromBase(entryPath, baseDir),
 				activation: getResourceEntryActivation(entry),
 				targets: resourceType === "extensions" ? getResourceEntryTargets(entry)! : [],
+				manifest: resourceType === "extensions" ? getResourceEntryManifest(entry) : undefined,
 				ui: resourceType === "extensions" ? getResourceEntryUI(entry) : undefined,
 			};
 		});
@@ -2686,10 +2770,12 @@ export class DefaultPackageManager implements PackageManager {
 				resourceType === "extensions" ? this.findIdForResolvedPath(f, extensionEntries) : undefined;
 			const extensionUI =
 				resourceType === "extensions" ? this.findUIForResolvedPath(f, extensionEntries) : undefined;
+			const extensionManifest =
+				resourceType === "extensions" ? this.findManifestForResolvedPath(f, extensionEntries) : undefined;
 			this.addResource(
 				target,
 				f,
-				withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI),
+				withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI, extensionManifest),
 				enabledPaths.has(f),
 			);
 		}
@@ -2728,6 +2814,7 @@ export class DefaultPackageManager implements PackageManager {
 					path: extensionEntry.path,
 					activation: entry.activation ?? extensionEntry.activation,
 					targets: entry.targets ?? extensionEntry.targets,
+					manifest: entry.manifest ?? extensionEntry.manifest,
 					ui: entry.ui ?? extensionEntry.ui,
 				});
 			}
@@ -2801,6 +2888,24 @@ export class DefaultPackageManager implements PackageManager {
 				normalizedFilePath.startsWith(`${normalizedEntryPath}${sep}`)
 			)
 				return entry.ui;
+		}
+		return undefined;
+	}
+
+	private findManifestForResolvedPath(
+		filePath: string,
+		entries: ResolvedResourcePathEntry[],
+	): ExtensionManifestV1 | undefined {
+		const normalizedFilePath = resolve(filePath);
+		for (const entry of entries) {
+			if (!entry.manifest) continue;
+			const normalizedEntryPath = resolve(entry.path);
+			if (
+				normalizedFilePath === normalizedEntryPath ||
+				normalizedFilePath.startsWith(`${normalizedEntryPath}${sep}`)
+			) {
+				return entry.manifest;
+			}
 		}
 		return undefined;
 	}
@@ -2890,10 +2995,12 @@ export class DefaultPackageManager implements PackageManager {
 				const targets = this.findTargetsForPath(entry.path, activationEntries, baseDir) ?? entry.targets;
 				const extensionId = this.findIdForPath(entry.path, activationEntries, baseDir) ?? entry.id;
 				const extensionUI = this.findUIForPath(entry.path, activationEntries, baseDir) ?? entry.ui;
+				const extensionManifest =
+					this.findManifestForPath(entry.path, activationEntries, baseDir) ?? entry.manifest;
 				this.addResource(
 					target,
 					entry.path,
-					withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI),
+					withExtensionMetadata(metadata, activation, targets, extensionId, extensionUI, extensionManifest),
 					enabled,
 				);
 			}
@@ -3054,6 +3161,266 @@ export class DefaultPackageManager implements PackageManager {
 		};
 	}
 
+	private resolveExtensionManifestGraph(entries: ResolvedResource[]): ResolvedResource[] {
+		const hostVersion = this.hostVersions[this.extensionTarget];
+		const originalIndex = new Map(entries.map((entry, index) => [entry, index]));
+		const byId = new Map<string, ResolvedResource>();
+
+		const addDiagnostic = (entry: ResolvedResource, diagnostic: ExtensionManifestDiagnostic): void => {
+			const diagnostics = entry.metadata.extensionManifestDiagnostics ?? [];
+			if (
+				diagnostics.some(
+					(existing) =>
+						existing.code === diagnostic.code && existing.relatedExtensionId === diagnostic.relatedExtensionId,
+				)
+			) {
+				return;
+			}
+			diagnostics.push(diagnostic);
+			entry.metadata.extensionManifestDiagnostics = diagnostics;
+		};
+
+		const block = (entry: ResolvedResource, diagnostic: ExtensionManifestDiagnostic): void => {
+			addDiagnostic(entry, diagnostic);
+			entry.enabled = false;
+		};
+
+		for (const entry of entries) {
+			entry.metadata.extensionHostVersion = hostVersion;
+			entry.metadata.extensionManifestDiagnostics = [];
+			const id = entry.metadata.extensionId;
+			if (!id) continue;
+			const winner = byId.get(id);
+			if (winner) {
+				block(entry, {
+					code: "duplicate-id",
+					severity: "error",
+					message: `Extension id "${id}" conflicts with ${winner.path}`,
+					relatedExtensionId: id,
+				});
+				continue;
+			}
+			byId.set(id, entry);
+		}
+
+		for (const entry of entries) {
+			const id = entry.metadata.extensionId;
+			const manifest = entry.metadata.extensionManifest;
+			if (!id || !manifest) {
+				if (id) {
+					addDiagnostic(entry, {
+						code: "legacy-manifest",
+						severity: "warning",
+						message:
+							"Local extension has no versioned manifest; dependency and host compatibility cannot be verified",
+					});
+				}
+				continue;
+			}
+			const engineRange = manifest.engines[this.extensionTarget]!;
+			if (!satisfies(hostVersion, engineRange, { includePrerelease: true })) {
+				block(entry, {
+					code: "host-incompatible",
+					severity: "error",
+					message: `${manifest.name} ${manifest.version} requires ${this.extensionTarget} ${engineRange}, current version is ${hostVersion}`,
+				});
+			}
+		}
+
+		const checkDependency = (
+			entry: ResolvedResource,
+			dependencyId: string,
+			range: string,
+			optional: boolean,
+		): void => {
+			const dependency = byId.get(dependencyId);
+			if (!dependency || !dependency.enabled) {
+				const diagnostic: ExtensionManifestDiagnostic = {
+					code: optional ? "optional-dependency-missing" : "missing-dependency",
+					severity: optional ? "warning" : "error",
+					message: `${optional ? "Optional dependency" : "Required dependency"} ${dependencyId} ${range} is not available`,
+					relatedExtensionId: dependencyId,
+				};
+				if (optional) addDiagnostic(entry, diagnostic);
+				else block(entry, diagnostic);
+				return;
+			}
+			const dependencyVersion = dependency.metadata.extensionManifest?.version;
+			if (!dependencyVersion || !satisfies(dependencyVersion, range, { includePrerelease: true })) {
+				const diagnostic: ExtensionManifestDiagnostic = {
+					code: optional ? "optional-dependency-version-mismatch" : "dependency-version-mismatch",
+					severity: optional ? "warning" : "error",
+					message: `${optional ? "Optional dependency" : "Required dependency"} ${dependencyId} must satisfy ${range}; found ${dependencyVersion ?? "an unversioned extension"}`,
+					relatedExtensionId: dependencyId,
+				};
+				if (optional) addDiagnostic(entry, diagnostic);
+				else block(entry, diagnostic);
+			}
+		};
+
+		for (const entry of entries) {
+			const manifest = entry.metadata.extensionManifest;
+			if (!manifest || !entry.enabled) continue;
+			for (const [dependencyId, range] of Object.entries(manifest.dependencies ?? {})) {
+				checkDependency(entry, dependencyId, range, false);
+			}
+			for (const [dependencyId, range] of Object.entries(manifest.optionalDependencies ?? {})) {
+				checkDependency(entry, dependencyId, range, true);
+			}
+		}
+
+		const conflictCandidates = new Set(entries.filter((entry) => entry.enabled));
+		for (const entry of entries) {
+			const manifest = entry.metadata.extensionManifest;
+			if (!manifest || !entry.enabled) continue;
+			for (const [conflictId, range] of Object.entries(manifest.conflicts ?? {})) {
+				const conflict = byId.get(conflictId);
+				if (!conflict || !conflictCandidates.has(conflict)) continue;
+				const conflictVersion = conflict.metadata.extensionManifest?.version;
+				if (conflictVersion && !satisfies(conflictVersion, range, { includePrerelease: true })) continue;
+				block(entry, {
+					code: "conflict",
+					severity: "error",
+					message: `Conflicts with ${conflictId} ${conflictVersion ?? "(unversioned)"} in range ${range}`,
+					relatedExtensionId: conflictId,
+				});
+			}
+		}
+
+		const visitState = new Map<string, "visiting" | "visited">();
+		const stack: string[] = [];
+		const cycleIds = new Set<string>();
+		const visitDependencies = (id: string): void => {
+			const state = visitState.get(id);
+			if (state === "visited") return;
+			if (state === "visiting") {
+				const cycleStart = stack.lastIndexOf(id);
+				for (const cycleId of stack.slice(Math.max(0, cycleStart))) cycleIds.add(cycleId);
+				return;
+			}
+			visitState.set(id, "visiting");
+			stack.push(id);
+			const entry = byId.get(id);
+			if (entry?.enabled) {
+				for (const dependencyId of Object.keys(entry.metadata.extensionManifest?.dependencies ?? {})) {
+					if (byId.get(dependencyId)?.enabled) visitDependencies(dependencyId);
+				}
+			}
+			stack.pop();
+			visitState.set(id, "visited");
+		};
+		for (const [id, entry] of byId) {
+			if (entry.enabled) visitDependencies(id);
+		}
+		for (const id of cycleIds) {
+			const entry = byId.get(id);
+			if (!entry) continue;
+			block(entry, {
+				code: "dependency-cycle",
+				severity: "error",
+				message: `Required dependency cycle includes ${Array.from(cycleIds).sort().join(", ")}`,
+			});
+		}
+
+		let propagated = true;
+		while (propagated) {
+			propagated = false;
+			for (const entry of entries) {
+				if (!entry.enabled) continue;
+				for (const [dependencyId, range] of Object.entries(entry.metadata.extensionManifest?.dependencies ?? {})) {
+					if (byId.get(dependencyId)?.enabled) continue;
+					block(entry, {
+						code: "missing-dependency",
+						severity: "error",
+						message: `Required dependency ${dependencyId} ${range} is blocked`,
+						relatedExtensionId: dependencyId,
+					});
+					propagated = true;
+					break;
+				}
+			}
+		}
+
+		const activeEntries = entries.filter((entry) => entry.enabled && entry.metadata.extensionId);
+		const activeIds = new Set(activeEntries.map((entry) => entry.metadata.extensionId!));
+		const outgoing = new Map<string, Set<string>>();
+		const indegree = new Map<string, number>(Array.from(activeIds, (id) => [id, 0]));
+		const addEdge = (from: string, to: string): void => {
+			if (from === to || !activeIds.has(from) || !activeIds.has(to)) return;
+			const targets = outgoing.get(from) ?? new Set<string>();
+			if (targets.has(to)) return;
+			targets.add(to);
+			outgoing.set(from, targets);
+			indegree.set(to, (indegree.get(to) ?? 0) + 1);
+		};
+		for (const entry of activeEntries) {
+			const id = entry.metadata.extensionId!;
+			const manifest = entry.metadata.extensionManifest;
+			for (const dependencyId of Object.keys(manifest?.dependencies ?? {})) addEdge(dependencyId, id);
+			for (const afterId of manifest?.loadOrder?.after ?? []) addEdge(afterId, id);
+			for (const beforeId of manifest?.loadOrder?.before ?? []) addEdge(id, beforeId);
+		}
+		const compareEntries = (a: ResolvedResource, b: ResolvedResource): number => {
+			const priorityA = a.metadata.extensionManifest?.loadOrder?.priority ?? 0;
+			const priorityB = b.metadata.extensionManifest?.loadOrder?.priority ?? 0;
+			return (
+				priorityB - priorityA ||
+				resourcePrecedenceRank(a.metadata) - resourcePrecedenceRank(b.metadata) ||
+				(a.metadata.extensionId ?? a.path).localeCompare(b.metadata.extensionId ?? b.path)
+			);
+		};
+		const ready = activeEntries
+			.filter((entry) => indegree.get(entry.metadata.extensionId!) === 0)
+			.sort(compareEntries);
+		const ordered: ResolvedResource[] = [];
+		const orderedIds = new Set<string>();
+		while (ready.length > 0) {
+			const entry = ready.shift()!;
+			const id = entry.metadata.extensionId!;
+			if (orderedIds.has(id)) continue;
+			ordered.push(entry);
+			orderedIds.add(id);
+			for (const targetId of outgoing.get(id) ?? []) {
+				const nextDegree = (indegree.get(targetId) ?? 0) - 1;
+				indegree.set(targetId, nextDegree);
+				if (nextDegree === 0) {
+					const target = byId.get(targetId);
+					if (target) {
+						ready.push(target);
+						ready.sort(compareEntries);
+					}
+				}
+			}
+		}
+		const orderCycleEntries = activeEntries.filter((entry) => !orderedIds.has(entry.metadata.extensionId!));
+		for (const entry of orderCycleEntries) {
+			addDiagnostic(entry, {
+				code: "load-order-cycle",
+				severity: "warning",
+				message: "Load-order hints form a cycle; deterministic priority and id ordering is used",
+			});
+		}
+		ordered.push(...orderCycleEntries.sort(compareEntries));
+
+		for (const entry of entries) {
+			const diagnostics = entry.metadata.extensionManifestDiagnostics ?? [];
+			const status: ExtensionManifestStatus = diagnostics.some((diagnostic) => diagnostic.severity === "error")
+				? "blocked"
+				: !entry.metadata.extensionManifest
+					? "legacy"
+					: diagnostics.length > 0
+						? "warning"
+						: "compatible";
+			entry.metadata.extensionManifestStatus = status;
+			entry.metadata.extensionLoadable = entry.enabled && status !== "blocked";
+		}
+
+		const inactive = entries
+			.filter((entry) => !ordered.includes(entry))
+			.sort((a, b) => (originalIndex.get(a) ?? 0) - (originalIndex.get(b) ?? 0));
+		return [...ordered, ...inactive];
+	}
+
 	private toResolvedPaths(accumulator: ResourceAccumulator): ResolvedPaths {
 		const mapToResolved = (
 			entries: Map<string, { metadata: PathMetadata; enabled: boolean }>,
@@ -3070,12 +3437,13 @@ export class DefaultPackageManager implements PackageManager {
 			resolved.sort((a, b) => resourcePrecedenceRank(a.metadata) - resourcePrecedenceRank(b.metadata));
 
 			const seen = new Set<string>();
-			return resolved.filter((entry) => {
+			const deduplicated = resolved.filter((entry) => {
 				const canonicalPath = canonicalizePath(entry.path);
 				if (seen.has(canonicalPath)) return false;
 				seen.add(canonicalPath);
 				return true;
 			});
+			return resourceType === "extensions" ? this.resolveExtensionManifestGraph(deduplicated) : deduplicated;
 		};
 
 		return {

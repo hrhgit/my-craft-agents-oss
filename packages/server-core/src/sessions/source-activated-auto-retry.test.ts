@@ -5,7 +5,7 @@ import { join } from 'path'
 import { ConversationProjector } from '../projection/conversation-projector.ts'
 import { SessionManager, createManagedSession, claimAutoRetryPending } from './SessionManager.ts'
 
-// Regression test for craft-agents-oss#804.
+// Regression test for mortise-oss#804.
 //
 // Before: the "[<slug> activated]" auto-retry only lived in the Electron renderer's
 // event processor. Headless deployments (WebUI, docker server) stalled after a
@@ -87,7 +87,7 @@ describe('source_activated auto-retry', () => {
       createdAt: Date.now(),
     }
     const managed = createManagedSession(
-      { craftId: id, name: 'auto-retry test' },
+      { mortiseId: id, name: 'auto-retry test' },
       workspace as never,
       { messagesLoaded: true },
     )
@@ -129,7 +129,7 @@ describe('source_activated auto-retry', () => {
   /**
    * Replace `sendMessage` with a spy that records the call and advances the
    * Pi-owned projection with the accepted user message. The auto-retry
-   * preemption check intentionally ignores Craft overlay messages.
+   * preemption check intentionally ignores Mortise overlay messages.
    */
   function spyOnSendMessage(sessionId: string) {
     const calls: string[] = []

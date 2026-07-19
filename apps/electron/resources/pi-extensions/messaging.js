@@ -10,7 +10,7 @@ export default function messagingExtension(pi) {
   pi.declareCapabilities([{ capability: "messaging.session", operations: ["list-bindings", "unbind"] }]);
 
   pi.registerTool({
-    name: "mcp__session__list_messaging_channels",
+    name: "list_messaging_channels",
     label: "List messaging channels",
     description: "List Telegram and WhatsApp channels bound to the current session.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
@@ -34,7 +34,7 @@ export default function messagingExtension(pi) {
   });
 
   pi.registerTool({
-    name: "mcp__session__unbind_messaging_channel",
+    name: "unbind_messaging_channel",
     label: "Unbind messaging channel",
     description: "Disconnect Telegram, WhatsApp, or all messaging channels from the current session.",
     parameters: {

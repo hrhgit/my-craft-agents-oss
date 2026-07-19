@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { requestCraftUiHost } from '../../craft-ui/client.ts'
-import { startCraftUiRun, stopCraftUiRun } from '../../craft-ui/controller.ts'
+import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
+import { startMortiseUiRun, stopMortiseUiRun } from '../../mortise-ui/controller.ts'
 
 interface SnapshotNode {
   ref: string
@@ -36,17 +36,44 @@ interface NativeSnapshot {
   windows: Array<{ nodes: Array<{ ref: string; role: string; actions: string[] }> }>
 }
 
-const fixtureRoot = await mkdtemp(join(tmpdir(), 'craft-ui-extension-source-'))
-const sourceCraft = join(fixtureRoot, 'craft')
+const fixtureRoot = await mkdtemp(join(tmpdir(), 'mortise-ui-extension-source-'))
+const sourceMortise = join(fixtureRoot, 'mortise')
 const sourcePi = join(fixtureRoot, 'pi-agent')
 const sourceWorkspace = join(fixtureRoot, 'workspace')
-const extensionPath = resolve(process.env.CRAFT_UI_EXTENSION_EXAMPLE
-  ?? join(process.cwd(), '..', 'pi', 'packages', 'coding-agent', 'examples', 'extensions', 'craft-gui.ts'))
+const extensionPackageRoot = join(fixtureRoot, 'extension-package')
+const extensionSourcePath = resolve(process.env.MORTISE_UI_EXTENSION_EXAMPLE
+  ?? join(process.cwd(), 'pi', 'packages', 'coding-agent', 'examples', 'extensions', 'mortise-gui.ts'))
 
-if (!existsSync(extensionPath)) throw new Error(`Pi Craft GUI example is missing: ${extensionPath}`)
+if (!existsSync(extensionSourcePath)) throw new Error(`Pi Mortise GUI example is missing: ${extensionSourcePath}`)
 
-await Promise.all([mkdir(sourceCraft, { recursive: true }), mkdir(sourcePi, { recursive: true }), mkdir(sourceWorkspace, { recursive: true })])
-await writeFile(join(sourceCraft, 'config.json'), `${JSON.stringify({
+await Promise.all([
+  mkdir(sourceMortise, { recursive: true }), mkdir(sourcePi, { recursive: true }),
+  mkdir(sourceWorkspace, { recursive: true }), mkdir(extensionPackageRoot, { recursive: true }),
+])
+await copyFile(extensionSourcePath, join(extensionPackageRoot, 'index.ts'))
+await writeFile(join(extensionPackageRoot, 'package.json'), `${JSON.stringify({
+  name: 'mortise-gui-example-e2e',
+  private: true,
+  type: 'module',
+  pi: {
+    extensions: [{
+      id: 'mortise-gui-example',
+      path: './index.ts',
+      activation: 'startup',
+      targets: ['mortise'],
+      manifest: {
+        schemaVersion: 1,
+        name: 'Mortise GUI Example',
+        version: '1.0.0',
+        author: { name: 'Mortise Contributors' },
+        engines: { mortise: '^0.1.0' },
+        capabilities: ['ui.contributions'],
+        permissions: [],
+      },
+    }],
+  },
+}, null, 2)}\n`, 'utf8')
+await writeFile(join(sourceMortise, 'config.json'), `${JSON.stringify({
   workspaces: [{ id: 'ui-extension-workspace', name: 'UI Extension E2E', rootPath: sourceWorkspace, createdAt: Date.now() }],
   activeWorkspaceId: 'ui-extension-workspace',
   activeSessionId: null,
@@ -55,7 +82,6 @@ await writeFile(join(sourceCraft, 'config.json'), `${JSON.stringify({
 await writeFile(join(sourcePi, 'settings.json'), `${JSON.stringify({
   defaultProvider: 'ui-validation-local',
   defaultModel: 'ui-validation-model',
-  extensions: [{ id: 'craft-gui-example', path: extensionPath, activation: 'startup', targets: ['craft'] }],
 }, null, 2)}\n`, 'utf8')
 await writeFile(join(sourcePi, 'models.json'), `${JSON.stringify({
   providers: {
@@ -68,13 +94,19 @@ await writeFile(join(sourcePi, 'models.json'), `${JSON.stringify({
   },
 }, null, 2)}\n`, 'utf8')
 
-const manifest = await startCraftUiRun({
+const manifest = await startMortiseUiRun({
   surface: 'electron',
   profileMode: 'clone',
-  sourceCraftConfigDir: sourceCraft,
+  windowMode: 'foreground',
+  sourceMortiseConfigDir: sourceMortise,
   sourcePiAgentDir: sourcePi,
+  extensionPaths: [extensionPackageRoot],
   waitMs: 180_000,
 })
+
+if (manifest.mountedExtensions?.[0]?.entries[0]?.id !== 'mortise-gui-example') {
+  throw new Error(`Extension package was not mounted into the run: ${JSON.stringify(manifest.mountedExtensions)}`)
+}
 
 try {
   const initial = await command<Snapshot>('ui.snapshot')
@@ -101,9 +133,9 @@ try {
   })
 
   const extensionList = await command<ExtensionDefinitionSnapshot>('ui.snapshot', {
-    target: { kind: 'extension', sessionId, extensionId: 'craft-gui-example' },
+    target: { kind: 'extension', sessionId, extensionId: 'mortise-gui-example' },
   })
-  const registered = extensionList.definitions.find(item => item.definition.id === 'craft-gui-example.contract')
+  const registered = extensionList.definitions.find(item => item.definition.id === 'mortise-gui-example.contract')
   if (!registered) throw new Error('Real Pi extension did not publish its validation definition.')
   const extensionTarget = {
     kind: 'extension',
@@ -136,15 +168,15 @@ try {
   assertCount(physicalResult, 9)
 
   await command('ui.wait', {
-    predicate: { kind: 'state', scope: 'extension', phase: 'ready', detail: { definitionId: 'craft-gui-example.sandbox-contract' } },
+    predicate: { kind: 'state', scope: 'extension', phase: 'ready', detail: { definitionId: 'mortise-gui-example.sandbox-contract' } },
     timeoutMs: 60_000,
     stableForMs: 100,
   })
-  const sandboxExtensionId = 'craft-gui-example:sandbox:validation-counter'
+  const sandboxExtensionId = 'mortise-gui-example:sandbox:validation-counter'
   const sandboxList = await command<ExtensionDefinitionSnapshot>('ui.snapshot', {
     target: { kind: 'extension', sessionId, extensionId: sandboxExtensionId },
   })
-  const sandboxRegistered = sandboxList.definitions.find(item => item.definition.id === 'craft-gui-example.sandbox-contract')
+  const sandboxRegistered = sandboxList.definitions.find(item => item.definition.id === 'mortise-gui-example.sandbox-contract')
   if (!sandboxRegistered) throw new Error('Sandbox app did not publish its validation definition through the private bridge.')
   const sandboxTarget = {
     kind: 'extension',
@@ -177,7 +209,7 @@ try {
     const native = await command<NativeSnapshot>('ui.native', { operation: 'snapshot' })
     const nativeWindow = native.windows.flatMap(window => window.nodes)
       .find(node => node.role === 'Window' && node.actions.includes('focus'))
-    if (!nativeWindow) throw new Error('Native driver did not expose a focusable Craft window.')
+    if (!nativeWindow) throw new Error('Native driver did not expose a focusable Mortise window.')
     const focused = await command('ui.action', {
       mode: 'native', revision: native.revision,
       target: { kind: 'native', ref: nativeWindow.ref }, action: 'focus',
@@ -217,7 +249,7 @@ try {
   }
   throw error
 } finally {
-  await stopCraftUiRun(manifest.runDir)
+  await stopMortiseUiRun(manifest.runDir)
   await rm(fixtureRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 }
 
@@ -226,7 +258,7 @@ async function command<T = Record<string, unknown>>(
   params: Record<string, unknown> = {},
   expectedLevel?: string,
 ): Promise<T & { verificationLevel?: string }> {
-  const response = await requestCraftUiHost<T>({ ...manifest, command: name, params, timeoutMs: 120_000 })
+  const response = await requestMortiseUiHost<T>({ ...manifest, command: name, params, timeoutMs: 120_000 })
   if (response.ok === false) throw new Error(`${name} failed: ${response.error.code}: ${response.error.message}`)
   if (expectedLevel && response.verificationLevel !== expectedLevel) {
     throw new Error(`${name} returned ${response.verificationLevel}; expected ${expectedLevel}.`)

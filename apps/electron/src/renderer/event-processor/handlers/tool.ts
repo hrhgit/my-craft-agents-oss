@@ -7,7 +7,7 @@
 
 import type { SessionState, ToolStartEvent, ToolResultEvent, TaskBackgroundedEvent, ShellBackgroundedEvent, TaskProgressEvent, TaskCompletedEvent } from '../types'
 import type { Message } from '../../../shared/types'
-import { inferToolResultError, isParentTaskOrTaskOutputTool } from '@craft-agent/shared/utils/toolNames'
+import { inferToolResultError, isParentTaskOrTaskOutputTool } from '@mortise/shared/utils/toolNames'
 import {
   findToolMessage,
   updateMessageAt,

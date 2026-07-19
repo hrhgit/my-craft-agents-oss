@@ -257,7 +257,7 @@ export function EntityRow({
   const resolvedContextMenu = useCompactMenu
     ? null
     : contextMenuContent ?? menuContent
-  const automaticSemanticId = dataAttributes?.['data-craft-semantic-id']
+  const automaticSemanticId = dataAttributes?.['data-mortise-semantic-id']
     ?? (dataAttributes?.['data-session-id'] ? `session.${dataAttributes['data-session-id']}` : undefined)
 
   // Build the inner content (shared between with-context-menu and without)
@@ -271,7 +271,7 @@ export function EntityRow({
       {/* Main content button */}
       <button
         data-slot="entity-row"
-        data-craft-semantic-id={automaticSemanticId}
+        data-mortise-semantic-id={automaticSemanticId}
         {...(buttonProps as React.ButtonHTMLAttributes<HTMLButtonElement>)}
         className={cn(
           "entity-row-btn flex w-full items-start gap-2 pl-2 pr-4 py-3 text-left text-sm outline-none rounded-[8px]",

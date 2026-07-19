@@ -1,10 +1,10 @@
 import { getLatestVersion } from "./manifest";
 
-declare const CRAFT_AGENT_CLI_VERSION: string | undefined;
+declare const MORTISE_AGENT_CLI_VERSION: string | undefined;
 
 export function getCurrentVersion(): string {
-  if (typeof CRAFT_AGENT_CLI_VERSION !== 'undefined' && CRAFT_AGENT_CLI_VERSION != null) {
-    return CRAFT_AGENT_CLI_VERSION;
+  if (typeof MORTISE_AGENT_CLI_VERSION !== 'undefined' && MORTISE_AGENT_CLI_VERSION != null) {
+    return MORTISE_AGENT_CLI_VERSION;
   }
   return "0.0.1";
 }

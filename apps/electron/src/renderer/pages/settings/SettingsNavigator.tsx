@@ -65,7 +65,7 @@ function SettingsItemRow({ item, isSelected, isFirst, onSelect }: SettingsItemRo
 
   // Open settings page in a new window via deep link
   const handleOpenInNewWindow = () => {
-    window.electronAPI.openUrl(`craftagents://settings/${item.id}?window=focused`)
+    window.electronAPI.openUrl(`mortise://settings/${item.id}?window=focused`)
   }
 
   return (
@@ -89,7 +89,7 @@ function SettingsItemRow({ item, isSelected, isFirst, onSelect }: SettingsItemRo
         </div>
         {/* Main content button */}
         <button
-          data-craft-semantic-id={`settings.${item.id}`}
+          data-mortise-semantic-id={`settings.${item.id}`}
           type="button"
           onClick={onSelect}
           className={cn(

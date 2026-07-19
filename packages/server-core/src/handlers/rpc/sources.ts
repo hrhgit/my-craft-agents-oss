@@ -1,11 +1,11 @@
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { loadWorkspaceSources } from '@craft-agent/shared/sources'
-import { safeJsonParse } from '@craft-agent/shared/utils/files'
-import { getCredentialManager } from '@craft-agent/shared/credentials'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { loadWorkspaceSources } from '@mortise/shared/sources'
+import { safeJsonParse } from '@mortise/shared/utils/files'
+import { getCredentialManager } from '@mortise/shared/credentials'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
-import { getDataSourcesEnabled } from '@craft-agent/shared/config'
+import { getDataSourcesEnabled } from '@mortise/shared/config'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sources.GET,
@@ -33,10 +33,10 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
   })
 
   // Create a new source
-  server.handle(RPC_CHANNELS.sources.CREATE, async (ctx, workspaceId: string, config: Partial<import('@craft-agent/shared/sources').CreateSourceInput>) => {
+  server.handle(RPC_CHANNELS.sources.CREATE, async (ctx, workspaceId: string, config: Partial<import('@mortise/shared/sources').CreateSourceInput>) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
-    const { createSource } = await import('@craft-agent/shared/sources')
+    const { createSource } = await import('@mortise/shared/sources')
     return createSource(workspace.rootPath, {
       name: config.name || 'New Source',
       provider: config.provider || 'custom',
@@ -52,11 +52,11 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
   server.handle(RPC_CHANNELS.sources.DELETE, async (ctx, workspaceId: string, sourceSlug: string) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
-    const { deleteSource } = await import('@craft-agent/shared/sources')
+    const { deleteSource } = await import('@mortise/shared/sources')
     deleteSource(workspace.rootPath, sourceSlug)
 
     // Clean up stale slug from workspace default sources
-    const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
+    const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@mortise/shared/workspaces')
     const config = loadWorkspaceConfig(workspace.rootPath)
     if (config?.defaults?.enabledSourceSlugs?.includes(sourceSlug)) {
       config.defaults.enabledSourceSlugs = config.defaults.enabledSourceSlugs.filter(s => s !== sourceSlug)
@@ -77,7 +77,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
   server.handle(RPC_CHANNELS.sources.SAVE_CREDENTIALS, async (ctx, workspaceId: string, sourceSlug: string, credential: string) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
-    const { loadSource, getSourceCredentialManager } = await import('@craft-agent/shared/sources')
+    const { loadSource, getSourceCredentialManager } = await import('@mortise/shared/sources')
 
     const source = loadSource(workspace.rootPath, sourceSlug)
     if (!source) {
@@ -99,7 +99,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     if (!workspace) return null
 
     const { existsSync, readFileSync } = await import('fs')
-    const { getSourcePermissionsPath } = await import('@craft-agent/shared/agent')
+    const { getSourcePermissionsPath } = await import('@mortise/shared/agent')
     const path = getSourcePermissionsPath(workspace.rootPath, sourceSlug)
 
     if (!existsSync(path)) return null
@@ -121,7 +121,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     if (!workspace) return null
 
     const { existsSync, readFileSync } = await import('fs')
-    const { getWorkspacePermissionsPath } = await import('@craft-agent/shared/agent')
+    const { getWorkspacePermissionsPath } = await import('@mortise/shared/agent')
     const path = getWorkspacePermissionsPath(workspace.rootPath)
 
     if (!existsSync(path)) return null
@@ -135,10 +135,10 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  // Get default permissions from ~/.craft-agent/permissions/default.json
+  // Get default permissions from ~/.mortise/permissions/default.json
   server.handle(RPC_CHANNELS.permissions.GET_DEFAULTS, async () => {
     const { existsSync, readFileSync } = await import('fs')
-    const { getAppPermissionsDir } = await import('@craft-agent/shared/agent')
+    const { getAppPermissionsDir } = await import('@mortise/shared/agent')
     const { join } = await import('path')
 
     const defaultPath = join(getAppPermissionsDir(), 'default.json')
@@ -177,15 +177,15 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
         return { success: false, error: 'Source has not been tested yet' }
       }
 
-      const { CraftMcpClient } = await import('@craft-agent/shared/mcp')
-      let client: InstanceType<typeof CraftMcpClient>
+      const { MortiseMcpClient } = await import('@mortise/shared/mcp')
+      let client: InstanceType<typeof MortiseMcpClient>
 
       if (source.config.mcp.transport === 'stdio') {
         if (!source.config.mcp.command) {
           return { success: false, error: 'Stdio MCP source is missing required "command" field' }
         }
         log.info(`Fetching MCP tools via stdio: ${source.config.mcp.command}`)
-        client = new CraftMcpClient({
+        client = new MortiseMcpClient({
           transport: 'stdio',
           command: source.config.mcp.command,
           args: source.config.mcp.args,
@@ -207,7 +207,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
         }
 
         log.info(`Fetching MCP tools from ${source.config.mcp.url}`)
-        client = new CraftMcpClient({
+        client = new MortiseMcpClient({
           transport: 'http',
           url: source.config.mcp.url,
           headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
@@ -217,7 +217,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
       const tools = await client.listTools()
       await client.close()
 
-      const { loadSourcePermissionsConfig, permissionsConfigCache } = await import('@craft-agent/shared/agent')
+      const { loadSourcePermissionsConfig, permissionsConfigCache } = await import('@mortise/shared/agent')
       const permissionsConfig = loadSourcePermissionsConfig(workspace.rootPath, sourceSlug)
 
       const mergedConfig = permissionsConfigCache.getMergedConfig({

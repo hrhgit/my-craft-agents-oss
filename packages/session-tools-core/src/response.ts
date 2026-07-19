@@ -5,13 +5,13 @@
  * Used by both Claude and Codex implementations.
  *
  * errorResponse and successResponse are re-exported from the canonical
- * implementation in @craft-agent/shared/agent (tool-result.ts).
+ * implementation in @mortise/shared/agent (tool-result.ts).
  */
 
 import type { TextContent } from './types.ts';
 
-// Re-export canonical response helpers from @craft-agent/shared/agent
-export { errorResponse, successResponse } from '@craft-agent/shared/agent';
+// Re-export canonical response helpers from @mortise/shared/agent
+export { errorResponse, successResponse } from '@mortise/shared/agent';
 
 /**
  * Create a text content block

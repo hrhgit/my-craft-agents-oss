@@ -1,10 +1,9 @@
-import { VIEWER_URL } from '@craft-agent/shared/branding'
 import type {
   ImportRemoteSessionTransferResult,
   RemoteSessionTransferPayload,
   ShareResult,
-} from '@craft-agent/shared/protocol'
-import type { PermissionMode } from '@craft-agent/shared/agent/mode-types'
+} from '@mortise/shared/protocol'
+import type { PermissionMode } from '@mortise/shared/agent/mode-types'
 import type { Logger } from '../runtime/platform'
 
 export interface ShareTransferSessionRecord {
@@ -39,12 +38,14 @@ export interface SessionShareTransferServiceOptions {
 /** Host-owned share and summary-transfer business logic shared by RPC and capabilities. */
 export class SessionShareTransferService {
   private readonly fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response>
-  private readonly viewerUrl: string
+  private readonly viewerUrl: string | null
 
   constructor(private readonly options: SessionShareTransferServiceOptions) {
     this.fetchImpl = options.fetch ?? globalThis.fetch
-    this.viewerUrl = options.viewerUrl ?? VIEWER_URL
+    this.viewerUrl = normalizeViewerUrl(options.viewerUrl ?? process.env.MORTISE_VIEWER_URL)
   }
+
+  isConfigured(): boolean { return this.viewerUrl !== null }
 
   status(sessionId: string): { published: boolean; url?: string } {
     const session = this.options.store.resolve(sessionId)
@@ -55,6 +56,7 @@ export class SessionShareTransferService {
   async publish(sessionId: string): Promise<ShareResult> {
     const session = this.options.store.resolve(sessionId)
     if (!session) return { success: false, error: 'Session not found' }
+    if (!this.viewerUrl) return { success: false, error: 'Session sharing is not configured' }
     return this.withAsyncOperation(session, async () => {
       const stored = this.options.store.loadStoredSession(session)
       if (!stored) return { success: false, error: 'Session file not found' }
@@ -78,6 +80,7 @@ export class SessionShareTransferService {
     const session = this.options.store.resolve(sessionId)
     if (!session) return { success: false, error: 'Session not found' }
     if (!session.sharedId) return { success: false, error: 'Session not shared' }
+    if (!this.viewerUrl) return { success: false, error: 'Session sharing is not configured' }
     return this.withAsyncOperation(session, async () => {
       const stored = this.options.store.loadStoredSession(session)
       if (!stored) return { success: false, error: 'Session file not found' }
@@ -98,6 +101,7 @@ export class SessionShareTransferService {
     const session = this.options.store.resolve(sessionId)
     if (!session) return { success: false, error: 'Session not found' }
     if (!session.sharedId) return { success: false, error: 'Session not shared' }
+    if (!this.viewerUrl) return { success: false, error: 'Session sharing is not configured' }
     return this.withAsyncOperation(session, async () => {
       try {
         const response = await this.fetchImpl(`${this.viewerUrl}/s/api/${session.sharedId}`, { method: 'DELETE' })
@@ -140,4 +144,20 @@ export class SessionShareTransferService {
     if (status === 413) return { success: false, error: 'Session file is too large to share' }
     return { success: false, error: fallback }
   }
+}
+
+function normalizeViewerUrl(value: string | undefined): string | null {
+  const trimmed = value?.trim().replace(/\/+$/, '')
+  if (!trimmed) return null
+
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    throw new Error('MORTISE_VIEWER_URL must be an absolute HTTP(S) URL')
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('MORTISE_VIEWER_URL must use HTTP or HTTPS')
+  }
+  return trimmed
 }

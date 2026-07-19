@@ -1,2 +1,2 @@
 @echo off
-"%CRAFT_UV%" run --python 3.12 "%CRAFT_SCRIPTS%\pptx_tool.py" %*
+"%MORTISE_UV%" run --python 3.12 "%MORTISE_SCRIPTS%\pptx_tool.py" %*

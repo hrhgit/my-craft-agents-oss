@@ -2,21 +2,21 @@
  * Pi SDK Event Adapter
  *
  * Maps Pi Agent Core events (AgentEvent / AgentSessionEvent) to
- * Craft Agent's AgentEvent format for UI compatibility.
+ * Mortise Agent's AgentEvent format for UI compatibility.
  *
  * Pi emits fine-grained lifecycle events. We translate them into
  * the same event vocabulary the renderer already understands from
  * Claude / Codex / Copilot backends.
  */
 
-import type { AgentEvent as CraftAgentEvent } from '@craft-agent/core/types';
+import type { AgentEvent as MortiseAgentEvent } from '@mortise/core/types';
 import type {
   AgentEvent as PiAgentEvent,
-} from '@earendil-works/pi-agent-core';
+} from '@mortise/pi-agent-core';
 import type {
   AgentSessionEvent,
-} from '@earendil-works/pi-coding-agent';
-import type { AssistantMessageEvent } from '@earendil-works/pi-ai';
+} from '@mortise/pi-coding-agent';
+import type { AssistantMessageEvent } from '@mortise/pi-ai';
 import { BaseEventAdapter } from '../base-event-adapter.ts';
 import { PI_TOOL_NAME_MAP } from './constants.ts';
 import { toolMetadataStore } from '../../../interceptor-common.ts';
@@ -29,7 +29,7 @@ import { parseError } from '../../errors.ts';
 type PiEvent = PiAgentEvent | AgentSessionEvent;
 
 /**
- * Maps Pi SDK events to Craft AgentEvents for UI compatibility.
+ * Maps Pi SDK events to Mortise AgentEvents for UI compatibility.
  *
  * Event mapping:
  * - message_update (text_delta in assistantMessageEvent) → text_delta
@@ -92,9 +92,9 @@ export class PiEventAdapter extends BaseEventAdapter {
   }
 
   /**
-   * Adapt a Pi SDK event to zero or more Craft AgentEvents.
+   * Adapt a Pi SDK event to zero or more Mortise AgentEvents.
    */
-  *adaptEvent(event: PiEvent): Generator<CraftAgentEvent> {
+  *adaptEvent(event: PiEvent): Generator<MortiseAgentEvent> {
     if ((event as { type?: string }).type === 'pi_user_message_persisted') {
       yield { type: 'pi_user_message_persisted' };
       return;
@@ -187,7 +187,7 @@ export class PiEventAdapter extends BaseEventAdapter {
           timestamp?: number;
         } | undefined;
         // Active model's context window, forwarded by Pi RpcClient. Lets us
-        // compute usage percent for models absent from craft's MODEL_REGISTRY
+        // compute usage percent for models absent from mortise's MODEL_REGISTRY
         // (custom-endpoint, pi-prefixed, OpenRouter, etc.). Updated each turn
         // so set_model mid-session is tracked.
         const forwardedModelContextWindow = (event as { modelContextWindow?: number }).modelContextWindow;

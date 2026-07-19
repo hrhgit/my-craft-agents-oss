@@ -5,29 +5,29 @@
  * Sessions are stored at ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl
  *
  * Pi Tree JSONL v3 Format (primary):
- * - On-disk 第一行结构: Pi 顶层字段 + `craft` 子对象（Craft 扩展字段）
- * - 内部类型拆分为 PiSessionHeader / CraftSessionMetadata / SessionComputedMetadata
+ * - On-disk 第一行结构: Pi 顶层字段 + `mortise` 子对象（Mortise 扩展字段）
+ * - 内部类型拆分为 PiSessionHeader / MortiseSessionMetadata / SessionComputedMetadata
  * - renderer/RPC 兼容 DTO 仍可使用扁平 SessionHeader
  * - 序列化层（tree-jsonl.ts）负责扁平 DTO ↔ 嵌套 tree header 转换
  */
 
 import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
-import type { PlanModeStateV1, StoredMessage } from '@craft-agent/core/types';
+import type { PlanModeStateV1, StoredMessage } from '@mortise/core/types';
 
 /**
- * Craft session metadata fields that persist to disk (写入 Pi 文件 craft 子对象).
- * Add new Craft metadata fields here - they automatically propagate to JSONL
+ * Mortise session metadata fields that persist to disk (写入 Pi 文件 mortise 子对象).
+ * Add new Mortise metadata fields here - they automatically propagate to JSONL
  * read/write via pickCraftSessionMetadata().
  *
  * IMPORTANT: When adding a new field:
  * 1. Add it to this array
- * 2. Add it to CraftSessionMetadata below
+ * 2. Add it to MortiseSessionMetadata below
  * 3. Done - serialization is automatic
  */
-export const CRAFT_SESSION_METADATA_FIELDS = [
+export const MORTISE_SESSION_METADATA_FIELDS = [
   // Identity
-  'craftId', 'workspaceRootPath', 'sdkSessionId', 'sdkCwd',
+  'mortiseId', 'workspaceRootPath', 'sdkSessionId', 'sdkCwd',
   // Timestamps
   'createdAt', 'lastUsedAt', 'lastMessageAt',
   // Display
@@ -56,12 +56,12 @@ export const CRAFT_SESSION_METADATA_FIELDS = [
   'triggeredBy',
 ] as const;
 
-export type CraftSessionMetadataField = typeof CRAFT_SESSION_METADATA_FIELDS[number];
+export type MortiseSessionMetadataField = typeof MORTISE_SESSION_METADATA_FIELDS[number];
 
 /**
- * Computed/list metadata cached in the craft sub-object for fast session lists.
+ * Computed/list metadata cached in the mortise sub-object for fast session lists.
  * These are derived from messages/runtime state, so they are intentionally not
- * part of CRAFT_SESSION_METADATA_FIELDS.
+ * part of MORTISE_SESSION_METADATA_FIELDS.
  */
 export const SESSION_COMPUTED_METADATA_FIELDS = [
   'messageCount',
@@ -90,14 +90,14 @@ export interface SessionTokenUsage {
 
 /**
  * Stored message format (simplified for persistence)
- * Re-exported from @craft-agent/core for convenience
+ * Re-exported from @mortise/core for convenience
  */
-export type { StoredMessage } from '@craft-agent/core/types';
+export type { StoredMessage } from '@mortise/core/types';
 
 /**
  * Pi tree top-level header fields.
  *
- * These fields are owned by Pi runtime and are only mirrored into Craft DTOs
+ * These fields are owned by Pi runtime and are only mirrored into Mortise DTOs
  * for lookup/list rendering.
  */
 export interface PiSessionHeader {
@@ -107,7 +107,7 @@ export interface PiSessionHeader {
   version?: number;
   /**
    * Pi session UUID — Pi runtime 主键，文件名一部分。
-   * 与 craftId 区分：piSessionId 是 Pi runtime 内部 ID，craftId 是 Craft 人类可读 ID。
+   * 与 mortiseId 区分：piSessionId 是 Pi runtime 内部 ID，mortiseId 是 Mortise 人类可读 ID。
    * legacy 文件无此字段。
    */
   piSessionId?: string;
@@ -120,21 +120,21 @@ export interface PiSessionHeader {
 }
 
 /**
- * Craft-owned persistent metadata, serialized under the tree header's `craft`
- * sub-object. On disk, `craftId` is mapped to `craft.id`.
+ * Mortise-owned persistent metadata, serialized under the tree header's `mortise`
+ * sub-object. On disk, `mortiseId` is mapped to `mortise.id`.
  */
-export interface CraftSessionMetadata {
+export interface MortiseSessionMetadata {
   /**
-   * Craft session ID — 人类可读格式（YYMMDD-adjective-noun），文件名一部分。
-   * 在 Pi 文件中序列化为 `craft.id`。
+   * Mortise session ID — 人类可读格式（YYMMDD-adjective-noun），文件名一部分。
+   * 在 Pi 文件中序列化为 `mortise.id`。
    */
-  craftId: string;
+  mortiseId: string;
   /** SDK session ID（Claude SDK 等底层 SDK 的 session 标识，捕获于首条消息后） */
   sdkSessionId?: string;
-  /** Craft workspace 根路径 */
+  /** Mortise workspace 根路径 */
   workspaceRootPath: string;
   // ============================================
-  // Craft 时间戳
+  // Mortise 时间戳
   // ============================================
 
   /** 创建时间（epoch ms） */
@@ -145,7 +145,7 @@ export interface CraftSessionMetadata {
   lastMessageAt?: number;
 
   // ============================================
-  // Craft 显示
+  // Mortise 显示
   // ============================================
 
   /** 用户自定义名称 */
@@ -154,7 +154,7 @@ export interface CraftSessionMetadata {
   hidden?: boolean;
 
   // ============================================
-  // Craft 读取跟踪
+  // Mortise 读取跟踪
   // ============================================
 
   /** 最后用户已读消息 ID */
@@ -166,7 +166,7 @@ export interface CraftSessionMetadata {
   hasUnread?: boolean;
 
   // ============================================
-  // Craft 配置
+  // Mortise 配置
   // ============================================
 
   /** Per-session source 选择（source slugs） */
@@ -181,7 +181,7 @@ export interface CraftSessionMetadata {
   sdkCwd?: string;
 
   // ============================================
-  // Craft Provider/模型
+  // Mortise Provider/模型
   // ============================================
 
   /** 模型 ID（覆盖全局配置） */
@@ -192,7 +192,7 @@ export interface CraftSessionMetadata {
   thinkingLevel?: ThinkingLevel;
 
   // ============================================
-  // Craft 分享
+  // Mortise 分享
   // ============================================
 
   /** 分享查看器 URL */
@@ -201,7 +201,7 @@ export interface CraftSessionMetadata {
   sharedId?: string;
 
   // ============================================
-  // Craft Plan 执行
+  // Mortise Plan 执行
   // ============================================
 
   /**
@@ -225,7 +225,7 @@ export interface CraftSessionMetadata {
   planModeState?: PlanModeStateV1;
 
   // ============================================
-  // Craft 分支
+  // Mortise 分支
   // ============================================
 
   /** 分支起点消息 ID（硬上下文截止标记） */
@@ -242,7 +242,7 @@ export interface CraftSessionMetadata {
   branchFromSdkTurnId?: string;
 
   // ============================================
-  // Craft 远程传输
+  // Mortise 远程传输
   // ============================================
 
   /** 远程传输后首条 turn 注入的一次性隐藏摘要 */
@@ -251,7 +251,7 @@ export interface CraftSessionMetadata {
   transferredSessionSummaryApplied?: boolean;
 
   // ============================================
-  // Craft 自动化
+  // Mortise 自动化
   // ============================================
 
   /** 自动化创建的 session 元数据 */
@@ -261,9 +261,9 @@ export interface CraftSessionMetadata {
 /**
  * Derived metadata used by session lists/runtime views.
  *
- * Some fields are cached in the tree header's `craft` sub-object to avoid
+ * Some fields are cached in the tree header's `mortise` sub-object to avoid
  * loading large message bodies for every list render. They are still computed
- * data, not user-editable Craft metadata.
+ * data, not user-editable Mortise metadata.
  */
 export interface SessionComputedMetadata {
   /** 消息数（列表展示用，免加载 messages） */
@@ -290,7 +290,7 @@ export interface SessionComputedMetadata {
  * sites. New storage/projection code should prefer the split interfaces above.
  */
 export interface SessionHeader
-  extends PiSessionHeader, CraftSessionMetadata, SessionComputedMetadata {}
+  extends PiSessionHeader, MortiseSessionMetadata, SessionComputedMetadata {}
 
 /**
  * Stored session with conversation data

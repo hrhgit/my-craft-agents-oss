@@ -1,6 +1,6 @@
-import { requestCraftUiHost } from '../../craft-ui/client.ts'
-import { startCraftUiRun, stopCraftUiRun } from '../../craft-ui/controller.ts'
-import type { CraftUiRunManifest, CraftUiSurface } from '../../craft-ui/protocol.ts'
+import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
+import { startMortiseUiRun, stopMortiseUiRun } from '../../mortise-ui/controller.ts'
+import type { MortiseUiRunManifest, MortiseUiSurface } from '../../mortise-ui/protocol.ts'
 
 interface SnapshotNode {
   role: string
@@ -25,15 +25,15 @@ const REQUIRED_SEMANTICS = [
   'navigation.nav_settings',
 ] as const
 
-const results = new Map<CraftUiSurface, Record<string, unknown>>()
+const results = new Map<MortiseUiSurface, Record<string, unknown>>()
 for (const surface of ['webui', 'electron'] as const) {
-  let manifest: CraftUiRunManifest | undefined
+  let manifest: MortiseUiRunManifest | undefined
   try {
-    manifest = await startCraftUiRun({
+    manifest = await startMortiseUiRun({
       surface,
       profileMode: 'fixture',
       waitMs: surface === 'electron' ? 180_000 : 90_000,
-      ...(process.env.CRAFT_UI_SKIP_BUILD === '1' ? { extraEnv: { CRAFT_UI_SKIP_BUILD: '1' } } : {}),
+      ...(process.env.MORTISE_UI_SKIP_BUILD === '1' ? { extraEnv: { MORTISE_UI_SKIP_BUILD: '1' } } : {}),
     })
     await ok(manifest, 'scenario.apply', { name: 'session.empty', seed: 1701 })
     const snapshot = await ok<Snapshot>(manifest, 'ui.snapshot')
@@ -50,7 +50,7 @@ for (const surface of ['webui', 'electron'] as const) {
     if (manifest) await ok(manifest, 'evidence.capture', { label: `surface-parity-${surface}-failure` }).catch(() => undefined)
     throw error
   } finally {
-    if (manifest) await stopCraftUiRun(manifest.runDir)
+    if (manifest) await stopMortiseUiRun(manifest.runDir)
   }
 }
 
@@ -62,11 +62,11 @@ if (JSON.stringify(web.contract) !== JSON.stringify(electron.contract)) {
 process.stdout.write(`${JSON.stringify({ ok: true, scenario: 'session.empty', surfaces: Object.fromEntries(results) })}\n`)
 
 async function ok<T = Record<string, unknown>>(
-  run: CraftUiRunManifest,
+  run: MortiseUiRunManifest,
   command: string,
   params: Record<string, unknown> = {},
 ): Promise<T> {
-  const response = await requestCraftUiHost<T>({ ...run, command, params, timeoutMs: 60_000 })
+  const response = await requestMortiseUiHost<T>({ ...run, command, params, timeoutMs: 60_000 })
   if (!response.ok) throw new Error(`${command}: ${response.error.code}: ${response.error.message}`)
   return response.result
 }

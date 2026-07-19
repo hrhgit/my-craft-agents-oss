@@ -37,8 +37,8 @@ export interface ConfigDefaults {
     piExtensions: PiExtensionSettings;
     /**
      * Pi 壳模式开关。
-     * - fullPassthrough: 完全 Pi 透传——使用 Pi 原生 system prompt，移除 Craft 身份覆盖。
-     *   默认 true。为 false 时回退到 Craft 独立身份模式。
+     * - fullPassthrough: 完全 Pi 透传——使用 Pi 原生 system prompt，移除 Mortise 身份覆盖。
+     *   默认 true。为 false 时回退到 Mortise 独立身份模式。
      */
     piShell: {
       fullPassthrough: boolean;

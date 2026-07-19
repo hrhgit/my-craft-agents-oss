@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import { buildClientApi, type ChannelMap } from '../build-api'
 import { CHUNKED_TRANSFER_THRESHOLD } from '../chunked-payload'
-import type { RpcClient } from '@craft-agent/server-core/transport'
+import type { RpcClient } from '@mortise/server-core/transport'
 import { CHANNEL_MAP } from '../channel-map'
 
 function makeClient() {

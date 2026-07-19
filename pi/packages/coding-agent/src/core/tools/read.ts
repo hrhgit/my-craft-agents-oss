@@ -1,7 +1,7 @@
 import { basename, dirname, isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { Api, ImageContent, Model, TextContent } from "@earendil-works/pi-ai/types";
-import { Text } from "@earendil-works/pi-tui";
+import type { AgentTool } from "@mortise/pi-agent-core";
+import type { Api, ImageContent, Model, TextContent } from "@mortise/pi-ai/types";
+import { Text } from "@mortise/pi-tui";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, stat as fsStat } from "fs/promises";
 import { type Static, Type } from "typebox";

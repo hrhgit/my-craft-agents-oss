@@ -1,18 +1,22 @@
-# Craft Agents Windows Installer
-# Usage: irm https://agents.craft.do/install-app.ps1 | iex
+# Mortise Windows Installer
+# Set MORTISE_UPDATE_URL to the release manifest base URL before running.
 
 & {
 $ErrorActionPreference = "Stop"
 
-$VERSIONS_URL = "https://agents.craft.do/electron"
-$DOWNLOAD_DIR = "$env:TEMP\craft-agent-install"
-$APP_NAME = "Craft Agents"
+$VERSIONS_URL = "$env:MORTISE_UPDATE_URL".TrimEnd('/')
+$DOWNLOAD_DIR = "$env:TEMP\mortise-install"
+$APP_NAME = "Mortise"
 
 # Colors for output
 function Write-Info { Write-Host "> $args" -ForegroundColor Blue }
 function Write-Success { Write-Host "> $args" -ForegroundColor Green }
 function Write-Warn { Write-Host "! $args" -ForegroundColor Yellow }
 function Write-Err { Write-Host "x $args" -ForegroundColor Red; exit 1 }
+
+if (-not $VERSIONS_URL) {
+    Write-Err "Set MORTISE_UPDATE_URL to the Mortise release manifest base URL."
+}
 
 # Check for Windows
 if ($env:OS -ne "Windows_NT") {
@@ -58,7 +62,7 @@ Write-Info "Latest version: $version"
 # Parse YAML to extract sha512, url (filename), and size for our architecture
 # YAML format:
 #   files:
-#     - url: Craft-Agents-x64.exe
+#     - url: Mortise-x64.exe
 #       sha512: <base64>
 #       size: 123456789
 #       arch: x64
@@ -108,7 +112,7 @@ if (-not $checksum -or $checksum.Length -lt 80) {
 
 # Use default filename if not found
 if (-not $filename) {
-    $filename = "Craft-Agents-$arch.exe"
+    $filename = "Mortise-$arch.exe"
 }
 
 $installerUrl = "$VERSIONS_URL/latest/$filename"
@@ -192,9 +196,9 @@ if ($actualHash -ne $checksum) {
 Write-Success "Checksum verified!"
 
 # Close the app if it's running
-$process = Get-Process -Name "Craft Agents" -ErrorAction SilentlyContinue
+$process = Get-Process -Name "Mortise" -ErrorAction SilentlyContinue
 if ($process) {
-    Write-Info "Closing Craft Agents..."
+    Write-Info "Closing Mortise..."
     $process | Stop-Process -Force
     Start-Sleep -Seconds 2
 }
@@ -227,11 +231,11 @@ Write-Info "Cleaning up..."
 Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue
 
 # Add command line shortcut
-Write-Info "Adding 'craft-agents' command to PATH..."
+Write-Info "Adding 'mortise' command to PATH..."
 
-$binDir = "$env:LOCALAPPDATA\Craft Agents\bin"
-$cmdFile = "$binDir\craft-agents.cmd"
-$exePath = "$env:LOCALAPPDATA\Programs\Craft Agents\Craft Agents.exe"
+$binDir = "$env:LOCALAPPDATA\Mortise\bin"
+$cmdFile = "$binDir\mortise.cmd"
+$exePath = "$env:LOCALAPPDATA\Programs\Mortise\Mortise.exe"
 
 # Create bin directory
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
@@ -245,9 +249,9 @@ $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath -notlike "*$binDir*") {
     $newPath = "$userPath;$binDir"
     [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    Write-Success "Added to PATH (restart terminal to use 'craft-agents' command)"
+    Write-Success "Added to PATH (restart terminal to use 'mortise' command)"
 } else {
-    Write-Success "Command 'craft-agents' is ready"
+    Write-Success "Command 'mortise' is ready"
 }
 
 Write-Host ""
@@ -255,10 +259,10 @@ Write-Host "--------------------------------------------------------------------
 Write-Host ""
 Write-Success "Installation complete!"
 Write-Host ""
-Write-Host "  Craft Agents has been installed."
+Write-Host "  Mortise has been installed."
 Write-Host ""
 Write-Host "  Launch from:"
 Write-Host "    - Start Menu or desktop shortcut"
-Write-Host "    - Command line: craft-agents (restart terminal first)"
+Write-Host "    - Command line: mortise (restart terminal first)"
 Write-Host ""
 }

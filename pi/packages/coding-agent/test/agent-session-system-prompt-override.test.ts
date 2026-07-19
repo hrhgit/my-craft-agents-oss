@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@mortise/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
@@ -48,13 +48,13 @@ describe("PromptOptions.systemPrompt host override", () => {
 	it("applies the override before the turn and keeps it as base prompt", async () => {
 		const session = await createSession();
 		const defaultPrompt = session.systemPrompt;
-		expect(defaultPrompt).not.toBe("You are Craft Agent.");
+		expect(defaultPrompt).not.toBe("You are Mortise Agent.");
 
 		// prompt() will fail without credentials, but the override is applied in
 		// preflight before any model validation — the state change is what we assert.
-		await session.prompt("hello", { systemPrompt: "You are Craft Agent." }).catch(() => {});
+		await session.prompt("hello", { systemPrompt: "You are Mortise Agent." }).catch(() => {});
 
-		expect(session.systemPrompt).toBe("You are Craft Agent.");
+		expect(session.systemPrompt).toBe("You are Mortise Agent.");
 
 		session.dispose();
 	});

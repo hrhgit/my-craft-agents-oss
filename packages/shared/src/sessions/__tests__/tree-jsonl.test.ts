@@ -133,11 +133,11 @@ describe('tree JSONL session projection', () => {
     if (existsSync(dir)) rmSync(dir, { recursive: true })
   })
 
-  it('detects and loads a tree JSONL session through Craft JSONL APIs', () => {
+  it('detects and loads a tree JSONL session through Mortise JSONL APIs', () => {
     expect(looksLikeTreeSessionJsonl(sessionFile)).toBe(true)
 
     const stored = readSessionJsonl(sessionFile)
-    expect(stored?.craftId).toBe('abc123')
+    expect(stored?.mortiseId).toBe('abc123')
     expect(stored?.workingDirectory).toBe('/work/project')
     expect(stored?.messages.map(m => m.id)).toEqual(['u1', 'alt'])
     expect(stored?.messages[1]?.content).toBe('This is the latest leaf.')
@@ -146,7 +146,7 @@ describe('tree JSONL session projection', () => {
   it('projects Pi tree messages and metadata for existing Pi history UI', () => {
     const projected = projectPiFacadeDto(sessionFile)
     expect(projected?.messages.map(m => m.id)).toEqual(['u1', 'alt'])
-    expect(projected?.craftId).toBe('pi-abc123')
+    expect(projected?.mortiseId).toBe('pi-abc123')
     expect(projected?.preview).toBe('Start here')
     expect(projected?.messageCount).toBe(2)
     expect(projected?.lastMessageRole).toBe('assistant')
@@ -167,8 +167,8 @@ describe('tree JSONL session projection', () => {
       id: 'pi-cached',
       timestamp: '2026-07-01T00:00:00.000Z',
       cwd: '/work/project',
-      craft: {
-        id: 'craft-cached',
+      mortise: {
+        id: 'mortise-cached',
         workspaceRootPath: '/work/project',
         createdAt: 1782864000000,
         lastUsedAt: 1782864001000,
@@ -186,7 +186,7 @@ describe('tree JSONL session projection', () => {
     const metadata = readSessionHeader(cachedFile)
 
     expect(metadata).toMatchObject({
-      craftId: 'craft-cached',
+      mortiseId: 'mortise-cached',
       piSessionId: 'pi-cached',
       name: 'Cached title',
       messageCount: 42,
@@ -227,13 +227,13 @@ describe('tree JSONL session projection', () => {
       },
       {
         type: 'custom_message', id: 'p1', parentId: 'a1',
-        timestamp: '2026-07-01T00:00:03.000Z', customType: 'craft-plan-artifact',
+        timestamp: '2026-07-01T00:00:03.000Z', customType: 'mortise-plan-artifact',
         content: '# Final plan', display: false,
         details: { schemaVersion: 1, artifact: planArtifact },
       },
       {
         type: 'custom_message', id: 's1', parentId: 'p1',
-        timestamp: '2026-07-01T00:00:04.000Z', customType: 'craft-plan-state',
+        timestamp: '2026-07-01T00:00:04.000Z', customType: 'mortise-plan-state',
         content: '', display: false,
         details: {
           schemaVersion: 1,
@@ -310,7 +310,7 @@ describe('tree JSONL session projection', () => {
     expect(messages[3]?.toolResult).toBe('README contents')
   })
 
-  it('strips Craft-injected prompt context from projected Pi user messages', () => {
+  it('strips Mortise-injected prompt context from projected Pi user messages', () => {
     const injectedFile = join(dir, '2026-07-01T00-00-01-000Z_injected.jsonl')
     writeJsonl(injectedFile, [
       {
@@ -333,7 +333,7 @@ other date information.
 <session_state>
 sessionId: injected
 permissionMode: explore
-plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.craft\\plans
+plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
 </session_state>
 
 <sources>
@@ -396,7 +396,7 @@ Active: none
     expect(messages[2]?.content).toBe('在。说你的事。')
   })
 
-  it('updates Craft metadata in tree header without flattening tree entries', () => {
+  it('updates Mortise metadata in tree header without flattening tree entries', () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
     stored!.name = 'Unified session'
@@ -410,7 +410,7 @@ Active: none
       const second = JSON.parse(lines[1]!)
 
       expect(header.type).toBe('session')
-      expect(header.craft.name).toBe('Unified session')
+      expect(header.mortise.name).toBe('Unified session')
       expect(second.type).toBe('message')
       expect(second.message.role).toBe('user')
 
@@ -419,7 +419,7 @@ Active: none
     })
   })
 
-  it('writes Craft metadata fields through the shared metadata helper', async () => {
+  it('writes Mortise metadata fields through the shared metadata helper', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
     stored!.previousPermissionMode = 'safe' as any
@@ -430,11 +430,11 @@ Active: none
     const lines = (await Bun.file(sessionFile).text()).trim().split('\n')
     const header = JSON.parse(lines[0]!)
 
-    expect(header.craft.id).toBe(stored!.craftId)
-    expect(header.craft.craftId).toBeUndefined()
-    expect(header.craft.previousPermissionMode).toBe('safe')
-    expect(header.craft.transferredSessionSummaryApplied).toBe(true)
-    expect(header.craft.messageCount).toBe(stored!.messages.length)
+    expect(header.mortise.id).toBe(stored!.mortiseId)
+    expect(header.mortise.mortiseId).toBeUndefined()
+    expect(header.mortise.previousPermissionMode).toBe('safe')
+    expect(header.mortise.transferredSessionSummaryApplied).toBe(true)
+    expect(header.mortise.messageCount).toBe(stored!.messages.length)
   })
 
   it('ignores and removes legacy provider lock metadata on the next write', async () => {
@@ -444,7 +444,7 @@ Active: none
       id: 'abc123',
       timestamp: '2026-07-01T00:00:00.000Z',
       cwd: '/work/project',
-      craft: {
+      mortise: {
         id: 'abc123',
         provider: 'anthropic',
         connectionLocked: true,
@@ -460,9 +460,9 @@ Active: none
     writeSessionJsonl(sessionFile, stored!)
 
     const header = JSON.parse((await Bun.file(sessionFile).text()).trim().split('\n')[0]!)
-    expect(header.craft.provider).toBe('anthropic')
-    expect(header.craft.connectionLocked).toBeUndefined()
-    expect(header.craft.providerLocked).toBeUndefined()
+    expect(header.mortise.provider).toBe('anthropic')
+    expect(header.mortise.connectionLocked).toBeUndefined()
+    expect(header.mortise.providerLocked).toBeUndefined()
   })
 
   it('persists projection-derived computed metadata instead of recalculating it from overlays', async () => {
@@ -477,7 +477,7 @@ Active: none
     writeSessionJsonl(sessionFile, stored!)
 
     const header = JSON.parse((await Bun.file(sessionFile).text()).trim().split('\n')[0]!)
-    expect(header.craft).toMatchObject({
+    expect(header.mortise).toMatchObject({
       messageCount: 7,
       preview: 'Projected prompt',
       lastMessageRole: 'assistant',
@@ -485,7 +485,7 @@ Active: none
     })
   })
 
-  it('keeps Pi header fields as Pi-owned while Craft UI state stays under craft metadata', () => {
+  it('keeps Pi header fields as Pi-owned while Mortise UI state stays under mortise metadata', () => {
     writeJsonl(sessionFile, [
       {
         type: 'session',
@@ -493,22 +493,22 @@ Active: none
         id: 'pi-owned-session',
         timestamp: '2026-07-01T00:00:00.000Z',
         cwd: '/pi/source-of-truth',
-        craft: {
-          id: 'craft-owned-session',
-          name: 'Craft title',
+        mortise: {
+          id: 'mortise-owned-session',
+          name: 'Mortise title',
           permissionMode: 'ask',
-          workingDirectory: '/craft/stale-mirror',
+          workingDirectory: '/mortise/stale-mirror',
         },
       },
     ])
 
     const stored = readSessionJsonl(sessionFile)
 
-    expect(stored?.craftId).toBe('craft-owned-session')
+    expect(stored?.mortiseId).toBe('mortise-owned-session')
     expect(stored?.piSessionId).toBe('pi-owned-session')
     expect(stored?.piCwd).toBe('/pi/source-of-truth')
     expect(stored?.workingDirectory).toBe('/pi/source-of-truth')
-    expect(stored?.name).toBe('Craft title')
+    expect(stored?.name).toBe('Mortise title')
     expect(stored?.permissionMode).toBe('ask')
   })
 
@@ -519,7 +519,7 @@ Active: none
       id: 'legacy-organized',
       timestamp: '2026-07-01T00:00:00.000Z',
       cwd: '/work/project',
-      craft: {
+      mortise: {
         id: 'legacy-organized',
         name: 'Keep me',
         transferredSessionSummary: 'x'.repeat(9000),
@@ -536,20 +536,20 @@ Active: none
     utimesSync(sessionFile, originalTimestamp, originalTimestamp)
 
     const loaded = readTreeSessionHeader(sessionFile)
-    expect(loaded?.craft?.id).toBe('legacy-organized')
-    expect(loaded?.craft?.name).toBe('Keep me')
-    expect(loaded?.craft?.transferredSessionSummary).toHaveLength(9000)
+    expect(loaded?.mortise?.id).toBe('legacy-organized')
+    expect(loaded?.mortise?.name).toBe('Keep me')
+    expect(loaded?.mortise?.transferredSessionSummary).toHaveLength(9000)
 
     const migrated = await Bun.file(sessionFile).text()
     expect(migrated.slice(migrated.indexOf('\n'))).toBe(laterLines)
     expect(statSync(sessionFile).mtimeMs).toBe(originalTimestamp.getTime())
     const firstPass = migrated
 
-    expect(readTreeSessionHeader(sessionFile)?.craft?.transferredSessionSummary).toHaveLength(9000)
+    expect(readTreeSessionHeader(sessionFile)?.mortise?.transferredSessionSummary).toHaveLength(9000)
     expect(await Bun.file(sessionFile).text()).toBe(firstPass)
   })
 
-  it('preserves Craft-only UI fields without copying canonical message content', async () => {
+  it('preserves Mortise-only UI fields without copying canonical message content', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
     const attachment = {
@@ -559,7 +559,7 @@ Active: none
       mimeType: 'image/png',
       size: 1234,
       originalSize: 1234,
-      storedPath: join(dirname(sessionFile), '.craft', stored!.craftId, 'attachments', 'screenshot.png'),
+      storedPath: join(dirname(sessionFile), '.mortise', stored!.mortiseId, 'attachments', 'screenshot.png'),
       thumbnailBase64: 'thumb',
     }
     stored!.messages[0] = {
@@ -591,7 +591,7 @@ Active: none
       },
     ])
 
-    const overlayPath = join(dirname(sessionFile), '.craft', stored!.craftId, 'overlay.json')
+    const overlayPath = join(dirname(sessionFile), '.mortise', stored!.mortiseId, 'overlay.json')
     expect(existsSync(overlayPath)).toBe(true)
     const overlay = JSON.parse(await Bun.file(overlayPath).text())
     expect(overlay.messages[0].id).toBe('u1')
@@ -609,7 +609,7 @@ Active: none
       createdAt: 1700000000001,
       body: [{ type: 'highlight' as const }],
       target: {
-        source: { sessionId: stored!.craftId, messageId: projectionMessageId },
+        source: { sessionId: stored!.mortiseId, messageId: projectionMessageId },
         selectors: [{ type: 'text-quote' as const, exact: 'answer' }],
       },
     }
@@ -630,14 +630,14 @@ Active: none
     })
   })
 
-  it('sanitizes craft ids before writing Craft overlay files', async () => {
+  it('sanitizes mortise ids before writing Mortise overlay files', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
 
     const escapeId = 'escape-overlay'
     writeCraftSessionOverlay(sessionFile, {
       ...stored!,
-      craftId: `../${escapeId}`,
+      mortiseId: `../${escapeId}`,
       messages: [{
         ...stored!.messages[0]!,
         attachments: [{
@@ -653,7 +653,7 @@ Active: none
     })
 
     expect(existsSync(join(dirname(sessionFile), escapeId, 'overlay.json'))).toBe(false)
-    expect(existsSync(join(dirname(sessionFile), '.craft', escapeId, 'overlay.json'))).toBe(true)
+    expect(existsSync(join(dirname(sessionFile), '.mortise', escapeId, 'overlay.json'))).toBe(true)
   })
 
   it('reuses matching Pi entries instead of duplicating messages on import retry', async () => {
@@ -714,7 +714,7 @@ Active: none
     expect([...retryIdMap.entries()]).toEqual([...firstIdMap.entries()])
   })
 
-  it('stores new Craft-managed sessions under the Pi sessions root when shared storage is enabled', async () => {
+  it('stores new Mortise-managed sessions under the Pi sessions root when shared storage is enabled', async () => {
     const piRoot = join(dir, 'pi-sessions')
     const workspaceRoot = join(dir, 'workspace')
     const workingDirectory = join(dir, 'workspace', 'project')
@@ -734,26 +734,26 @@ Active: none
     setSharedPiSessionsDirForTests(piRoot)
 
     const session = await createSession(workspaceRoot, { workingDirectory, name: 'Shared write' })
-    const filePath = getSessionFilePath(workspaceRoot, session.craftId)
+    const filePath = getSessionFilePath(workspaceRoot, session.mortiseId)
 
     expect(filePath.startsWith(piRoot)).toBe(true)
-    expect(filePath).toContain(`${session.craftId}.jsonl`)
+    expect(filePath).toContain(`${session.mortiseId}.jsonl`)
     expect(existsSync(filePath)).toBe(true)
 
     const lines = (await Bun.file(filePath).text()).trim().split('\n')
     const header = JSON.parse(lines[0]!)
     expect(header.type).toBe('session')
     expect(header.version).toBe(3)
-    expect(header.id).toBe(session.craftId)
+    expect(header.id).toBe(session.mortiseId)
     expect(header.cwd).toBe(workspaceRoot)
-    expect(header.craft.name).toBe('Shared write')
-    expect(header.craft.conversationFormat).toBeUndefined()
-    expect(expandPath(header.craft.workingDirectory)).toBe(workspaceRoot)
+    expect(header.mortise.name).toBe('Shared write')
+    expect(header.mortise.conversationFormat).toBeUndefined()
+    expect(expandPath(header.mortise.workingDirectory)).toBe(workspaceRoot)
     expect(lines.length).toBe(1)
 
     const listed = listSessions(workspaceRoot)
-    expect(listed.map(s => s.craftId)).toContain(session.craftId)
-    expect(listed.find(s => s.craftId === session.craftId)?.name).toBe('Shared write')
+    expect(listed.map(s => s.mortiseId)).toContain(session.mortiseId)
+    expect(listed.find(s => s.mortiseId === session.mortiseId)?.name).toBe('Shared write')
   })
 
   it('ignores explicit non-default working directories for new sessions', async () => {
@@ -781,8 +781,8 @@ Active: none
     })
 
     const listed = listSessions(workspaceRoot)
-    expect(listed.map(s => s.craftId)).toContain(session.craftId)
-    expect(listed.find(s => s.craftId === session.craftId)?.workingDirectory).toBe(workspaceRoot)
+    expect(listed.map(s => s.mortiseId)).toContain(session.mortiseId)
+    expect(listed.find(s => s.mortiseId === session.mortiseId)?.workingDirectory).toBe(workspaceRoot)
   })
 
   it('keeps hidden mini sessions out of the unified session list', async () => {
@@ -794,9 +794,9 @@ Active: none
     const visible = await createSession(workspaceRoot, { name: 'Visible' })
     const hidden = await createSession(workspaceRoot, { name: 'Hidden', hidden: true })
 
-    expect(listSessions(workspaceRoot).map(session => session.craftId)).toContain(visible.craftId)
-    expect(listSessions(workspaceRoot).map(session => session.craftId)).not.toContain(hidden.craftId)
-    expect(loadSession(workspaceRoot, hidden.craftId)?.hidden).toBe(true)
+    expect(listSessions(workspaceRoot).map(session => session.mortiseId)).toContain(visible.mortiseId)
+    expect(listSessions(workspaceRoot).map(session => session.mortiseId)).not.toContain(hidden.mortiseId)
+    expect(loadSession(workspaceRoot, hidden.mortiseId)?.hidden).toBe(true)
   })
 
   it('rejects nested legacy session.jsonl paths inside the Pi session bucket', () => {
@@ -815,10 +815,10 @@ Active: none
       id: sessionId,
       timestamp: '2026-07-01T00:00:00.000Z',
       cwd: workspaceRoot,
-      craft: { id: sessionId, workspaceRootPath: workspaceRoot },
+      mortise: { id: sessionId, workspaceRootPath: workspaceRoot },
     }])
 
-    expect(listSessions(workspaceRoot).map(session => session.craftId)).not.toContain(sessionId)
+    expect(listSessions(workspaceRoot).map(session => session.mortiseId)).not.toContain(sessionId)
     expect(loadSession(workspaceRoot, sessionId)).toBeNull()
     expect(getSessionFilePath(workspaceRoot, sessionId)).not.toBe(nestedSessionFile)
   })
@@ -830,10 +830,10 @@ Active: none
     setSharedPiSessionsDirForTests(piRoot)
 
     const session = await createSession(workspaceRoot, { name: 'Plan count' })
-    const plansDir = getSessionPlansPath(workspaceRoot, session.craftId)
+    const plansDir = getSessionPlansPath(workspaceRoot, session.mortiseId)
     writeFileSync(join(plansDir, 'plan.md'), '# Plan\n')
 
     const listed = listSessions(workspaceRoot)
-    expect(listed.find(s => s.craftId === session.craftId)?.planCount).toBe(1)
+    expect(listed.find(s => s.mortiseId === session.mortiseId)?.planCount).toBe(1)
   })
 })

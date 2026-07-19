@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$launcherStateRoot = Join-Path $repoRoot '.craft-agent\portmux'
-$launchStatePath = Join-Path $env:TEMP 'craft-agent-webui\instance-1\webui-launch-state.json'
+$launcherStateRoot = Join-Path $repoRoot '.mortise\portmux'
+$launchStatePath = Join-Path $env:TEMP 'mortise-webui\instance-1\webui-launch-state.json'
 . (Join-Path $PSScriptRoot 'webui-process-utils.ps1')
 
 if (-not (Get-Command portmux -ErrorAction SilentlyContinue)) {
@@ -42,7 +42,7 @@ function Get-RunningWebuiUrl {
 function Open-WebuiUrl {
   param([string]$Url)
 
-  Write-Host "[Craft Agents Web] Opening shared WebUI: $Url" -ForegroundColor Cyan
+  Write-Host "[Mortise Web] Opening shared WebUI: $Url" -ForegroundColor Cyan
   Start-Process $Url
 }
 
@@ -57,18 +57,18 @@ function Clear-StaleWebuiLaunch {
   if (Stop-LegacyWebuiViteProcess -RepoRoot $repoRoot -WebuiPort $webuiPort) { $stopped++ }
   if (Stop-LegacyWebuiRpcProcess -WebuiPort $webuiPort -RpcPort $rpcPort) { $stopped++ }
   if ($stopped -gt 0) {
-    Write-Host "[Craft Agents Web] Cleaned up $stopped stale WebUI process tree(s) before requesting a port." -ForegroundColor Cyan
+    Write-Host "[Mortise Web] Cleaned up $stopped stale WebUI process tree(s) before requesting a port." -ForegroundColor Cyan
   }
 }
 
 function Start-SharedClientInstance {
-  $endpoint = Get-CraftServerEndpoint -RequireWebuiAutoLogin
+  $endpoint = Get-MortiseServerEndpoint -RequireWebuiAutoLogin
   if ($null -eq $endpoint) {
-    throw 'No healthy shared Craft WebUI backend was found. Run start-webui.cmd once to start it.'
+    throw 'No healthy shared Mortise WebUI backend was found. Run start-webui.cmd once to start it.'
   }
 
   $clientId = [string]$PID
-  $portmuxProject = Join-Path $env:TEMP "craft-agent-webui\portmux\client-$clientId"
+  $portmuxProject = Join-Path $env:TEMP "mortise-webui\portmux\client-$clientId"
   $portmuxConfig = Join-Path $portmuxProject '.portmux.json'
   $portmuxLauncher = Join-Path $portmuxProject 'start.ps1'
   New-Item -ItemType Directory -Force $portmuxProject | Out-Null
@@ -80,17 +80,17 @@ function Start-SharedClientInstance {
 
   $config = [ordered]@{
     start = 'powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File start.ps1'
-    port_env = @('CRAFT_WEBUI_PORT', 'PORT')
+    port_env = @('MORTISE_WEBUI_PORT', 'PORT')
   }
   $json = ($config | ConvertTo-Json -Depth 3) + [Environment]::NewLine
   [System.IO.File]::WriteAllText($portmuxConfig, $json, [System.Text.UTF8Encoding]::new($false))
 
-  Write-Host "[Craft Agents Web] Starting a new frontend process against shared backend PID $($endpoint.pid)..." -ForegroundColor Cyan
+  Write-Host "[Mortise Web] Starting a new frontend process against shared backend PID $($endpoint.pid)..." -ForegroundColor Cyan
   & portmux start --project $portmuxProject
   if ($LASTEXITCODE -ne 0) { throw 'Failed to start a frontend process for the shared backend.' }
 }
 
-if ($null -ne (Get-CraftServerEndpoint -RequireWebuiAutoLogin)) {
+if ($null -ne (Get-MortiseServerEndpoint -RequireWebuiAutoLogin)) {
   Start-SharedClientInstance
   exit 0
 }
@@ -105,11 +105,11 @@ $primaryLockPath = Join-Path $launcherStateRoot 'webui-primary.lock'
 $primaryLock = Open-ExclusiveFile $primaryLockPath
 
 if ($null -eq $primaryLock) {
-  Write-Host '[Craft Agents Web] The shared WebUI is starting. Waiting for its URL...' -ForegroundColor Cyan
+  Write-Host '[Mortise Web] The shared WebUI is starting. Waiting for its URL...' -ForegroundColor Cyan
   $deadline = (Get-Date).AddSeconds(180)
   do {
     Start-Sleep -Milliseconds 250
-    if ($null -ne (Get-CraftServerEndpoint -RequireWebuiAutoLogin)) {
+    if ($null -ne (Get-MortiseServerEndpoint -RequireWebuiAutoLogin)) {
       Start-SharedClientInstance
       exit 0
     }
@@ -136,7 +136,7 @@ try {
   }
 
   Clear-StaleWebuiLaunch
-  Write-Host '[Craft Agents Web] Starting the shared WebUI with ~/.craft-agent...' -ForegroundColor Cyan
+  Write-Host '[Mortise Web] Starting the shared WebUI with ~/.mortise...' -ForegroundColor Cyan
   & portmux start --project $repoRoot
   exit $LASTEXITCODE
 } finally {

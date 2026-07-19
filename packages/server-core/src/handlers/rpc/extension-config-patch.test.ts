@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test'
-import type { PiExtensionCatalogEntry, PiExtensionConfigPatch } from '@craft-agent/shared/config'
+import type { PiExtensionCatalogEntry, PiExtensionConfigPatch } from '@mortise/shared/config'
 import { applyExtensionConfigPatch } from './extension-config-patch'
 
 const entry = { id: 'example' } as PiExtensionCatalogEntry

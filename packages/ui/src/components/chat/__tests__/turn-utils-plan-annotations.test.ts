@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { groupMessagesByTurn } from '../turn-utils'
-import type { Message } from '@craft-agent/core'
+import type { Message } from '@mortise/core'
 
 // F25: SubmitPlan (mcp__session__SubmitPlan) 已废弃，此处 toolName 仅作为
 // 历史兼容测试数据，用于验证 groupMessagesByTurn 对带 plan 注解的工具消息

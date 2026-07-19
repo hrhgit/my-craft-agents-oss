@@ -89,7 +89,7 @@ export type ExtensionPathSource =
  * Per-extension namespace configuration.
  *
  * Stored under `extensionConfig.<name>` in settings.json (the typed, preferred
- * location). Craft Agent historically writes these values under the `extensions`
+ * location). Mortise Agent historically writes these values under the `extensions`
  * field as a namespace object (`extensions.<name>.{model,enabled,concurrency}`);
  * the getter methods below check both locations for compatibility.
  */
@@ -100,16 +100,16 @@ export interface ExtensionNamespaceSettings {
 }
 
 /**
- * Per-namespace GUI preferences for craft shell, stored under
+ * Per-namespace GUI preferences for mortise shell, stored under
  * `shellGui.<name>` in settings.json (the `shell.gui.<name>.*` namespace).
  *
- * This namespace carries craft shell GUI switches such as
+ * This namespace carries mortise shell GUI switches such as
  * `shellGui.repoMemory.showStatusBadge` or `shellGui.planMode.enabled`. Each
- * `<name>` is opaque to pi: craft shell defines the fields it stores under
+ * `<name>` is opaque to pi: mortise shell defines the fields it stores under
  * each name, so the interface is intentionally a loose string-keyed map.
  *
  * Pi CLI running standalone SHALL ignore this field entirely (no side
- * effects); only craft shell reads and writes these values via the
+ * effects); only mortise shell reads and writes these values via the
  * getter/setter methods below (getShellGuiEntry / setShellGuiEntry /
  * setShellGuiSetting / deleteShellGuiEntry).
  */
@@ -139,7 +139,7 @@ export interface Settings {
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	extensions?: ExtensionPathSource[]; // Array of local extension file paths/directories, optionally with activation/targets
 	extensionConfig?: Record<string, ExtensionNamespaceSettings>; // Per-extension namespace config (model/enabled/concurrency), keyed by extension name
-	shellGui?: Record<string, ShellGuiNamespaceSettings>; // craft shell GUI preferences (shell.gui.<name>.*); ignored by pi CLI standalone
+	shellGui?: Record<string, ShellGuiNamespaceSettings>; // mortise shell GUI preferences (shell.gui.<name>.*); ignored by pi CLI standalone
 	skills?: string[]; // Array of local skill file paths or directories
 	prompts?: string[]; // Array of local prompt template paths or directories
 	themes?: string[]; // Array of local theme file paths or directories
@@ -961,8 +961,8 @@ export class SettingsManager {
 	 * Read the namespace config entry for a given extension name.
 	 *
 	 * Checks the typed `extensionConfig.<name>` field first, then falls back to
-	 * the `extensions` field when it is used as a namespace object (Craft Agent
-	 * compatibility — craft writes `extensions.<name>.{model,enabled,concurrency}`
+	 * the `extensions` field when it is used as a namespace object (Mortise Agent
+	 * compatibility — mortise writes `extensions.<name>.{model,enabled,concurrency}`
 	 * directly).
 	 */
 	getExtensionConfig(name: string): ExtensionNamespaceSettings | undefined {
@@ -975,7 +975,7 @@ export class SettingsManager {
 		if (fromConfig) {
 			return fromConfig;
 		}
-		// Fallback: craft writes extensions as a namespace object keyed by extension name
+		// Fallback: mortise writes extensions as a namespace object keyed by extension name
 		const extRaw = this.settings.extensions as unknown;
 		if (!Array.isArray(extRaw) && extRaw !== null && typeof extRaw === "object") {
 			const entry = (extRaw as Record<string, ExtensionNamespaceSettings>)[name];

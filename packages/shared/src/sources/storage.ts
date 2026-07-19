@@ -39,7 +39,7 @@ import {
   isIconUrl,
 } from '../utils/icon.ts';
 
-const SOURCE_SNAPSHOT = Symbol('craftSourceSnapshot');
+const SOURCE_SNAPSHOT = Symbol('mortiseSourceSnapshot');
 type SourceWithSnapshot = FolderSourceConfig & { [SOURCE_SNAPSHOT]?: string };
 
 function sourceHash(value: unknown): string {
@@ -361,7 +361,7 @@ export function sourceNeedsIconDownload(
 
 /**
  * Load complete source with all files
- * @param workspaceRootPath - Absolute path to workspace folder (e.g., ~/.craft-agent/workspaces/xxx)
+ * @param workspaceRootPath - Absolute path to workspace folder (e.g., ~/.mortise/workspaces/xxx)
  * @param sourceSlug - Source folder name
  */
 export function loadSource(workspaceRootPath: string, sourceSlug: string): LoadedSource | null {
@@ -580,7 +580,7 @@ export async function createSource(
   }
 
   // Create guide.md with skeleton template
-  // (bundled guides removed - agent should search craft-agents-docs MCP for service-specific guidance)
+  // (bundled guides removed - agent should search mortise-docs MCP for service-specific guidance)
   const guideContent = `# ${input.name}
 
 ## Guidelines

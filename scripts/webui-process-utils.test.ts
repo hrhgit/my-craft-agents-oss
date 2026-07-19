@@ -44,10 +44,10 @@ describe("WebUI process lifecycle utilities", () => {
     expect(result).toEqual({ active: true, reusedPidRejected: true });
   });
 
-  windowsTest("only recognizes the legacy Craft RPC process chain", () => {
+  windowsTest("only recognizes the legacy Mortise RPC process chain", () => {
     const result = runPowerShellJson(`
       [pscustomobject]@{
-        craftRpc = Test-IsLegacyWebuiRpcProcess ` +
+        mortiseRpc = Test-IsLegacyWebuiRpcProcess ` +
           `-ProcessName 'bun.exe' ` +
           `-CommandLine 'bun.exe run packages/server/src/index.ts' ` +
           `-ParentCommandLine 'bun.exe run server:dev:raw'
@@ -60,10 +60,10 @@ describe("WebUI process lifecycle utilities", () => {
           `-CommandLine 'python packages/server/src/index.ts' ` +
           `-ParentCommandLine 'bun.exe run server:dev:raw'
       } | ConvertTo-Json -Compress
-    `) as { craftRpc: boolean; unrelatedCommand: boolean; unrelatedRuntime: boolean };
+    `) as { mortiseRpc: boolean; unrelatedCommand: boolean; unrelatedRuntime: boolean };
 
     expect(result).toEqual({
-      craftRpc: true,
+      mortiseRpc: true,
       unrelatedCommand: false,
       unrelatedRuntime: false,
     });
@@ -72,27 +72,27 @@ describe("WebUI process lifecycle utilities", () => {
   windowsTest("only recognizes Vite processes rooted in this repository", () => {
     const result = runPowerShellJson(`
       [pscustomobject]@{
-        craftVite = Test-IsLegacyWebuiViteProcess ` +
-          `-RepoRoot 'E:\\craft-agent' ` +
+        mortiseVite = Test-IsLegacyWebuiViteProcess ` +
+          `-RepoRoot 'E:\\mortise' ` +
           `-ProcessName 'node.exe' ` +
-          `-CommandLine 'node E:\\craft-agent\\node_modules\\vite\\bin\\vite.js dev --config apps/webui/vite.config.ts'
+          `-CommandLine 'node E:\\mortise\\node_modules\\vite\\bin\\vite.js dev --config apps/webui/vite.config.ts'
         otherRepo = Test-IsLegacyWebuiViteProcess ` +
-          `-RepoRoot 'E:\\craft-agent' ` +
+          `-RepoRoot 'E:\\mortise' ` +
           `-ProcessName 'node.exe' ` +
           `-CommandLine 'node E:\\other\\node_modules\\vite\\bin\\vite.js dev --config apps/webui/vite.config.ts'
         otherConfig = Test-IsLegacyWebuiViteProcess ` +
-          `-RepoRoot 'E:\\craft-agent' ` +
+          `-RepoRoot 'E:\\mortise' ` +
           `-ProcessName 'node.exe' ` +
-          `-CommandLine 'node E:\\craft-agent\\node_modules\\vite\\bin\\vite.js dev --config apps/marketing/vite.config.ts'
+          `-CommandLine 'node E:\\mortise\\node_modules\\vite\\bin\\vite.js dev --config apps/marketing/vite.config.ts'
       } | ConvertTo-Json -Compress
-    `) as { craftVite: boolean; otherRepo: boolean; otherConfig: boolean };
+    `) as { mortiseVite: boolean; otherRepo: boolean; otherConfig: boolean };
 
-    expect(result).toEqual({ craftVite: true, otherRepo: false, otherConfig: false });
+    expect(result).toEqual({ mortiseVite: true, otherRepo: false, otherConfig: false });
   });
 
   windowsTest("keeps a live launch state until its matching launcher removes it", () => {
     const result = runPowerShellJson(`
-      $path = Join-Path $env:TEMP ('craft-webui-state-test-' + [guid]::NewGuid() + '.json')
+      $path = Join-Path $env:TEMP ('mortise-webui-state-test-' + [guid]::NewGuid() + '.json')
       $self = Get-Process -Id $PID
       $children = [System.Collections.ArrayList]::new()
       try {
@@ -134,7 +134,7 @@ describe("WebUI process lifecycle utilities", () => {
 
   windowsTest("accepts a live endpoint owned by the current process", () => {
     const result = runPowerShellJson(`
-      $directory = Join-Path $env:TEMP ('craft-endpoint-test-' + [guid]::NewGuid())
+      $directory = Join-Path $env:TEMP ('mortise-endpoint-test-' + [guid]::NewGuid())
       $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
       try {
         New-Item -ItemType Directory -Force $directory | Out-Null
@@ -150,7 +150,7 @@ describe("WebUI process lifecycle utilities", () => {
           tokenFile = $tokenFile
           webui = [ordered]@{ enabled = $true; autoLogin = $true }
         } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $directory '.server-endpoint.json')
-        $endpoint = Get-CraftServerEndpoint -ConfigDir $directory -RequireWebuiAutoLogin
+        $endpoint = Get-MortiseServerEndpoint -ConfigDir $directory -RequireWebuiAutoLogin
         [pscustomobject]@{
           found = $null -ne $endpoint
           pid = $endpoint.pid
@@ -181,7 +181,7 @@ describe("WebUI process lifecycle utilities", () => {
 
     expect(launcher).toContain('"apps\\webui\\src"');
     expect(launcher).toContain('{ "server:dev:runtime" } else { "server:dev:webui" }');
-    expect(scripts["server:dev:webui"]).toContain("CRAFT_WEBUI_DIR=apps/webui/src");
+    expect(scripts["server:dev:webui"]).toContain("MORTISE_WEBUI_DIR=apps/webui/src");
     expect(scripts["server:dev:webui"]).toContain("server:dev:raw");
     expect(scripts["server:dev:webui"]).not.toContain("webui:build");
     expect(scripts["server:dev:raw"]).toContain("server:build:subprocess");
@@ -209,7 +209,7 @@ describe("WebUI process lifecycle utilities", () => {
     const clientLauncher = readFileSync(clientLauncherPath, "utf8");
 
     expect(cmd).not.toContain("%~1");
-    expect(instanceLauncher).toContain("Get-CraftServerEndpoint -RequireWebuiAutoLogin");
+    expect(instanceLauncher).toContain("Get-MortiseServerEndpoint -RequireWebuiAutoLogin");
     expect(instanceLauncher).toContain("Start-SharedClientInstance");
     expect(clientLauncher).toContain("apps/webui/vite.config.ts");
     expect(clientLauncher).not.toContain("Start-HeadlessServer");

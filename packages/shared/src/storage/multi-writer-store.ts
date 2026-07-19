@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { CraftSqliteDatabase } from './sqlite-driver.ts'
+import type { MortiseSqliteDatabase } from './sqlite-driver.ts'
 import { openCraftSqliteDatabase, openCraftSqliteDatabaseSync } from './sqlite-driver.ts'
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
@@ -131,13 +131,13 @@ const MIGRATIONS: readonly Migration[] = [
   {
     id: '0001_multi_writer_core',
     sql: `
-      CREATE TABLE IF NOT EXISTS craft_capabilities (
+      CREATE TABLE IF NOT EXISTS mortise_capabilities (
         name TEXT PRIMARY KEY,
         version INTEGER NOT NULL CHECK (version > 0),
         updated_at INTEGER NOT NULL
       ) STRICT;
 
-      CREATE TABLE IF NOT EXISTS craft_operations (
+      CREATE TABLE IF NOT EXISTS mortise_operations (
         operation_id TEXT PRIMARY KEY,
         capability TEXT NOT NULL,
         payload_hash TEXT NOT NULL,
@@ -147,7 +147,7 @@ const MIGRATIONS: readonly Migration[] = [
         created_at INTEGER NOT NULL
       ) STRICT;
 
-      CREATE TABLE IF NOT EXISTS craft_records (
+      CREATE TABLE IF NOT EXISTS mortise_records (
         namespace TEXT NOT NULL,
         record_key TEXT NOT NULL,
         version INTEGER NOT NULL CHECK (version > 0),
@@ -157,12 +157,12 @@ const MIGRATIONS: readonly Migration[] = [
         PRIMARY KEY (namespace, record_key)
       ) STRICT;
 
-      CREATE TABLE IF NOT EXISTS craft_stream_heads (
+      CREATE TABLE IF NOT EXISTS mortise_stream_heads (
         stream_id TEXT PRIMARY KEY,
         last_sequence INTEGER NOT NULL CHECK (last_sequence >= 0)
       ) STRICT;
 
-      CREATE TABLE IF NOT EXISTS craft_events (
+      CREATE TABLE IF NOT EXISTS mortise_events (
         event_id TEXT PRIMARY KEY,
         stream_id TEXT NOT NULL,
         sequence INTEGER NOT NULL CHECK (sequence > 0),
@@ -175,10 +175,10 @@ const MIGRATIONS: readonly Migration[] = [
         UNIQUE (stream_id, sequence)
       ) STRICT;
 
-      CREATE INDEX IF NOT EXISTS craft_events_stream_sequence
-        ON craft_events (stream_id, sequence);
+      CREATE INDEX IF NOT EXISTS mortise_events_stream_sequence
+        ON mortise_events (stream_id, sequence);
 
-      INSERT OR IGNORE INTO craft_capabilities (name, version, updated_at)
+      INSERT OR IGNORE INTO mortise_capabilities (name, version, updated_at)
         VALUES ('records', 1, 0), ('events', 1, 0);
     `,
   },
@@ -365,13 +365,13 @@ export class CapabilityReadOnlyError extends Error {
 }
 
 export class MultiWriterStore {
-  private readonly database: CraftSqliteDatabase
+  private readonly database: MortiseSqliteDatabase
   private readonly writerId: string
   private readonly writerVersion: number
   private readonly capabilities: Record<string, CapabilityRange>
 
   private constructor(
-    database: CraftSqliteDatabase,
+    database: MortiseSqliteDatabase,
     writerId: string,
     writerVersion: number,
     capabilities: Record<string, CapabilityRange>,
@@ -441,7 +441,7 @@ export class MultiWriterStore {
   getRecord<T extends JsonValue = JsonValue>(namespace: string, key: string): StoredRecord<T> | null {
     const row = this.database.prepare(`
       SELECT version, value_json, updated_at, writer_id
-      FROM craft_records
+      FROM mortise_records
       WHERE namespace = ? AND record_key = ?
     `).get<RecordRow>(namespace, key)
     if (!row) return null
@@ -500,7 +500,7 @@ export class MultiWriterStore {
       const updatedAt = Date.now()
       if (current) {
         const updated = this.database.prepare(`
-          UPDATE craft_records
+          UPDATE mortise_records
           SET version = ?, value_json = ?, updated_at = ?, writer_id = ?
           WHERE namespace = ? AND record_key = ? AND version = ?
         `).run(
@@ -515,7 +515,7 @@ export class MultiWriterStore {
         if (updated.changes !== 1) throw new Error('Record CAS invariant failed inside write transaction')
       } else {
         this.database.prepare(`
-          INSERT INTO craft_records
+          INSERT INTO mortise_records
             (namespace, record_key, version, value_json, updated_at, writer_id)
           VALUES (?, ?, ?, ?, ?, ?)
         `).run(
@@ -594,7 +594,7 @@ export class MultiWriterStore {
 
       const nextVersion = current.version + 1
       const updated = this.database.prepare(`
-        UPDATE craft_records
+        UPDATE mortise_records
         SET version = ?, value_json = ?, updated_at = ?, writer_id = ?
         WHERE namespace = ? AND record_key = ? AND version = ?
       `).run(
@@ -646,12 +646,12 @@ export class MultiWriterStore {
       this.assertWritable('events')
 
       const head = this.database.prepare(`
-        SELECT last_sequence FROM craft_stream_heads WHERE stream_id = ?
+        SELECT last_sequence FROM mortise_stream_heads WHERE stream_id = ?
       `).get<StreamHeadRow>(input.streamId)
       const currentSequence = Number(head?.last_sequence ?? 0)
 
       const existingEvent = this.database.prepare(`
-        SELECT sequence FROM craft_events WHERE event_id = ?
+        SELECT sequence FROM mortise_events WHERE event_id = ?
       `).get<EventIdentityRow>(input.eventId)
       if (existingEvent) {
         const conflict: AppendEventResult = {
@@ -678,7 +678,7 @@ export class MultiWriterStore {
       const sequence = currentSequence + 1
       const occurredAt = Date.now()
       this.database.prepare(`
-        INSERT INTO craft_events
+        INSERT INTO mortise_events
           (event_id, stream_id, sequence, event_type, schema_version, payload_json,
            writer_id, operation_id, occurred_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -694,7 +694,7 @@ export class MultiWriterStore {
         occurredAt,
       )
       this.database.prepare(`
-        INSERT INTO craft_stream_heads (stream_id, last_sequence)
+        INSERT INTO mortise_stream_heads (stream_id, last_sequence)
         VALUES (?, ?)
         ON CONFLICT (stream_id) DO UPDATE SET last_sequence = excluded.last_sequence
       `).run(input.streamId, sequence)
@@ -709,7 +709,7 @@ export class MultiWriterStore {
     return this.database.prepare(`
       SELECT stream_id, sequence, event_id, event_type, schema_version, payload_json,
              writer_id, operation_id, occurred_at
-      FROM craft_events
+      FROM mortise_events
       WHERE stream_id = ?
       ORDER BY sequence
     `).all<EventRow>(streamId).map(row => ({
@@ -727,14 +727,14 @@ export class MultiWriterStore {
 
   getCapabilityVersion(capability: string): number | null {
     const row = this.database.prepare(`
-      SELECT version FROM craft_capabilities WHERE name = ?
+      SELECT version FROM mortise_capabilities WHERE name = ?
     `).get<CapabilityRow>(capability)
     return row ? Number(row.version) : null
   }
 
   private applyMigrations(): void {
     this.database.exec(`
-      CREATE TABLE IF NOT EXISTS craft_schema_migrations (
+      CREATE TABLE IF NOT EXISTS mortise_schema_migrations (
         id TEXT PRIMARY KEY,
         checksum TEXT NOT NULL,
         applied_at INTEGER NOT NULL
@@ -745,7 +745,7 @@ export class MultiWriterStore {
       for (const migration of MIGRATIONS) {
         const checksum = sha256(migration.sql)
         const existing = this.database.prepare(`
-          SELECT checksum FROM craft_schema_migrations WHERE id = ?
+          SELECT checksum FROM mortise_schema_migrations WHERE id = ?
         `).get<{ checksum: string }>(migration.id)
         if (existing) {
           if (existing.checksum !== checksum) throw new MigrationChecksumError(migration.id)
@@ -753,7 +753,7 @@ export class MultiWriterStore {
         }
         this.database.exec(migration.sql)
         this.database.prepare(`
-          INSERT INTO craft_schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)
+          INSERT INTO mortise_schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)
         `).run(migration.id, checksum, Date.now())
       }
     })
@@ -773,7 +773,7 @@ export class MultiWriterStore {
   private readOperation<T>(operationId: string, capability: string, payloadHash: string): T | null {
     const existing = this.database.prepare(`
       SELECT capability, payload_hash, result_json
-      FROM craft_operations
+      FROM mortise_operations
       WHERE operation_id = ?
     `).get<OperationRow>(operationId)
     if (!existing) return null
@@ -785,7 +785,7 @@ export class MultiWriterStore {
 
   private saveOperation(operationId: string, capability: string, payloadHash: string, result: object): void {
     this.database.prepare(`
-      INSERT INTO craft_operations
+      INSERT INTO mortise_operations
         (operation_id, capability, payload_hash, writer_id, writer_version, result_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(

@@ -1,7 +1,7 @@
 /**
  * Tests for PiEventAdapter
  *
- * Tests the Pi SDK AgentEvent / AgentSessionEvent → Craft AgentEvent conversion.
+ * Tests the Pi SDK AgentEvent / AgentSessionEvent → Mortise AgentEvent conversion.
  * Each test provides mock Pi SDK event objects and verifies the AgentEvents produced.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
@@ -184,7 +184,7 @@ describe('PiEventAdapter', () => {
         type: 'message_end',
         message: {
           role: 'custom',
-          customType: 'craft-plan-state',
+          customType: 'mortise-plan-state',
           content: 'Plan mode state changed',
           display: false,
           details,
@@ -195,7 +195,7 @@ describe('PiEventAdapter', () => {
       expect(events).toEqual([{
         type: 'custom_message',
         id: undefined,
-        customType: 'craft-plan-state',
+        customType: 'mortise-plan-state',
         content: 'Plan mode state changed',
         display: false,
         details,

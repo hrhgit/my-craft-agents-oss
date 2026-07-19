@@ -8,13 +8,13 @@ import App from './App'
 import { ThemeProvider } from './context/ThemeContext'
 import { windowWorkspaceIdAtom } from './atoms/sessions'
 import { Toaster } from '@/components/ui/sonner'
-import { setupI18n, i18n } from '@craft-agent/shared/i18n'
+import { setupI18n, i18n } from '@mortise/shared/i18n'
 import { initReactI18next } from 'react-i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
 import './index.css'
-if (__CRAFT_UI_VALIDATION_BUILD__) {
+if (__MORTISE_UI_VALIDATION_BUILD__) {
   if (window.electronAPI?.uiValidationTestHost?.enabled) {
-    Object.defineProperty(window, '__CRAFT_EXTENSION_UI_VALIDATION__', {
+    Object.defineProperty(window, '__MORTISE_EXTENSION_UI_VALIDATION__', {
       value: Object.freeze({ schemaVersion: 1, available: true }),
       configurable: false,
       enumerable: false,

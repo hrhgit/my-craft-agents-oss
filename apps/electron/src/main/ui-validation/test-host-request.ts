@@ -3,7 +3,7 @@ import {
   parseUiValidationWaitRequest,
   type UiValidationActionRequest,
   type UiValidationWaitRequest,
-} from '@craft-agent/shared/ui-validation'
+} from '@mortise/shared/ui-validation'
 
 export function parseElectronActionParams(params: Record<string, unknown>): UiValidationActionRequest {
   const target = isRecord(params.target)

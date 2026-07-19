@@ -1,4 +1,4 @@
 {
   "start": "bun run dev",
-  "port_env": ["CRAFT_WEBUI_PORT", "PORT"]
+  "port_env": ["MORTISE_WEBUI_PORT", "PORT"]
 }

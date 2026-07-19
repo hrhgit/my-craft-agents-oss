@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { ExtensionUINode } from '@craft-agent/shared/protocol'
+import type { ExtensionUINode } from '@mortise/shared/protocol'
 import { isAcceptableSandboxMessage, isSandboxValidationBridgeEnabled } from './SandboxAppHost'
 
 type SandboxNode = Extract<ExtensionUINode, { type: 'sandbox-app' }>

@@ -46,7 +46,7 @@ export interface ShikiDiffViewerProps {
   /** Theme mode */
   theme?: 'light' | 'dark'
   /** Shiki theme name (e.g., 'dracula', 'github-dark'). When provided, uses the matching
-   *  Shiki theme natively. Falls back to craft-dark/craft-light (transparent bg) if not set. */
+   *  Shiki theme natively. Falls back to mortise-dark/mortise-light (transparent bg) if not set. */
   shikiTheme?: string
   /** Disable background highlighting on changed lines */
   disableBackground?: boolean
@@ -125,8 +125,8 @@ export function ShikiDiffViewer({
   }, [oldFile, newFile])
 
   // Diff options - use the app's Shiki theme if available, otherwise fall back
-  // to craft-dark/craft-light which have transparent bg for CSS variable theming
-  const resolvedThemeName = shikiTheme || (theme === 'dark' ? 'craft-dark' : 'craft-light')
+  // to mortise-dark/mortise-light which have transparent bg for CSS variable theming
+  const resolvedThemeName = shikiTheme || (theme === 'dark' ? 'mortise-dark' : 'mortise-light')
   // When onFileHeaderClick is provided, inject CSS to make the header look clickable
   const unsafeCSS = onFileHeaderClick
     ? '[data-diffs-header] { cursor: pointer; } [data-diffs-header]:hover [data-title] { text-decoration: underline; }'
@@ -181,7 +181,7 @@ export function ShikiDiffViewer({
       }
       header.addEventListener('click', handleClick)
       // Store cleanup ref so we can remove listener
-      ;(header as any).__craftClickCleanup = () => header.removeEventListener('click', handleClick)
+      ;(header as any).__mortiseClickCleanup = () => header.removeEventListener('click', handleClick)
     }, 150)
 
     return () => {
@@ -189,7 +189,7 @@ export function ShikiDiffViewer({
       const diffsContainer = containerRef.current?.querySelector(DIFFS_TAG_NAME)
       const header = diffsContainer?.shadowRoot?.querySelector('[data-diffs-header]')
       if (header) {
-        ;(header as any).__craftClickCleanup?.()
+        ;(header as any).__mortiseClickCleanup?.()
       }
     }
   }, [filePath, disableFileHeader, onFileHeaderClick])

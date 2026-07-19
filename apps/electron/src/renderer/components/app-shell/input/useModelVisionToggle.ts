@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { setPiProviderModelSupportsImages } from '@craft-agent/shared/config/pi-provider-models'
+import { setPiProviderModelSupportsImages } from '@mortise/shared/config/pi-provider-models'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 
 export type ToggleModelVision = (

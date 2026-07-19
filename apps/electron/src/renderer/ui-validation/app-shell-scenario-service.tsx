@@ -9,9 +9,9 @@ import {
   type UiValidationClock,
   type UiValidationFaultSetRequest,
   type UiValidationScenarioApplyResult,
-} from '@craft-agent/shared/ui-validation'
+} from '@mortise/shared/ui-validation'
 import type { Message, PermissionRequest, Session, TransportConnectionState } from '../../shared/types'
-import { TooltipProvider } from '@craft-agent/ui'
+import { TooltipProvider } from '@mortise/ui'
 import { TransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
 import { StreamingMarkdown } from '@/components/markdown'
 import { AdminApprovalRequest } from '@/components/app-shell/input/structured/AdminApprovalRequest'
@@ -32,7 +32,7 @@ import { DismissibleLayerProvider } from '@/context/DismissibleLayerContext'
 import { ModalProvider } from '@/context/ModalContext'
 import { SplashScreen } from '@/components/SplashScreen'
 
-export const APP_SHELL_SCENARIO_BRIDGE_KEY = '__CRAFT_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__'
+export const APP_SHELL_SCENARIO_BRIDGE_KEY = '__MORTISE_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__'
 const SCENARIO_SESSION_ID = 'ui-validation-scenario-session'
 const SCENARIO_RUNTIME_ID = 'ui-validation-scenario-runtime'
 const SCENARIO_EXTENSION_ID = 'ui-validation-example-extension'
@@ -350,7 +350,7 @@ export interface AppShellScenarioBridgeV1 {
 }
 
 export function installAppShellScenarioBridge(): (() => void) | undefined {
-  if (typeof window === 'undefined' || (window.electronAPI?.uiValidationTestHost?.enabled !== true && window.__craftUiValidation === undefined)) return undefined
+  if (typeof window === 'undefined' || (window.electronAPI?.uiValidationTestHost?.enabled !== true && window.__mortiseUiValidation === undefined)) return undefined
   const bridge: AppShellScenarioBridgeV1 = {
     schemaVersion: 1,
     list: () => appShellScenarioService.scenarios.list(),
@@ -402,14 +402,14 @@ export function ScenarioAppShellHost() {
 
   return (
     <main className="flex h-full min-h-[420px] w-full flex-col bg-background text-foreground" data-testid="scenario.app-shell" data-scenario={state.activeScenario ?? 'none'}>
-      <header className="flex h-12 shrink-0 items-center border-b px-4 text-sm font-medium">Craft Scenario AppShell</header>
+      <header className="flex h-12 shrink-0 items-center border-b px-4 text-sm font-medium">Mortise Scenario AppShell</header>
       {state.view === 'transport' && state.transport && <TransportConnectionBanner state={state.transport} onRetry={() => void appShellScenarioService.retryTransport()} />}
       <section className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
         {state.view === 'idle' && <p className="text-sm text-muted-foreground">No scenario applied</p>}
         {state.view === 'app-loading' && <SplashScreen isExiting={false} />}
         {state.view === 'session-empty' && <div className="text-center"><h2 className="text-base font-medium">No sessions yet</h2><p className="mt-1 text-sm text-muted-foreground">Create a session to start working.</p></div>}
         {state.view === 'session-streaming' && <article className="w-full max-w-2xl"><StreamingMarkdown content={state.stream.text} isStreaming={state.stream.active} /></article>}
-        {state.view === 'tool-approval' && <div className="h-80 w-full max-w-xl"><AdminApprovalRequest request={{ appName: 'Scenario tool', reason: 'Validate the production approval card', command: 'craft scenario --verify', impact: 'No real command is executed.' }} onApprove={() => appShellScenarioService.dispatch({ type: 'approval.resolved', result: 'approved' })} onCancel={() => appShellScenarioService.dispatch({ type: 'approval.resolved', result: 'cancelled' })} /></div>}
+        {state.view === 'tool-approval' && <div className="h-80 w-full max-w-xl"><AdminApprovalRequest request={{ appName: 'Scenario tool', reason: 'Validate the production approval card', command: 'mortise scenario --verify', impact: 'No real command is executed.' }} onApprove={() => appShellScenarioService.dispatch({ type: 'approval.resolved', result: 'approved' })} onCancel={() => appShellScenarioService.dispatch({ type: 'approval.resolved', result: 'cancelled' })} /></div>}
         {state.view === 'extension' && <div className="w-full max-w-xl"><ExtensionContributionZone sessionId={SCENARIO_SESSION_ID} surface="composer.above" hydrateRuntime={false} /></div>}
         {state.view === 'permissions' && <div className="w-full max-w-3xl"><SettingsSection title="Permissions"><PermissionsDataTable data={[{ access: 'allowed', type: 'bash', pattern: 'git status', comment: 'Read-only repository inspection' }, { access: 'blocked', type: 'tool', pattern: 'arbitrary-state-write', comment: 'Scenario safety boundary' }]} searchable /></SettingsSection></div>}
         {state.view === 'settings' && <div className="w-full max-w-2xl"><SettingsSection title="Application"><SettingsCard><SettingsRow label="Browser tools" description="Controlled scenario setting"><Button size="sm" variant="outline">Enabled</Button></SettingsRow><SettingsRow label="Keep awake" description="Uses production settings layout"><span className="text-sm text-muted-foreground">Off</span></SettingsRow></SettingsCard></SettingsSection></div>}
@@ -457,7 +457,7 @@ function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
       result.set(SCENARIO_SESSION_ID, [{
         sessionId: SCENARIO_SESSION_ID, requestId: 'scenario-approval', toolName: 'admin_approval', type: 'admin_approval',
         description: 'Validate the production approval flow', appName: 'Scenario tool',
-        reason: 'Validate the production approval card', command: 'craft scenario --verify',
+        reason: 'Validate the production approval card', command: 'mortise scenario --verify',
         impact: 'No real command is executed.',
       }])
     }

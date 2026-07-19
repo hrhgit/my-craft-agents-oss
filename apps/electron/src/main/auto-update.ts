@@ -2,8 +2,8 @@
  * Auto-update module using electron-updater
  *
  * Handles checking for updates, downloading, and installing via the standard
- * electron-updater library. Updates are served from https://agents.craft.do/electron/latest
- * using the generic provider (YAML manifests + binaries on R2/S3).
+ * electron-updater library. Mortise does not ship a default update service;
+ * deployments opt in by setting MORTISE_UPDATE_URL to their manifest base URL.
  *
  * Platform behavior:
  * - macOS: Downloads zip, extracts and swaps app bundle atomically
@@ -20,14 +20,14 @@ import { platform } from 'os'
 import * as path from 'path'
 import * as fs from 'fs'
 import { mainLog, autoUpdateLog } from './logger'
-import { getAppVersion } from '@craft-agent/shared/version'
+import { getAppVersion } from '@mortise/shared/version'
 import {
   getDismissedUpdateVersion,
   clearDismissedUpdateVersion,
-} from '@craft-agent/shared/config'
-import { readJsonFileSync } from '@craft-agent/shared/utils/files'
+} from '@mortise/shared/config'
+import { readJsonFileSync } from '@mortise/shared/utils/files'
 import { RPC_CHANNELS, type UpdateInfo } from '../shared/types'
-import type { EventSink } from '@craft-agent/server-core/transport'
+import type { EventSink } from '@mortise/server-core/transport'
 import {
   runUpdateQuitTransaction,
   UpdateQuitRecovery,
@@ -38,6 +38,39 @@ import {
 const PLATFORM = platform()
 const IS_MAC = PLATFORM === 'darwin'
 const IS_WINDOWS = PLATFORM === 'win32'
+let configuredFeedUrl: string | null = null
+
+function configuredUpdateBaseUrl(): string | null {
+  const value = process.env.MORTISE_UPDATE_URL?.trim().replace(/\/+$/, '')
+  if (!value) return null
+
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error('MORTISE_UPDATE_URL must be an absolute HTTP(S) URL')
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('MORTISE_UPDATE_URL must use HTTP or HTTPS')
+  }
+  return value
+}
+
+export function isUpdateConfigured(): boolean {
+  return configuredUpdateBaseUrl() !== null
+}
+
+function configureUpdateFeed(): void {
+  const baseUrl = configuredUpdateBaseUrl()
+  if (!baseUrl) {
+    throw new Error('Updates are not configured. Set MORTISE_UPDATE_URL to enable update checks.')
+  }
+
+  const feedUrl = `${baseUrl}/latest`
+  if (configuredFeedUrl === feedUrl) return
+  autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl })
+  configuredFeedUrl = feedUrl
+}
 
 // Get the update cache directory path (for file watcher fallback on macOS)
 // electron-updater uses these paths:
@@ -374,6 +407,8 @@ function checkForExistingDownload(): { exists: boolean; version?: string } {
 export async function checkForUpdates(options: CheckOptions = {}): Promise<UpdateInfo> {
   const { autoDownload = true } = options
 
+  configureUpdateFeed()
+
   // Temporarily override autoDownload for this check if needed
   // (e.g., manual check from settings shouldn't auto-download on metered connections)
   const previousAutoDownload = autoUpdater.autoDownload
@@ -491,6 +526,10 @@ export interface UpdateOnLaunchResult {
  * - Auto-downloads if update available
  */
 export async function checkForUpdatesOnLaunch(): Promise<UpdateOnLaunchResult> {
+  if (!isUpdateConfigured()) {
+    autoUpdateLog.info('Skipping launch update check because MORTISE_UPDATE_URL is not configured')
+    return { action: 'skipped', reason: 'not-configured' }
+  }
   autoUpdateLog.info('Checking for updates on launch...')
 
   const info = await checkForUpdates({ autoDownload: true })

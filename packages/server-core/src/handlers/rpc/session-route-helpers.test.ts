@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { encodePiSessionCwd } from '@craft-agent/shared/config/paths';
-import { setSharedPiSessionsDirForTests } from '@craft-agent/shared/sessions';
+import { encodePiSessionCwd } from '@mortise/shared/config/paths';
+import { setSharedPiSessionsDirForTests } from '@mortise/shared/sessions';
 import {
   collectSessionSearchRoots,
   serializeExtensionCommandArgs,

@@ -2,15 +2,14 @@ import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { Command as CommandPrimitive } from 'cmdk'
 import { Check, Minimize2 } from 'lucide-react'
-import { Icon_Folder } from '@craft-agent/ui'
+import { Icon_Folder } from '@mortise/ui'
 import { cn } from '@/lib/utils'
-import { PERMISSION_MODE_CONFIG, PERMISSION_MODE_ORDER, type PermissionMode } from '@craft-agent/shared/agent/modes'
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type SlashCommandId = PermissionMode | 'compact'
+export type SlashCommandId = 'compact' | `ext:${string}`
 
 /** Union type for all item types in the slash menu */
 export type SlashItemType = 'command' | 'folder'
@@ -47,48 +46,11 @@ export interface CommandGroup {
 }
 
 // ============================================================================
-// Permission Mode Icon Component
-// ============================================================================
-
-interface PermissionModeIconProps {
-  mode: PermissionMode
-  className?: string
-}
-
-function PermissionModeIcon({ mode, className }: PermissionModeIconProps) {
-  const config = PERMISSION_MODE_CONFIG[mode]
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d={config.svgPath} />
-    </svg>
-  )
-}
-
-// ============================================================================
 // Default Commands
 // ============================================================================
 
 // Icon size constant
 const MENU_ICON_SIZE = 'h-3.5 w-3.5'
-
-// Generate permission mode commands from centralized config
-const permissionModeCommands: SlashCommand[] = PERMISSION_MODE_ORDER.map(mode => {
-  const config = PERMISSION_MODE_CONFIG[mode]
-  return {
-    id: mode,
-    label: config.displayName,
-    description: config.description,
-    icon: <PermissionModeIcon mode={mode} className={MENU_ICON_SIZE} />,
-  }
-})
 
 const compactCommand: SlashCommand = {
   id: 'compact',
@@ -98,13 +60,10 @@ const compactCommand: SlashCommand = {
 }
 
 export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = [
-  ...permissionModeCommands,
   compactCommand,
 ]
 
-export const DEFAULT_SLASH_COMMAND_GROUPS: CommandGroup[] = [
-  { id: 'modes', commands: permissionModeCommands },
-]
+export const DEFAULT_SLASH_COMMAND_GROUPS: CommandGroup[] = []
 
 // ============================================================================
 // Shared Styles
@@ -162,15 +121,11 @@ function flattenSections(sections: SlashSection[]): (SlashCommand | SlashFolderI
 // Shared: Command Item Content
 // ============================================================================
 
-const MODE_COMMAND_IDS = new Set<string>(['safe', 'ask', 'allow-all'])
-
 function CommandItemContent({ command, isActive }: { command: SlashCommand; isActive: boolean }) {
-  const { t } = useTranslation()
-  const label = MODE_COMMAND_IDS.has(command.id) ? t(`mode.${command.id}`, command.label) : command.label
   return (
     <>
       <div className="shrink-0 text-muted-foreground">{command.icon}</div>
-      <div className="flex-1 min-w-0">{label}</div>
+      <div className="flex-1 min-w-0">{command.label}</div>
       {isActive && (
         <div className="shrink-0 h-4 w-4 rounded-full bg-current flex items-center justify-center">
           <Check className="h-2.5 w-2.5 text-white dark:text-black" strokeWidth={3} />
@@ -577,13 +532,6 @@ export function useInlineSlashCommand({
   // Build sections from commands and folders
   const sections = React.useMemo((): SlashSection[] => {
     const result: SlashSection[] = []
-
-    // Modes section
-    result.push({
-      id: 'modes',
-      label: 'Modes',
-      items: permissionModeCommands,
-    })
 
     // Commands section
     result.push({

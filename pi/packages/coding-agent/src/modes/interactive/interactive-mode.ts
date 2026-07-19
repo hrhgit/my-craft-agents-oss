@@ -7,9 +7,9 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { OAuthProviderId, OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/types";
+import type { AgentMessage } from "@mortise/pi-agent-core";
+import type { OAuthProviderId, OAuthSelectPrompt } from "@mortise/pi-ai/oauth";
+import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@mortise/pi-ai/types";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -20,7 +20,7 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	SlashCommand,
-} from "@earendil-works/pi-tui";
+} from "@mortise/pi-tui";
 import {
 	CombinedAutocompleteProvider,
 	type Component,
@@ -39,7 +39,7 @@ import {
 	TruncatedText,
 	TUI,
 	visibleWidth,
-} from "@earendil-works/pi-tui";
+} from "@mortise/pi-tui";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import { extractImageAttachmentsFromText } from "../../cli/file-processor.ts";
@@ -51,7 +51,7 @@ import {
 	getDebugLogPath,
 	getDocsPath,
 	getShareViewerUrl,
-	usesOfficialUpdateChannel,
+	usesPublishedUpdateChannel,
 	VERSION,
 } from "../../config.ts";
 import {
@@ -112,7 +112,6 @@ import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
-import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
@@ -1185,7 +1184,7 @@ export class InteractiveMode {
 	}
 
 	private reportInstallTelemetry(version: string): void {
-		if (process.env.PI_OFFLINE || !usesOfficialUpdateChannel()) {
+		if (process.env.PI_OFFLINE || !usesPublishedUpdateChannel()) {
 			return;
 		}
 
@@ -3128,11 +3127,6 @@ export class InteractiveMode {
 			}
 			if (text === "/arminsayshi") {
 				this.handleArminSaysHi();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/dementedelves") {
-				this.handleDementedDelves();
 				this.editor.setText("");
 				return;
 			}
@@ -5376,8 +5370,8 @@ export class InteractiveMode {
 		const options: AuthSelectorProvider[] = [];
 
 		for (const providerId of authStorage.list()) {
-			// Skip craft-namespaced credentials; pi CLI doesn't manage them.
-			if (providerId.startsWith("craft.")) {
+			// Skip mortise-namespaced credentials; pi CLI doesn't manage them.
+			if (providerId.startsWith("mortise.")) {
 				continue;
 			}
 			const credential = authStorage.get(providerId);
@@ -6334,12 +6328,6 @@ export class InteractiveMode {
 	private handleArminSaysHi(): void {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ArminComponent(this.ui));
-		this.ui.requestRender();
-	}
-
-	private handleDementedDelves(): void {
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new EarendilAnnouncementComponent());
 		this.ui.requestRender();
 	}
 

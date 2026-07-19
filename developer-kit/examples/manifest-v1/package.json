@@ -1,0 +1,37 @@
+{
+  "name": "mortise-manifest-v1-example",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      {
+        "id": "manifest-v1-example",
+        "path": "./index.ts",
+        "targets": ["mortise"],
+        "manifest": {
+          "schemaVersion": 1,
+          "name": "Manifest V1 Example",
+          "version": "1.0.0",
+          "author": {
+            "name": "Example Author",
+            "url": "https://example.com"
+          },
+          "publisher": "example-author",
+          "description": "A minimal host-rendered Mortise extension.",
+          "license": "MIT",
+          "engines": {
+            "mortise": "^0.1.0"
+          },
+          "capabilities": ["ui.contributions"],
+          "permissions": []
+        },
+        "ui": {
+          "schemaVersion": 1,
+          "title": "Manifest V1 Example",
+          "description": "A minimal host-rendered Mortise extension.",
+          "category": "ui"
+        }
+      }
+    ]
+  }
+}

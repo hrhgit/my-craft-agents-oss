@@ -235,7 +235,7 @@ mock.module('../logger', () => {
   }
 })
 
-mock.module('@craft-agent/server-core/handlers', () => ({
+mock.module('@mortise/server-core/handlers', () => ({
   validateFilePath: validateFilePathImpl,
   getWorkspaceAllowedDirs: mockGetWorkspaceAllowedDirs,
 }))
@@ -618,7 +618,7 @@ describe('BrowserPaneManager', () => {
   })
 
   it('uploads files inside the instance workspace when its root is a symlink', async () => {
-    const sandbox = await mkdtemp(join(tmpdir(), 'craft-browser-upload-'))
+    const sandbox = await mkdtemp(join(tmpdir(), 'mortise-browser-upload-'))
     try {
       const targetRoot = join(sandbox, 'workspace-target')
       const linkedRoot = join(sandbox, 'workspace-root')
@@ -643,7 +643,7 @@ describe('BrowserPaneManager', () => {
   })
 
   it('rejects files in home or temp outside the instance workspace', async () => {
-    const sandbox = await mkdtemp(join(tmpdir(), 'craft-browser-upload-scope-'))
+    const sandbox = await mkdtemp(join(tmpdir(), 'mortise-browser-upload-scope-'))
     try {
       const workspaceRoot = join(sandbox, 'workspace')
       const outsideTmpFile = join(sandbox, 'outside.txt')
@@ -653,7 +653,7 @@ describe('BrowserPaneManager', () => {
       workspaceAllowedDirs.set('workspace-upload-scope', [workspaceRoot])
       manager.createInstance('browser-upload-scope', { workspaceId: 'workspace-upload-scope' })
       const instance = (manager as any).instances.get('browser-upload-scope')
-      const outsideHomeFile = join(homedir(), `craft-browser-upload-outside-${process.pid}.txt`)
+      const outsideHomeFile = join(homedir(), `mortise-browser-upload-outside-${process.pid}.txt`)
 
       await expect(manager.uploadFile('browser-upload-scope', '@upload', [outsideTmpFile]))
         .rejects.toThrow('Access denied')
@@ -698,14 +698,14 @@ describe('BrowserPaneManager', () => {
     const openHandler = instance.pageView.webContents.setWindowOpenHandler.mock.calls[0][0]
 
     const result = openHandler({
-      url: 'craftagents://settings',
+      url: 'mortise://settings',
       disposition: 'new-popup',
       frameName: '',
     })
 
     expect(result).toEqual({ action: 'deny' })
     await Bun.sleep(0)
-    expect(mockShellOpenExternal).toHaveBeenCalledWith('craftagents://settings')
+    expect(mockShellOpenExternal).toHaveBeenCalledWith('mortise://settings')
   })
 
   it('destroys child popups when parent instance is destroyed', () => {
@@ -960,10 +960,10 @@ describe('BrowserPaneManager', () => {
 
   it('navigate treats plain text as search query', async () => {
     manager.createInstance('nav-2')
-    await manager.navigate('nav-2', 'craft agents browser tools')
+    await manager.navigate('nav-2', 'mortise agents browser tools')
     const instance = (manager as any).instances.get('nav-2')
     expect(instance.pageView.webContents.loadURL).toHaveBeenCalledWith(
-      'https://duckduckgo.com/?q=craft%20agents%20browser%20tools'
+      'https://duckduckgo.com/?q=mortise%20agents%20browser%20tools'
     )
   })
 
@@ -1134,7 +1134,7 @@ describe('BrowserPaneManager', () => {
     const instance = (manager as any).instances.get('theme-signal')
     instance.themeObserverToken = 'tok-1'
 
-    instance.pageView.webContents._emit('console-message', 1, '__craft_theme_color__:tok-1:#123456')
+    instance.pageView.webContents._emit('console-message', 1, '__mortise_theme_color__:tok-1:#123456')
 
     expect(manager.listInstances().find(i => i.id === 'theme-signal')?.themeColor).toBe('#123456')
     expect(manager.getConsoleLogs('theme-signal', { level: 'all', limit: 10 })).toHaveLength(0)
@@ -1145,10 +1145,10 @@ describe('BrowserPaneManager', () => {
     const instance = (manager as any).instances.get('theme-dedupe')
     instance.themeObserverToken = 'tok-2'
 
-    instance.pageView.webContents._emit('console-message', 1, '__craft_theme_color__:tok-2:#445566')
+    instance.pageView.webContents._emit('console-message', 1, '__mortise_theme_color__:tok-2:#445566')
     const sendCallsAfterFirst = instance.window.webContents.send.mock.calls.length
 
-    instance.pageView.webContents._emit('console-message', 1, '__craft_theme_color__:tok-2:#445566')
+    instance.pageView.webContents._emit('console-message', 1, '__mortise_theme_color__:tok-2:#445566')
     const sendCallsAfterSecond = instance.window.webContents.send.mock.calls.length
 
     expect(sendCallsAfterSecond).toBe(sendCallsAfterFirst)
@@ -1160,7 +1160,7 @@ describe('BrowserPaneManager', () => {
     instance.themeObserverToken = 'tok-current'
     instance.themeColor = '#aaaaaa'
 
-    instance.pageView.webContents._emit('console-message', 1, '__craft_theme_color__:tok-old:#bbccdd')
+    instance.pageView.webContents._emit('console-message', 1, '__mortise_theme_color__:tok-old:#bbccdd')
 
     expect(manager.listInstances().find(i => i.id === 'theme-stale-token')?.themeColor).toBe('#aaaaaa')
   })
@@ -1170,10 +1170,10 @@ describe('BrowserPaneManager', () => {
     const instance = (manager as any).instances.get('theme-null')
     instance.themeObserverToken = 'tok-null'
 
-    instance.pageView.webContents._emit('console-message', 1, '__craft_theme_color__:tok-null:#223344')
+    instance.pageView.webContents._emit('console-message', 1, '__mortise_theme_color__:tok-null:#223344')
     expect(manager.listInstances().find(i => i.id === 'theme-null')?.themeColor).toBe('#223344')
 
-    instance.pageView.webContents._emit('console-message', 1, '__craft_theme_color__:tok-null:__NULL__')
+    instance.pageView.webContents._emit('console-message', 1, '__mortise_theme_color__:tok-null:__NULL__')
     expect(manager.listInstances().find(i => i.id === 'theme-null')?.themeColor).toBeNull()
   })
 
@@ -1209,8 +1209,8 @@ describe('BrowserPaneManager', () => {
     manager.createInstance('toolbar-finish-load-replay')
     const instance = (manager as any).instances.get('toolbar-finish-load-replay')
 
-    instance.currentUrl = 'https://craft.do'
-    instance.title = 'Craft'
+    instance.currentUrl = 'https://mortise.do'
+    instance.title = 'Mortise'
     instance.isLoading = true
     instance.canGoBack = true
     instance.canGoForward = true
@@ -1225,8 +1225,8 @@ describe('BrowserPaneManager', () => {
     expect(sendCallsAfterFinishLoad).toContainEqual([
       'browser-toolbar:state-update',
       {
-        url: 'https://craft.do',
-        title: 'Craft',
+        url: 'https://mortise.do',
+        title: 'Mortise',
         isLoading: true,
         canGoBack: true,
         canGoForward: true,

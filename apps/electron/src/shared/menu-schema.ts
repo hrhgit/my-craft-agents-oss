@@ -13,7 +13,8 @@
  */
 
 import { RPC_CHANNELS } from './types'
-import { FEATURE_FLAGS } from '@craft-agent/shared/feature-flags'
+import { FEATURE_FLAGS } from '@mortise/shared/feature-flags'
+import { MORTISE_DOCS_URL } from '@mortise/shared/branding'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -228,7 +229,7 @@ export const MENU_SECTIONS: MenuSection[] = [EDIT_MENU, VIEW_MENU, WINDOW_MENU]
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Root-level leaf actions exposed in the Craft logo menu.
+ * Root-level leaf actions exposed in the Mortise logo menu.
  *
  * Both DesktopAppMenu (dropdown) and MobileAppMenu (full-screen sheet) read from
  * this collection. Desktop renders all four directly inline. Mobile filters out
@@ -276,7 +277,7 @@ export const ROOT_MENU = {
     type: 'action',
     id: 'quit',
     actionId: 'app.quit',
-    labelKey: 'menu.quitCraftAgents',
+    labelKey: 'menu.quitMortise',
     shortcut: 'CmdOrCtrl+Q',
     shortcutDisplayMac: '⌘Q',
     shortcutDisplayOther: 'Ctrl+Q',
@@ -299,7 +300,7 @@ export const HELP_LINKS: MenuItemUrl[] = [
     type: 'url',
     id: 'helpAndDocs',
     labelKey: 'menu.helpAndDocs',
-    url: 'https://agents.craft.do/docs',
+    url: MORTISE_DOCS_URL,
     icon: 'HelpCircle',
   },
 ]
@@ -381,6 +382,7 @@ export interface SettingsMenuItem {
 const SETTINGS_ICONS: Record<SettingsSubpage, string> = {
   app: 'ToggleRight',
   ai: 'Sparkles',
+  agents: 'Bot',
   extensions: 'Puzzle',
   appearance: 'Palette',
   input: 'Keyboard',

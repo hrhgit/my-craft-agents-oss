@@ -6,9 +6,9 @@
  */
 
 import { createInterface } from "node:readline";
-import { modelsAreEqual } from "@earendil-works/pi-ai/model-utils";
-import type { ImageContent } from "@earendil-works/pi-ai/types";
-import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
+import { modelsAreEqual } from "@mortise/pi-ai/model-utils";
+import type { ImageContent } from "@mortise/pi-ai/types";
+import { ProcessTerminal, setKeybindings, TUI } from "@mortise/pi-tui";
 import chalk from "chalk";
 import { createJiti } from "jiti/static";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
@@ -592,7 +592,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("parseArgs");
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY);
-	const rpcExtensionTarget = process.env.PI_EXTENSION_TARGET === "craft" ? "craft" : "pi";
+	const rpcExtensionTarget = process.env.PI_EXTENSION_TARGET === "mortise" ? "mortise" : "pi";
 	const rpcUiCapabilities =
 		appMode === "rpc" ? parseRpcHostUICapabilities(process.env[PI_RPC_UI_CAPABILITIES_ENV]) : undefined;
 	const shouldTakeOverStdout = appMode !== "interactive";

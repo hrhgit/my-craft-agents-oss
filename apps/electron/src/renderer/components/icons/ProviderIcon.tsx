@@ -1,5 +1,5 @@
 import { Brain } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@mortise/ui'
 import { getModelDisplayName } from '@config/models'
 import { getProviderIcon } from '@/lib/provider-icons'
 import type { PiGlobalProviderForDisplay } from '../../../shared/types'

@@ -1,5 +1,5 @@
 /**
- * @craft-agent/ui - Shared React UI components for Craft Agent
+ * @mortise/ui - Shared React UI components for Mortise Agent
  *
  * This package provides platform-agnostic UI components that work in both:
  * - Electron desktop app (full interactive mode)
@@ -29,6 +29,7 @@ export {
 export {
   SessionViewer,
   TurnCard,
+  ArtifactContributionProvider,
   TurnCardActionsMenu,
   ResponseCard,
   UserMessageBubble,
@@ -49,6 +50,7 @@ export {
   type SessionViewerProps,
   type SessionViewerMode,
   type TurnCardProps,
+  type ArtifactContributionPresentation,
   type TurnCardActionsMenuProps,
   type ResponseCardProps,
   type UserMessageBubbleProps,

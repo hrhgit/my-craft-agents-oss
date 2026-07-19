@@ -15,6 +15,7 @@ import { SessionMenu } from '@/components/app-shell/SessionMenu'
 import { CompactSessionMenu } from '@/components/app-shell/CompactSessionMenu'
 import { useExtensionStatus } from '@/hooks/useExtensionStatus'
 import { SessionInfoPopover } from '@/components/app-shell/SessionInfoPopover'
+import { SideTasksStatusPopover } from '@/components/app-shell/SideTasksStatusPopover'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { toast } from 'sonner'
 import { PanelHeaderCenterButton } from '@/components/ui/PanelHeaderCenterButton'
@@ -22,13 +23,14 @@ import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu
 import { StyledDropdownMenuContent, StyledDropdownMenuItem, StyledDropdownMenuSeparator } from '@/components/ui/styled-dropdown'
 import { useAppShellContext, usePendingPermission, usePendingCredential, useSessionOptionsFor, useSession as useSessionData } from '@/context/AppShellContext'
 import { rendererPerf } from '@/lib/perf'
-import { routes } from '@/lib/navigate'
+import { navigate, routes } from '@/lib/navigate'
 import { coerceInputText } from '@/lib/input-text'
 import { deriveSessionMessagesLoadState, formatSessionLoadFailure } from '@/lib/session-load'
 import { ensureSessionMessagesLoadedAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { piProjectionAtomFamily } from '@/atoms/pi-projection'
 import { getSessionTitle } from '@/utils/session'
-import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
+import type { MidStreamSendIntent } from '@mortise/shared/protocol'
+import { MORTISE_DOCS_URL } from '@mortise/shared/branding'
 import { useWorkspaceElectronApi, useWorkspaceRoute } from '@/context/WorkspaceElectronApiContext'
 
 export interface ChatPageProps {
@@ -94,7 +96,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const sessionMeta = sessionMetaMap.get(sessionId)
 
-  // Load Craft-owned overlays (annotations, attachment paths, badges). Pi
+  // Load Mortise-owned overlays (annotations, attachment paths, badges). Pi
   // projection loading is independent and owns transcript readiness.
   const ensureMessagesLoaded = useSetAtom(ensureSessionMessagesLoadedAtom)
 
@@ -208,8 +210,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         inputValueRef.current = nextText
       }
     }
-    window.addEventListener('craft:restore-input', handler)
-    return () => window.removeEventListener('craft:restore-input', handler)
+    window.addEventListener('mortise:restore-input', handler)
+    return () => window.removeEventListener('mortise:restore-input', handler)
   }, [sessionId])
 
   const handleInputChange = React.useCallback((value: string) => {
@@ -389,7 +391,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const handleOpenInNewWindow = React.useCallback(async () => {
     const route = routes.view.allSessions(sessionId)
     const separator = route.includes('?') ? '&' : '?'
-    const url = `craftagents://${route}${separator}window=focused`
+    const url = `mortise://${route}${separator}window=focused`
     try {
       await electronApi.openUrl(url)
     } catch (error) {
@@ -478,7 +480,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               <span className="flex-1">{t('sessionMenu.stopSharing')}</span>
             </StyledDropdownMenuItem>
             <StyledDropdownMenuSeparator />
-            <StyledDropdownMenuItem onClick={() => electronApi.openUrl('https://agents.craft.do/docs/go-further/sharing')}>
+            <StyledDropdownMenuItem onClick={() => electronApi.openUrl(MORTISE_DOCS_URL)}>
               <Info className="h-3.5 w-3.5" />
               <span className="flex-1">{t('chat.learnMore')}</span>
             </StyledDropdownMenuItem>
@@ -492,7 +494,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               <span className="flex-1">{t('chat.shareOnline')}</span>
             </StyledDropdownMenuItem>
             <StyledDropdownMenuSeparator />
-            <StyledDropdownMenuItem onClick={() => electronApi.openUrl('https://agents.craft.do/docs/go-further/sharing')}>
+            <StyledDropdownMenuItem onClick={() => electronApi.openUrl(MORTISE_DOCS_URL)}>
               <Info className="h-3.5 w-3.5" />
               <span className="flex-1">{t('chat.learnMore')}</span>
             </StyledDropdownMenuItem>
@@ -521,6 +523,15 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   }, [isCompactMode, sessionId, session?.sessionFolderPath, sessionMeta, t])
 
   const headerActions = isCompactMode ? compactInfoButton : shareButton
+  const openSideTaskSession = React.useCallback((childSessionId: string) => {
+    navigate(routes.view.allSessions(childSessionId), { newPanel: true })
+  }, [])
+  const sideTasksStatusButton = React.useMemo(() => (
+    <SideTasksStatusPopover
+      parentSessionId={sessionId}
+      onOpenSession={openSideTaskSession}
+    />
+  ), [openSideTaskSession, sessionId])
 
   // Build title menu content for chat sessions using shared SessionMenu.
   // Desktop uses Radix DropdownMenu via PanelHeader; compact mode uses a
@@ -584,7 +595,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       return (
         <>
           <div className="h-full flex flex-col" data-e2e-chat-session-id={sessionId}>
-            <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} trailingAction={panelHeaderTrailingAction} isTitleBusy={isAsyncOperationOngoing} />
+            <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} centerButton={sideTasksStatusButton} actions={headerActions} trailingAction={panelHeaderTrailingAction} isTitleBusy={isAsyncOperationOngoing} />
             <div className="flex-1 flex flex-col min-h-0">
               <ChatDisplay
                 ref={chatDisplayRef}
@@ -653,7 +664,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   return (
     <>
       <div className="h-full flex flex-col" data-e2e-chat-session-id={sessionId}>
-        <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} trailingAction={panelHeaderTrailingAction} isTitleBusy={isAsyncOperationOngoing} />
+        <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} centerButton={sideTasksStatusButton} actions={headerActions} trailingAction={panelHeaderTrailingAction} isTitleBusy={isAsyncOperationOngoing} />
         <div className="flex-1 flex flex-col min-h-0">
           <ChatDisplay
             ref={chatDisplayRef}

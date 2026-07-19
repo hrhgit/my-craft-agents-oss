@@ -22,7 +22,7 @@ import {
   type MessageEnvelope,
   type PushTarget,
   type TransportErrorCode,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 import type {
   RpcServer,
   HandlerFn,
@@ -31,7 +31,7 @@ import type {
   WorkspaceAuthMethod,
 } from './types'
 import { serializeEnvelope, deserializeEnvelope } from './codec'
-import { createLogger } from '@craft-agent/shared/utils'
+import { createLogger } from '@mortise/shared/utils'
 
 // ---------------------------------------------------------------------------
 // Client connection state

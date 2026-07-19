@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { ExtensionInteractionBridgeRequestV1 } from '@craft-agent/shared/protocol'
+import type { ExtensionInteractionBridgeRequestV1 } from '@mortise/shared/protocol'
 import {
   asExtensionInteractionRequest,
   collectExtensionInteractionAnswers,

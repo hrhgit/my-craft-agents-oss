@@ -163,7 +163,7 @@ export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, i
   return (
     <div className={cn("flex min-w-0 flex-col select-none", !isNested && "py-1")}>
       <NavWrapper
-        data-craft-semantic-id={isNested ? undefined : 'navigation.main'}
+        data-mortise-semantic-id={isNested ? undefined : 'navigation.main'}
         className={cn(
           "grid min-w-0 gap-0.5",
           isNested ? "pl-5 pr-0 relative" : "px-2"
@@ -289,7 +289,7 @@ function SidebarLinkRow({
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  data-craft-semantic-id={`${semanticId}.menu`}
+                  data-mortise-semantic-id={`${semanticId}.menu`}
                   aria-label={`${t('common.more')}: ${link.title}`}
                   className="flex h-6 w-6 items-center justify-center rounded-[5px] text-muted-foreground outline-none hover:bg-foreground/[0.08] hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring data-[state=open]:bg-foreground/[0.08] data-[state=open]:text-foreground"
                   onClick={(event) => event.stopPropagation()}
@@ -367,7 +367,7 @@ const SidebarButton = React.forwardRef<HTMLButtonElement, SidebarButtonProps & R
     const { ref: _itemRef, ...itemButtonProps } = itemProps || { ref: undefined }
     return (
       <button
-        data-craft-semantic-id={`navigation.${link.id.replace(/[^A-Za-z0-9._-]/g, '_')}`}
+        data-mortise-semantic-id={`navigation.${link.id.replace(/[^A-Za-z0-9._-]/g, '_')}`}
         {...itemButtonProps}
         // Spread Radix props (data-state, onContextMenu, onPointerDown, etc.)
         {...radixProps}

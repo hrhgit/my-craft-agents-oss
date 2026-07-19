@@ -1,6 +1,6 @@
-import { isPlanArtifactV1, type PlanArtifactV1 } from '@craft-agent/core'
-import type { PiProjectionEntityV1 } from '@craft-agent/shared/protocol'
-import type { ActivityItem, AssistantTurn, Turn } from '@craft-agent/ui'
+import { isPlanArtifactV1, type PlanArtifactV1 } from '@mortise/core'
+import type { PiProjectionEntityV1 } from '@mortise/shared/protocol'
+import type { ActivityItem, AssistantTurn, Turn } from '@mortise/ui'
 import type { Message, StoredAttachment } from '../../../shared/types'
 
 export interface PiMessageUiOverlay {
@@ -14,7 +14,7 @@ export interface PiMessageUiOverlay {
 
 export type PiTurnOverlay = ReadonlyMap<string, PiMessageUiOverlay>
 
-/** Extracts Craft-owned UI metadata without using Craft message content or order. */
+/** Extracts Mortise-owned UI metadata without using Mortise message content or order. */
 export function buildPiTurnOverlay(messages: readonly Message[]): PiTurnOverlay {
   const overlay = new Map<string, PiMessageUiOverlay>()
   for (const message of messages) {
@@ -454,7 +454,7 @@ function batchAssistantRecords(
 
 /**
  * Adapts the normalized Pi projection to the existing TurnCard view model.
- * Craft data is consulted only for UI overlays keyed by Pi message identity.
+ * Mortise data is consulted only for UI overlays keyed by Pi message identity.
  */
 export function buildPiTurns(
   inputEntities: readonly PiProjectionEntityV1[],

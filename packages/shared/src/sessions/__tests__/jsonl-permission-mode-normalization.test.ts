@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe('session jsonl format boundary', () => {
-  it('rejects a legacy flat Craft header', () => {
+  it('rejects a legacy flat Mortise header', () => {
     const sessionDir = mkdtempSync(join(tmpdir(), 'session-mode-header-'));
     tempDirs.push(sessionDir);
 
@@ -45,7 +45,7 @@ describe('session jsonl format boundary', () => {
     expect(loadedHeader).toBeNull();
   });
 
-  it('rejects a legacy flat Craft transcript', () => {
+  it('rejects a legacy flat Mortise transcript', () => {
     const sessionDir = mkdtempSync(join(tmpdir(), 'session-mode-full-'));
     tempDirs.push(sessionDir);
 

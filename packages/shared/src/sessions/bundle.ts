@@ -117,8 +117,8 @@ export function serializeSession(
   }
 
   // Read the session header via readSessionHeader, which correctly handles
-  // both Pi tree JSONL v3 format (extracts the `craft` extension from the Pi
-  // header) and the legacy Craft JSONL format (reads the first line directly).
+  // both Pi tree JSONL v3 format (extracts the `mortise` extension from the Pi
+  // header) and the legacy Mortise JSONL format (reads the first line directly).
   const header = readSessionHeader(sessionFile)
   if (!header) {
     debug('[bundle] Failed to read session header:', sessionFile)
@@ -151,9 +151,9 @@ export function validateBundle(bundle: unknown): bundle is SessionBundle {
   if (!Array.isArray(session.messages)) return false
 
   const header = session.header as Record<string, unknown>
-  // 接受 craftId（新格式）或 id（旧 bundle 格式）
-  if (typeof header.craftId !== 'string' && typeof header.id !== 'string') return false
-  if (typeof header.craftId === 'string' && !isValidSessionId(header.craftId)) return false
+  // 接受 mortiseId（新格式）或 id（旧 bundle 格式）
+  if (typeof header.mortiseId !== 'string' && typeof header.id !== 'string') return false
+  if (typeof header.mortiseId === 'string' && !isValidSessionId(header.mortiseId)) return false
   if (typeof header.id === 'string' && !isValidSessionId(header.id)) return false
   if (typeof header.createdAt !== 'number') return false
 

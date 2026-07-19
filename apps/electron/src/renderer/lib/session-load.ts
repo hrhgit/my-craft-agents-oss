@@ -24,7 +24,7 @@ export interface SessionMessagesLoadState {
 
 /**
  * Derive transcript readiness from Pi projection state. `session.messages` is a
- * Craft-owned UI overlay and must not be compared with projection-derived
+ * Mortise-owned UI overlay and must not be compared with projection-derived
  * message counts to decide whether canonical history is present.
  */
 export function deriveSessionMessagesLoadState({

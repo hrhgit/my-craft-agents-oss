@@ -1,5 +1,5 @@
 /**
- * Chat component exports for @craft-agent/ui
+ * Chat component exports for @mortise/ui
  */
 
 // Turn utilities (pure functions, no React)
@@ -7,7 +7,7 @@ export * from './turn-utils'
 export * from './follow-up-helpers'
 
 // Components
-export { TurnCard, ResponseCard, SIZE_CONFIG, ActivityStatusIcon, type TurnCardProps, type ResponseCardProps, type ActivityItem, type ActivityStatus, type ResponseContent, type TodoItem } from './TurnCard'
+export { TurnCard, ResponseCard, ArtifactContributionProvider, SIZE_CONFIG, ActivityStatusIcon, type ArtifactContributionPresentation, type TurnCardProps, type ResponseCardProps, type ActivityItem, type ActivityStatus, type ResponseContent, type TodoItem } from './TurnCard'
 export { InlineExecution, mapToolEventToActivity, type InlineExecutionProps, type InlineExecutionStatus, type InlineActivityItem } from './InlineExecution'
 export { TurnCardActionsMenu, type TurnCardActionsMenuProps } from './TurnCardActionsMenu'
 export { SessionViewer, type SessionViewerProps, type SessionViewerMode } from './SessionViewer'

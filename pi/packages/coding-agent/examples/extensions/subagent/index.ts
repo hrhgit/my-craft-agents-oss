@@ -17,16 +17,16 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { Message } from "@earendil-works/pi-ai";
-import { StringEnum } from "@earendil-works/pi-ai";
+import type { AgentToolResult } from "@mortise/pi-agent-core";
+import type { Message } from "@mortise/pi-ai";
+import { StringEnum } from "@mortise/pi-ai";
 import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	getMarkdownTheme,
 	withFileMutationQueue,
-} from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+} from "@mortise/pi-coding-agent";
+import { Container, Markdown, Spacer, Text } from "@mortise/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 
@@ -344,7 +344,10 @@ async function runSingleAgent(
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (agent.model) args.push("--model", agent.model);
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	if (agent.tools) {
+		if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+		else args.push("--no-tools");
+	}
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;

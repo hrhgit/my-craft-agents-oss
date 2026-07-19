@@ -1,20 +1,20 @@
 import { existsSync } from 'fs'
 import { readFile, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { RPC_CHANNELS, type FileAttachment, type SendMessageOptions, type SessionEvent, type Session } from '@craft-agent/shared/protocol'
-import type { StoredAttachment } from '@craft-agent/core/types'
-import { storedToMessage } from '@craft-agent/core/types'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { RPC_CHANNELS, type FileAttachment, type SendMessageOptions, type SessionEvent, type Session } from '@mortise/shared/protocol'
+import type { StoredAttachment } from '@mortise/core/types'
+import { storedToMessage } from '@mortise/core/types'
+import { getWorkspaceByNameOrId } from '@mortise/shared/config'
 import {
   findPiSessionProjectionById,
   projectTreeSessionProjectionAsStoredSession,
   validateSessionId,
-} from '@craft-agent/shared/sessions'
-import { perf, writeRuntimeLog } from '@craft-agent/shared/utils'
-import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
+} from '@mortise/shared/sessions'
+import { perf, writeRuntimeLog } from '@mortise/shared/utils'
+import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@mortise/shared/agent/thinking-levels'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
-import { pushTyped, type HandlerFn, type RpcServer } from '@craft-agent/server-core/transport'
+import { pushTyped, type HandlerFn, type RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import type { ISessionManager } from '../session-manager-interface'
 import { getWorkspaceOrNull, resolveWorkspaceId } from '../utils'
@@ -109,10 +109,10 @@ export function cleanupSessionFileWatchForClient(clientId: string): void {
 // Recursive directory scanner for session files
 // Filters out internal files (session.jsonl) and hidden files (. prefix)
 // Returns only non-empty directories
-async function scanSessionDirectory(dirPath: string): Promise<import('@craft-agent/shared/protocol').SessionFile[]> {
+async function scanSessionDirectory(dirPath: string): Promise<import('@mortise/shared/protocol').SessionFile[]> {
   const { readdir, stat } = await import('fs/promises')
   const entries = await readdir(dirPath, { withFileTypes: true })
-  const files: import('@craft-agent/shared/protocol').SessionFile[] = []
+  const files: import('@mortise/shared/protocol').SessionFile[] = []
 
   for (const entry of entries) {
     // Skip internal and hidden files
@@ -331,7 +331,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Create a new session
-  server.handle(RPC_CHANNELS.sessions.CREATE, async (ctx, workspaceId: string, options?: import('@craft-agent/shared/protocol').CreateSessionOptions) => {
+  server.handle(RPC_CHANNELS.sessions.CREATE, async (ctx, workspaceId: string, options?: import('@mortise/shared/protocol').CreateSessionOptions) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const end = perf.start('rpc.createSession', { workspaceId: wid })
     const session = await sessionManager.createSession(wid, options)
@@ -460,7 +460,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Respond to a credential request (secure auth input)
   // Returns true if the response was delivered, false if agent/session is gone
-  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL, async (ctx, sessionId: string, requestId: string, response: import('@craft-agent/shared/protocol').CredentialResponse) => {
+  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL, async (ctx, sessionId: string, requestId: string, response: import('@mortise/shared/protocol').CredentialResponse) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.respondToCredential(sessionId, requestId, response)
   })
@@ -501,7 +501,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.sessions.COMMAND, async (
     ctx,
     sessionId: string,
-    command: import('@craft-agent/shared/protocol').SessionCommand
+    command: import('@mortise/shared/protocol').SessionCommand
   ) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     switch (command.type) {
@@ -604,7 +604,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     const workspace = getWorkspaceOrNull(wid, log, 'SEARCH_SESSIONS')
     if (!workspace) return []
 
-    const { searchSessions } = await import('@craft-agent/server-core/services')
+    const { searchSessions } = await import('@mortise/server-core/services')
     const workspaceSessions = sessionManager.getSessions(wid)
     const searchRoots = collectSessionSearchRoots(workspace.rootPath, workspaceSessions)
       .filter((root) => existsSync(root))
@@ -757,7 +757,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     if (!targetWorkspaceId || typeof targetWorkspaceId !== 'string') throw new Error('targetWorkspaceId is required')
     if (mode !== 'move' && mode !== 'fork') throw new Error(`Invalid dispatch mode: ${mode}`)
 
-    return sessionManager.importSession(targetWorkspaceId, bundle as import('@craft-agent/shared/sessions').SessionBundle, mode)
+    return sessionManager.importSession(targetWorkspaceId, bundle as import('@mortise/shared/sessions').SessionBundle, mode)
   }
   server.handle(RPC_CHANNELS.sessions.IMPORT, importHandler)
   // Also register as transferable so chunked transfer can invoke it on commit
@@ -775,7 +775,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Import a summarized remote-transfer payload into a target workspace.
-  server.handle(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, async (_ctx, targetWorkspaceId: string, payload: import('@craft-agent/shared/protocol').RemoteSessionTransferPayload) => {
+  server.handle(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, async (_ctx, targetWorkspaceId: string, payload: import('@mortise/shared/protocol').RemoteSessionTransferPayload) => {
     await sessionManager.waitForInit()
     if (!targetWorkspaceId || typeof targetWorkspaceId !== 'string') throw new Error('targetWorkspaceId is required')
     return sessionManager.shareTransferService.importSummary(targetWorkspaceId, payload)

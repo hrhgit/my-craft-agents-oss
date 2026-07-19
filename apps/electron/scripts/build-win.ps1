@@ -2,6 +2,8 @@
 # Usage: powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1
 
 $ErrorActionPreference = "Stop"
+$env:MORTISE_UI_VALIDATION_BUILD = "0"
+$env:MORTISE_DEV_HOST_BUILD = "0"
 
 # 强制 TLS 1.2:GitHub 要求 TLS 1.2+,旧版 Windows/PowerShell 默认 TLS 1.0/1.1 会导致下载失败
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -16,7 +18,7 @@ $RootDir = Split-Path -Parent (Split-Path -Parent $ElectronDir)
 # Configuration
 $BunVersion = "bun-v1.3.14"  # Pinned version for reproducible builds
 
-Write-Host "=== Building Craft Agents Windows Installer using electron-builder ===" -ForegroundColor Cyan
+Write-Host "=== Building Mortise Windows Installer using electron-builder ===" -ForegroundColor Cyan
 
 # 预检:构建步骤依赖系统 PATH 上的 bun/npx/node(vendor/bun/bun.exe 只用于打包进应用,不参与构建)
 foreach ($tool in @('bun', 'npx', 'node')) {
@@ -106,7 +108,7 @@ foreach ($folder in $foldersToClean) {
 }
 
 # 2. Skip `bun install`
-# craft 的 package.json 用 `file:../pi/packages/...` 协议依赖本地 Pi 仓库,
+# mortise 的 package.json 用 `file:../pi/packages/...` 协议依赖本地 Pi 仓库,
 # bun 1.3.13/1.3.14 在 Windows 上解析 `file:../` 路径时会剥掉 `../` 前缀(已知 bug),
 # 导致 `bun install` 失败并破坏已有的 node_modules symlink。
 # 开发环境已装好依赖(含指向 E:\_workSpace\_Agents\pi\packages\* 的 symlink),
@@ -123,7 +125,7 @@ function Remove-StaleCraftWorkspaceLinks {
         return
     }
 
-    Write-Host "Checking @craft-agent workspace links..."
+    Write-Host "Checking @mortise workspace links..."
     foreach ($item in Get-ChildItem -LiteralPath $ScopeDir -Force) {
         $isReparsePoint = (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq [System.IO.FileAttributes]::ReparsePoint)
         if (-not $isReparsePoint) {
@@ -145,7 +147,7 @@ function Remove-StaleCraftWorkspaceLinks {
     }
 }
 
-Remove-StaleCraftWorkspaceLinks -ScopeDir "$RootDir\node_modules\@craft-agent"
+Remove-StaleCraftWorkspaceLinks -ScopeDir "$RootDir\node_modules\@mortise"
 
 # 3. Download Bun binary for Windows (cached by version marker file)
 # Use baseline build - works on all x64 CPUs (no AVX2 requirement)
@@ -432,9 +434,9 @@ if (-not $builderSuccess) {
 }
 
 # 8. Verify the installer was built
-# electron-builder.yml 配置 win.artifactName = "Craft-Agents-${arch}.${ext}",
-# 所以 NSIS 输出为 Craft-Agents-x64.exe。优先按名称查找,回退到第一个 .exe
-$InstallerPath = Get-ChildItem -Path "$ElectronDir\release" -Filter "Craft-Agents-x64.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+# electron-builder.yml 配置 win.artifactName = "Mortise-${arch}.${ext}",
+# 所以 NSIS 输出为 Mortise-x64.exe。优先按名称查找,回退到第一个 .exe
+$InstallerPath = Get-ChildItem -Path "$ElectronDir\release" -Filter "Mortise-x64.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $InstallerPath) {
     # 回退:取 release 目录下最大的 .exe(NSIS installer 通常远大于 blockmap)
     $InstallerPath = Get-ChildItem -Path "$ElectronDir\release" -Filter "*.exe" -ErrorAction SilentlyContinue |

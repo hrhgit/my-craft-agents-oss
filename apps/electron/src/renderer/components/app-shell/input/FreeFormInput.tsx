@@ -16,7 +16,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { Icon_Home, Icon_Folder, Spinner } from '@craft-agent/ui'
+import { Icon_Home, Icon_Folder, Spinner } from '@mortise/ui'
 
 import * as storage from '@/lib/local-storage'
 import { useDirectoryPicker } from '@/hooks/useDirectoryPicker'
@@ -38,7 +38,7 @@ import {
 } from '@/components/ui/mention-menu'
 import { parseMentions } from '@/lib/mentions'
 import { RichTextInput, type RichTextInputHandle } from '@/components/ui/rich-text-input'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@mortise/ui'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -60,7 +60,7 @@ import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { ImageSupportWarningBanner } from './ImageSupportWarningBanner'
 import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, type ModelDefinition } from '@config/models'
-import { piProviderModelSupportsImages } from '@craft-agent/shared/config/pi-provider-models'
+import { piProviderModelSupportsImages } from '@mortise/shared/config/pi-provider-models'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import { SourceSelectorPopover } from '@/components/ui/SourceSelectorPopover'
@@ -69,14 +69,15 @@ import { CompactWorkingDirectorySelector } from '@/components/ui/CompactWorkingD
 import { ProviderIcon } from '@/components/icons/ProviderIcon'
 import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
 import { derivePickerMode } from './picker-mode'
+import { matchExactExtensionCommand } from './extension-command-submit'
 import type { FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
-import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
-import type { PermissionMode } from '@craft-agent/shared/agent/modes'
-import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@craft-agent/shared/agent/thinking-levels'
+import type { MidStreamSendIntent } from '@mortise/shared/protocol'
+import type { PermissionMode } from '@mortise/shared/agent/modes'
+import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@mortise/shared/agent/thinking-levels'
 import {
   ATTACHMENT_INLINE_RPC_LIMIT_BYTES,
   ATTACHMENT_SINGLE_FILE_LIMIT_BYTES,
-} from '@craft-agent/shared/utils/attachment-limits'
+} from '@mortise/shared/utils/attachment-limits'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { useUiSemanticNode } from '@/ui-validation/react'
 import { hasOpenOverlay } from '@/lib/overlay-detection'
@@ -699,7 +700,7 @@ export function FreeFormInput({
   // Track last caret position for focus restoration (e.g., after permission mode popover closes)
   const lastCaretPositionRef = React.useRef<number | null>(null)
 
-  // Listen for craft:insert-text events (generic mechanism for inserting text into input)
+  // Listen for mortise:insert-text events (generic mechanism for inserting text into input)
   // Used by components that want to pre-fill the input with text
   React.useEffect(() => {
     const handleInsertText = (e: CustomEvent<{ text: string; sessionId?: string }>) => {
@@ -717,13 +718,13 @@ export function FreeFormInput({
       }, 0)
     }
 
-    window.addEventListener('craft:insert-text', handleInsertText as EventListener)
-    return () => window.removeEventListener('craft:insert-text', handleInsertText as EventListener)
+    window.addEventListener('mortise:insert-text', handleInsertText as EventListener)
+    return () => window.removeEventListener('mortise:insert-text', handleInsertText as EventListener)
   }, [sessionId, isFocusedPanel, syncToParent, richInputRef])
 
   const handleToggleModelVision = useModelVisionToggle()
 
-  // Listen for craft:focus-input events (restore focus after popover/dropdown closes)
+  // Listen for mortise:focus-input events (restore focus after popover/dropdown closes)
   React.useEffect(() => {
     const handleFocusInput = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string }>).detail
@@ -745,8 +746,8 @@ export function FreeFormInput({
       }
     }
 
-    window.addEventListener('craft:focus-input', handleFocusInput)
-    return () => window.removeEventListener('craft:focus-input', handleFocusInput)
+    window.addEventListener('mortise:focus-input', handleFocusInput)
+    return () => window.removeEventListener('mortise:focus-input', handleFocusInput)
   }, [sessionId, isFocusedPanel, richInputRef])
 
   // Recover queued focus requests after session switch/mount races.
@@ -774,7 +775,7 @@ export function FreeFormInput({
     return maxNum + 1
   }
 
-  // Listen for craft:paste-files events (for global paste when input not focused)
+  // Listen for mortise:paste-files events (for global paste when input not focused)
   React.useEffect(() => {
     const handlePasteFiles = async (e: CustomEvent<{ files: File[]; sessionId?: string }>) => {
       if (disabled) return
@@ -813,19 +814,13 @@ export function FreeFormInput({
       richInputRef.current?.focus()
     }
 
-    window.addEventListener('craft:paste-files', handlePasteFiles as unknown as EventListener)
-    return () => window.removeEventListener('craft:paste-files', handlePasteFiles as unknown as EventListener)
+    window.addEventListener('mortise:paste-files', handlePasteFiles as unknown as EventListener)
+    return () => window.removeEventListener('mortise:paste-files', handlePasteFiles as unknown as EventListener)
   }, [disabled, sessionId, isFocusedPanel, richInputRef])
 
-  // Build active commands list for slash command menu
-  const activeCommands = React.useMemo(() => {
-    const active: SlashCommandId[] = []
-    // Add the currently active permission mode
-    if (permissionMode === 'safe') active.push('safe')
-    else if (permissionMode === 'ask') active.push('ask')
-    else if (permissionMode === 'allow-all') active.push('allow-all')
-    return active
-  }, [permissionMode])
+  // Permission selection remains in the composer footer; slash commands only
+  // expose command-like actions that do not already have a dedicated control.
+  const activeCommands = React.useMemo<SlashCommandId[]>(() => [], [])
 
   // pi 扩展命令：监听 extension_command_registered 事件并维护命令列表，
   // triggerCommand 通过 invokeExtensionCommand ElectronAPI 方法派发到子进程。
@@ -863,11 +858,8 @@ export function FreeFormInput({
       })
       return
     }
-    if (commandId === 'safe') onPermissionModeChange?.('safe')
-    else if (commandId === 'ask') onPermissionModeChange?.('ask')
-    else if (commandId === 'allow-all') onPermissionModeChange?.('allow-all')
-    else if (commandId === 'compact' && !isProcessing) onSubmit('/compact', undefined)
-  }, [onPermissionModeChange, isProcessing, onSubmit, triggerExtensionCommand])
+    if (commandId === 'compact' && !isProcessing) onSubmit('/compact', undefined)
+  }, [isProcessing, onSubmit, triggerExtensionCommand])
 
   // Handle folder selection from slash command menu
   const handleSlashFolderSelect = React.useCallback((path: string) => {
@@ -1166,6 +1158,21 @@ export function FreeFormInput({
     // Tutorial may disable sending to guide user through specific steps
     if (disableSend) return false
 
+    const exactExtensionCommand = attachments.length === 0 && followUpItems.length === 0
+      ? matchExactExtensionCommand(input, extensionCommands)
+      : undefined
+    if (exactExtensionCommand) {
+      void triggerExtensionCommand(exactExtensionCommand.name).then(result => {
+        if (!result.invoked) toast.error(`/${exactExtensionCommand.name} failed`, { description: result.error })
+      })
+      setInput('')
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
+      onInputChange?.('')
+      prevInputValueRef.current = ''
+      requestAnimationFrame(() => richInputRef.current?.focus())
+      return true
+    }
+
     // Parse all @mentions (skills, sources, folders)
     const skillSlugs = skills.map(s => s.slug)
     const sourceSlugs = sources.map(s => s.config.slug)
@@ -1202,9 +1209,9 @@ export function FreeFormInput({
     })
 
     return true
-  }, [input, attachments, followUpItems, disabled, disableSend, onInputChange, onAttachmentsChange, onSubmit, skills, sources, optimisticSourceSlugs, onSourcesChange, onWorkingDirectoryChange, homeDir])
+  }, [input, attachments, followUpItems, disabled, disableSend, extensionCommands, triggerExtensionCommand, onInputChange, onAttachmentsChange, onSubmit, skills, sources, optimisticSourceSlugs, onSourcesChange, onWorkingDirectoryChange, homeDir])
 
-  // Listen for craft:submit-input events (simulate pressing the Send button)
+  // Listen for mortise:submit-input events (simulate pressing the Send button)
   React.useEffect(() => {
     const handleSubmitInput = (e: CustomEvent<{ sessionId?: string }>) => {
       const targetSessionId = e.detail?.sessionId
@@ -1212,8 +1219,8 @@ export function FreeFormInput({
       submitMessage()
     }
 
-    window.addEventListener('craft:submit-input', handleSubmitInput as EventListener)
-    return () => window.removeEventListener('craft:submit-input', handleSubmitInput as EventListener)
+    window.addEventListener('mortise:submit-input', handleSubmitInput as EventListener)
+    return () => window.removeEventListener('mortise:submit-input', handleSubmitInput as EventListener)
   }, [sessionId, isFocusedPanel, submitMessage])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1593,7 +1600,7 @@ export function FreeFormInput({
         {!isCollapsedInCompact && (
         <RichTextInput
           {...inputSemanticProps}
-          data-craft-ui-interactions="shortcut clipboard ime rich-text"
+          data-mortise-ui-interactions="shortcut clipboard ime rich-text"
           ref={richInputRef}
           value={input}
           onChange={handleInputChange}
@@ -1603,7 +1610,7 @@ export function FreeFormInput({
           onLongTextPaste={handleLongTextPaste}
           onFocus={() => { setIsFocused(true); onFocusChange?.(true) }}
           onBlur={() => {
-            // Save caret position before losing focus (for restoration via craft:focus-input)
+            // Save caret position before losing focus (for restoration via mortise:focus-input)
             lastCaretPositionRef.current = richInputRef.current?.selectionStart ?? null
             setIsFocused(false)
             onFocusChange?.(false)
@@ -1640,7 +1647,7 @@ export function FreeFormInput({
 
           {/* Compact mode: standard icon badges plus the permission selector in the input footer.
               Wrapper absorbs all squeeze so the model label truncates first and the send button stays
-              anchored to the right (craft-agents-oss#798). overflow-hidden is safe — Radix Drawer /
+              anchored to the right (mortise-oss#798). overflow-hidden is safe — Radix Drawer /
               dropdowns inside render via portals, so they aren't clipped. */}
           {compactMode && (
           <div className="flex items-center gap-1 min-w-0 shrink overflow-hidden">

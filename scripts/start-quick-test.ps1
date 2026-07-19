@@ -11,7 +11,7 @@ Set-Location $repoRoot
 
 function Write-Step {
   param([string]$Message)
-  Write-Host "[Craft Agents] $Message" -ForegroundColor Cyan
+  Write-Host "[Mortise] $Message" -ForegroundColor Cyan
 }
 
 function Fail-And-Wait {
@@ -37,10 +37,10 @@ function Ensure-Command {
 Ensure-Command "bun"
 
 # Product feature test mode is intentionally separate from the privileged UI
-# validation host. Quick launches use normal Craft data while enabling gated
+# validation host. Quick launches use normal Mortise data while enabling gated
 # work that has not reached the production default yet.
-$env:CRAFT_TEST_MODE = "1"
-$env:VITE_CRAFT_TEST_MODE = "1"
+$env:MORTISE_TEST_MODE = "1"
+$env:VITE_MORTISE_TEST_MODE = "1"
 
 $nodeModulesPath = Join-Path $repoRoot "node_modules"
 if (-not (Test-Path $nodeModulesPath)) {

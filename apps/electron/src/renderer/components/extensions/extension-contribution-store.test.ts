@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { ExtensionContributionDeltaV1 } from '@craft-agent/shared/protocol'
+import type { ExtensionContributionDeltaV1 } from '@mortise/shared/protocol'
 import { ContributionStore, selectMountableOverflow, SurfaceLayoutManager } from './extension-contribution-store'
 import type { RegisteredExtensionContribution } from './extension-contribution-store'
 

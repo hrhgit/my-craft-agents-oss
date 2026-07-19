@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mortise/pi-coding-agent";
 import { acquireLock, getYourselfOutputDir, homeRelative, releaseLock, resetYourselfOutputDir } from "./state.ts";
 import { isMimoAvailable } from "./summarizer.ts";
 import { STATUS_SPINNER_FRAMES, YOURSELF_MODEL_REF, YOURSELF_STATUS_KEY, type YourselfRuntimeStatus } from "./types.ts";

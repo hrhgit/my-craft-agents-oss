@@ -4,8 +4,8 @@ import { homedir, tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { pathToFileURL } from 'url'
 import { EventEmitter } from 'events'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import type { HandlerFn, RequestContext, RpcServer } from '@craft-agent/server-core/transport'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import type { HandlerFn, RequestContext, RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import {
   deleteWorkspaceFileDraftRecord,
@@ -191,7 +191,7 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 3_000): Promise<v
 
 describe('registerFilesHandlers READ_USER_ATTACHMENT', () => {
   it('rejects requests without a trusted local Electron window', async () => {
-    const tmp = await mkdtemp(join(tmpdir(), 'craft-user-attachment-'))
+    const tmp = await mkdtemp(join(tmpdir(), 'mortise-user-attachment-'))
     try {
       const filePath = join(tmp, 'notes.txt')
       await writeFile(filePath, 'hello')
@@ -206,7 +206,7 @@ describe('registerFilesHandlers READ_USER_ATTACHMENT', () => {
   })
 
   it('blocks symlink aliases whose real target is a sensitive path', async () => {
-    const tmp = await mkdtemp(join(tmpdir(), 'craft-user-attachment-'))
+    const tmp = await mkdtemp(join(tmpdir(), 'mortise-user-attachment-'))
     try {
       const sshDir = join(tmp, '.ssh')
       await mkdir(sshDir)
@@ -246,7 +246,7 @@ describe('registerFilesHandlers LIST_DIRECTORY', () => {
 
 describe('registerFilesHandlers generic preview read limits', () => {
   it('rejects text and rich preview sources before reading oversized files', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-preview-read-limits-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-preview-read-limits-'))
     try {
       const oversizedText = join(root, 'oversized.html')
       const oversizedImage = join(root, 'oversized.png')
@@ -278,7 +278,7 @@ describe('registerFilesHandlers generic preview read limits', () => {
 
 describe('registerFilesHandlers workspace file browser', () => {
   it('lists and searches workspace-relative paths without exposing the root path', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-files-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-files-'))
     try {
       await mkdir(join(root, 'docs'))
       await mkdir(join(root, 'node_modules'))
@@ -305,7 +305,7 @@ describe('registerFilesHandlers workspace file browser', () => {
   })
 
   it('creates, renames, and explicitly deletes workspace entries without overwriting', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-mutations-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-mutations-'))
     try {
       const {
         createWorkspaceEntry,
@@ -357,7 +357,7 @@ describe('registerFilesHandlers workspace file browser', () => {
     expect(isCaseOnlyWorkspaceRename('docs/README.md', 'docs/README.md', 'win32')).toBe(false)
     if (process.platform !== 'win32') return
 
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-case-rename-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-case-rename-'))
     try {
       await writeFile(join(root, 'Readme.md'), 'content')
       const { renameWorkspaceEntry, listWorkspaceDirectory, ctx } = createTestHarness({ workspaceRoot: root })
@@ -371,7 +371,7 @@ describe('registerFilesHandlers workspace file browser', () => {
   })
 
   it('renames and deletes a symlink node without mutating its target', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-link-mutation-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-link-mutation-'))
     try {
       const target = join(root, 'target')
       const alias = join(root, 'alias')
@@ -400,10 +400,10 @@ describe('registerFilesHandlers workspace file browser', () => {
   })
 
   it('rejects entry mutations with active drafts and never revives a discarded draft after recreation', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-draft-mutation-'))
-    const configDir = await mkdtemp(join(tmpdir(), 'craft-workspace-draft-mutation-config-'))
-    const previousConfigDir = process.env.CRAFT_CONFIG_DIR
-    process.env.CRAFT_CONFIG_DIR = configDir
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-draft-mutation-'))
+    const configDir = await mkdtemp(join(tmpdir(), 'mortise-workspace-draft-mutation-config-'))
+    const previousConfigDir = process.env.MORTISE_CONFIG_DIR
+    process.env.MORTISE_CONFIG_DIR = configDir
     try {
       await mkdir(join(root, 'docs'))
       await writeFile(join(root, 'docs', 'notes.txt'), 'original')
@@ -432,18 +432,18 @@ describe('registerFilesHandlers workspace file browser', () => {
       await expect(readWorkspaceFileDraft(ctx, 'docs/notes.txt')).resolves.toBeNull()
       expect(await readFile(join(root, 'docs', 'notes.txt'), 'utf-8')).toBe('')
     } finally {
-      if (previousConfigDir === undefined) delete process.env.CRAFT_CONFIG_DIR
-      else process.env.CRAFT_CONFIG_DIR = previousConfigDir
+      if (previousConfigDir === undefined) delete process.env.MORTISE_CONFIG_DIR
+      else process.env.MORTISE_CONFIG_DIR = previousConfigDir
       await rm(root, { recursive: true, force: true })
       await rm(configDir, { recursive: true, force: true })
     }
   })
 
   it('serializes cross-client draft, save, and entry mutations at the workspace boundary', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-mutation-race-'))
-    const configDir = await mkdtemp(join(tmpdir(), 'craft-workspace-mutation-race-config-'))
-    const previousConfigDir = process.env.CRAFT_CONFIG_DIR
-    process.env.CRAFT_CONFIG_DIR = configDir
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-mutation-race-'))
+    const configDir = await mkdtemp(join(tmpdir(), 'mortise-workspace-mutation-race-config-'))
+    const previousConfigDir = process.env.MORTISE_CONFIG_DIR
+    process.env.MORTISE_CONFIG_DIR = configDir
     try {
       await writeFile(join(root, 'draft.txt'), 'original')
       await writeFile(join(root, 'save.txt'), 'original')
@@ -485,15 +485,15 @@ describe('registerFilesHandlers workspace file browser', () => {
         expect(await readFile(join(root, 'save.txt'), 'utf-8')).toBe('updated')
       }
     } finally {
-      if (previousConfigDir === undefined) delete process.env.CRAFT_CONFIG_DIR
-      else process.env.CRAFT_CONFIG_DIR = previousConfigDir
+      if (previousConfigDir === undefined) delete process.env.MORTISE_CONFIG_DIR
+      else process.env.MORTISE_CONFIG_DIR = previousConfigDir
       await rm(root, { recursive: true, force: true })
       await rm(configDir, { recursive: true, force: true })
     }
   })
 
   it('shares one filtered workspace watcher while keeping client subscriptions independent', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-watch-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-watch-'))
     const ctx2: RequestContext = {
       clientId: 'client-2',
       workspaceId: 'ws-1',
@@ -538,7 +538,7 @@ describe('registerFilesHandlers workspace file browser', () => {
   }, 10_000)
 
   it('rejects an initial watcher failure and builds a fresh watcher on retry', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-watch-retry-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-watch-retry-'))
     let attempts = 0
     try {
       setWorkspaceWatcherFactoryForTesting(() => {
@@ -566,8 +566,8 @@ describe('registerFilesHandlers workspace file browser', () => {
   })
 
   it('does not let a stale workspace teardown remove the client\'s newer watch', async () => {
-    const firstRoot = await mkdtemp(join(tmpdir(), 'craft-workspace-watch-old-'))
-    const secondRoot = await mkdtemp(join(tmpdir(), 'craft-workspace-watch-new-'))
+    const firstRoot = await mkdtemp(join(tmpdir(), 'mortise-workspace-watch-old-'))
+    const secondRoot = await mkdtemp(join(tmpdir(), 'mortise-workspace-watch-new-'))
     const nextCtx: RequestContext = {
       clientId: 'client-1',
       workspaceId: 'ws-2',
@@ -597,7 +597,7 @@ describe('registerFilesHandlers workspace file browser', () => {
   }, 10_000)
 
   it('returns typed previews and preserves the sensitive-file boundary', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-preview-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-preview-'))
     try {
       await writeFile(join(root, 'notes.md'), '# Notes')
       await writeFile(join(root, 'data.csv'), 'name,value\nalpha,1')
@@ -636,7 +636,7 @@ describe('registerFilesHandlers workspace file browser', () => {
   })
 
   it('keeps invalid UTF-8 files read-only without rewriting their bytes', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-encoding-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-encoding-'))
     try {
       const filePath = join(root, 'latin1.txt')
       const originalBytes = Buffer.from([0x63, 0x61, 0x66, 0xe9])
@@ -663,10 +663,10 @@ describe('registerFilesHandlers workspace file browser', () => {
   })
 
   it('persists editor drafts under the private server profile and isolates resources', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-drafts-'))
-    const configDir = await mkdtemp(join(tmpdir(), 'craft-workspace-draft-config-'))
-    const previousConfigDir = process.env.CRAFT_CONFIG_DIR
-    process.env.CRAFT_CONFIG_DIR = configDir
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-drafts-'))
+    const configDir = await mkdtemp(join(tmpdir(), 'mortise-workspace-draft-config-'))
+    const previousConfigDir = process.env.MORTISE_CONFIG_DIR
+    process.env.MORTISE_CONFIG_DIR = configDir
     try {
       await writeFile(join(root, 'alpha.txt'), 'alpha')
       await writeFile(join(root, 'beta.txt'), 'beta')
@@ -705,18 +705,18 @@ describe('registerFilesHandlers workspace file browser', () => {
       await expect(readWorkspaceFileDraft(ctx, 'alpha.txt')).resolves.toBeNull()
       await expect(readWorkspaceFileDraft(ctx, 'beta.txt')).resolves.toMatchObject({ content: 'beta draft' })
     } finally {
-      if (previousConfigDir === undefined) delete process.env.CRAFT_CONFIG_DIR
-      else process.env.CRAFT_CONFIG_DIR = previousConfigDir
+      if (previousConfigDir === undefined) delete process.env.MORTISE_CONFIG_DIR
+      else process.env.MORTISE_CONFIG_DIR = previousConfigDir
       await rm(root, { recursive: true, force: true })
       await rm(configDir, { recursive: true, force: true })
     }
   })
 
   it('surfaces unreadable draft records without deleting the recovery source', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-draft-read-error-'))
-    const configDir = await mkdtemp(join(tmpdir(), 'craft-workspace-draft-read-error-config-'))
-    const previousConfigDir = process.env.CRAFT_CONFIG_DIR
-    process.env.CRAFT_CONFIG_DIR = configDir
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-draft-read-error-'))
+    const configDir = await mkdtemp(join(tmpdir(), 'mortise-workspace-draft-read-error-config-'))
+    const previousConfigDir = process.env.MORTISE_CONFIG_DIR
+    process.env.MORTISE_CONFIG_DIR = configDir
     try {
       await writeFile(join(root, 'notes.txt'), 'original')
       const { readWorkspaceFileDraft, setWorkspaceFileDraft, ctx } = createTestHarness({ workspaceRoot: root })
@@ -732,18 +732,18 @@ describe('registerFilesHandlers workspace file browser', () => {
       await expect(readWorkspaceFileDraft(ctx, 'notes.txt')).rejects.toThrow()
       expect(await readFile(storedDraftPath, 'utf-8')).toBe('{not-json')
     } finally {
-      if (previousConfigDir === undefined) delete process.env.CRAFT_CONFIG_DIR
-      else process.env.CRAFT_CONFIG_DIR = previousConfigDir
+      if (previousConfigDir === undefined) delete process.env.MORTISE_CONFIG_DIR
+      else process.env.MORTISE_CONFIG_DIR = previousConfigDir
       await rm(root, { recursive: true, force: true })
       await rm(configDir, { recursive: true, force: true })
     }
   })
 
   it('leaves a deletion marker that prevents a discarded draft from reviving after unlink fails', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-draft-delete-'))
-    const configDir = await mkdtemp(join(tmpdir(), 'craft-workspace-draft-delete-config-'))
-    const previousConfigDir = process.env.CRAFT_CONFIG_DIR
-    process.env.CRAFT_CONFIG_DIR = configDir
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-draft-delete-'))
+    const configDir = await mkdtemp(join(tmpdir(), 'mortise-workspace-draft-delete-config-'))
+    const previousConfigDir = process.env.MORTISE_CONFIG_DIR
+    process.env.MORTISE_CONFIG_DIR = configDir
     try {
       await writeFile(join(root, 'notes.txt'), 'original')
       const { setWorkspaceFileDraft, ctx } = createTestHarness({ workspaceRoot: root })
@@ -777,18 +777,18 @@ describe('registerFilesHandlers workspace file browser', () => {
       await expect(readWorkspaceFileDraftRecord(identity)).resolves.toBeNull()
       await expect(readFile(`${filePath}.deleted`, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
-      if (previousConfigDir === undefined) delete process.env.CRAFT_CONFIG_DIR
-      else process.env.CRAFT_CONFIG_DIR = previousConfigDir
+      if (previousConfigDir === undefined) delete process.env.MORTISE_CONFIG_DIR
+      else process.env.MORTISE_CONFIG_DIR = previousConfigDir
       await rm(root, { recursive: true, force: true })
       await rm(configDir, { recursive: true, force: true })
     }
   })
 
   it('keeps a stale draft recoverable and rejects an optimistic write conflict', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-conflict-'))
-    const configDir = await mkdtemp(join(tmpdir(), 'craft-workspace-conflict-config-'))
-    const previousConfigDir = process.env.CRAFT_CONFIG_DIR
-    process.env.CRAFT_CONFIG_DIR = configDir
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-conflict-'))
+    const configDir = await mkdtemp(join(tmpdir(), 'mortise-workspace-conflict-config-'))
+    const previousConfigDir = process.env.MORTISE_CONFIG_DIR
+    process.env.MORTISE_CONFIG_DIR = configDir
     try {
       const filePath = join(root, 'notes.txt')
       await writeFile(filePath, 'original')
@@ -817,15 +817,15 @@ describe('registerFilesHandlers workspace file browser', () => {
       })
       expect(await readFile(filePath, 'utf-8')).toBe('my draft')
     } finally {
-      if (previousConfigDir === undefined) delete process.env.CRAFT_CONFIG_DIR
-      else process.env.CRAFT_CONFIG_DIR = previousConfigDir
+      if (previousConfigDir === undefined) delete process.env.MORTISE_CONFIG_DIR
+      else process.env.MORTISE_CONFIG_DIR = previousConfigDir
       await rm(root, { recursive: true, force: true })
       await rm(configDir, { recursive: true, force: true })
     }
   })
 
-  it('serializes concurrent Craft saves so only one matching expectation can commit', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-concurrent-save-'))
+  it('serializes concurrent Mortise saves so only one matching expectation can commit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-concurrent-save-'))
     try {
       const filePath = join(root, 'notes.txt')
       await writeFile(filePath, 'original')
@@ -847,8 +847,8 @@ describe('registerFilesHandlers workspace file browser', () => {
   })
 
   it('keeps an escaping symlink manageable without granting access to or deleting its target', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-workspace-symlink-'))
-    const outside = await mkdtemp(join(tmpdir(), 'craft-workspace-outside-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-workspace-symlink-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mortise-workspace-outside-'))
     try {
       await writeFile(join(outside, 'keep.txt'), 'outside')
       try {
@@ -884,7 +884,7 @@ describe('registerFilesHandlers workspace file browser', () => {
 
 describe('registerFilesHandlers READ', () => {
   it('rejects home-directory reads from remote clients without a trusted local window', async () => {
-    const tmp = await mkdtemp(join(tmpdir(), 'craft-read-remote-'))
+    const tmp = await mkdtemp(join(tmpdir(), 'mortise-read-remote-'))
     try {
       const configDir = join(tmp, 'config')
       const piAgentDir = join(tmp, 'pi-agent')
@@ -903,7 +903,7 @@ describe('registerFilesHandlers READ', () => {
       )
 
       const script = `
-        import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+        import { RPC_CHANNELS } from '@mortise/shared/protocol'
         import { registerFilesHandlers } from ${JSON.stringify(FILES_MODULE)}
 
         const handlers = new Map()
@@ -961,9 +961,9 @@ describe('registerFilesHandlers READ', () => {
       const run = Bun.spawnSync([process.execPath, '--eval', script], {
         env: {
           ...process.env,
-          CRAFT_CONFIG_DIR: configDir,
+          MORTISE_CONFIG_DIR: configDir,
           PI_CODING_AGENT_DIR: piAgentDir,
-          TEST_HOME_PATH: join(homedir(), 'craft-agent-home-read-regression.txt'),
+          TEST_HOME_PATH: join(homedir(), 'mortise-home-read-regression.txt'),
         },
         stdout: 'pipe',
         stderr: 'pipe',
@@ -978,7 +978,7 @@ describe('registerFilesHandlers READ', () => {
 
 describe('registerFilesHandlers STORE_ATTACHMENT', () => {
   it('rejects path-only attachments without a trusted local Electron window', async () => {
-    const tmp = await mkdtemp(join(tmpdir(), 'craft-store-attachment-'))
+    const tmp = await mkdtemp(join(tmpdir(), 'mortise-store-attachment-'))
     try {
       const configDir = join(tmp, 'config')
       const piAgentDir = join(tmp, 'pi-agent')
@@ -1000,7 +1000,7 @@ describe('registerFilesHandlers STORE_ATTACHMENT', () => {
       await writeFile(filePath, 'hello')
 
       const script = `
-        import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+        import { RPC_CHANNELS } from '@mortise/shared/protocol'
         import { registerFilesHandlers } from ${JSON.stringify(FILES_MODULE)}
 
         const handlers = new Map()
@@ -1067,7 +1067,7 @@ describe('registerFilesHandlers STORE_ATTACHMENT', () => {
       const run = Bun.spawnSync([process.execPath, '--eval', script], {
         env: {
           ...process.env,
-          CRAFT_CONFIG_DIR: configDir,
+          MORTISE_CONFIG_DIR: configDir,
           PI_CODING_AGENT_DIR: piAgentDir,
           TEST_ATTACHMENT_PATH: filePath,
         },

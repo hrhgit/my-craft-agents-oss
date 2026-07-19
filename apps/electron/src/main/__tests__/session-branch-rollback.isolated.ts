@@ -16,7 +16,7 @@ let appendedMessages: any[] = []
 // Partial-mock baseline: import real modules via file paths (avoids recursive mock imports)
 const actualSharedAgentModule = await import('../../../../../packages/shared/src/agent/index.ts')
 const actualSharedAgentBackendModule = await import('../../../../../packages/shared/src/agent/backend/index.ts')
-// 真实的 Craft metadata fields 和 pickSessionFields，避免 mock 字段列表与实际不同步
+// 真实的 Mortise metadata fields 和 pickSessionFields，避免 mock 字段列表与实际不同步
 const actualSessionUtils = await import('../../../../../packages/shared/src/sessions/utils.ts')
 
 mock.module('electron', () => ({
@@ -59,7 +59,7 @@ mock.module('../logger', () => {
   }
 })
 
-mock.module('@craft-agent/shared/config', () => ({
+mock.module('@mortise/shared/config', () => ({
   getWorkspaceByNameOrId: (id: string) => (id === workspace.id ? workspace : null),
   getWorkspaces: () => [workspace],
   loadConfigDefaults: () => ({
@@ -100,7 +100,7 @@ mock.module('@craft-agent/shared/config', () => ({
   deleteSessionDraft: async () => {},
 }))
 
-mock.module('@craft-agent/shared/workspaces', () => ({
+mock.module('@mortise/shared/workspaces', () => ({
   loadWorkspaceConfig: () => ({
     defaults: {
       permissionMode: 'ask',
@@ -110,7 +110,7 @@ mock.module('@craft-agent/shared/workspaces', () => ({
   }),
 }))
 
-mock.module('@craft-agent/shared/agent', () => ({
+mock.module('@mortise/shared/agent', () => ({
   ...actualSharedAgentModule,
   setPermissionMode: () => {},
   getPermissionModeDiagnostics: () => ({ mode: 'ask', source: 'test' }),
@@ -126,7 +126,7 @@ mock.module('@craft-agent/shared/agent', () => ({
   normalizeCanonicalBrowserToolName: (name: string) => name,
 }))
 
-mock.module('@craft-agent/shared/agent/backend', () => ({
+mock.module('@mortise/shared/agent/backend', () => ({
   ...actualSharedAgentBackendModule,
   resolveSessionProvider: () => null,
   createBackendFromProvider: () => {
@@ -154,7 +154,7 @@ mock.module('@craft-agent/shared/agent/backend', () => ({
   validateStoredBackendConnection: async () => ({ success: false, error: 'stub' }),
 }))
 
-mock.module('@craft-agent/shared/sources', () => ({
+mock.module('@mortise/shared/sources', () => ({
   loadWorkspaceSources: () => [],
   loadAllSources: () => [],
   getSourcesBySlugs: () => [],
@@ -175,7 +175,7 @@ mock.module('@craft-agent/shared/sources', () => ({
   API_OAUTH_PROVIDERS: [],
 }))
 
-mock.module('@craft-agent/shared/automations', () => ({
+mock.module('@mortise/shared/automations', () => ({
   AutomationSystem: class AutomationSystem {
     constructor(..._args: unknown[]) {}
     setInitialSessionMetadata() {}
@@ -188,21 +188,21 @@ mock.module('@craft-agent/shared/automations', () => ({
   AUTOMATIONS_HISTORY_FILE: 'automations.history.jsonl',
 }))
 
-mock.module('@craft-agent/shared/sessions', () => ({
+mock.module('@mortise/shared/sessions', () => ({
   listSessions: () => [],
   loadSession: (_root: string, id: string) => storedById.get(id) ?? null,
   saveSession: async (session: any) => {
-    // 兼容新格式（craftId）与旧格式（id）
-    const key = session.craftId ?? session.id
+    // 兼容新格式（mortiseId）与旧格式（id）
+    const key = session.mortiseId ?? session.id
     storedById.set(key, session)
   },
   createSession: async (_root: string, opts: any) => {
     const id = `child-${++idCounter}`
     const now = Date.now()
     const session = {
-      // 新格式用 craftId，旧测试逻辑用 id。两者设为同值以兼容。
+      // 新格式用 mortiseId，旧测试逻辑用 id。两者设为同值以兼容。
       id,
-      craftId: id,
+      mortiseId: id,
       name: opts?.name ?? null,
       messages: [],
       permissionMode: opts?.permissionMode ?? 'ask',
@@ -249,7 +249,7 @@ mock.module('@craft-agent/shared/sessions', () => ({
         id,
         timestamp: new Date(source.createdAt).toISOString(),
         cwd: workspaceRootPath,
-        craft: { id },
+        mortise: { id },
       },
       path: `${workspaceRootPath}/${id}.jsonl`,
       cwd: workspaceRootPath,
@@ -258,7 +258,7 @@ mock.module('@craft-agent/shared/sessions', () => ({
     }
   },
   projectTreeSessionProjectionAsStoredSession: (projection: any, options: { leafId?: string }) => {
-    const source = storedById.get(projection.header.craft.id)
+    const source = storedById.get(projection.header.mortise.id)
     const index = source?.messages.findIndex((message: any) => message.id === options.leafId) ?? -1
     return source && index >= 0 ? { ...source, messages: source.messages.slice(0, index + 1) } : null
   },
@@ -272,12 +272,12 @@ mock.module('@craft-agent/shared/sessions', () => ({
   },
   getOrCreateLatestSession: async () => null,
   sessionPersistenceQueue: { flush: async () => {} },
-  // 使用真实实现，避免手工维护字段列表与 Craft metadata fields 不同步
+  // 使用真实实现，避免手工维护字段列表与 Mortise metadata fields 不同步
   pickSessionFields: actualSessionUtils.pickSessionFields,
   validateSessionId: () => true,
 }))
 
-const { SessionManager } = await import('@craft-agent/server-core/sessions')
+const { SessionManager } = await import('@mortise/server-core/sessions')
 
 describe('Pi projection branch creation', () => {
   beforeEach(() => {

@@ -46,7 +46,7 @@ export function appendCompactDockBackControl(
     <button
       type="button"
       className="flexlayout__tab_toolbar_button"
-      data-craft-semantic-id="workspace.compact.back-to-navigator"
+      data-mortise-semantic-id="workspace.compact.back-to-navigator"
       title={options.label}
       aria-label={options.label}
       onPointerDown={event => event.stopPropagation()}
@@ -64,7 +64,7 @@ export function customizeDockTab(node: TabNode, renderValues: ITabRenderValues):
   const config = (node.getConfig() ?? {}) as DockTabConfig
   renderValues.leading = iconForContentKind(config.contentKind)
   renderValues.content = (
-    <span className="craft-dock-tab-label">
+    <span className="mortise-dock-tab-label">
       {renderValues.content}
     </span>
   )
@@ -85,7 +85,7 @@ export function appendSelectedTabDetachControl(
       key="detach-selected-tab"
       type="button"
       className="flexlayout__tab_toolbar_button"
-      data-craft-semantic-id={`workspace.detach-tab.${selected.getId()}`}
+      data-mortise-semantic-id={`workspace.detach-tab.${selected.getId()}`}
       title={options.label}
       aria-label={options.label}
       onPointerDown={event => event.stopPropagation()}
@@ -102,7 +102,6 @@ export function appendSelectedTabDetachControl(
 function iconForContentKind(kind: ContentKind | undefined): React.ReactNode {
   if (kind === 'file') return <FileText className="size-3.5" />
   if (kind === 'browser') return <Globe2 className="size-3.5" />
-  if (kind === 'side-task') return <Wrench className="size-3.5" />
   if (kind === 'extension') return <Puzzle className="size-3.5" />
   if (kind === 'tool' || kind === 'navigation') return <Wrench className="size-3.5" />
   return <MessageSquare className="size-3.5" />

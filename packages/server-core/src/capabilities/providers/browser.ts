@@ -1,5 +1,5 @@
 import type { CapabilityProvider } from '../types.ts'
-import { executeBrowserToolCommand, type BrowserPaneFns } from '@craft-agent/shared/agent'
+import { executeBrowserToolCommand, type BrowserPaneFns } from '@mortise/shared/agent'
 
 export interface BrowserOpenInput { url: string; focus?: boolean }
 export interface BrowserOpenResult { instanceId: string; url: string; title: string }

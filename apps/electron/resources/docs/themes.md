@@ -1,14 +1,14 @@
 # Theme Configuration Guide
 
-This guide explains how to customize the visual theme of Craft Agent.
+This guide explains how to customize the visual theme of Mortise Agent.
 
 ## Overview
 
-Craft Agent uses a 6-color theme system with support for both app-level defaults and per-workspace overrides.
+Mortise Agent uses a 6-color theme system with support for both app-level defaults and per-workspace overrides.
 
 ## Theme System Architecture (TUI vs GUI)
 
-Craft is built on top of Pi (the shared TUI coding-agent core). The two layers
+Mortise is built on top of Pi (the shared TUI coding-agent core). The two layers
 have **independent theme systems** that communicate only through a `string[]`
 protocol. Neither side reads the other's theme object.
 
@@ -17,20 +17,20 @@ protocol. Neither side reads the other's theme object.
 | Aspect | Value |
 |--------|-------|
 | **Owner** | Pi (the underlying TUI agent) |
-| **Storage** | Pi `settings.json` / Pi-internal theme state (never read by Craft) |
+| **Storage** | Pi `settings.json` / Pi-internal theme state (never read by Mortise) |
 | **Consumers** | Pi CLI terminal rendering; the `theme` argument passed to Pi extension widget `renderFn(width, theme)` |
 | **Fields** | Terminal-oriented attributes — colors, text styles (bold/dim/italic), ANSI mappings |
 | **Lifecycle** | Loaded and mutated entirely inside the `Pi RpcClient` child process |
 
-The TUI theme never crosses the child-process boundary as an object. Craft GUI
+The TUI theme never crosses the child-process boundary as an object. Mortise GUI
 does not import, read, or import the type of the Pi theme.
 
-### GUI Theme (managed by Craft shell)
+### GUI Theme (managed by Mortise shell)
 
 | Aspect | Value |
 |--------|-------|
-| **Owner** | Craft shell (Electron renderer) |
-| **Storage** | `~/.craft-agent/theme.json` (overrides) and `~/.craft-agent/themes/{name}.json` (presets) |
+| **Owner** | Mortise shell (Electron renderer) |
+| **Storage** | `~/.mortise/theme.json` (overrides) and `~/.mortise/themes/{name}.json` (presets) |
 | **Consumers** | Electron renderer CSS variables, component styles, Shiki syntax highlighting |
 | **Fields** | 6-color OKLCH palette (`background`, `foreground`, `accent`, `info`, `success`, `destructive`), surface colors, fonts, spacing, scenic mode |
 | **Lifecycle** | Loaded by the main process, applied to the renderer as CSS variables; live-updated on file change |
@@ -39,7 +39,7 @@ The rest of this document describes the **GUI theme only**.
 
 ### Decoupling Protocol
 
-Pi and Craft are decoupled by a `string[]` contract. The flow for extension
+Pi and Mortise are decoupled by a `string[]` contract. The flow for extension
 widgets:
 
 1. A Pi extension calls `ctx.ui.setWidget(key, renderFn, { placement })`.
@@ -50,19 +50,19 @@ widgets:
 3. The child process resolves `renderFn` to a plain `string[]` (one string per
    rendered line) and forwards it over JSONL as an `extension_widget` message:
    `{ type: 'extension_widget', key, content: string[], placement, source }`.
-4. The Craft main process relays the message to the renderer via IPC.
+4. The Mortise main process relays the message to the renderer via IPC.
 5. The renderer's generic `ExtensionWidgetZone` surfaces render the `string[]`
-   verbatim. Structured Craft features such as plan artifacts use their own
+   verbatim. Structured Mortise features such as plan artifacts use their own
    versioned message protocol instead. **Neither path sees the Pi `theme`
    object.**
 
 Consequences of this contract:
 
-- Craft GUI does not touch the Pi theme object; fg/bold/ANSI → plain-text
+- Mortise GUI does not touch the Pi theme object; fg/bold/ANSI → plain-text
   downgrading happens inside the child process bridge.
-- Craft GUI theme (the 6-color OKLCH palette) is independent of the Pi TUI
+- Mortise GUI theme (the 6-color OKLCH palette) is independent of the Pi TUI
   theme. Changing one does not affect the other.
-- Pi extensions cannot reach the Craft GUI theme, the DOM, or Electron APIs —
+- Pi extensions cannot reach the Mortise GUI theme, the DOM, or Electron APIs —
   they run in the child process and only receive `(width, theme)`.
 
 For the `renderFn` contract from the extension author's perspective, see
@@ -70,15 +70,15 @@ For the `renderFn` contract from the extension author's perspective, see
 
 ## GUI Theme Reference
 
-The remainder of this document describes the **GUI theme** (managed by the Craft
+The remainder of this document describes the **GUI theme** (managed by the Mortise
 shell). For the TUI theme, see Pi's own documentation.
 
 ### Theme Hierarchy
 
 1. **App default**: Selected in Settings → Appearance → Default Theme
 2. **Workspace override**: Per-workspace theme in Settings → Appearance → Workspace Themes
-3. **Preset themes**: `~/.craft-agent/themes/{name}.json` - Complete theme packages
-4. **Theme overrides**: `~/.craft-agent/theme.json` - Override specific colors (app-level)
+3. **Preset themes**: `~/.mortise/themes/{name}.json` - Complete theme packages
+4. **Theme overrides**: `~/.mortise/theme.json` - Override specific colors (app-level)
 
 Workspaces without a custom theme inherit the app default. All settings are optional - the app has sensible built-in defaults.
 
@@ -94,7 +94,7 @@ Each workspace can have its own color theme that overrides the app default. Conf
 Workspace theme preferences are stored in the workspace config:
 
 ```
-~/.craft-agent/workspaces/{id}/config.json
+~/.mortise/workspaces/{id}/config.json
 ```
 
 ```json
@@ -133,7 +133,7 @@ Any valid CSS color format is supported:
 
 ## Theme Override File
 
-Create `~/.craft-agent/theme.json` to override specific colors:
+Create `~/.mortise/theme.json` to override specific colors:
 
 ```json
 {
@@ -156,7 +156,7 @@ This allows partial dark mode customization - only override what needs to differ
 
 ## Preset Themes
 
-Preset themes are complete theme packages stored at `~/.craft-agent/themes/`. Each preset is a JSON file with theme colors and metadata.
+Preset themes are complete theme packages stored at `~/.mortise/themes/`. Each preset is a JSON file with theme colors and metadata.
 
 ### Preset Theme Schema
 
@@ -198,7 +198,7 @@ Preset themes are complete theme packages stored at `~/.craft-agent/themes/`. Ea
 ### Installing Preset Themes
 
 1. Download or create a theme JSON file
-2. Save it to `~/.craft-agent/themes/{name}.json`
+2. Save it to `~/.mortise/themes/{name}.json`
 3. Select the theme in Settings → Appearance
 
 ## Scenic Mode
@@ -296,7 +296,7 @@ Theme changes are applied immediately - no restart needed. Edit theme.json and t
 
 ## Creating a Theme
 
-1. Create `~/.craft-agent/theme.json` for overrides or `~/.craft-agent/themes/{name}.json` for a preset
+1. Create `~/.mortise/theme.json` for overrides or `~/.mortise/themes/{name}.json` for a preset
 2. Add only the colors you want to customize
 3. Optionally add `dark` overrides for dark mode
 
@@ -310,7 +310,7 @@ Theme changes are applied immediately - no restart needed. Edit theme.json and t
 
 **Theme not applying:**
 - Verify JSON syntax is valid
-- Check file is in correct location (`~/.craft-agent/theme.json` for overrides, `~/.craft-agent/themes/` for presets)
+- Check file is in correct location (`~/.mortise/theme.json` for overrides, `~/.mortise/themes/` for presets)
 - Ensure color values are valid CSS colors
 
 **Colors look wrong in dark mode:**

@@ -1,8 +1,8 @@
 // =============================================================================
 // Protocol re-exports (channels, DTOs, events, wire types)
 // =============================================================================
-export * from '@craft-agent/shared/protocol'
-import type { BrowserHostDockNavigationCommand } from '@craft-agent/shared/protocol'
+export * from '@mortise/shared/protocol'
+import type { BrowserHostDockNavigationCommand, WorkspaceCoordinationStatusV1 } from '@mortise/shared/protocol'
 
 // =============================================================================
 // Package re-exports (convenience for renderer imports)
@@ -22,17 +22,17 @@ import type {
   ContentBadge,
   ToolDisplayMeta,
   AnnotationV1,
-} from '@craft-agent/core/types';
+} from '@mortise/core/types';
 
 // Mode types from dedicated subpath export (avoids pulling in SDK)
-import type { PermissionMode } from '@craft-agent/shared/agent/modes';
+import type { PermissionMode } from '@mortise/shared/agent/modes';
 export type { PermissionMode };
-export { PERMISSION_MODE_CONFIG } from '@craft-agent/shared/agent/modes';
+export { PERMISSION_MODE_CONFIG } from '@mortise/shared/agent/modes';
 
 // Thinking level types
-import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels';
+import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels';
 export type { ThinkingLevel };
-export { THINKING_LEVELS, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels';
+export { THINKING_LEVELS, DEFAULT_THINKING_LEVEL } from '@mortise/shared/agent/thinking-levels';
 
 export type {
   CoreMessage as Message,
@@ -50,29 +50,29 @@ export type {
 };
 
 // Auth types for onboarding
-import type { AuthState, SetupNeeds } from '@craft-agent/shared/auth';
-import type { AuthType } from '@craft-agent/shared/config/types';
+import type { AuthState, SetupNeeds } from '@mortise/shared/auth';
+import type { AuthType } from '@mortise/shared/config/types';
 export type { AuthState, SetupNeeds, AuthType };
 
 // Credential health types
-import type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType } from '@craft-agent/shared/credentials/types';
+import type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType } from '@mortise/shared/credentials/types';
 export type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType };
 
 // Source types for session source selection
-import type { LoadedSource, FolderSourceConfig, SourceConnectionStatus } from '@craft-agent/shared/sources/types';
+import type { LoadedSource, FolderSourceConfig, SourceConnectionStatus } from '@mortise/shared/sources/types';
 export type { LoadedSource, FolderSourceConfig, SourceConnectionStatus };
 
 // Skill types
-import type { LoadedSkill, SkillMetadata } from '@craft-agent/shared/skills/types';
+import type { LoadedSkill, SkillMetadata } from '@mortise/shared/skills/types';
 export type { LoadedSkill, SkillMetadata };
 
 // Resource bundle types (cross-workspace export/import)
-import type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult } from '@craft-agent/shared/resources';
+import type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult } from '@mortise/shared/resources';
 export type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult };
 
 // provider types
-import type { NetworkProxySettings, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult } from '@craft-agent/shared/config';
-export type { NetworkProxySettings, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult };
+import type { NetworkProxySettings, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate, SubagentUpsert } from '@mortise/shared/config';
+export type { NetworkProxySettings, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate, SubagentUpsert };
 
 // =============================================================================
 // GUI-only types (not used by server/handler code)
@@ -161,7 +161,7 @@ export interface TransportConnectionState {
 // =============================================================================
 
 // Re-import types for ElectronAPI
-import type { WorkspaceInfo, Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@craft-agent/core/types';
+import type { WorkspaceInfo, Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@mortise/core/types';
 
 // Import protocol types used by ElectronAPI (they come through the `export *` above,
 // but we need them in scope for the interface definition)
@@ -205,7 +205,7 @@ import type {
   ImportRemoteSessionTransferResult,
   PiProjectionEventV1,
   PiProjectionSnapshotV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 
 export interface ElectronAPI {
   /** Development-only agent UI validation bridge. Absent in production builds. */
@@ -232,9 +232,9 @@ export interface ElectronAPI {
   getServerHomeDir(): Promise<string>
 
   // Server mode configuration
-  getServerConfig(): Promise<import('@craft-agent/shared/config/server-config').ServerConfig>
-  setServerConfig(config: import('@craft-agent/shared/config/server-config').ServerConfig): Promise<void>
-  getServerStatus(): Promise<import('@craft-agent/shared/config/server-config').ServerStatus>
+  getServerConfig(): Promise<import('@mortise/shared/config/server-config').ServerConfig>
+  setServerConfig(config: import('@mortise/shared/config/server-config').ServerConfig): Promise<void>
+  getServerStatus(): Promise<import('@mortise/shared/config/server-config').ServerStatus>
 
   // App lifecycle
   relaunchApp(): Promise<void>
@@ -276,6 +276,7 @@ export interface ElectronAPI {
   checkWorkspaceSlug(slug: string): Promise<{ exists: boolean; path: string }>
   updateWorkspaceRemoteServer(workspaceId: string, remoteServer: CoreRemoteServerConfig): Promise<{ success: boolean }>
   onWorkspaceRemoteServerUpdated(callback: (data: { workspaceId: string }) => void): () => void
+  getWorkspaceCoordinationStatus(): Promise<WorkspaceCoordinationStatusV1>
 
   // Server-level workspace operations (for thin client / remote workspace discovery)
   getServerWorkspaces(): Promise<WorkspaceInfo[]>
@@ -422,7 +423,7 @@ export interface ElectronAPI {
   onMenuToggleFocusMode(callback: () => void): () => void
   onMenuToggleSidebar(callback: () => void): () => void
 
-  // Deep link navigation listener (for external craftagents:// URLs)
+  // Deep link navigation listener (for external mortise:// URLs)
   onDeepLinkNavigate(callback: (nav: DeepLinkNavigation) => void): () => void
 
   // Auth
@@ -471,10 +472,10 @@ export interface ElectronAPI {
   writePreferences(content: string): Promise<{ success: boolean; error?: string }>
 
   // Session Drafts (persisted composer state — text + attachment refs)
-  getDraft(sessionId: string): Promise<import('@craft-agent/shared/config').SessionDraft | null>
-  setDraft(sessionId: string, draft: import('@craft-agent/shared/config').SessionDraft): Promise<void>
+  getDraft(sessionId: string): Promise<import('@mortise/shared/config').SessionDraft | null>
+  setDraft(sessionId: string, draft: import('@mortise/shared/config').SessionDraft): Promise<void>
   deleteDraft(sessionId: string): Promise<void>
-  getAllDrafts(): Promise<Record<string, import('@craft-agent/shared/config').SessionDraft>>
+  getAllDrafts(): Promise<Record<string, import('@mortise/shared/config').SessionDraft>>
 
   // Session Info Panel
   getSessionFiles(sessionId: string): Promise<SessionFile[]>
@@ -488,9 +489,9 @@ export interface ElectronAPI {
   deleteSource(workspaceId: string, sourceSlug: string): Promise<void>
   startSourceOAuth(workspaceId: string, sourceSlug: string): Promise<{ success: boolean; error?: string }>
   saveSourceCredentials(workspaceId: string, sourceSlug: string, credential: string): Promise<void>
-  getSourcePermissionsConfig(workspaceId: string, sourceSlug: string): Promise<import('@craft-agent/shared/agent').PermissionsConfigFile | null>
-  getWorkspacePermissionsConfig(workspaceId: string): Promise<import('@craft-agent/shared/agent').PermissionsConfigFile | null>
-  getDefaultPermissionsConfig(): Promise<{ config: import('@craft-agent/shared/agent').PermissionsConfigFile | null; path: string }>
+  getSourcePermissionsConfig(workspaceId: string, sourceSlug: string): Promise<import('@mortise/shared/agent').PermissionsConfigFile | null>
+  getWorkspacePermissionsConfig(workspaceId: string): Promise<import('@mortise/shared/agent').PermissionsConfigFile | null>
+  getDefaultPermissionsConfig(): Promise<{ config: import('@mortise/shared/agent').PermissionsConfigFile | null; path: string }>
   getMcpTools(workspaceId: string, sourceSlug: string): Promise<McpToolsResult>
 
   // OAuth (server-owned credentials, client-orchestrated flow)
@@ -562,6 +563,12 @@ export interface ElectronAPI {
   getDataSourcesEnabled(): Promise<boolean>
   setDataSourcesEnabled(enabled: boolean): Promise<void>
 
+  // Agent settings
+  getAgentSettings(): Promise<AgentSettingsSnapshot>
+  updateMainAgentSettings(update: MainAgentSettingsUpdate): Promise<AgentSettingsSnapshot>
+  upsertSubagent(update: SubagentUpsert): Promise<{ success: true; agent: import('@mortise/shared/config').SubagentDefinition }>
+  deleteSubagent(id: string): Promise<{ success: true }>
+
   // Pi Extensions 集成开关
   getPiExtensionsDelegatePromptAutomation(): Promise<boolean>
   setPiExtensionsDelegatePromptAutomation(delegate: boolean): Promise<void>
@@ -569,21 +576,21 @@ export interface ElectronAPI {
   setPiExtensionSettings(settings: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   updatePiExtensionSettings(patch: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   getPiExtensionCatalog(): Promise<PiExtensionCatalogResult>
-  patchPiExtensionConfig(patch: import('@craft-agent/shared/config').PiExtensionConfigPatch): Promise<import('@craft-agent/shared/config').PiExtensionConfigPatchResult>
-  reloadPiExtensions(interruptRunning: boolean): Promise<import('@craft-agent/shared/config').PiExtensionReloadResult>
+  patchPiExtensionConfig(patch: import('@mortise/shared/config').PiExtensionConfigPatch): Promise<import('@mortise/shared/config').PiExtensionConfigPatchResult>
+  reloadPiExtensions(interruptRunning: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
   getPiExtensionStates(): Promise<Record<string, boolean>>
-  setPiExtensionEnabled(name: string, enabled: boolean): Promise<import('@craft-agent/shared/config').PiExtensionReloadResult>
+  setPiExtensionEnabled(name: string, enabled: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
 
   // Pi 扩展事件桥接：监听 extension_* / remoteui_request 事件
-  onExtensionEvent(callback: (event: import('@craft-agent/shared/agent/backend/types').ExtensionBridgeEvent) => void): () => void
+  onExtensionEvent(callback: (event: import('@mortise/shared/agent/backend/types').ExtensionBridgeEvent) => void): () => void
   // 回复 remoteui:request（payload=null 表示取消）
   sendRemoteUIResponse(sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): Promise<boolean>
-  invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>, ownerExtensionId?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult>
-  getExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent/backend/types').PiExtensionCommand[]>
+  invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>, ownerExtensionId?: string): Promise<import('@mortise/core/types').ExtensionCommandResult>
+  getExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent/backend/types').PiExtensionCommand[]>
   /** Preload-authenticated, source-build-only capability. Never true in packaged/production builds. */
   uiValidationTestHost?: { readonly schemaVersion: 1; readonly enabled: true }
   // Pi session tree — list child sessions spawned from the given parent session
-  listChildSessions(sessionId: string): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]>
+  listChildSessions(sessionId: string): Promise<import('@mortise/shared/agent').PiChildSessionInfo[]>
 
   // Appearance settings
   getRichToolDescriptions(): Promise<boolean>
@@ -739,7 +746,7 @@ export interface MessagingPlatformRuntimeInfo {
 
 /**
  * Workspace-level access policy for a messaging platform.
- * Mirrors the canonical type in `@craft-agent/messaging-gateway`.
+ * Mirrors the canonical type in `@mortise/messaging-gateway`.
  */
 export type MessagingPlatformAccessMode = 'open' | 'owner-only'
 

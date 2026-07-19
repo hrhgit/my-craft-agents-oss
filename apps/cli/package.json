@@ -1,12 +1,12 @@
 {
-  "name": "@craft-agent/cli",
-  "version": "0.10.4",
+  "name": "@mortise/cli",
+  "version": "0.1.0",
   "license": "Apache-2.0",
-  "description": "Terminal client for Craft Agent server",
+  "description": "Terminal client for Mortise Agent server",
   "type": "module",
   "main": "src/index.ts",
   "bin": {
-    "craft-cli": "src/index.ts"
+    "mortise-cli": "src/index.ts"
   },
   "scripts": {
     "start": "bun run src/index.ts",
@@ -14,8 +14,8 @@
     "test": "bun test src/"
   },
   "dependencies": {
-    "@craft-agent/shared": "workspace:*",
-    "@craft-agent/server-core": "workspace:*"
+    "@mortise/shared": "workspace:*",
+    "@mortise/server-core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.2",

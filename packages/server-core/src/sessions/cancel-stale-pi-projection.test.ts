@@ -1,12 +1,12 @@
 import { describe, expect, it, jest } from 'bun:test'
-import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 
 describe('SessionManager cancellation', () => {
   it('closes a stale running Pi projection even when managed processing is already false', async () => {
     const manager = new SessionManager()
     const managed = createManagedSession(
-      { craftId: 'session-1' },
+      { mortiseId: 'session-1' },
       { id: 'workspace-1', name: 'Workspace', rootPath: process.cwd(), createdAt: 0 } as never,
       { messagesLoaded: true },
     )

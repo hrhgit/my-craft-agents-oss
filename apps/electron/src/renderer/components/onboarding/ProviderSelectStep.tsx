@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { Key, Monitor } from "lucide-react"
-import { CraftAgentsSymbol } from "@/components/icons/CraftAgentsSymbol"
+import { MortiseSymbol } from "@/components/icons/MortiseSymbol"
 import { StepFormLayout } from "./primitives"
 
 /**
@@ -57,7 +57,7 @@ export function ProviderSelectStep({ onSelect, onSkip }: ProviderSelectStepProps
     <StepFormLayout
       iconElement={
         <div className="flex size-16 items-center justify-center">
-          <CraftAgentsSymbol className="size-10 text-accent" />
+          <MortiseSymbol className="size-10 text-accent" />
         </div>
       }
       title={t("onboarding.providerSelect.title")}
@@ -68,7 +68,7 @@ export function ProviderSelectStep({ onSelect, onSkip }: ProviderSelectStepProps
           <button
             key={option.id}
             data-testid={`onboarding-provider-${option.id}`}
-            data-craft-semantic-id={`onboarding.provider.${option.id}`}
+            data-mortise-semantic-id={`onboarding.provider.${option.id}`}
             onClick={() => onSelect(option.id)}
             className={cn(
               "flex w-full items-center gap-3 rounded-xl bg-foreground-2 p-3 text-left transition-all",
@@ -97,7 +97,7 @@ export function ProviderSelectStep({ onSelect, onSkip }: ProviderSelectStepProps
         <div className="mt-4 text-center">
           <button
             data-testid="onboarding-setup-later"
-            data-craft-semantic-id="onboarding.setup-later"
+            data-mortise-semantic-id="onboarding.setup-later"
             onClick={onSkip}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >

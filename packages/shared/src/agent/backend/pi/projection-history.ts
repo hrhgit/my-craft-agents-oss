@@ -1,10 +1,10 @@
-import type { HostSessionProjection } from '@earendil-works/pi-coding-agent/host-facade'
+import type { HostSessionProjection } from '@mortise/pi-coding-agent/host-facade'
 import type { PiProjectionEntityV1, PiProjectionEventV1, PiProjectionSnapshotV1 } from '../../../protocol/pi-projection.ts'
 import { PiProjectionBuilder } from './projection-builder.ts'
 
 export type PiHostSessionProjectionLike = Pick<HostSessionProjection, 'leafId' | 'entries'>
 
-/** Rebuilds the active Pi branch without constructing Craft transcript DTOs. */
+/** Rebuilds the active Pi branch without constructing Mortise transcript DTOs. */
 export function buildPiProjectionSnapshotFromHostProjection(
   sessionId: string,
   runtimeId: string,

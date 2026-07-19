@@ -1,4 +1,4 @@
-import type { BrowserPaneFns, BrowserLifecycleActionResult } from '@craft-agent/shared/agent'
+import type { BrowserPaneFns, BrowserLifecycleActionResult } from '@mortise/shared/agent'
 import type { BrowserPaneManager } from './browser-pane-manager'
 
 export function createBrowserCapabilityAdapter(

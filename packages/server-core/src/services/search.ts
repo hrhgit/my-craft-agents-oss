@@ -7,8 +7,8 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { existsSync } from 'fs';
-import { resolveBackendHostTooling } from '@craft-agent/shared/agent/backend';
-import { escapeRegExp as escapeRegex } from '@craft-agent/shared/utils/files';
+import { resolveBackendHostTooling } from '@mortise/shared/agent/backend';
+import { escapeRegExp as escapeRegex } from '@mortise/shared/utils/files';
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '../runtime/platform';
 
 /**
@@ -87,7 +87,7 @@ export interface SearchOptions {
   searchId?: string;
 }
 
-/** Extract a Craft session id from a flat Pi session JSONL filename. */
+/** Extract a Mortise session id from a flat Pi session JSONL filename. */
 export function extractPiSessionIdFromPath(filePath: string): string | null {
   const fileName = filePath.split(/[/\\]/).pop();
   if (!fileName?.endsWith('.jsonl') || fileName === 'session.jsonl') return null;

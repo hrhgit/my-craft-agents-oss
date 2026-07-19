@@ -8,7 +8,7 @@
  * so releaseBrowserOwnershipOnForcedStop() accepts IBrowserPaneManager.
  */
 
-import type { BrowserInstanceInfo } from '@craft-agent/shared/protocol'
+import type { BrowserInstanceInfo } from '@mortise/shared/protocol'
 
 // ---------------------------------------------------------------------------
 // Supporting types — minimal subsets of BPM's internal types

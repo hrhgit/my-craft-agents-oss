@@ -32,12 +32,12 @@ import {
   Eye,
   X,
 } from 'lucide-react'
-import { Markdown, Spinner } from '@craft-agent/ui'
+import { Markdown, Spinner } from '@mortise/ui'
 import type {
   WorkspaceDirectoryListing,
   WorkspaceFileEntry,
   WorkspaceFilePreview,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 import { HeaderIconButton } from '@/components/ui/HeaderIconButton'
 import { Button } from '@/components/ui/button'
 import {
@@ -744,14 +744,14 @@ export function FileWorkbench({ workspaceId, onProtectionChange }: FileWorkbench
 
   return (
     <section
-      data-craft-semantic-id="workspace.files"
+      data-mortise-semantic-id="workspace.files"
       data-tree-open={persisted.treeOpen}
       data-dirty={dirty}
       data-draft-persistence-pending={draftPersistencePending}
-      className="craft-file-workbench-shell relative h-full min-h-0 overflow-hidden bg-background"
+      className="mortise-file-workbench-shell relative h-full min-h-0 overflow-hidden bg-background"
       aria-label={t('workbench.files')}
     >
-      <div className="craft-file-workbench-layout h-full min-h-0">
+      <div className="mortise-file-workbench-layout h-full min-h-0">
         <main className="flex min-h-0 min-w-0 flex-col bg-background">
           <FilePreviewHeader
             selectedPath={persisted.selectedFile}
@@ -788,14 +788,14 @@ export function FileWorkbench({ workspaceId, onProtectionChange }: FileWorkbench
 
         <button
           type="button"
-          className="craft-file-tree-backdrop"
+          className="mortise-file-tree-backdrop"
           aria-label={t('workbench.closeFileTree')}
           onClick={() => setPersisted(previous => ({ ...previous, treeOpen: false }))}
         />
 
         <aside
-          data-craft-semantic-id="workspace.files.tree"
-          className="craft-file-workbench-tree min-h-0 min-w-0 bg-background"
+          data-mortise-semantic-id="workspace.files.tree"
+          className="mortise-file-workbench-tree min-h-0 min-w-0 bg-background"
           aria-label={t('workbench.fileTree')}
         >
           <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border/60 px-3">
@@ -805,7 +805,7 @@ export function FileWorkbench({ workspaceId, onProtectionChange }: FileWorkbench
               icon={<FilePlus2 className="size-3.5" />}
               tooltip={t('workbench.newFile')}
               aria-label={t('workbench.newFile')}
-              data-craft-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.createFile}
+              data-mortise-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.createFile}
               disabled={entryMutationPending}
               onClick={() => beginCreateEntry('file')}
             />
@@ -813,7 +813,7 @@ export function FileWorkbench({ workspaceId, onProtectionChange }: FileWorkbench
               icon={<FolderPlus className="size-3.5" />}
               tooltip={t('workbench.newFolder')}
               aria-label={t('workbench.newFolder')}
-              data-craft-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.createFolder}
+              data-mortise-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.createFolder}
               disabled={entryMutationPending}
               onClick={() => beginCreateEntry('directory')}
             />
@@ -821,15 +821,15 @@ export function FileWorkbench({ workspaceId, onProtectionChange }: FileWorkbench
               icon={<RefreshCw className={cn('size-3.5', loadingDirectories.size > 0 && 'animate-spin')} />}
               tooltip={t('workbench.refreshFiles')}
               aria-label={t('workbench.refreshFiles')}
-              data-craft-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.refreshTree}
+              data-mortise-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.refreshTree}
               onClick={() => void refreshTree()}
             />
             <HeaderIconButton
               icon={<X className="size-3.5" />}
-              className="craft-file-tree-close"
+              className="mortise-file-tree-close"
               tooltip={t('workbench.closeFileTree')}
               aria-label={t('workbench.closeFileTree')}
-              data-craft-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.closeTree}
+              data-mortise-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.closeTree}
               onClick={() => setPersisted(previous => ({ ...previous, treeOpen: false }))}
             />
           </div>
@@ -842,7 +842,7 @@ export function FileWorkbench({ workspaceId, onProtectionChange }: FileWorkbench
                 onChange={event => setPersisted(previous => ({ ...previous, filter: event.target.value.slice(0, 120) }))}
                 placeholder={t('workbench.filterFiles')}
                 aria-label={t('workbench.filterFiles')}
-                data-craft-semantic-id="workspace.files.filter"
+                data-mortise-semantic-id="workspace.files.filter"
                 className="h-8 w-full rounded-[5px] border border-border/70 bg-background pl-8 pr-8 text-xs outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
               />
               {persisted.filter && (
@@ -971,13 +971,13 @@ function FilePreviewHeader({
         )}
       </div>
       {preview && (
-        <span className="craft-file-preview-size shrink-0 text-[11px] tabular-nums text-muted-foreground">{formatFileSize(preview.size)}</span>
+        <span className="mortise-file-preview-size shrink-0 text-[11px] tabular-nums text-muted-foreground">{formatFileSize(preview.size)}</span>
       )}
       {editor && (
         <div
           role="tablist"
           aria-label={t('workbench.fileModes')}
-          className="craft-file-editor-modes flex h-7 shrink-0 items-center overflow-hidden rounded-[5px] border border-border/70 bg-foreground/[0.025]"
+          className="mortise-file-editor-modes flex h-7 shrink-0 items-center overflow-hidden rounded-[5px] border border-border/70 bg-foreground/[0.025]"
         >
           {([
             ['preview', Eye, t('workbench.preview')],
@@ -991,7 +991,7 @@ function FilePreviewHeader({
               aria-selected={viewMode === mode}
               aria-label={label}
               title={label}
-              data-craft-semantic-id={`workspace.files.mode.${mode}`}
+              data-mortise-semantic-id={`workspace.files.mode.${mode}`}
               onClick={() => onViewModeChange(mode)}
               className={cn(
                 'inline-flex size-7 items-center justify-center border-r border-border/60 text-muted-foreground outline-none transition-colors last:border-r-0 hover:bg-foreground/5 hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring',
@@ -1010,14 +1010,14 @@ function FilePreviewHeader({
             icon={<Undo2 className="size-3.5" />}
             tooltip={t('common.revert')}
             aria-label={t('common.revert')}
-            data-craft-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.revert}
+            data-mortise-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.revert}
             onClick={onRevert}
           />
           <HeaderIconButton
             icon={<Save className="size-3.5" />}
             tooltip={conflict ? t('workbench.compareLatest') : t('common.save')}
             aria-label={t('common.save')}
-            data-craft-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.save}
+            data-mortise-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.save}
             disabled={loading || saving}
             onClick={onSave}
           />
@@ -1025,28 +1025,28 @@ function FilePreviewHeader({
       )}
       <HeaderIconButton
         icon={<Clipboard className="size-3.5" />}
-        className="craft-file-copy-action"
+        className="mortise-file-copy-action"
         tooltip={t('common.copyPath')}
         aria-label={t('common.copyPath')}
-        data-craft-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.copyPath}
+        data-mortise-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.copyPath}
         disabled={!selectedPath}
         onClick={onCopyPath}
       />
       <HeaderIconButton
         icon={<RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />}
-        className="craft-file-refresh-action"
+        className="mortise-file-refresh-action"
         tooltip={t('workbench.refreshPreview')}
         aria-label={t('workbench.refreshPreview')}
-        data-craft-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.refreshPreview}
+        data-mortise-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.refreshPreview}
         disabled={!selectedPath || loading}
         onClick={onRefresh}
       />
       <HeaderIconButton
         icon={<PanelRight className="size-3.5" />}
-        className="craft-file-tree-toggle"
+        className="mortise-file-tree-toggle"
         tooltip={t('workbench.toggleFileTree')}
         aria-label={t('workbench.toggleFileTree')}
-        data-craft-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.toggleTree}
+        data-mortise-semantic-id={FILE_WORKBENCH_SEMANTIC_IDS.toggleTree}
         onClick={onToggleTree}
       />
     </header>
@@ -1086,7 +1086,7 @@ function WorkspacePreviewContent({
   if (editor && viewMode === 'edit') {
     return (
       <textarea
-        data-craft-semantic-id="workspace.files.editor"
+        data-mortise-semantic-id="workspace.files.editor"
         value={editor.content}
         onChange={event => onEditorChange(event.target.value)}
         readOnly={saving}
@@ -1334,7 +1334,7 @@ function WorkspaceFileTreeEntry({
       >
         <button
           type="button"
-          data-craft-semantic-id={`workspace.files.entry.${encodeURIComponent(entry.relativePath)}`}
+          data-mortise-semantic-id={`workspace.files.entry.${encodeURIComponent(entry.relativePath)}`}
           onClick={() => isDirectory ? onToggleDirectory(entry.relativePath) : onSelectFile(entry.relativePath)}
           className={cn(
             'flex h-7 w-full min-w-0 items-center gap-1.5 rounded-[4px] pr-2 text-left text-xs outline-none transition-colors hover:bg-foreground/4 focus-visible:ring-1 focus-visible:ring-ring',

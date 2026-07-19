@@ -2,9 +2,9 @@
  * Extension runner - executes extensions and manages their lifecycle.
  */
 
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model } from "@earendil-works/pi-ai/types";
-import type { KeyId } from "@earendil-works/pi-tui";
+import type { AgentMessage } from "@mortise/pi-agent-core";
+import type { ImageContent, Model } from "@mortise/pi-ai/types";
+import type { KeyId } from "@mortise/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
@@ -610,7 +610,7 @@ export class ExtensionRunner {
 
 	getRegisteredCommands(): ResolvedCommand[] {
 		this.commandDiagnostics = [];
-		return this.resolveRegisteredCommands();
+		return this.resolveRegisteredCommands().filter((command) => command.hidden !== true);
 	}
 
 	getCommandDiagnostics(): ResourceDiagnostic[] {

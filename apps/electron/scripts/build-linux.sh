@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+export MORTISE_UI_VALIDATION_BUILD=0
+export MORTISE_DEV_HOST_BUILD=0
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ELECTRON_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname "$(dirname "$ELECTRON_DIR")")"
@@ -65,7 +68,7 @@ done
 # Configuration
 BUN_VERSION="bun-v1.3.9"  # Pinned version for reproducible builds
 
-echo "=== Building Craft Agents AppImage (${ARCH}) using electron-builder ==="
+echo "=== Building Mortise AppImage (${ARCH}) using electron-builder ==="
 if [ "$UPLOAD" = true ]; then
     echo "Will upload to S3 after build"
 fi
@@ -142,8 +145,8 @@ else
     LINUX_ARCH="aarch64"
 fi
 
-# electron-builder outputs: Craft-Agents-x86_64.AppImage or Craft-Agents-aarch64.AppImage
-BUILT_APPIMAGE_NAME="Craft-Agents-${LINUX_ARCH}.AppImage"
+# electron-builder outputs: Mortise-x86_64.AppImage or Mortise-aarch64.AppImage
+BUILT_APPIMAGE_NAME="Mortise-${LINUX_ARCH}.AppImage"
 BUILT_APPIMAGE_PATH="$ELECTRON_DIR/release/$BUILT_APPIMAGE_NAME"
 
 if [ ! -f "$BUILT_APPIMAGE_PATH" ]; then
@@ -153,8 +156,8 @@ if [ ! -f "$BUILT_APPIMAGE_PATH" ]; then
     exit 1
 fi
 
-# Rename to our standard naming convention: Craft-Agents-x64.AppImage, Craft-Agents-arm64.AppImage
-APPIMAGE_NAME="Craft-Agents-${ARCH}.AppImage"
+# Rename to our standard naming convention: Mortise-x64.AppImage, Mortise-arm64.AppImage
+APPIMAGE_NAME="Mortise-${ARCH}.AppImage"
 APPIMAGE_PATH="$ELECTRON_DIR/release/$APPIMAGE_NAME"
 mv "$BUILT_APPIMAGE_PATH" "$APPIMAGE_PATH"
 echo "Renamed $BUILT_APPIMAGE_NAME -> $APPIMAGE_NAME"

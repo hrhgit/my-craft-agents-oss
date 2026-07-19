@@ -13,17 +13,17 @@ Set-Location $repoRoot
 
 function Write-Step {
   param([string]$Message)
-  Write-Host "[Craft Agents Web client $ClientId] $Message" -ForegroundColor Cyan
+  Write-Host "[Mortise Web client $ClientId] $Message" -ForegroundColor Cyan
 }
 
 function Get-AssignedPort {
-  $raw = if ($env:CRAFT_WEBUI_PORT) { $env:CRAFT_WEBUI_PORT } else { $env:PORT }
+  $raw = if ($env:MORTISE_WEBUI_PORT) { $env:MORTISE_WEBUI_PORT } else { $env:PORT }
   $port = 0
   if ([string]::IsNullOrWhiteSpace($raw) -or
       -not [int]::TryParse($raw, [ref]$port) -or
       $port -lt 1 -or
       $port -gt 65535) {
-    throw 'portmux did not provide a valid CRAFT_WEBUI_PORT or PORT.'
+    throw 'portmux did not provide a valid MORTISE_WEBUI_PORT or PORT.'
   }
   return $port
 }
@@ -42,9 +42,9 @@ if (-not $PortmuxManaged) {
   throw 'Shared WebUI clients must be launched through portmux.'
 }
 
-$endpoint = Get-CraftServerEndpoint -RequireWebuiAutoLogin
+$endpoint = Get-MortiseServerEndpoint -RequireWebuiAutoLogin
 if ($null -eq $endpoint) {
-  throw 'No healthy shared Craft WebUI backend was found. Run start-webui.cmd once to start it.'
+  throw 'No healthy shared Mortise WebUI backend was found. Run start-webui.cmd once to start it.'
 }
 
 $webuiPort = Get-AssignedPort
@@ -54,7 +54,7 @@ if (Test-WebuiTcpPort -Port $webuiPort) {
 
 $rpcUri = [Uri]([string]$endpoint.url)
 $rpcPort = $rpcUri.Port
-$logDir = Join-Path $env:TEMP "craft-agent-webui\client-$ClientId"
+$logDir = Join-Path $env:TEMP "mortise-webui\client-$ClientId"
 New-Item -ItemType Directory -Force $logDir | Out-Null
 $launchStatePath = Join-Path $logDir 'webui-launch-state.json'
 $staleProcessCount = Stop-WebuiLaunchState -Path $launchStatePath
@@ -67,12 +67,12 @@ if (-not (Test-Path -LiteralPath $vitePath)) {
   throw 'Vite executable not found. Run bun install first.'
 }
 
-$env:CRAFT_RPC_PORT = "$rpcPort"
-$env:CRAFT_WEBUI_PORT = "$webuiPort"
-$env:CRAFT_WEBUI_INSTANCE = "$ClientId"
-$env:CRAFT_WEBUI_HOST = '127.0.0.1'
-$env:CRAFT_WEBUI_WS_URL = "ws://localhost:$webuiPort/ws"
-$env:CRAFT_CONFIG_DIR = Split-Path -Parent ([string]$endpoint.tokenFile)
+$env:MORTISE_RPC_PORT = "$rpcPort"
+$env:MORTISE_WEBUI_PORT = "$webuiPort"
+$env:MORTISE_WEBUI_INSTANCE = "$ClientId"
+$env:MORTISE_WEBUI_HOST = '127.0.0.1'
+$env:MORTISE_WEBUI_WS_URL = "ws://localhost:$webuiPort/ws"
+$env:MORTISE_CONFIG_DIR = Split-Path -Parent ([string]$endpoint.tokenFile)
 
 $viteInput = Join-Path $logDir 'webui-vite.stdin'
 $viteOutput = Join-Path $logDir 'webui-vite.log'
@@ -107,7 +107,7 @@ try {
 
   $url = "http://localhost:$webuiPort"
   Write-Step "Ready: $url (shared RPC: $($endpoint.url))"
-  if (-not $NoBrowser -and $env:CRAFT_WEBUI_NO_BROWSER -ne '1') {
+  if (-not $NoBrowser -and $env:MORTISE_WEBUI_NO_BROWSER -ne '1') {
     Start-Process $url
   }
 

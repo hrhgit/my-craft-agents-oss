@@ -15,7 +15,7 @@ afterEach(() => {
 })
 
 function createConfigDir(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'craft-electron-shared-backend-'))
+  const directory = mkdtempSync(join(tmpdir(), 'mortise-electron-shared-backend-'))
   temporaryDirectories.push(directory)
   return directory
 }
@@ -35,13 +35,13 @@ describe('Electron shared backend discovery', () => {
 
   it('preserves an explicitly configured server', async () => {
     const env = {
-      CRAFT_SERVER_URL: 'ws://explicit.example:9100',
-      CRAFT_SERVER_TOKEN: 'explicit-token',
+      MORTISE_SERVER_URL: 'ws://explicit.example:9100',
+      MORTISE_SERVER_TOKEN: 'explicit-token',
     }
 
     expect(await configureSharedBackend(env, createConfigDir())).toBeNull()
-    expect(env.CRAFT_SERVER_URL).toBe('ws://explicit.example:9100')
-    expect(env.CRAFT_SERVER_TOKEN).toBe('explicit-token')
+    expect(env.MORTISE_SERVER_URL).toBe('ws://explicit.example:9100')
+    expect(env.MORTISE_SERVER_TOKEN).toBe('explicit-token')
   })
 
   it('configures thin-client mode from a healthy local endpoint', async () => {
@@ -66,11 +66,11 @@ describe('Electron shared backend discovery', () => {
         tokenFile,
         endpointFile,
       })
-      const env = { CRAFT_CONFIG_DIR: configDir }
+      const env = { MORTISE_CONFIG_DIR: configDir }
 
       expect(await configureSharedBackend(env, configDir)).toEqual({ pid: process.pid, url: manifest.url })
-      expect(env.CRAFT_SERVER_URL).toBe(manifest.url)
-      expect(env.CRAFT_SERVER_TOKEN).toBe(token)
+      expect(env.MORTISE_SERVER_URL).toBe(manifest.url)
+      expect(env.MORTISE_SERVER_TOKEN).toBe(token)
     } finally {
       await new Promise<void>(resolve => listener.close(() => resolve()))
     }
@@ -87,9 +87,9 @@ describe('Electron shared backend discovery', () => {
       tokenFile,
       endpointFile: join(configDir, '.server-endpoint.json'),
     })
-    const env = { CRAFT_CONFIG_DIR: configDir }
+    const env = { MORTISE_CONFIG_DIR: configDir }
 
     expect(await configureSharedBackend(env, configDir)).toBeNull()
-    expect(env.CRAFT_SERVER_URL).toBeUndefined()
+    expect(env.MORTISE_SERVER_URL).toBeUndefined()
   })
 })

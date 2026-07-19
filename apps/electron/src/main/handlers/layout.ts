@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
 import type { AppLayout, LayoutWindow } from '../../shared/app-layout'
 

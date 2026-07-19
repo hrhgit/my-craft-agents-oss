@@ -1,16 +1,16 @@
-import type { EventSink, RpcServer } from '@craft-agent/server-core/transport'
-import { CLIENT_BROWSER_INVOKE } from '@craft-agent/server-core/transport'
-import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput } from '@craft-agent/server-core/handlers'
+import type { EventSink, RpcServer } from '@mortise/server-core/transport'
+import { CLIENT_BROWSER_INVOKE } from '@mortise/server-core/transport'
+import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput } from '@mortise/server-core/handlers'
 import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
-import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
+import { validateFilePath, getWorkspaceAllowedDirs } from '@mortise/server-core/handlers'
 import { createExtensionEventForwarder } from '../handlers/pi-extension-bridge'
-import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
+import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@mortise/server-core/runtime'
 import { basename, dirname, join } from 'path'
 import { existsSync } from 'fs'
 import { readFile, writeFile, mkdir, rename } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
-import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
-import type { AgentEvent, PlanModeStateV1 } from '@craft-agent/core/types'
+import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@mortise/shared/agent'
+import type { AgentEvent, PlanModeStateV1 } from '@mortise/core/types'
 import {
   resolveSessionProvider,
   createBackendFromProvider,
@@ -23,12 +23,13 @@ import {
   type PostInitResult,
   buildPiProjectionSnapshotFromHostProjection,
   PiProjectionBuilder,
-} from '@craft-agent/shared/agent/backend'
-import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDataSourcesEnabled, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@craft-agent/shared/config'
-import { PrivilegedExecutionBroker, SessionShareTransferService } from '@craft-agent/server-core/services'
+  piHostManager,
+} from '@mortise/shared/agent/backend'
+import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDataSourcesEnabled, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
+import { PrivilegedExecutionBroker, SessionShareTransferService } from '@mortise/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
-import { InitGate } from '@craft-agent/server-core/domain'
-import { i18n } from '@craft-agent/shared/i18n'
+import { InitGate } from '@mortise/server-core/domain'
+import { i18n } from '@mortise/shared/i18n'
 import {
   getWorkspaces,
   getWorkspaceByNameOrId,
@@ -37,9 +38,9 @@ import {
   MODEL_REGISTRY,
   type Workspace,
   type WorkspaceInfo,
-} from '@craft-agent/shared/config'
-import type { ActiveSessionInfo, SessionProcessingStatus } from '@craft-agent/core/types'
-import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
+} from '@mortise/shared/config'
+import type { ActiveSessionInfo, SessionProcessingStatus } from '@mortise/core/types'
+import { loadWorkspaceConfig } from '@mortise/shared/workspaces'
 import {
   // Session persistence functions
   listSessions as listStoredSessions,
@@ -74,14 +75,14 @@ import {
   type SessionHeader,
   pickCraftSessionMetadata,
   parsePlanCustomMessage,
-} from '@craft-agent/shared/sessions'
-import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
-import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/config'
-import { getLastApiError } from '@craft-agent/shared/interceptor'
-import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
-import { getCredentialManager } from '@craft-agent/shared/credentials'
-import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
+} from '@mortise/shared/sessions'
+import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@mortise/shared/sources'
+import { ConfigWatcher, type ConfigWatcherCallbacks } from '@mortise/shared/config'
+import { getLastApiError } from '@mortise/shared/interceptor'
+import { restoreFiles } from '@mortise/shared/utils/bundle-files'
+import { getCredentialManager } from '@mortise/shared/credentials'
+import { MortiseMcpClient, McpClientPool, McpPoolServer } from '@mortise/shared/mcp'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, RPC_CHANNELS, generateMessageId } from '@mortise/shared/protocol'
 import {
   ConversationProjector,
   resolvePiBranchTarget,
@@ -90,20 +91,20 @@ import {
   type ProjectionApplyResult,
 } from '../projection'
 import { CapabilityRouter, ELECTRON_CAPABILITY_POLICY_V1, createCapabilityAuthorizationPolicy, type CapabilityProvider } from '../capabilities'
-import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
-import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, writeRuntimeLog } from '@craft-agent/shared/utils'
-import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
-import { getToolIconsDir } from '@craft-agent/shared/config'
-import { getDefaultSummarizationModel } from '@craft-agent/shared/config/models'
-import type { SummarizeCallback } from '@craft-agent/shared/sources'
-import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
-import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot, type PendingPrompt } from '@craft-agent/shared/automations'
-import { FEATURE_FLAGS } from '@craft-agent/shared/feature-flags'
+import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@mortise/core/types'
+import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, writeRuntimeLog } from '@mortise/shared/utils'
+import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@mortise/shared/skills'
+import { getToolIconsDir } from '@mortise/shared/config'
+import { getDefaultSummarizationModel } from '@mortise/shared/config/models'
+import type { SummarizeCallback } from '@mortise/shared/sources'
+import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@mortise/shared/agent/thinking-levels'
+import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot, type PendingPrompt } from '@mortise/shared/automations'
+import { FEATURE_FLAGS } from '@mortise/shared/feature-flags'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput, normalizeProviderRuntimeBaseUrl } from './runtime-config'
 
 // Import from server-core domain utilities
-import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
-import { resizeImageForAPI, resizeIconBuffer } from '@craft-agent/server-core/services'
+import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@mortise/server-core/domain'
+import { resizeImageForAPI, resizeIconBuffer } from '@mortise/server-core/services'
 export { sanitizeForTitle }
 
 // Module-level platform ref — set once during init via setSessionPlatform()
@@ -186,7 +187,7 @@ const METADATA_WRITE_GUARD_MS = 5000
  */
 const PLAN_APPROVAL_MESSAGE = 'Plan approved, please execute.'
 
-// validateSpawnAttachmentPath removed — use shared validateFilePath from @craft-agent/server-core/handlers
+// validateSpawnAttachmentPath removed — use shared validateFilePath from @mortise/server-core/handlers
 
 const CLAUDE_TURN_ANCHORS_VERSION = 1
 const CLAUDE_TURN_ANCHORS_FILE = 'claude-turn-anchors.json'
@@ -433,7 +434,7 @@ async function applyBridgeUpdates(
   agent: AgentInstance,
   sessionPath: string,
   enabledSources: LoadedSource[],
-  mcpServers: Record<string, import('@craft-agent/shared/agent/backend').SdkMcpServerConfig>,
+  mcpServers: Record<string, import('@mortise/shared/agent/backend').SdkMcpServerConfig>,
   sessionId: string,
   workspaceRootPath: string,
   context: string,
@@ -483,7 +484,7 @@ async function getBrowserToolIconDataUrl(): Promise<string | undefined> {
   try {
     const iconCandidates = [
       join(getToolIconsDir(), BROWSER_TOOL_ICON_FILENAME),
-      // Dev fallback (before sync to ~/.craft-agent/tool-icons)
+      // Dev fallback (before sync to ~/.mortise/tool-icons)
       join(process.cwd(), 'apps', 'electron', 'resources', 'tool-icons', BROWSER_TOOL_ICON_FILENAME),
       // Packaged fallback (app resources)
       join(process.resourcesPath, 'tool-icons', BROWSER_TOOL_ICON_FILENAME),
@@ -506,12 +507,45 @@ async function getBrowserToolIconDataUrl(): Promise<string | undefined> {
   return browserToolIconDataUrlCache ?? undefined
 }
 
+const SESSION_TOOL_DISPLAY_NAMES: Record<string, string> = {
+  config_validate: 'Validate Config',
+  skill_validate: 'Validate Skill',
+  mermaid_validate: 'Validate Mermaid',
+  source_test: 'Test Source',
+  source_oauth_trigger: 'OAuth',
+  source_google_oauth_trigger: 'Google Auth',
+  source_slack_oauth_trigger: 'Slack Auth',
+  source_microsoft_oauth_trigger: 'Microsoft Auth',
+  source_credential_prompt: 'Enter Credentials',
+  update_user_preferences: 'Update Preferences',
+  transform_data: 'Transform Data',
+  script_sandbox: 'Run Script',
+  render_template: 'Render Template',
+  send_developer_feedback: 'Send Feedback',
+  spawn_session: 'Spawn Session',
+  browser_tool: 'Browser',
+  get_session_info: 'Session Info',
+  list_sessions: 'List Sessions',
+  send_agent_message: 'Send Agent Message',
+  list_messaging_channels: 'List Messaging Channels',
+  unbind_messaging_channel: 'Unbind Messaging Channel',
+}
+
 async function resolveToolDisplayMeta(
   toolName: string,
   toolInput: Record<string, unknown> | undefined,
   workspaceRootPath: string,
   sources: LoadedSource[]
 ): Promise<ToolDisplayMeta | undefined> {
+  const directSessionDisplayName = SESSION_TOOL_DISPLAY_NAMES[toolName]
+  if (directSessionDisplayName) {
+    return {
+      displayName: directSessionDisplayName,
+      iconDataUrl: toolName === 'browser_tool' ? await getBrowserToolIconDataUrl() : undefined,
+      category: 'native' as const,
+    }
+  }
+
   // Check if it's an MCP tool (format: mcp__<serverSlug>__<toolName>)
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__')
@@ -519,26 +553,11 @@ async function resolveToolDisplayMeta(
       const serverSlug = parts[1]
       const toolSlug = parts.slice(2).join('__')
 
-      // Internal MCP server tools (session, docs)
+      // Legacy session names and current documentation MCP tools.
       const internalMcpServers: Record<string, Record<string, string>> = {
-        'session': {
-          'config_validate': 'Validate Config',
-          'skill_validate': 'Validate Skill',
-          'mermaid_validate': 'Validate Mermaid',
-          'source_test': 'Test Source',
-          'source_oauth_trigger': 'OAuth',
-          'source_google_oauth_trigger': 'Google Auth',
-          'source_slack_oauth_trigger': 'Slack Auth',
-          'source_microsoft_oauth_trigger': 'Microsoft Auth',
-          'source_credential_prompt': 'Enter Credentials',
-          'transform_data': 'Transform Data',
-          'render_template': 'Render Template',
-          'update_user_preferences': 'Update Preferences',
-          'send_developer_feedback': 'Send Feedback',
-          'browser_tool': 'Browser',
-        },
-        'craft-agents-docs': {
-          'SearchCraftAgents': 'Search Docs',
+        'session': SESSION_TOOL_DISPLAY_NAMES,
+        'mortise-docs': {
+          'SearchMortise': 'Search Docs',
         },
       }
 
@@ -615,7 +634,7 @@ async function resolveToolDisplayMeta(
 
   // CLI tool icon resolution for Bash commands
   // Parses the command string to detect known tools (git, npm, docker, etc.)
-  // and resolves their brand icon from ~/.craft-agent/tool-icons/
+  // and resolves their brand icon from ~/.mortise/tool-icons/
   if (toolName === 'Bash' && toolInput?.command) {
     try {
       const toolIconsDir = getToolIconsDir()
@@ -696,7 +715,7 @@ interface ManagedSession {
   // Used to detect if a follow-up message has superseded the current one (stale-request guard).
   processingGeneration: number
   // NOTE: Parent-child tracking state (pendingTools, parentToolStack, toolToParentMap,
-  // pendingTextParent) has been removed. CraftAgent now provides parentToolUseId
+  // pendingTextParent) has been removed. MortiseAgent now provides parentToolUseId
   // directly on all events using the SDK's authoritative parent_tool_use_id field.
   // See: packages/shared/src/agent/tool-matching.ts
   // Session name (user-defined or AI-generated)
@@ -761,6 +780,8 @@ interface ManagedSession {
   turnStartFinalMessageId?: string
   // External session metadata updates seen while processing (applied after turn stop)
   pendingExternalMetadata?: SessionHeader
+  // Provider/auth changed while this turn was active; rebuild before the next turn.
+  pendingProviderRuntimeRestart?: boolean
   // Guard: suppress external metadata revert after programmatic writes.
   // fs.watch fires during atomic write (unlink+rename) and can read stale data, reverting in-memory state.
   _metadataWriteGuardUntil?: number
@@ -853,7 +874,7 @@ interface ManagedSession {
   // Whether the previous turn was interrupted (for context injection on next message).
   // Ephemeral — not persisted to disk. Cleared after one-shot injection.
   wasInterrupted?: boolean
-  // Source-activation auto-retry (craft-agents-oss#804). When a source activates
+  // Source-activation auto-retry (mortise-oss#804). When a source activates
   // mid-turn, we re-send the original message with a "[<slug> activated]" suffix
   // after a short delay. The pending slot lets `sendMessage` dedup a duplicate
   // RPC from a legacy renderer that still ships the client-side auto_retry.
@@ -903,7 +924,7 @@ export function claimAutoRetryPending(
  * Runtime-only fields get sensible defaults.
  */
 export function createManagedSession(
-  source: { craftId: string } & Partial<ManagedSession>,
+  source: { mortiseId: string } & Partial<ManagedSession>,
   workspace: Workspace,
   overrides?: Partial<ManagedSession>,
 ): ManagedSession {
@@ -927,8 +948,8 @@ export function createManagedSession(
     // Spread all session-like fields from source (name, permissionMode, model, etc.)
     // This ensures new persistent fields automatically flow through without manual copying.
     ...sourceFields,
-    // Map craftId → id (ManagedSession 内部用 id 字段，值等于 SessionHeader.craftId)
-    id: source.craftId,
+    // Map mortiseId → id (ManagedSession 内部用 id 字段，值等于 SessionHeader.mortiseId)
+    id: source.mortiseId,
     // Runtime-only defaults (not persisted)
     workspace,
     agent: null,
@@ -1131,7 +1152,7 @@ const DEFAULT_TOKEN_USAGE = {
 
 /**
  * Convert a ManagedSession to a renderer-side Session object.
- * Uses pickCraftSessionMetadata() for Craft-owned persistent fields so new
+ * Uses pickCraftSessionMetadata() for Mortise-owned persistent fields so new
  * fields propagate automatically.
  */
 function managedToSession(
@@ -1142,10 +1163,10 @@ function managedToSession(
   const includeSessionFolderPath = options.includeSessionFolderPath ?? true
   return {
     ...pickCraftSessionMetadata(m),
-    // Craft metadata uses craftId, while ManagedSession runtime state uses id.
+    // Mortise metadata uses mortiseId, while ManagedSession runtime state uses id.
     // Renderer Session DTO still exposes id, so map it explicitly here.
     id: m.id,
-    // Pre-computed fields from header (not in CRAFT_SESSION_METADATA_FIELDS)
+    // Pre-computed fields from header (not in MORTISE_SESSION_METADATA_FIELDS)
     preview: m.preview,
     lastMessageRole: m.lastMessageRole,
     tokenUsage: m.tokenUsage,
@@ -1171,7 +1192,7 @@ export class SessionManager implements ISessionManager {
   private piProjectionRetiredRuntimeIds = new Map<string, Set<string>>()
   private piProjectionWrites = new Map<string, Promise<void>>()
   private piProjectionPendingSnapshots = new Map<string, PiProjectionSnapshotV1>()
-  private capabilityPrompt?: (request: import('@craft-agent/shared/protocol').CapabilityRequestV1) => Promise<boolean>
+  private capabilityPrompt?: (request: import('@mortise/shared/protocol').CapabilityRequestV1) => Promise<boolean>
   private readonly capabilityRouter = new CapabilityRouter({
     requireDeclarations: true,
     authorize: createCapabilityAuthorizationPolicy({
@@ -1244,11 +1265,11 @@ export class SessionManager implements ISessionManager {
   // Automation systems for workspace event automations - one per workspace (includes scheduler, diffing, and handlers)
   private automationSystems: Map<string, AutomationSystem> = new Map()
   // Pending credential request resolvers (keyed by requestId)
-  private pendingCredentialResolvers: Map<string, (response: import('@craft-agent/shared/protocol').CredentialResponse) => void> = new Map()
+  private pendingCredentialResolvers: Map<string, (response: import('@mortise/shared/protocol').CredentialResponse) => void> = new Map()
   // Permission request metadata tracking (keyed by requestId)
   private pendingPermissionRequests: Map<string, {
     sessionId: string
-    type?: 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation' | 'admin_approval'
+    type?: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval'
     commandHash?: string
   }> = new Map()
   // Privileged approval binding + audit logger
@@ -1280,6 +1301,8 @@ export class SessionManager implements ISessionManager {
    * subprocess can race the resulting `chat` against the still-pending update.
    */
   private agentRefreshLocks: Map<string, Promise<void>> = new Map()
+  /** Coalesce the global Pi watcher callbacks installed once per workspace. */
+  private providerRuntimeReloadTimer?: ReturnType<typeof setTimeout>
   /** Monotonic clock to ensure strictly increasing message timestamps */
   private lastTimestamp = 0
 
@@ -1346,7 +1369,7 @@ export class SessionManager implements ISessionManager {
     return this.capabilityRouter.register(provider)
   }
 
-  setCapabilityPrompt(prompt: (request: import('@craft-agent/shared/protocol').CapabilityRequestV1) => Promise<boolean>): void {
+  setCapabilityPrompt(prompt: (request: import('@mortise/shared/protocol').CapabilityRequestV1) => Promise<boolean>): void {
     this.capabilityPrompt = prompt
   }
 
@@ -1599,6 +1622,14 @@ export class SessionManager implements ISessionManager {
       onProvidersChange: () => {
         sessionLog.info(`Pi providers changed in ${workspaceId}`)
         this.broadcastProvidersChanged()
+        if (this.providerRuntimeReloadTimer) clearTimeout(this.providerRuntimeReloadTimer)
+        this.providerRuntimeReloadTimer = setTimeout(() => {
+          this.providerRuntimeReloadTimer = undefined
+          void this.reloadProviderRuntime().catch(error => {
+            sessionLog.error(`Failed to reload Pi runtimes after external config change: ${error instanceof Error ? error.message : error}`)
+          })
+        }, 150)
+        this.providerRuntimeReloadTimer.unref?.()
       },
       onAppThemeChange: (theme) => {
         sessionLog.info(`App theme changed`)
@@ -1615,12 +1646,12 @@ export class SessionManager implements ISessionManager {
       onSkillChange: async (slug, skill) => {
         sessionLog.info(`Skill '${slug}' changed:`, skill ? 'updated' : 'deleted')
         // Broadcast updated list to UI
-        const { loadAllSkills } = await import('@craft-agent/shared/skills')
+        const { loadAllSkills } = await import('@mortise/shared/skills')
         const skills = loadAllSkills(workspaceRootPath)
         this.broadcastSkillsChanged(workspaceId, skills)
       },
 
-      // Session metadata changes (edits to the Craft metadata in Pi JSONL headers).
+      // Session metadata changes (edits to the Mortise metadata in Pi JSONL headers).
       // Detects changes from both internal writes (self) and external sources
       // (other instances, scripts, manual edits).
       onSessionMetadataChange: (sessionId, header) => {
@@ -1790,7 +1821,7 @@ export class SessionManager implements ISessionManager {
     this.eventSink(RPC_CHANNELS.automations.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
   }
 
-  private broadcastAppThemeChanged(theme: import('@craft-agent/shared/config').ThemeOverrides | null): void {
+  private broadcastAppThemeChanged(theme: import('@mortise/shared/config').ThemeOverrides | null): void {
     if (!this.eventSink) return
     sessionLog.info(`Broadcasting app theme changed`)
     this.eventSink(RPC_CHANNELS.theme.APP_CHANGED, { to: 'all' }, theme)
@@ -1802,7 +1833,7 @@ export class SessionManager implements ISessionManager {
     this.eventSink(RPC_CHANNELS.pi.GLOBAL_CHANGED, { to: 'all' })
   }
 
-  private broadcastSkillsChanged(workspaceId: string, skills: import('@craft-agent/shared/skills').LoadedSkill[]): void {
+  private broadcastSkillsChanged(workspaceId: string, skills: import('@mortise/shared/skills').LoadedSkill[]): void {
     if (!this.eventSink) return
     sessionLog.info(`Broadcasting skills changed (${skills.length} skills)`)
     this.eventSink(RPC_CHANNELS.skills.CHANGED, { to: 'workspace', workspaceId }, workspaceId, skills)
@@ -1825,7 +1856,7 @@ export class SessionManager implements ISessionManager {
     const workspaceRootPath = managed.workspace.rootPath
     sessionLog.info(`Reloading sources for session ${managed.id}`)
 
-    // Reload all sources from disk (craft-agents-docs is always available as MCP server)
+    // Reload all sources from disk (mortise-docs is always available as MCP server)
     const allSources = loadRuntimeAllSources(workspaceRootPath)
     managed.agent.setAllSources(allSources)
 
@@ -1855,7 +1886,7 @@ export class SessionManager implements ISessionManager {
    * Bun's automatic .env loading is disabled in the subprocess (--env-file=/dev/null)
    * to prevent a user's project .env from injecting ANTHROPIC_API_KEY and overriding
    * OAuth auth — Anthropic-compatible providers prioritize API key over OAuth token when both are set.
-   * See: https://github.com/lukilabs/craft-agents-oss/issues/39
+   * See: https://github.com/hrhgit/mortise-oss/issues/39
    */
   /**
    * Reinitialize authentication environment variables.
@@ -2197,7 +2228,7 @@ export class SessionManager implements ISessionManager {
           // Clear persisted overrides that point to a provider removed outside this process.
           if (managed.provider) {
             if (!hasConfiguredPiProvider(managed.provider)) {
-              sessionLog.warn(`Session ${meta.craftId} has orphaned provider "${managed.provider}", clearing`)
+              sessionLog.warn(`Session ${meta.mortiseId} has orphaned provider "${managed.provider}", clearing`)
               managed.provider = undefined
               this.setMetadataWriteGuard(managed)
               this.persistSession(managed)
@@ -2206,16 +2237,16 @@ export class SessionManager implements ISessionManager {
 
           // Initialize mode-manager state for restored sessions even before agent creation.
           // This keeps diagnostics/effective mode aligned with persisted session metadata.
-          setPermissionMode(meta.craftId, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
+          setPermissionMode(meta.mortiseId, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
           if (managed.previousPermissionMode) {
-            hydratePreviousPermissionMode(meta.craftId, managed.previousPermissionMode)
+            hydratePreviousPermissionMode(meta.mortiseId, managed.previousPermissionMode)
           }
 
-          this.sessions.set(meta.craftId, managed)
+          this.sessions.set(meta.mortiseId, managed)
 
           // Initialize session metadata in AutomationSystem for diffing
           if (automationSystem) {
-            automationSystem.setInitialSessionMetadata(meta.craftId, {
+            automationSystem.setInitialSessionMetadata(meta.mortiseId, {
               permissionMode: meta.permissionMode,
               sessionName: managed.name,
             })
@@ -2296,7 +2327,7 @@ export class SessionManager implements ISessionManager {
 
       const storedSession: StoredSession = {
         ...pickCraftSessionMetadata(managed),
-        craftId: managed.id,
+        mortiseId: managed.id,
         workspaceRootPath: managed.workspace.rootPath,
         createdAt: managed.createdAt ?? Date.now(),
         lastUsedAt: Date.now(),
@@ -2446,7 +2477,7 @@ export class SessionManager implements ISessionManager {
   async handleCredentialInput(
     sessionId: string,
     requestId: string,
-    response: import('@craft-agent/shared/protocol').CredentialResponse
+    response: import('@mortise/shared/protocol').CredentialResponse
   ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed?.pendingAuthRequest) {
@@ -2502,7 +2533,7 @@ export class SessionManager implements ISessionManager {
       }
 
       // Update source config to mark as authenticated
-      const { markSourceAuthenticated } = await import('@craft-agent/shared/sources')
+      const { markSourceAuthenticated } = await import('@mortise/shared/sources')
       markSourceAuthenticated(managed.workspace.rootPath, request.sourceSlug)
 
       // Mark source as unseen so fresh guide is injected on next message
@@ -2747,7 +2778,7 @@ export class SessionManager implements ISessionManager {
     return getSessionStoragePath(managed.workspace.rootPath, sessionId)
   }
 
-  async createSession(workspaceId: string, options?: import('@craft-agent/shared/protocol').CreateSessionOptions): Promise<Session> {
+  async createSession(workspaceId: string, options?: import('@mortise/shared/protocol').CreateSessionOptions): Promise<Session> {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       throw new Error(`Workspace ${workspaceId} not found`)
@@ -2943,21 +2974,21 @@ export class SessionManager implements ISessionManager {
     })
 
     // Branch: project the active Pi path up to the selected entry, then append
-    // only canonical messages through Pi's public SessionManager API. Craft
+    // only canonical messages through Pi's public SessionManager API. Mortise
     // retains UI-only overlay fields (annotations, attachments, badges).
     if (validatedBranch) {
       try {
-        const branchedStored = loadStoredSession(workspaceRootPath, storedSession.craftId)
+        const branchedStored = loadStoredSession(workspaceRootPath, storedSession.mortiseId)
         if (!branchedStored) {
-          throw new Error(`Failed to load newly created session ${storedSession.craftId} for branch copy`)
+          throw new Error(`Failed to load newly created session ${storedSession.mortiseId} for branch copy`)
         }
 
         const sourceMessages = validatedBranch.sourceProjectionSession.messages
           .filter(message => validatedBranch.sourceEntryIds.has(message.id))
 
-        // Re-map embedded paths from the source Craft sidecar to the branch sidecar.
+        // Re-map embedded paths from the source Mortise sidecar to the branch sidecar.
         const sourceDir = normalizePath(getSessionStoragePath(workspaceRootPath, validatedBranch.sourceSessionId))
-        const branchDir = normalizePath(getSessionStoragePath(workspaceRootPath, storedSession.craftId))
+        const branchDir = normalizePath(getSessionStoragePath(workspaceRootPath, storedSession.mortiseId))
         const remappedMessages = sourceDir !== branchDir
           ? sourceMessages.map(m => {
             const json = JSON.stringify(m)
@@ -2968,7 +2999,7 @@ export class SessionManager implements ISessionManager {
 
         const branchSessionFile = getSessionFilePath(
           workspaceRootPath,
-          storedSession.craftId,
+          storedSession.mortiseId,
           workspaceRootPath,
           storedSession.createdAt,
         )
@@ -2985,7 +3016,7 @@ export class SessionManager implements ISessionManager {
         branchedStored.messages = remapBranchedMessageIdentities(
           remappedMessages,
           importedIdMap,
-          storedSession.craftId,
+          storedSession.mortiseId,
         )
 
         branchedStored.branchFromMessageId = validatedBranch.sourceMessageId
@@ -2996,8 +3027,8 @@ export class SessionManager implements ISessionManager {
         delete branchedStored.branchFromSdkTurnId
         await saveStoredSession(branchedStored)
       } catch (error) {
-        await deleteStoredSession(workspaceRootPath, storedSession.craftId).catch(deleteError => {
-          sessionLog.warn(`Failed to roll back branch ${storedSession.craftId}: ${deleteError instanceof Error ? deleteError.message : deleteError}`)
+        await deleteStoredSession(workspaceRootPath, storedSession.mortiseId).catch(deleteError => {
+          sessionLog.warn(`Failed to roll back branch ${storedSession.mortiseId}: ${deleteError instanceof Error ? deleteError.message : deleteError}`)
         })
         throw new Error(`Could not create branch: ${error instanceof Error ? error.message : String(error)}`)
       }
@@ -3047,7 +3078,7 @@ export class SessionManager implements ISessionManager {
         } catch (error) {
           sessionLog.warn('Branch creation failed during backend preflight handshake', {
             workspaceId,
-            sessionId: storedSession.craftId,
+            sessionId: storedSession.mortiseId,
             branchFromSessionId: validatedBranch?.sourceSessionId,
             branchFromMessageId: validatedBranch?.sourceMessageId,
             branchContextStrategy: managed.branchContextStrategy,
@@ -3057,7 +3088,7 @@ export class SessionManager implements ISessionManager {
           await rollbackFailedBranchCreation({
             managed,
             workspaceRootPath,
-            sessionId: storedSession.craftId,
+            sessionId: storedSession.mortiseId,
             deleteFromRuntimeSessions: (id) => {
               const m = this.sessions.get(id)
               if (m?.autoRetryTimer) {
@@ -3079,17 +3110,17 @@ export class SessionManager implements ISessionManager {
 
     // Initialize mode-manager state immediately to avoid UI/enforcement races
     // before the agent instance is lazily created.
-    setPermissionMode(storedSession.craftId, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
+    setPermissionMode(storedSession.mortiseId, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
     if (managed.previousPermissionMode) {
-      hydratePreviousPermissionMode(storedSession.craftId, managed.previousPermissionMode)
+      hydratePreviousPermissionMode(storedSession.mortiseId, managed.previousPermissionMode)
     }
 
-    this.sessions.set(storedSession.craftId, managed)
+    this.sessions.set(storedSession.mortiseId, managed)
 
     // Initialize session metadata in AutomationSystem for diffing
     const automationSystem = this.automationSystems.get(workspaceRootPath)
     if (automationSystem) {
-      automationSystem.setInitialSessionMetadata(storedSession.craftId, {
+      automationSystem.setInitialSessionMetadata(storedSession.mortiseId, {
         permissionMode: storedSession.permissionMode,
         sessionName: managed.name,
       })
@@ -3361,7 +3392,7 @@ export class SessionManager implements ISessionManager {
       // Keep SDK subprocess side-channel files, such as api-error.json,
       // scoped to this session. Tool metadata now travels through typed Pi
       // events and no longer uses tool-metadata.json.
-      process.env.CRAFT_SESSION_DIR = getSessionStoragePath(managed.workspace.rootPath, managed.id)
+      process.env.MORTISE_SESSION_DIR = getSessionStoragePath(managed.workspace.rootPath, managed.id)
 
       // Set up agentReady promise so title generation can await agent creation
       managed.agentReady = new Promise<void>(r => { managed.agentReadyResolve = r })
@@ -3395,7 +3426,7 @@ export class SessionManager implements ISessionManager {
       // Per-session env overrides
       const miniModel = providerConfig?.models?.[1]?.id ?? providerConfig?.models?.[0]?.id
       const envOverrides: Record<string, string> = {
-        CRAFT_WORKSPACE_PATH: managed.workspace.rootPath,
+        MORTISE_WORKSPACE_PATH: managed.workspace.rootPath,
       }
       managed.envOverrides = envOverrides
 
@@ -3404,7 +3435,7 @@ export class SessionManager implements ISessionManager {
       // ============================================================
 
       const sessionConfig = {
-        craftId: managed.id,
+        mortiseId: managed.id,
         workspaceRootPath: managed.workspace.rootPath,
         sdkSessionId: managed.sdkSessionId,
         branchFromSdkSessionId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkSessionId : undefined,
@@ -3473,10 +3504,10 @@ export class SessionManager implements ISessionManager {
         }
       }
       const onHostCapabilityRequest = (
-        request: import('@craft-agent/shared/protocol').CapabilityRequestV1,
-        onProgress: (event: import('@craft-agent/shared/protocol').CapabilityProgressV1) => void,
+        request: import('@mortise/shared/protocol').CapabilityRequestV1,
+        onProgress: (event: import('@mortise/shared/protocol').CapabilityProgressV1) => void,
       ) => this.capabilityRouter.invoke(request, onProgress)
-      const onHostCapabilityDeclaration = (declaration: import('@craft-agent/shared/protocol').ExtensionCapabilityDeclarationV1) => {
+      const onHostCapabilityDeclaration = (declaration: import('@mortise/shared/protocol').ExtensionCapabilityDeclarationV1) => {
         this.capabilityRouter.declare(declaration)
       }
       const onHostCapabilityCancel = (requestId: string, runtimeId: string) => {
@@ -3673,7 +3704,7 @@ export class SessionManager implements ISessionManager {
         toolName: string;
         command?: string;
         description: string;
-        type?: 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
+        type?: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
         appName?: string;
         reason?: string;
         impact?: string;
@@ -3747,7 +3778,7 @@ export class SessionManager implements ISessionManager {
       }
 
       // Note: Credential requests now flow through onAuthRequest (unified auth flow)
-      // The legacy onCredentialRequest callback has been removed from CraftAgent
+      // The legacy onCredentialRequest callback has been removed from MortiseAgent
       // Auth refresh for mid-session token expiry is handled by the error handler in sendMessage
       // which destroys/recreates the agent to get fresh credentials
 
@@ -3781,7 +3812,7 @@ export class SessionManager implements ISessionManager {
 
       // Wire up plan review as Host control flow. The plan artifact itself is
       // projected by Pi; this compatibility event is only for external
-      // messaging consumers and never enters the Craft transcript.
+      // messaging consumers and never enters the Mortise transcript.
       managed.agent.onPlanSubmitted = async (planPath) => {
         sessionLog.info(`Plan submitted for session ${managed.id}:`, planPath)
         let planContent = ''
@@ -3869,7 +3900,7 @@ export class SessionManager implements ISessionManager {
       // Wire up onSpawnSession. When the backend exposes spawnChildSession
       // (PiAgent), delegate to pi's session tree as a thin wrapper — pi creates
       // the child session file (header + spawnedFrom + spawnConfig + optional
-      // initial prompt/name) and craft no longer instantiates its own
+      // initial prompt/name) and mortise no longer instantiates its own
       // SessionManager or writes session files. The SubagentPanel lists these
       // children via listChildSessions(spawnedFrom filter).
       // Backends without spawnChildSession are unsupported — onSpawnSession throws.
@@ -4009,7 +4040,7 @@ export class SessionManager implements ISessionManager {
           // the next tool_result, yield source_activated, and forceAbort. The
           // `source_activated` handler in this class then schedules a server-side
           // resend of the original user message with a "[{slug} activated]" suffix —
-          // landing in a fresh turn with tools live (craft-agents-oss#804).
+          // landing in a fresh turn with tools live (mortise-oss#804).
           const userMessage = managed.agent?.getCurrentTurnUserMessage?.() ?? ''
           if (userMessage) {
             managed.agent?.setPendingSourceActivationRestart({ sourceSlug, userMessage })
@@ -4162,6 +4193,42 @@ export class SessionManager implements ISessionManager {
       provider,
       supportsBranching: resolveSupportsBranching(managed),
     }, managed.workspace.id)
+  }
+
+  /**
+   * Move future sessions to a Pi host with a fresh models/auth registry and
+   * rebuild idle session runtimes. Active turns finish before their rebuild.
+   */
+  async reloadProviderRuntime(provider?: string): Promise<void> {
+    await piHostManager.invalidateAll('provider-config-changed')
+    for (const managed of this.sessions.values()) {
+      const effectiveProvider = resolveBackendContext({
+        sessionProvider: managed.provider,
+        managedModel: managed.model,
+      }).providerKey
+      if (provider && effectiveProvider !== provider) continue
+      if (!managed.agent) continue
+      if (managed.agent.isProcessing()) {
+        managed.pendingProviderRuntimeRestart = true
+        sessionLog.info(`Deferring provider runtime reload for active session ${managed.id}`)
+        continue
+      }
+      await this.disposeManagedAgentRuntime(managed, 'provider registry reload')
+    }
+  }
+
+  async getAgentRuntimeProfile(): Promise<import('@mortise/shared/config').AgentRuntimeProfile | null> {
+    for (const managed of this.sessions.values()) {
+      if (!managed.agent?.getAgentProfile) continue
+      try {
+        return await managed.agent.getAgentProfile()
+      } catch (error) {
+        sessionLog.warn(
+          `Failed to inspect agent runtime for session ${managed.id}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
+    return null
   }
 
   /** Apply the global data-source feature flag to every active runtime. */
@@ -4378,7 +4445,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Resolve a Craft-owned annotation overlay by Pi message identity. Runtime
+   * Resolve a Mortise-owned annotation overlay by Pi message identity. Runtime
    * Pi messages are intentionally not copied into `managed.messages`; when a
    * newly projected message has no overlay yet, keep only an empty placeholder
    * so persistence writes annotations without introducing transcript content.
@@ -4483,7 +4550,7 @@ export class SessionManager implements ISessionManager {
     let needsPersist = false
     const updates: { lastReadMessageId?: string; hasUnread?: boolean } = {}
 
-    // Projection is authoritative for transcript identity; Craft only stores
+    // Projection is authoritative for transcript identity; Mortise only stores
     // the read cursor as an overlay.
     const lastFinalId = managed.lastFinalMessageId
     if (lastFinalId && managed.lastReadMessageId !== lastFinalId) {
@@ -4609,7 +4676,7 @@ export class SessionManager implements ISessionManager {
           workspace: managed.workspace,
           miniModel: resolvedMiniModel,
           session: {
-            craftId: `title-${managed.id}`,
+            mortiseId: `title-${managed.id}`,
             workspaceRootPath: managed.workspace.rootPath,
             provider: managed.provider,
             createdAt: Date.now(),
@@ -4944,13 +5011,9 @@ export class SessionManager implements ISessionManager {
     // Revoke share if session was shared (prevent orphaned viewer copies)
     if (managed.sharedId) {
       try {
-        const { VIEWER_URL } = await import('@craft-agent/shared/branding')
-        const response = await fetch(
-          `${VIEWER_URL}/s/api/${managed.sharedId}`,
-          { method: 'DELETE', signal: AbortSignal.timeout(5000) }
-        )
-        if (!response.ok) {
-          sessionLog.warn(`Failed to revoke share for ${sessionId}: HTTP ${response.status}`)
+        const result = await this.shareTransferService.revoke(sessionId)
+        if (!result.success) {
+          sessionLog.warn(`Failed to revoke share for ${sessionId}: ${result.error}`)
         } else {
           sessionLog.info(`Revoked share for deleted session ${sessionId}`)
         }
@@ -4980,7 +5043,7 @@ export class SessionManager implements ISessionManager {
     await this.disposeManagedAgentRuntime(managed, 'session deleted')
     await this.flushPiProjectionWrites(managed)
 
-    // Cancel any pending source-activation auto-retry timer (craft-agents-oss#804).
+    // Cancel any pending source-activation auto-retry timer (mortise-oss#804).
     if (managed.autoRetryTimer) {
       clearTimeout(managed.autoRetryTimer)
       managed.autoRetryTimer = undefined
@@ -5019,7 +5082,7 @@ export class SessionManager implements ISessionManager {
     existingMessageId?: string,
     _isAuthRetry?: boolean,
     /**
-     * Internal hook fired after the user message identity and any Craft-owned
+     * Internal hook fired after the user message identity and any Mortise-owned
      * attachment/badge overlay have been durably accepted, but before model
      * streaming begins. The RPC handler uses this to send a synchronous ack;
      * pre-acceptance errors still reject the outer promise.
@@ -5057,7 +5120,7 @@ export class SessionManager implements ISessionManager {
 
     this.setLastMessageClientId(sessionId, rpcContext?.callerClientId)
 
-    // Source-activation auto-retry dedup (craft-agents-oss#804). When the server
+    // Source-activation auto-retry dedup (mortise-oss#804). When the server
     // has just scheduled or committed a "[<slug> activated]" retry, drop a matching
     // duplicate that arrives from a legacy renderer still running the client-side
     // auto_retry. The first matching caller wins (server timer or legacy RPC,
@@ -5172,7 +5235,7 @@ export class SessionManager implements ISessionManager {
       return
     }
 
-    // Pi owns the canonical user message. Craft only records the UI overlay
+    // Pi owns the canonical user message. Mortise only records the UI overlay
     // needed to reconcile optimistic queue/attachment state.
     const messageId = existingMessageId ?? options?.optimisticMessageId ?? generateMessageId()
     managed.lastMessageRole = 'user'
@@ -5406,7 +5469,7 @@ export class SessionManager implements ISessionManager {
 
       // Skills mentioned via @mentions are handled by the SDK's Skill tool.
       // The UI layer (extractBadges in mentions.ts) injects fully-qualified names
-      // in the rawText, and canUseTool in craft-agent.ts provides a fallback
+      // in the rawText, and canUseTool in mortise.ts provides a fallback
       // to qualify short names. No transformation needed here.
 
       // Inject interruption context so the LLM knows the previous turn was cut short.
@@ -5831,6 +5894,11 @@ export class SessionManager implements ISessionManager {
       await this.applyExternalSessionMetadata(managed, pendingHeader)
     }
 
+    if (managed.pendingProviderRuntimeRestart) {
+      managed.pendingProviderRuntimeRestart = false
+      await this.disposeManagedAgentRuntime(managed, 'deferred provider registry reload')
+    }
+
     // 4. Check queue and process or complete
     if (managed.messageQueue.length > 0) {
       // Has queued messages - process next
@@ -6030,7 +6098,7 @@ export class SessionManager implements ISessionManager {
     requestId: string,
     allowed: boolean,
     alwaysAllow: boolean,
-    options?: import('@craft-agent/shared/protocol').PermissionResponseOptions,
+    options?: import('@mortise/shared/protocol').PermissionResponseOptions,
   ): boolean {
     const managed = this.sessions.get(sessionId)
     if (managed?.agent) {
@@ -6092,7 +6160,7 @@ export class SessionManager implements ISessionManager {
    * 仅 Pi 后端实现（PiAgent.sendExtensionCommandInvoke）；其他后端返回 false。
    * 返回 false 时调用方应回退到原生路径。
    */
-  async invokeExtensionCommand(sessionId: string, commandId: string, args?: string, ownerExtensionId?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult> {
+  async invokeExtensionCommand(sessionId: string, commandId: string, args?: string, ownerExtensionId?: string): Promise<import('@mortise/core/types').ExtensionCommandResult> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       sessionLog.warn(`[ExtensionBridge] No session for command invocation: ${sessionId}`)
@@ -6229,7 +6297,7 @@ export class SessionManager implements ISessionManager {
   /**
    * 查询当前会话已注册的 Pi 扩展 slash commands。
    */
-  async listExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent').PiExtensionCommand[]> {
+  async listExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent').PiExtensionCommand[]> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       sessionLog.warn(`[ExtensionBridge] No session for command listing: ${sessionId}`)
@@ -6259,17 +6327,18 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * List child sessions in pi's session tree spawned from the given craft session.
+   * List child sessions in pi's session tree spawned from the given mortise session.
    *
    * Delegates to the backend's listChildSessions (PiAgent) which queries pi's
    * SessionManager.list(cwd) and filters by header.spawnedFrom === piSessionId.
    * Used by the SubagentPanel to render the active branch set instead of the
    * legacy subagent-supervisor active-sessions.json.
    *
-   * Returns an empty array when the backend doesn't support listChildSessions
-   * or the pi session ID isn't available yet.
+   * Returns an empty array when the backend doesn't support listChildSessions.
+   * A cold backend receives the Mortise session ID as a startup hint and resolves
+   * its authoritative runtime session ID after readiness.
    */
-  async listChildSessions(sessionId: string): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]> {
+  async listChildSessions(sessionId: string): Promise<import('@mortise/shared/agent').PiChildSessionInfo[]> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       sessionLog.warn(`[listChildSessions] No session for ${sessionId}`)
@@ -6287,11 +6356,7 @@ export class SessionManager implements ISessionManager {
     if (typeof agent.listChildSessions !== 'function') {
       return []
     }
-    const parentSessionId = agent.getSessionId()
-    if (!parentSessionId) {
-      sessionLog.warn(`[listChildSessions] No pi session ID for session ${sessionId}`)
-      return []
-    }
+    const parentSessionId = agent.getSessionId() ?? managed.sdkSessionId ?? sessionId
     try {
       return await agent.listChildSessions(parentSessionId)
     } catch (error) {
@@ -6353,7 +6418,7 @@ export class SessionManager implements ISessionManager {
    * - New unified auth flow (via handleCredentialInput)
    * - Legacy callback flow (via pendingCredentialResolvers)
    */
-  async respondToCredential(sessionId: string, requestId: string, response: import('@craft-agent/shared/protocol').CredentialResponse): Promise<boolean> {
+  async respondToCredential(sessionId: string, requestId: string, response: import('@mortise/shared/protocol').CredentialResponse): Promise<boolean> {
     // First, check if this is a new unified auth flow request
     const managed = this.sessions.get(sessionId)
     if (managed?.pendingAuthRequest && managed.pendingAuthRequest.requestId === requestId) {
@@ -6545,7 +6610,7 @@ export class SessionManager implements ISessionManager {
           workspace: managed.workspace,
           miniModel: providerConfig?.models?.[1]?.id ?? providerConfig?.models?.[0]?.id,
           session: {
-            craftId: `title-${managed.id}`,
+            mortiseId: `title-${managed.id}`,
             workspaceRootPath: managed.workspace.rootPath,
             provider: managed.provider,
             createdAt: Date.now(),
@@ -6918,7 +6983,7 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'complete':
-        // Complete event from CraftAgent - accumulate usage from this turn
+        // Complete event from MortiseAgent - accumulate usage from this turn
         // Actual 'complete' sent to renderer comes from the finally block in sendMessage
         if (event.usage) {
           // Initialize tokenUsage if not set
@@ -7136,7 +7201,7 @@ export class SessionManager implements ISessionManager {
       ?? getDefaultSummarizationModel()
 
     const envOverrides: Record<string, string> = {
-      CRAFT_WORKSPACE_PATH: workspaceRootPath,
+      MORTISE_WORKSPACE_PATH: workspaceRootPath,
     }
 
     const agent = createBackendFromResolvedContext({
@@ -7145,7 +7210,7 @@ export class SessionManager implements ISessionManager {
       coreConfig: {
         workspace: managed.workspace,
         session: {
-          craftId: `${managed.id}-remote-transfer-summary`,
+          mortiseId: `${managed.id}-remote-transfer-summary`,
           workspaceRootPath,
           createdAt: Date.now(),
           lastUsedAt: Date.now(),
@@ -7225,7 +7290,7 @@ export class SessionManager implements ISessionManager {
     bundle: SessionBundle,
     mode: DispatchMode,
   ): Promise<{ sessionId: string; warnings?: string[] }> {
-    sessionLog.info(`[import] Starting import: workspaceId=${workspaceId}, mode=${mode}, bundleSessionId=${bundle?.session?.header?.craftId ?? 'unknown'}, files=${bundle?.files?.length ?? 0}`)
+    sessionLog.info(`[import] Starting import: workspaceId=${workspaceId}, mode=${mode}, bundleSessionId=${bundle?.session?.header?.mortiseId ?? 'unknown'}, files=${bundle?.files?.length ?? 0}`)
 
     if (!validateBundle(bundle)) {
       throw new Error('Invalid session bundle')
@@ -7242,12 +7307,12 @@ export class SessionManager implements ISessionManager {
     const workspaceRootPath = workspace.rootPath
 
     // Determine session ID
-    // 兼容旧 bundle：重构前 header 只有 id（无 craftId），validateBundle 接受两者。
-    // move 模式优先使用 craftId，缺失时回退到 id（旧 bundle，类型上不存在，用 cast 访问）。
+    // 兼容旧 bundle：重构前 header 只有 id（无 mortiseId），validateBundle 接受两者。
+    // move 模式优先使用 mortiseId，缺失时回退到 id（旧 bundle，类型上不存在，用 cast 访问）。
     const header = bundle.session.header
     const legacyId = (header as { id?: string }).id
     const sessionId = mode === 'move'
-      ? (header.craftId ?? legacyId)
+      ? (header.mortiseId ?? legacyId)
       : generateSessionId(workspaceRootPath)
 
     // Check for ID collision on move
@@ -7259,13 +7324,13 @@ export class SessionManager implements ISessionManager {
     const sessionDir = ensureSessionDir(workspaceRootPath, sessionId)
 
     // Build the stored session from bundle data.
-    // 用 pickCraftSessionMetadata(header) 作为基底，让 Craft metadata 字段自动透传
+    // 用 pickCraftSessionMetadata(header) 作为基底，让 Mortise metadata 字段自动透传
     //（避免新增字段时手工同步遗漏，如 hasUnread/pendingPlanExecution）。
     // 然后显式覆盖需要重写的字段。
     const storedSession = {
       ...(pickCraftSessionMetadata(header) as Partial<SessionHeader>),
       // 显式覆盖：目标工作区的身份与路径
-      craftId: sessionId,
+      mortiseId: sessionId,
       workspaceRootPath,
       workingDirectory: workspaceRootPath,
       // Always regenerate sdkCwd for the target workspace.
@@ -7278,7 +7343,7 @@ export class SessionManager implements ISessionManager {
       lastUsedAt: Date.now(),
       // 保留 sdkSessionId（fork 逻辑下方可能清空）
       sdkSessionId: header.sdkSessionId,
-      // 非 CRAFT_SESSION_METADATA_FIELDS 字段
+      // 非 MORTISE_SESSION_METADATA_FIELDS 字段
       messages: bundle.session.messages,
       tokenUsage: header.tokenUsage ?? DEFAULT_TOKEN_USAGE,
     } as StoredSession
@@ -7350,7 +7415,7 @@ export class SessionManager implements ISessionManager {
     storedSession.workingDirectory = workspaceRootPath
     storedSession.sdkCwd = storedSession.sdkCwd ?? workspaceRootPath
 
-    // Create/update the Pi session header + Craft metadata first, then import
+    // Create/update the Pi session header + Mortise metadata first, then import
     // canonical transcript entries through Pi's public SessionManager API.
     const sessionFile = getSessionFilePath(workspaceRootPath, sessionId, workspaceRootPath, storedSession.createdAt)
     sessionLog.info(`[import] Creating Pi canonical session: ${sessionFile} (provider=${storedSession.provider ?? 'default'}, messages=${storedSession.messages.length})`)
@@ -7429,6 +7494,9 @@ export class SessionManager implements ISessionManager {
    */
   async cleanup(): Promise<void> {
     sessionLog.info('Cleaning up resources...')
+
+    if (this.providerRuntimeReloadTimer) clearTimeout(this.providerRuntimeReloadTimer)
+    this.providerRuntimeReloadTimer = undefined
 
     // Dispose all live backend runtimes before dropping the session map so Pi
     // subprocesses, MCP pool clients, and session HTTP pool servers cannot leak.

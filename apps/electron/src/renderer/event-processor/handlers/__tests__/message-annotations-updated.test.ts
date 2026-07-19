@@ -49,7 +49,7 @@ describe('handleMessageAnnotationsUpdated', () => {
     expect((next.state.session.messages[1] as any).annotations).toEqual(annotations)
   })
 
-  it('creates an overlay carrier for a projected message not present in Craft messages', () => {
+  it('creates an overlay carrier for a projected message not present in Mortise messages', () => {
     const state = makeState([])
     const annotations = [{
       id: 'ann-projected',

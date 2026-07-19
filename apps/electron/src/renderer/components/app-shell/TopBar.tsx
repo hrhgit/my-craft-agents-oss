@@ -9,7 +9,7 @@
 
 import { useTranslation } from "react-i18next"
 import * as Icons from "lucide-react"
-import { Tooltip, TooltipTrigger, TooltipContent } from "@craft-agent/ui"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@mortise/ui"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
 import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { TopBarButton } from "../ui/TopBarButton"
@@ -27,7 +27,8 @@ import { SquarePenRounded } from "../icons/SquarePenRounded"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { BrowserTabStrip } from "../browser/BrowserTabStrip"
 import type { WorkspaceNavigationModel } from "@/components/workspace/useWorkspaceNavigation"
-import { getDocUrl } from "@craft-agent/shared/docs/doc-links"
+import { getDocUrl } from "@mortise/shared/docs/doc-links"
+import { MORTISE_DOCS_URL } from "@mortise/shared/branding"
 import { AppMenu } from "../AppMenu"
 
 const RIGHT_SLOT_FULL_BADGES_THRESHOLD = 420
@@ -52,6 +53,7 @@ interface TopBarProps {
   onAddBrowserPanel: () => void
   onTogglePanelLayout: () => void
   isCanvasLayoutFocused: boolean
+  isWorkspaceCanvasActive: boolean
   leftExtensionSlot?: ReactNode
   rightExtensionSlot?: ReactNode
   /** When true, hides controls that don't apply in compact/mobile layout */
@@ -77,6 +79,7 @@ export function TopBar({
   onAddBrowserPanel,
   onTogglePanelLayout,
   isCanvasLayoutFocused,
+  isWorkspaceCanvasActive,
   leftExtensionSlot,
   rightExtensionSlot,
   isCompact,
@@ -164,7 +167,7 @@ export function TopBar({
           onToggleFocusMode={onToggleFocusMode}
           workspaceNavigation={workspaceNavigation}
         />
-        {isCompact && (
+        {isCompact && isWorkspaceCanvasActive && (
           <Tooltip>
             <TooltipTrigger asChild>
               <TopBarButton
@@ -172,7 +175,7 @@ export function TopBar({
                 isActive={panelControlActive}
                 aria-label={panelControlLabel}
                 aria-pressed={panelControlActive}
-                data-craft-semantic-id="workspace.toggle-panel-layout"
+                data-mortise-semantic-id="workspace.toggle-panel-layout"
               >
                 <PanelRightRounded className="h-[18px] w-[18px] text-foreground/70" />
               </TopBarButton>
@@ -210,11 +213,13 @@ export function TopBar({
       {/* === RIGHT: Browser strip + add + help === */}
       {!isCompact && (
       <div ref={rightSlotRef} className="flex min-w-0 shrink-0 items-center justify-end gap-1" style={{ paddingRight: 12 }}>
-        {rightExtensionSlot && <div className="titlebar-no-drag flex h-8 max-w-[min(240px,20vw)] min-w-0 items-center">{rightExtensionSlot}</div>}
-        <div className="min-w-0">
-          <BrowserTabStrip activeSessionId={activeSessionId} maxVisibleBadges={maxVisibleBrowserBadges} />
-        </div>
-        <DropdownMenu>
+        {isWorkspaceCanvasActive && rightExtensionSlot && <div className="titlebar-no-drag flex h-8 max-w-[min(240px,20vw)] min-w-0 items-center">{rightExtensionSlot}</div>}
+        {isWorkspaceCanvasActive && (
+        <>
+          <div className="min-w-0">
+            <BrowserTabStrip activeSessionId={activeSessionId} maxVisibleBadges={maxVisibleBrowserBadges} />
+          </div>
+          <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <TopBarButton aria-label={t("menu.addPanelMenu")} className="ml-1 h-[26px] w-[26px] rounded-lg">
               <Icons.Plus className="h-4 w-4 text-foreground/50" strokeWidth={1.5} />
@@ -230,23 +235,25 @@ export function TopBar({
               {t("browser.newWindow")}
             </StyledDropdownMenuItem>
           </StyledDropdownMenuContent>
-        </DropdownMenu>
+          </DropdownMenu>
 
-        <Tooltip>
+          <Tooltip>
           <TooltipTrigger asChild>
             <TopBarButton
               onClick={onTogglePanelLayout}
               isActive={panelControlActive}
               aria-label={panelControlLabel}
               aria-pressed={panelControlActive}
-              data-craft-semantic-id="workspace.toggle-panel-layout"
+              data-mortise-semantic-id="workspace.toggle-panel-layout"
               className="h-[26px] w-[26px] rounded-lg"
             >
               <PanelRightRounded className="h-[18px] w-[18px] text-foreground/70" />
             </TopBarButton>
           </TooltipTrigger>
           <TooltipContent side="bottom">{panelControlLabel}</TooltipContent>
-        </Tooltip>
+          </Tooltip>
+        </>
+        )}
 
         {/* Help button */}
         <DropdownMenu>
@@ -282,7 +289,7 @@ export function TopBar({
               <Icons.ExternalLink className="h-3 w-3 text-muted-foreground" />
             </StyledDropdownMenuItem>
             <StyledDropdownMenuSeparator />
-            <StyledDropdownMenuItem onClick={() => window.electronAPI.openUrl('https://agents.craft.do/docs')}>
+            <StyledDropdownMenuItem onClick={() => window.electronAPI.openUrl(MORTISE_DOCS_URL)}>
               <Icons.ExternalLink className="h-3.5 w-3.5" />
               <span className="flex-1">{t("menu.allDocumentation")}</span>
             </StyledDropdownMenuItem>

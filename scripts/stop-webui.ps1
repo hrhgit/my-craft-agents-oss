@@ -2,15 +2,15 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $normalizedRepoRoot = $repoRoot.TrimEnd('\').ToLowerInvariant()
-$legacyInstanceRoot = Join-Path $repoRoot '.craft-agent\portmux\webui-instance-'
+$legacyInstanceRoot = Join-Path $repoRoot '.mortise\portmux\webui-instance-'
 $normalizedLegacyInstanceRoot = $legacyInstanceRoot.ToLowerInvariant()
-$clientProjectRoot = Join-Path $env:TEMP 'craft-agent-webui\portmux\client-'
+$clientProjectRoot = Join-Path $env:TEMP 'mortise-webui\portmux\client-'
 $normalizedClientProjectRoot = $clientProjectRoot.ToLowerInvariant()
 . (Join-Path $PSScriptRoot 'webui-process-utils.ps1')
 
 function Write-Step {
   param([string]$Message)
-  Write-Host "[Craft Agents Web] $Message" -ForegroundColor Cyan
+  Write-Host "[Mortise Web] $Message" -ForegroundColor Cyan
 }
 
 function Normalize-PathText {
@@ -46,7 +46,7 @@ foreach ($project in $projects) {
 }
 
 $stoppedStateProcessCount = 0
-$stateRoot = Join-Path $env:TEMP 'craft-agent-webui'
+$stateRoot = Join-Path $env:TEMP 'mortise-webui'
 if (Test-Path -LiteralPath $stateRoot) {
   Get-ChildItem -LiteralPath $stateRoot -Filter 'webui-launch-state.json' -File -Recurse |
     ForEach-Object {

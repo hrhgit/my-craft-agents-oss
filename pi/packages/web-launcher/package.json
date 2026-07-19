@@ -1,6 +1,6 @@
 {
-	"name": "@earendil-works/pi-web-launcher",
-	"version": "0.78.0-fork.1",
+	"name": "@mortise/pi-web-launcher",
+	"version": "0.1.0",
 	"private": true,
 	"description": "Global launcher for the local Pi web example",
 	"type": "module",

@@ -5,7 +5,7 @@ import {
   type UiValidationAppPhase,
   type UiValidationScopedState,
   type UiValidationScopedWait,
-} from '@craft-agent/shared/ui-validation'
+} from '@mortise/shared/ui-validation'
 
 const PHASES: readonly UiValidationAppPhase[] = ['booting', 'loading', 'ready', 'busy', 'error', 'disposed']
 
@@ -68,7 +68,7 @@ export function parseStateCondition(condition: Record<string, unknown>, windowId
 export function expectedRendererRoute(params: Record<string, unknown>): string | undefined {
   const raw = typeof params.route === 'string' ? params.route : typeof params.url === 'string' ? params.url : undefined
   if (!raw) return undefined
-  if (!raw.startsWith('craftagents://')) return normalizeRoutePath(raw)
+  if (!raw.startsWith('mortise://')) return normalizeRoutePath(raw)
   try {
     const url = new URL(raw)
     return normalizeRoutePath(`${url.hostname}${url.pathname}`)

@@ -23,7 +23,8 @@ describe('buildSemanticHistoryKey', () => {
   it('stays stable for identical semantic inputs', () => {
     const input = {
       workspaceSlug: 'ws',
-      panelRoutes: ['allSessions/session/s1', 'sources/source/github'],
+      pageSurfaceRoute: 'sources/source/github',
+      panelRoutes: ['allSessions/session/s1', 'allSessions/session/s2'],
       focusedPanelIndex: 1,
     }
 
@@ -31,6 +32,22 @@ describe('buildSemanticHistoryKey', () => {
     const keyB = buildSemanticHistoryKey(input)
 
     expect(keyA).toBe(keyB)
+  })
+
+  it('changes when an application page opens without changing the dock', () => {
+    const common = {
+      workspaceSlug: 'ws',
+      panelRoutes: ['allSessions/session/s1'],
+      focusedPanelIndex: 0,
+    }
+
+    const workspaceKey = buildSemanticHistoryKey(common)
+    const settingsKey = buildSemanticHistoryKey({
+      ...common,
+      pageSurfaceRoute: 'settings/ai',
+    })
+
+    expect(settingsKey).not.toBe(workspaceKey)
   })
 })
 

@@ -18,7 +18,7 @@ describe('extension GUI migration guard', () => {
       read('packages/ui/src/components/chat/TurnCard.tsx'),
       read('packages/shared/src/config/pi-extension-settings.ts'),
     ].join('\n')
-    expect(hostSources).not.toMatch(/ConversationModeSelector|PlanArtifactCard|showDiscussionButton|showPlanButton|renderPlanMarkdown|craft:approve-plan/)
+    expect(hostSources).not.toMatch(/ConversationModeSelector|PlanArtifactCard|showDiscussionButton|showPlanButton|renderPlanMarkdown|mortise:approve-plan/)
   })
 
   it('does not restore ask_user identity branches in the generic host adapters', () => {

@@ -7,12 +7,12 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { connect, type Socket } from "node:net";
-import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent } from "@earendil-works/pi-ai/types";
+import type { AgentEvent, AgentMessage, ThinkingLevel } from "@mortise/pi-agent-core";
+import type { ImageContent } from "@mortise/pi-ai/types";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
-import { readPiGlobalHostState } from "../../core/global-host-state.ts";
+import { PI_GLOBAL_HOST_INSTANCE_ID_ENV, readPiGlobalHostState } from "../../core/global-host-state.ts";
 import type {
 	HostExtensionsResult,
 	HostGlobalConfig,
@@ -53,6 +53,8 @@ import type {
 	RpcToolExecuteResponse,
 	RpcToolPermissionRequest,
 	RpcToolPermissionResponse,
+	RpcToolResultRequest,
+	RpcToolResultResponse,
 } from "./rpc-types.ts";
 import { PI_HOST_HOOKS_MODULE_ENV, PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV } from "./rpc-types.ts";
 
@@ -70,7 +72,7 @@ type RpcWritable = NodeJS.WritableStream & { destroyed: boolean; writable: boole
 
 export interface RpcClientOptions {
 	/** Discover and connect to an existing user-level Pi GlobalHost before spawning. */
-	globalHost?: { enabled: boolean; agentDir?: string };
+	globalHost?: { enabled: boolean; agentDir?: string; instanceId?: string };
 	/** Command used to launch the CLI entry point (default: node) */
 	command?: string;
 	/** Arguments placed before the CLI entry point, useful for tsx/register-based dev runs */
@@ -113,6 +115,7 @@ export interface RpcClientOptions {
 
 export interface ConnectPiGlobalHostOptions extends Omit<RpcClientOptions, "globalHost"> {
 	agentDir?: string;
+	instanceId?: string;
 }
 
 export interface ModelInfo {
@@ -149,6 +152,7 @@ export type RpcClientEvent =
 	| RpcExtensionErrorEvent
 	| RpcProcessLifecycleEvent
 	| RpcToolPermissionRequest
+	| RpcToolResultRequest
 	| RpcToolExecuteRequest;
 export type RpcEventListener = (event: AgentEvent & RpcEnvelope) => void;
 export type RpcClientEventListener = (event: RpcClientEvent) => void;
@@ -159,6 +163,9 @@ export type RpcToolPermissionHandler = (
 ) => Promise<
 	{ action: "allow" } | { action: "block"; reason?: string } | { action: "modify"; input: Record<string, unknown> }
 >;
+
+/** Host-side observer invoked for every finalized tool_result_request. */
+export type RpcToolResultHandler = (request: RpcToolResultRequest) => Promise<void>;
 
 /** Host-side executor invoked for every tool_execute_request (host proxy tools). */
 export type RpcToolExecutor = (request: RpcToolExecuteRequest) => Promise<RpcHostToolResult>;
@@ -188,8 +195,10 @@ export class RpcClient {
 	private exitError: Error | null = null;
 	private options: RpcClientOptions;
 	private toolPermissionHandler: RpcToolPermissionHandler | null = null;
+	private toolResultHandler: RpcToolResultHandler | null = null;
 	private toolExecutor: RpcToolExecutor | null = null;
 	private runtimeToolPermissionHandlers = new Map<string, RpcToolPermissionHandler>();
+	private runtimeToolResultHandlers = new Map<string, RpcToolResultHandler>();
 	private runtimeToolExecutors = new Map<string, RpcToolExecutor>();
 	private extensionUIOwners = new Map<
 		string,
@@ -210,7 +219,7 @@ export class RpcClient {
 
 		this.exitError = null;
 		if (this.options.globalHost?.enabled) {
-			const state = readPiGlobalHostState(this.options.globalHost.agentDir);
+			const state = readPiGlobalHostState(this.options.globalHost.agentDir, this.options.globalHost.instanceId);
 			if (state && (await this.connectToGlobalHost(state.port, state.token))) return;
 		}
 
@@ -235,6 +244,9 @@ export class RpcClient {
 			...baseEnv,
 			...this.options.env,
 			...(this.options.globalHost?.enabled ? { PI_GLOBAL_HOST_PROCESS: "1" } : {}),
+			...(this.options.globalHost?.instanceId
+				? { [PI_GLOBAL_HOST_INSTANCE_ID_ENV]: this.options.globalHost.instanceId }
+				: {}),
 			...(hostHooksModule
 				? {
 						[PI_HOST_HOOKS_MODULE_ENV]: hostHooksModule,
@@ -426,6 +438,7 @@ export class RpcClient {
 	async closeRuntime(runtimeId: string): Promise<boolean> {
 		const response = await this.send({ type: "close_runtime", runtimeId });
 		this.runtimeToolPermissionHandlers.delete(runtimeId);
+		this.runtimeToolResultHandlers.delete(runtimeId);
 		this.runtimeToolExecutors.delete(runtimeId);
 		return this.getData<{ closed: boolean }>(response).closed;
 	}
@@ -451,7 +464,7 @@ export class RpcClient {
 		options?: {
 			systemPrompt?: string;
 			clientMutationId?: string;
-			attachments?: import("@earendil-works/pi-ai/types").UserAttachmentMetadata[];
+			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
 		},
 	): Promise<void> {
 		await this.send({
@@ -524,6 +537,12 @@ export class RpcClient {
 		await this.send({ type: "enable_tool_permissions", enabled: handler !== null });
 	}
 
+	/** Install a host-side observer for finalized tool results. */
+	async setToolResultHandler(handler: RpcToolResultHandler | null): Promise<void> {
+		this.toolResultHandler = handler;
+		await this.send({ type: "enable_tool_results", enabled: handler !== null });
+	}
+
 	/**
 	 * Register host proxy tools with the agent.
 	 *
@@ -572,6 +591,14 @@ export class RpcClient {
 	async getState(): Promise<RpcSessionState> {
 		const response = await this.send({ type: "get_state" });
 		return this.getData(response);
+	}
+
+	async setActiveTools(toolNames: string[]): Promise<void> {
+		await this.send({ type: "set_active_tools", toolNames });
+	}
+
+	async setCompactionPrompt(prompt?: string): Promise<void> {
+		await this.send({ type: "set_compaction_prompt", prompt });
 	}
 
 	/**
@@ -791,7 +818,7 @@ export class RpcClient {
 
 	/**
 	 * Read Pi-owned global host config: providers, settings, display metadata,
-	 * and Craft opaque metadata stored under Pi's models.json.
+	 * and Mortise opaque metadata stored under Pi's models.json.
 	 */
 	async getGlobalConfig(): Promise<HostGlobalConfig> {
 		const response = await this.send({ type: "get_global_config" });
@@ -815,7 +842,7 @@ export class RpcClient {
 	}
 
 	async setCraftCredential(slug: string, credential: unknown): Promise<void> {
-		await this.send({ type: "set_craft_credential", slug, credential });
+		await this.send({ type: "set_mortise_credential", slug, credential });
 	}
 
 	async getSessionProjection(
@@ -836,7 +863,7 @@ export class RpcClient {
 		options: { sessionDir?: string; cwdOverride?: string; name?: string; metadata?: unknown; customType?: string },
 	): Promise<HostSessionProjection> {
 		const response = await this.send({
-			type: "set_craft_session_metadata",
+			type: "set_mortise_session_metadata",
 			sessionPath,
 			sessionDir: options.sessionDir,
 			cwdOverride: options.cwdOverride,
@@ -927,6 +954,13 @@ export class RpcClient {
 		if (handler) this.runtimeToolPermissionHandlers.set(runtimeId, handler);
 		else this.runtimeToolPermissionHandlers.delete(runtimeId);
 		await this.requestRuntime(runtimeId, { type: "enable_tool_permissions", enabled: handler !== null });
+	}
+
+	/** @internal Install a runtime-scoped finalized tool-result observer. */
+	async setRuntimeToolResultHandler(runtimeId: string, handler: RpcToolResultHandler | null): Promise<void> {
+		if (handler) this.runtimeToolResultHandlers.set(runtimeId, handler);
+		else this.runtimeToolResultHandlers.delete(runtimeId);
+		await this.requestRuntime(runtimeId, { type: "enable_tool_results", enabled: handler !== null });
 	}
 
 	/** @internal Register tools without replacing another runtime's executor. */
@@ -1124,6 +1158,10 @@ export class RpcClient {
 				this.handleToolPermissionRequest(event);
 				return;
 			}
+			if (event.type === "tool_result_request") {
+				this.handleToolResultRequest(event);
+				return;
+			}
 			if (event.type === "tool_execute_request") {
 				this.handleToolExecuteRequest(event);
 				return;
@@ -1184,6 +1222,43 @@ export class RpcClient {
 					id: request.id,
 					action: "block",
 					reason: `Permission handler failed: ${err instanceof Error ? err.message : String(err)}`,
+				});
+			});
+	}
+
+	private handleToolResultRequest(request: RpcToolResultRequest): void {
+		const handler = request.runtimeId
+			? (this.runtimeToolResultHandlers.get(request.runtimeId) ??
+				(request.runtimeId === "default" ? this.toolResultHandler : null))
+			: this.toolResultHandler;
+		const respond = (response: RpcToolResultResponse) => {
+			const stdin = this.getWritableInput();
+			if (!stdin || stdin.destroyed || !stdin.writable) return;
+			stdin.write(
+				serializeJsonLine({
+					...response,
+					clientId: request.clientId,
+					runtimeId: request.runtimeId,
+					sessionId: request.sessionId,
+				}),
+			);
+		};
+
+		if (!handler) {
+			respond({ type: "tool_result_response", id: request.id, status: "acknowledged" });
+			return;
+		}
+
+		void handler(request)
+			.then(() => {
+				respond({ type: "tool_result_response", id: request.id, status: "acknowledged" });
+			})
+			.catch((error: unknown) => {
+				respond({
+					type: "tool_result_response",
+					id: request.id,
+					status: "failed",
+					error: `Tool result handler failed: ${error instanceof Error ? error.message : String(error)}`,
 				});
 			});
 	}
@@ -1318,10 +1393,10 @@ export class RpcClient {
 }
 
 export async function connectPiGlobalHost(options: ConnectPiGlobalHostOptions = {}): Promise<RpcClient> {
-	const { agentDir, ...clientOptions } = options;
+	const { agentDir, instanceId, ...clientOptions } = options;
 	const client = new RpcClient({
 		...clientOptions,
-		globalHost: { enabled: true, agentDir },
+		globalHost: { enabled: true, agentDir, instanceId },
 	});
 	await client.start();
 	return client;
@@ -1393,13 +1468,21 @@ export class PiRuntimeHandle {
 		return this.requestData({ type: "get_state" });
 	}
 
+	setActiveTools(toolNames: string[]): Promise<void> {
+		return this.requestVoid({ type: "set_active_tools", toolNames });
+	}
+
+	setCompactionPrompt(prompt?: string): Promise<void> {
+		return this.requestVoid({ type: "set_compaction_prompt", prompt });
+	}
+
 	prompt(
 		message: string,
 		images?: ImageContent[],
 		options?: {
 			systemPrompt?: string;
 			clientMutationId?: string;
-			attachments?: import("@earendil-works/pi-ai/types").UserAttachmentMetadata[];
+			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
 		},
 	): Promise<void> {
 		return this.requestVoid({
@@ -1511,6 +1594,10 @@ export class PiRuntimeHandle {
 
 	setToolPermissionHandler(handler: RpcToolPermissionHandler | null): Promise<void> {
 		return this.client.setRuntimeToolPermissionHandler(this.runtimeId, handler);
+	}
+
+	setToolResultHandler(handler: RpcToolResultHandler | null): Promise<void> {
+		return this.client.setRuntimeToolResultHandler(this.runtimeId, handler);
 	}
 
 	registerTools(tools: RpcHostToolDefinition[], executor: RpcToolExecutor): Promise<string[]> {

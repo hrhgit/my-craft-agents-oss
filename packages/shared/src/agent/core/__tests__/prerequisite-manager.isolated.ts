@@ -31,7 +31,7 @@ function skillPath(slug: string): string {
 }
 
 function browserDocPath(): string {
-  return resolve(join(homedir(), '.craft-agent', 'docs', 'browser-tools.md'));
+  return resolve(join(homedir(), '.mortise', 'docs', 'browser-tools.md'));
 }
 
 describe('PrerequisiteManager', () => {
@@ -81,15 +81,15 @@ describe('PrerequisiteManager', () => {
       expect(result.allowed).toBe(true);
     });
 
-    it('exempts session MCP tools', () => {
+    it('exempts persisted legacy session tool names', () => {
       mockExistsPaths.add(guidePath('session'));
       const result = manager.checkPrerequisites('mcp__session__config_validate');
       expect(result.allowed).toBe(true);
     });
 
-    it('exempts craft-agents-docs MCP tools', () => {
-      mockExistsPaths.add(guidePath('craft-agents-docs'));
-      const result = manager.checkPrerequisites('mcp__craft-agents-docs__search');
+    it('exempts mortise-docs MCP tools', () => {
+      mockExistsPaths.add(guidePath('mortise-docs'));
+      const result = manager.checkPrerequisites('mcp__mortise-docs__search');
       expect(result.allowed).toBe(true);
     });
 

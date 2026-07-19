@@ -342,7 +342,7 @@ export function copyRipgrep(config: BuildConfig): void {
   cpSync(rgSource, rgDest, { recursive: true, dereference: true });
 }
 
-const PI_RUNTIME_PACKAGE = '@earendil-works/pi-coding-agent';
+const PI_RUNTIME_PACKAGE = '@mortise/pi-coding-agent';
 const PI_RUNTIME_BUNDLE_ENTRY = join('dist', 'cli.bundle.js');
 const PI_RUNTIME_REQUIRED_DIST_FILES = [
   'dist/cli.bundle.js',
@@ -372,7 +372,7 @@ const PI_RUNTIME_METADATA_FILES = [
   'npm-shrinkwrap.json',
 ];
 const PI_RUNTIME_EXTERNAL_FALLBACKS = [
-  '@earendil-works/pi-ai',
+  '@mortise/pi-ai',
   '@silvia-odwyer/photon-node',
   'cross-spawn',
   'hosted-git-info',
@@ -392,7 +392,7 @@ const PI_RUNTIME_ADDITIONAL_EXTERNALS = [
   // imports are not represented in the bundle metafile.
   'ignore',
   'minimatch',
-  // Extensions may import @earendil-works/pi-coding-agent. The staged runtime
+  // Extensions may import @mortise/pi-coding-agent. The staged runtime
   // therefore ships the public dist/index.js surface, whose package imports are
   // not represented in the CLI bundle metafile.
   '@anthropic-ai/sdk',
@@ -511,7 +511,7 @@ function shouldCopyPiRuntimeDistPath(sourcePath: string, distRoot: string): bool
   const relativePath = relative(distRoot, sourcePath).replace(/\\/g, '/');
 
   // The package dist contains a standalone Pi executable and sidecars for every
-  // supported platform. Craft starts cli.bundle.js with its bundled Bun runtime
+  // supported platform. Mortise starts cli.bundle.js with its bundled Bun runtime
   // and stages exactly one sidecar below, so copying these files is both
   // redundant and very expensive for Windows installers.
   if (relativePath === 'pi.exe' || relativePath === 'sidecar' || relativePath.startsWith('sidecar/')) {
@@ -704,7 +704,7 @@ function copyNpmPackage(packageDir: string, dest: string, packageName: string): 
   }
   mkdirSync(dest, { recursive: true });
 
-  if (packageName.startsWith('@earendil-works/pi-')) {
+  if (packageName.startsWith('@mortise/pi-')) {
     copyPiWorkspacePackage(packageDir, dest);
     return;
   }
@@ -979,9 +979,9 @@ function stagePiBinaryRuntime(config: BuildConfig, runtimeRoot: string): void {
 export function copyPiRuntime(config: BuildConfig): void {
   const runtimeRoot = join(config.electronDir, 'dist', 'resources', 'pi-runtime');
   // Windows defaults to the compiled runtime to avoid installing thousands of
-  // small node_modules files. Set CRAFT_PI_BINARY_RUNTIME=0 for emergency
+  // small node_modules files. Set MORTISE_PI_BINARY_RUNTIME=0 for emergency
   // fallback to the legacy JS runtime while keeping other platforms unchanged.
-  if (config.platform === 'win32' && process.env.CRAFT_PI_BINARY_RUNTIME !== '0') {
+  if (config.platform === 'win32' && process.env.MORTISE_PI_BINARY_RUNTIME !== '0') {
     stagePiBinaryRuntime(config, runtimeRoot);
     return;
   }
@@ -1023,7 +1023,7 @@ export function buildMcpServers(config: BuildConfig): void {
   mkdirSync(join(sessionDir, 'dist'), { recursive: true });
 
   execSync(
-    `bun build ${join(sessionDir, 'src', 'index.ts')} --outfile ${sessionOut} --target node --format cjs --minify-syntax --define process.env.CRAFT_UI_VALIDATION_BUILD=\\\"0\\\" --define process.env.CRAFT_UI_TEST_HOST=\\\"0\\\"`,
+    `bun build ${join(sessionDir, 'src', 'index.ts')} --outfile ${sessionOut} --target node --format cjs --minify-syntax --define process.env.MORTISE_UI_VALIDATION_BUILD=\\\"0\\\" --define process.env.MORTISE_UI_TEST_HOST=\\\"0\\\"`,
     { cwd: rootDir, stdio: 'inherit', shell: true }
   );
 
@@ -1072,7 +1072,7 @@ export async function buildElectronApp(config: BuildConfig): Promise<void> {
 
   console.log('Building Electron app...');
   // Packaging must never inherit an opt-in source-development validation build.
-  process.env.CRAFT_UI_VALIDATION_BUILD = '0';
+  process.env.MORTISE_UI_VALIDATION_BUILD = '0';
   await $`cd ${rootDir} && bun run electron:build`;
 }
 
@@ -1153,10 +1153,10 @@ export async function loadEnvFile(config: BuildConfig): Promise<void> {
 export function getArtifactName(platform: Platform, arch: Arch): string {
   switch (platform) {
     case 'darwin':
-      return `Craft-Agents-${arch}.dmg`;
+      return `Mortise-${arch}.dmg`;
     case 'win32':
-      return `Craft-Agents-${arch}.exe`;
+      return `Mortise-${arch}.exe`;
     case 'linux':
-      return `Craft-Agents-${arch}.AppImage`;
+      return `Mortise-${arch}.AppImage`;
   }
 }

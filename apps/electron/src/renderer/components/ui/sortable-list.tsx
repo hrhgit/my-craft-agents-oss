@@ -186,7 +186,7 @@ export function SortableList<T extends SortableItemData>({
       measuring={measuringConfig}
     >
       <SortableContext items={items} strategy={verticalListSortingStrategy}>
-        <div className={className} data-slot="sortable-list" data-craft-semantic-id={semanticId} role="list">
+        <div className={className} data-slot="sortable-list" data-mortise-semantic-id={semanticId} role="list">
           {items.map(item => (
             <SortableItemWrapper
               key={item.id}
@@ -258,8 +258,8 @@ function SortableItemWrapper({ id, isDragActive, hideWhileDragging, children, se
     <div
       ref={setNodeRef}
       data-slot="sortable-item"
-      data-craft-semantic-id={semanticId}
-      data-craft-ui-interactions="drag"
+      data-mortise-semantic-id={semanticId}
+      data-mortise-ui-interactions="drag"
       style={style}
       {...attributes}
       {...listeners}

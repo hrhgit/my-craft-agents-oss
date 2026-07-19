@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 import { isUiValidationBuildEnabled, uiValidationProductionBoundaryPlugin } from '../../scripts/build/ui-validation-boundary'
 
-const requestedPort = Number.parseInt(process.env.CRAFT_VITE_PORT ?? process.env.PORT ?? '', 10)
+const requestedPort = Number.parseInt(process.env.MORTISE_VITE_PORT ?? process.env.PORT ?? '', 10)
 const electronVitePort = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
   ? requestedPort
   : 5173
@@ -62,7 +62,7 @@ export default defineConfig(({ command }) => {
   resolve: {
     alias: {
       ...(!uiValidationBuild ? {
-        '@craft-agent/shared/protocol': resolve(__dirname, '../../packages/shared/src/protocol/production.ts'),
+        '@mortise/shared/protocol': resolve(__dirname, '../../packages/shared/src/protocol/production.ts'),
         '@/ui-validation/bridge': resolve(disabledValidationDir, 'bridge.ts'),
         '@/ui-validation/state-bridge': resolve(disabledValidationDir, 'state-bridge.ts'),
         '@/ui-validation/react': resolve(disabledValidationDir, 'react.ts'),
@@ -73,7 +73,7 @@ export default defineConfig(({ command }) => {
       '@': resolve(__dirname, 'src/renderer'),
       '@config': resolve(__dirname, '../../packages/shared/src/config'),
       // Force all React imports to use the root node_modules React
-      // Bun hoists deps to root. This prevents "multiple React copies" error from @craft-agent/ui
+      // Bun hoists deps to root. This prevents "multiple React copies" error from @mortise/ui
       'react': resolve(__dirname, '../../node_modules/react'),
       'react-dom': resolve(__dirname, '../../node_modules/react-dom'),
     },
@@ -81,14 +81,14 @@ export default defineConfig(({ command }) => {
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'jotai', 'pdfjs-dist'],
-    exclude: ['@craft-agent/ui'],
+    exclude: ['@mortise/ui'],
     esbuildOptions: {
       supported: { 'top-level-await': true },
       target: 'esnext'
     }
   },
   define: {
-    __CRAFT_UI_VALIDATION_BUILD__: JSON.stringify(uiValidationBuild),
+    __MORTISE_UI_VALIDATION_BUILD__: JSON.stringify(uiValidationBuild),
   },
   server: {
     port: electronVitePort,

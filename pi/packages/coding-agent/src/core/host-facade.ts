@@ -2,7 +2,7 @@
  * Stable host facade for GUI shells and embedders.
  *
  * Pi owns runtime/config/credential/session/resource storage. Host apps such as
- * Craft should use this facade (or the matching RPC commands), not raw
+ * Mortise should use this facade (or the matching RPC commands), not raw
  * ~/.pi/agent file IO or copied Pi internals.
  */
 
@@ -18,9 +18,9 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { getModels, getProviders } from "@earendil-works/pi-ai";
-import type { Api, Model } from "@earendil-works/pi-ai/types";
+import type { ThinkingLevel } from "@mortise/pi-agent-core";
+import { getModels, getProviders } from "@mortise/pi-ai";
+import type { Api, Model } from "@mortise/pi-ai/types";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir, getModelsPath, getSettingsPath } from "../config.ts";
 import { parseFrontmatter } from "../utils/frontmatter.ts";
@@ -28,6 +28,11 @@ import { stripJsonComments } from "../utils/json.ts";
 import type { AuthCredential, AuthStatus } from "./auth-storage.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
+import type {
+	ExtensionManifestDiagnostic,
+	ExtensionManifestStatus,
+	ExtensionManifestV1,
+} from "./extension-manifest.ts";
 import type {
 	Extension,
 	ExtensionActivation,
@@ -143,7 +148,7 @@ export interface HostGlobalProvider {
 export interface HostGlobalModelsFile {
 	providers?: Record<string, HostGlobalProvider>;
 	/** Host-owned metadata; Pi ModelRegistry ignores unknown top-level fields. */
-	craftConnections?: unknown[];
+	mortiseConnections?: unknown[];
 	[key: string]: unknown;
 }
 
@@ -189,7 +194,7 @@ export interface HostGlobalConfig {
 	providers: Record<string, HostGlobalProvider>;
 	settings: Settings;
 	providersForDisplay: HostGlobalProviderForDisplay[];
-	craftConnections: unknown[];
+	mortiseConnections: unknown[];
 }
 
 export interface HostApiKeyMigrationResult {
@@ -247,12 +252,17 @@ export type HostExtensionCategory =
 
 export interface HostExtensionSummary {
 	id: string;
-	target: "pi" | "craft";
+	target: "pi" | "mortise";
 	loaded: boolean;
 	title: string;
 	description: string;
 	category: HostExtensionCategory;
 	configurable: boolean;
+	manifest?: ExtensionManifestV1;
+	manifestStatus: ExtensionManifestStatus;
+	manifestDiagnostics: ExtensionManifestDiagnostic[];
+	hostVersion: string;
+	loadable: boolean;
 	ui?: ExtensionManifestUIV1;
 	path: string;
 	resolvedPath: string;
@@ -268,7 +278,7 @@ export interface HostExtensionSummary {
 
 export interface HostExtensionsResult {
 	extensions: HostExtensionSummary[];
-	errors: Array<{ path: string; error: string; target: "pi" | "craft" }>;
+	errors: Array<{ path: string; error: string; target: "pi" | "mortise" }>;
 }
 
 const VALID_THINKING_LEVELS: HostThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
@@ -565,24 +575,24 @@ export function readGlobalProviders(): Record<string, HostGlobalProvider> {
 }
 
 export function readCraftLlmConnections<T = unknown>(): T[] {
-	const connections = readGlobalModelsFile().craftConnections;
+	const connections = readGlobalModelsFile().mortiseConnections;
 	return Array.isArray(connections) ? (connections as T[]) : [];
 }
 
 export function writeCraftLlmConnections(connections: unknown[]): void {
 	withJsonFileLock(modelsPath(), MODELS_FILE_FALLBACK, normalizeModelsFile, (file) => {
 		file.providers ??= {};
-		file.craftConnections = connections;
+		file.mortiseConnections = connections;
 	});
 }
 
 export function upsertCraftLlmConnection(connection: { slug: string; [key: string]: unknown }): void {
 	withJsonFileLock(modelsPath(), MODELS_FILE_FALLBACK, normalizeModelsFile, (file) => {
-		const connections = Array.isArray(file.craftConnections) ? file.craftConnections : [];
+		const connections = Array.isArray(file.mortiseConnections) ? file.mortiseConnections : [];
 		const index = connections.findIndex((item) => {
 			return !!item && typeof item === "object" && (item as { slug?: unknown }).slug === connection.slug;
 		});
-		file.craftConnections =
+		file.mortiseConnections =
 			index === -1
 				? [...connections, connection]
 				: connections.map((existing, existingIndex) => (existingIndex === index ? connection : existing));
@@ -591,12 +601,12 @@ export function upsertCraftLlmConnection(connection: { slug: string; [key: strin
 
 export function deleteCraftLlmConnection(slug: string): boolean {
 	return withJsonFileLock(modelsPath(), MODELS_FILE_FALLBACK, normalizeModelsFile, (file) => {
-		const connections = Array.isArray(file.craftConnections) ? file.craftConnections : [];
+		const connections = Array.isArray(file.mortiseConnections) ? file.mortiseConnections : [];
 		const next = connections.filter((item) => {
 			return !item || typeof item !== "object" || (item as { slug?: unknown }).slug !== slug;
 		});
 		if (next.length === connections.length) return false;
-		file.craftConnections = next;
+		file.mortiseConnections = next;
 		return { result: true };
 	});
 }
@@ -654,7 +664,7 @@ export function getGlobalConfig(): HostGlobalConfig {
 		providers: models.providers ?? {},
 		settings,
 		providersForDisplay: readGlobalProvidersForDisplay(),
-		craftConnections: Array.isArray(models.craftConnections) ? models.craftConnections : [],
+		mortiseConnections: Array.isArray(models.mortiseConnections) ? models.mortiseConnections : [],
 	};
 }
 
@@ -780,19 +790,19 @@ export async function setDefaultThinkingLevel(level: string, cwd?: string): Prom
 	}
 }
 
-export function readCraftAgentSettings(): Record<string, unknown> {
-	const settings = readGlobalSettings() as Settings & { craft?: { agent?: Record<string, unknown> } };
-	const agent = settings.craft?.agent;
+export function readMortiseSettings(): Record<string, unknown> {
+	const settings = readGlobalSettings() as Settings & { mortise?: { agent?: Record<string, unknown> } };
+	const agent = settings.mortise?.agent;
 	return agent && typeof agent === "object" ? { ...agent } : {};
 }
 
-export function writeCraftAgentSettingsBulk(updates: Record<string, unknown>): void {
+export function writeMortiseSettingsBulk(updates: Record<string, unknown>): void {
 	withJsonFileLock(settingsPath(), SETTINGS_FILE_FALLBACK, normalizeSettingsFile, (settings) => {
-		const current = settings as Settings & { craft?: { agent?: Record<string, unknown> } };
-		const craft = current.craft && typeof current.craft === "object" ? current.craft : {};
-		const agent = craft.agent && typeof craft.agent === "object" ? craft.agent : {};
-		current.craft = {
-			...craft,
+		const current = settings as Settings & { mortise?: { agent?: Record<string, unknown> } };
+		const mortise = current.mortise && typeof current.mortise === "object" ? current.mortise : {};
+		const agent = mortise.agent && typeof mortise.agent === "object" ? mortise.agent : {};
+		current.mortise = {
+			...mortise,
 			agent: {
 				...agent,
 				...updates,
@@ -924,7 +934,7 @@ export function createSessionProjection(args: {
 	try {
 		const manager = SessionManager.create(args.cwd, args.sessionDir, { id: args.id });
 		if (args.metadata !== undefined && !isPlainRecord(args.metadata)) {
-			throw new HostFacadeError("invalid_input", "Craft session metadata must be an object.");
+			throw new HostFacadeError("invalid_input", "Mortise session metadata must be an object.");
 		}
 		manager.setCraftMetadata(args.metadata ?? {});
 		return toSessionProjection(manager);
@@ -949,7 +959,7 @@ export function setCraftSessionMetadata(args: {
 		}
 		if (args.metadata !== undefined) {
 			if (!isPlainRecord(args.metadata)) {
-				throw new HostFacadeError("invalid_input", "Craft session metadata must be an object.");
+				throw new HostFacadeError("invalid_input", "Mortise session metadata must be an object.");
 			}
 			manager.setCraftMetadata(args.metadata);
 			if (args.customType) {
@@ -1006,8 +1016,8 @@ export async function findSessionProjectionById(args: {
 				sessionDir: args.sessionDir,
 				cwdOverride: args.cwd,
 			});
-			const craftId = projection.header?.craft?.id;
-			if (craftId === args.sessionId) {
+			const mortiseId = projection.header?.mortise?.id;
+			if (mortiseId === args.sessionId) {
 				return projection;
 			}
 		}
@@ -1090,14 +1100,14 @@ function dedupeHostSkillsBySlug(skills: HostSkillSummary[]): HostSkillSummary[] 
 }
 
 async function createHostResourceLoader(
-	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "craft" } = {},
+	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "mortise" } = {},
 ) {
 	const cwd = args.cwd ?? process.cwd();
 	const agentDir = args.agentDir ?? getAgentDir();
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir,
-		extensionTarget: args.extensionTarget ?? "craft",
+		extensionTarget: args.extensionTarget ?? "mortise",
 	});
 	await loader.reload({ phase: "full" });
 	return loader;
@@ -1113,7 +1123,7 @@ export function listSkillsSync(args: HostSkillsArgs = {}): HostSkillsResult {
 			cwd,
 			agentDir,
 			// Host shells need project-local skills to override global skills, and
-			// Craft keeps old sync helpers keyed by directory slug rather than
+			// Mortise keeps old sync helpers keyed by directory slug rather than
 			// frontmatter display name. Use explicit roots so Pi remains the parser
 			// while the facade owns host-facing precedence.
 			skillPaths: [defaultRoots.project, defaultRoots.user, ...(args.skillPaths ?? [])],
@@ -1172,10 +1182,15 @@ function summarizeExtension(extension: Extension): HostExtensionSummary {
 		id,
 		target: extension.target,
 		loaded: true,
-		title: manifestUI?.title ?? id,
-		description: manifestUI?.description ?? "",
+		title: manifestUI?.title ?? extension.manifest?.name ?? id,
+		description: manifestUI?.description ?? extension.manifest?.description ?? "",
 		category: manifestUI?.category ?? "other",
 		configurable: (manifestUI?.settings?.fields.length ?? 0) > 0,
+		manifest: extension.manifest,
+		manifestStatus: extension.manifestStatus ?? "legacy",
+		manifestDiagnostics: extension.manifestDiagnostics ?? [],
+		hostVersion: extension.hostVersion ?? "0.0.0",
+		loadable: true,
 		ui: manifestUI,
 		path: extension.path,
 		resolvedPath: extension.resolvedPath,
@@ -1191,14 +1206,14 @@ function summarizeExtension(extension: Extension): HostExtensionSummary {
 }
 
 export async function getExtensions(
-	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "craft" } = {},
+	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "mortise" } = {},
 ): Promise<HostExtensionsResult> {
 	try {
 		const loader = await createHostResourceLoader(args);
 		const result = loader.getExtensions();
 		return {
 			extensions: result.extensions.map(summarizeExtension),
-			errors: result.errors.map((item) => ({ ...item, target: args.extensionTarget ?? "craft" })),
+			errors: result.errors.map((item) => ({ ...item, target: args.extensionTarget ?? "mortise" })),
 		};
 	} catch (error) {
 		return {
@@ -1207,7 +1222,7 @@ export async function getExtensions(
 				{
 					path: "",
 					error: error instanceof Error ? error.message : String(error),
-					target: args.extensionTarget ?? "craft",
+					target: args.extensionTarget ?? "mortise",
 				},
 			],
 		};
@@ -1215,11 +1230,11 @@ export async function getExtensions(
 }
 
 export async function getExtensionCatalog(
-	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "craft" } = {},
+	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "mortise" } = {},
 ): Promise<HostExtensionsResult> {
 	const cwd = args.cwd ?? process.cwd();
 	const agentDir = args.agentDir ?? getAgentDir();
-	const target = args.extensionTarget ?? "craft";
+	const target = args.extensionTarget ?? "mortise";
 	try {
 		const packageManager = new DefaultPackageManager({
 			cwd,
@@ -1230,19 +1245,25 @@ export async function getExtensionCatalog(
 		const resolved = await packageManager.resolve();
 		return {
 			extensions: resolved.extensions
-				.filter((resource) => resource.enabled && resource.metadata.extensionId)
+				.filter((resource) => resource.metadata.extensionId)
 				.map((resource) => {
 					const id = resource.metadata.extensionId!;
 					const manifestUI = resource.metadata.extensionUI;
+					const manifest = resource.metadata.extensionManifest;
 					const config = readExtensionConfig(id);
 					return {
 						id,
 						target,
 						loaded: false,
-						title: manifestUI?.title ?? id,
-						description: manifestUI?.description ?? "",
+						title: manifestUI?.title ?? manifest?.name ?? id,
+						description: manifestUI?.description ?? manifest?.description ?? "",
 						category: manifestUI?.category ?? "other",
 						configurable: (manifestUI?.settings?.fields.length ?? 0) > 0,
+						manifest,
+						manifestStatus: resource.metadata.extensionManifestStatus ?? "legacy",
+						manifestDiagnostics: resource.metadata.extensionManifestDiagnostics ?? [],
+						hostVersion: resource.metadata.extensionHostVersion ?? "0.0.0",
+						loadable: resource.metadata.extensionLoadable ?? resource.enabled,
 						ui: manifestUI,
 						path: resource.path,
 						resolvedPath: resource.path,

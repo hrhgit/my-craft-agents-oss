@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
+const viewerApiTarget = process.env.MORTISE_VIEWER_URL?.trim()
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -29,13 +31,12 @@ export default defineConfig({
   server: {
     port: 5174, // Different from Electron dev server
     open: true,
-    proxy: {
-      // Proxy API requests to production R2 during local dev
+    proxy: viewerApiTarget ? {
       '/s/api': {
-        target: 'https://agents.craft.do',
+        target: viewerApiTarget,
         changeOrigin: true,
         secure: true,
       },
-    },
+    } : undefined,
   },
 })

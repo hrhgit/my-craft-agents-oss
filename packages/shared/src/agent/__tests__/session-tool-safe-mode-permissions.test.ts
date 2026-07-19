@@ -11,8 +11,8 @@ describe('session tool safe-mode classification', () => {
   // send-developer-feedback-permissions.test.ts owns that flag-aware behavior.
   it('allows read-only session tools in safe mode', () => {
     const allowedTools = [
-      'mcp__session__browser_tool',
-      'mcp__session__script_sandbox',
+      'browser_tool',
+      'script_sandbox',
     ] as const;
 
     for (const toolName of allowedTools) {
@@ -23,10 +23,10 @@ describe('session tool safe-mode classification', () => {
 
   it('blocks mutating/auth session tools in safe mode', () => {
     const blockedTools = [
-      'mcp__session__source_oauth_trigger',
-      'mcp__session__source_credential_prompt',
-      'mcp__session__spawn_session',
-      'mcp__session__update_user_preferences',
+      'source_oauth_trigger',
+      'source_credential_prompt',
+      'spawn_session',
+      'update_user_preferences',
     ] as const;
 
     for (const toolName of blockedTools) {
@@ -36,5 +36,10 @@ describe('session tool safe-mode classification', () => {
         expect(result.reason).toContain('Session configuration changes are blocked in');
       }
     }
+  });
+
+  it('keeps legacy prefixed names readable', () => {
+    expect(shouldAllowToolInMode('mcp__session__script_sandbox', {}, 'safe').allowed).toBe(true);
+    expect(shouldAllowToolInMode('mcp__session__spawn_session', {}, 'safe').allowed).toBe(false);
   });
 });

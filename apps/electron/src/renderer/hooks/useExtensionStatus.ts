@@ -2,7 +2,7 @@
  * useExtensionStatus Hook
  *
  * 监听 pi 扩展通过桥接层转发到 renderer 的 `extension_notify` 事件，
- * 复用 craft 现有的 sonner toast 系统向用户显示真正的用户通知。
+ * 复用 mortise 现有的 sonner toast 系统向用户显示真正的用户通知。
  * `extension_status` 是运行态更新，不在这里 toast。
  *
  * 事件流：
@@ -24,7 +24,7 @@
 
 import { useEffect } from 'react'
 import { toast } from 'sonner'
-import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
+import type { ExtensionBridgeEvent } from '@mortise/shared/agent/backend/types'
 
 /**
  * notificationType   sonner toast 方法映射。
@@ -77,7 +77,7 @@ export function useExtensionStatus(sessionId: string): void {
         return
       }
       if (event.type === 'extension_set_editor_text') {
-        window.dispatchEvent(new CustomEvent('craft:restore-input', {
+        window.dispatchEvent(new CustomEvent('mortise:restore-input', {
           detail: { sessionId, text: event.text },
         }))
       }

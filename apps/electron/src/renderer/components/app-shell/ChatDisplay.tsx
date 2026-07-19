@@ -39,13 +39,13 @@ import {
   type ActivityItem,
   type FileChange,
   type DiffViewerSettings,
-} from "@craft-agent/ui"
+} from "@mortise/ui"
 import { useFocusZone } from "@/hooks/keyboard"
 import { useTheme } from "@/hooks/useTheme"
 import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, LoadedSource, LoadedSkill } from "../../../shared/types"
-import type { PermissionMode } from "@craft-agent/shared/agent/modes"
-import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
-import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
+import type { PermissionMode } from "@mortise/shared/agent/modes"
+import type { ThinkingLevel } from "@mortise/shared/agent/thinking-levels"
+import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import {
   TurnCard,
   UserMessageBubble,
@@ -58,11 +58,12 @@ import {
   extractAnnotationSelectedText,
   normalizeFollowUpText,
   type Turn,
-} from "@craft-agent/ui"
+} from "@mortise/ui"
 import { MemoizedAuthRequestCard } from "@/components/chat/AuthRequestCard"
 import { ChatInputZone, type StructuredInputState, type StructuredResponse, type PermissionResponse, type AdminApprovalResponse } from "./input"
 import { ExtensionWidgetZone } from "@/components/extensions/ExtensionWidgetZone"
 import { ExtensionContributionZone, ExtensionReplaceZone } from "@/components/extensions/ExtensionContributionZone"
+import { ExtensionArtifactContributionProvider } from "@/components/extensions/ExtensionArtifactContributionProvider"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { useBackgroundTasks } from "@/hooks/useBackgroundTasks"
 import { useTurnCardExpansion } from "@/hooks/useTurnCardExpansion"
@@ -998,7 +999,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const [overlayState, setOverlayState] = useState<OverlayState>(null)
 
   // Diff viewer settings - loaded from user preferences on mount, persisted on change
-  // These settings are stored in ~/.craft-agent/preferences.json (not localStorage)
+  // These settings are stored in ~/.mortise/preferences.json (not localStorage)
   const [diffViewerSettings, setDiffViewerSettings] = useState<Partial<DiffViewerSettings>>({})
 
   // Load diff viewer settings from preferences on mount
@@ -1328,7 +1329,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
     // Mimic pressing Send in the input after Save completes.
     window.setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('craft:submit-input', {
+      window.dispatchEvent(new CustomEvent('mortise:submit-input', {
         detail: { sessionId: session.id },
       }))
     }, 0)
@@ -1936,8 +1937,18 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           <div className="min-w-0">
                             <ExtensionContributionZone sessionId={session.id} surface="conversation.message.before" target={{ messageId }} />
                             <ExtensionReplaceZone sessionId={session.id} surface="conversation.message.replace" target={{ messageId }}>
-                              {builtIn}
+                              {turn.response?.artifact?.artifactId && turn.response.messageId === messageId ? (
+                                <ExtensionArtifactContributionProvider sessionId={session.id} artifactId={turn.response.artifact.artifactId}>
+                                  {builtIn}
+                                </ExtensionArtifactContributionProvider>
+                              ) : builtIn}
                             </ExtensionReplaceZone>
+                            <ExtensionContributionZone
+                              className="mt-1 rounded-[8px] border border-border/50 bg-muted/15 px-2 py-1.5 shadow-minimal"
+                              sessionId={session.id}
+                              surface="conversation.message.footer"
+                              target={{ messageId }}
+                            />
                             <ExtensionContributionZone sessionId={session.id} surface="conversation.message.after" target={{ messageId }} />
                           </div>
                         )}
@@ -1987,6 +1998,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
           <div className="pointer-events-none absolute inset-x-0 top-2 z-20 mx-auto flex max-h-[45%] w-full max-w-3xl flex-col items-end gap-2 overflow-auto px-4">
             <ExtensionContributionZone className="pointer-events-auto w-full max-w-lg" sessionId={session.id} surface="conversation.overlay" />
+          </div>
+
+          <div className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto flex w-full min-w-0 justify-center px-3 pb-1 empty:hidden @xs/panel:px-4')}>
+            <ExtensionContributionZone className="w-full items-center" sessionId={session.id} surface="conversation.status" />
           </div>
 
           <div className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto flex w-full min-w-0 flex-col gap-1 px-3 @xs/panel:px-4')}>

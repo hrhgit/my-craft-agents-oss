@@ -5,8 +5,8 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { BrowserWindow, dialog, Menu } from 'electron'
 import type { ManagedWindowRole, WindowManager } from '../window-manager'
 import type { BrowserPaneManager } from '../browser-pane-manager'
-import { queryUiValidationCapabilities, UiValidationError, type UiValidationCapabilitiesQuery } from '@craft-agent/shared/ui-validation'
-import { extensionUIValidationEntityId } from '@craft-agent/shared/protocol'
+import { queryUiValidationCapabilities, UiValidationError, type UiValidationCapabilitiesQuery } from '@mortise/shared/ui-validation'
+import { extensionUIValidationEntityId } from '@mortise/shared/protocol'
 import {
   ElectronUiDriverError,
   ElectronUiSurfaceDriver,
@@ -37,6 +37,7 @@ const MAX_WAIT_MS = UI_TEST_HOST_MAX_WAIT_MS
 
 export interface UiTestHostOptions {
   isPackaged: boolean
+  allowPackagedDevHost?: boolean
   windowManager: WindowManager
   browserPaneManager?: BrowserPaneManager
   runtimeLogPath: string
@@ -68,20 +69,20 @@ interface ExtensionTarget {
 }
 
 export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTestHost | null> {
-  if (process.env.CRAFT_UI_TEST_HOST !== '1') return null
-  if (options.isPackaged || process.env.NODE_ENV === 'production') {
-    throw new Error('CRAFT_UI_TEST_HOST is forbidden in packaged or production runtime.')
+  if (process.env.MORTISE_UI_TEST_HOST !== '1') return null
+  if ((options.isPackaged || process.env.NODE_ENV === 'production') && !options.allowPackagedDevHost) {
+    throw new Error('MORTISE_UI_TEST_HOST is forbidden in packaged or production runtime.')
   }
 
-  const runId = requireEnv('CRAFT_UI_RUN_ID')
-  const token = requireEnv('CRAFT_UI_TOKEN')
-  const manifestPath = resolve(requireEnv('CRAFT_UI_ENDPOINT_MANIFEST'))
-  const artifactsDir = resolve(requireEnv('CRAFT_UI_ARTIFACTS_DIR'))
-  const surface = process.env.CRAFT_UI_SURFACE
-  const windowMode = parseElectronUiWindowMode(process.env.CRAFT_UI_WINDOW_MODE)
+  const runId = requireEnv('MORTISE_UI_RUN_ID')
+  const token = requireEnv('MORTISE_UI_TOKEN')
+  const manifestPath = resolve(requireEnv('MORTISE_UI_ENDPOINT_MANIFEST'))
+  const artifactsDir = resolve(requireEnv('MORTISE_UI_ARTIFACTS_DIR'))
+  const surface = process.env.MORTISE_UI_SURFACE
+  const windowMode = parseElectronUiWindowMode(process.env.MORTISE_UI_WINDOW_MODE)
   if (surface !== 'electron') throw new Error(`Electron Test Host cannot serve surface ${surface ?? '(missing)'}.`)
-  if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('CRAFT_UI_TOKEN must be 64 hexadecimal characters.')
-  if (process.env.CRAFT_UI_PROTOCOL_VERSION !== '1') throw new Error('Unsupported CRAFT_UI_PROTOCOL_VERSION.')
+  if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('MORTISE_UI_TOKEN must be 64 hexadecimal characters.')
+  if (process.env.MORTISE_UI_PROTOCOL_VERSION !== '1') throw new Error('Unsupported MORTISE_UI_PROTOCOL_VERSION.')
 
   await mkdir(artifactsDir, { recursive: true })
   const driver = new ElectronUiSurfaceDriver(options.windowManager)
@@ -137,12 +138,12 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
   const nativeMenus = new ElectronNativeMenuAdapter(Menu, () => BrowserWindow.getFocusedWindow())
   const stateBridge = getUiValidationStateBridge()!
   if (!stateBridge) throw new Error('UI validation state bridge must be installed before the Test Host starts.')
-  const nativeWindows = new ElectronNativeWindowController(nativeDriver, (webContentsId, phase, detail) => {
-    stateBridge.setNativeDriverState(webContentsId, phase, detail)
-  }, windowMode)
   const backgroundWindows = windowMode === 'background'
     ? new ElectronBackgroundWindowController(options.windowManager)
     : undefined
+  const nativeWindows = new ElectronNativeWindowController(nativeDriver, (webContentsId, phase, detail) => {
+    stateBridge.setNativeDriverState(webContentsId, phase, detail)
+  }, windowMode, window => backgroundWindows?.hasUserForegroundControl(window) ?? false)
   if (windowMode === 'foreground') {
     for (const { window } of options.windowManager.getAllWindows()) {
       if (!window.isDestroyed()) nativeWindows.reveal(window, { focus: false })
@@ -1149,6 +1150,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     url,
     pid: process.pid,
     readyAt: new Date().toISOString(),
+    ...(process.env.MORTISE_UI_BUILD_ID ? { buildId: process.env.MORTISE_UI_BUILD_ID } : {}),
   })
 
   async function close(): Promise<void> {
@@ -1476,7 +1478,7 @@ function boundedLogBytes(value: unknown): number {
 
 function requireEnv(name: string): string {
   const value = process.env[name]
-  if (!value) throw new Error(`${name} is required when CRAFT_UI_TEST_HOST=1.`)
+  if (!value) throw new Error(`${name} is required when MORTISE_UI_TEST_HOST=1.`)
   return value
 }
 

@@ -1,6 +1,6 @@
-import type { LlmAuthType, ModelProvider } from '@craft-agent/shared/agent/backend'
-import type { PiGlobalProvider } from '@craft-agent/shared/config'
-import type { FileAttachment } from '@craft-agent/shared/protocol'
+import type { LlmAuthType, ModelProvider } from '@mortise/shared/agent/backend'
+import type { PiGlobalProvider } from '@mortise/shared/config'
+import type { FileAttachment } from '@mortise/shared/protocol'
 
 export interface BackendRuntimeSignatureInput {
   providerKey?: string

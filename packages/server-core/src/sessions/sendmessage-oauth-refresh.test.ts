@@ -43,7 +43,7 @@ describe('sendMessage OAuth refresh ordering (#710)', () => {
       createdAt: Date.now(),
     }
     const managed = createManagedSession(
-      { craftId: id, name: 'oauth-refresh test' },
+      { mortiseId: id, name: 'oauth-refresh test' },
       workspace as never,
       { messagesLoaded: true },
     )
@@ -62,7 +62,7 @@ describe('sendMessage OAuth refresh ordering (#710)', () => {
         name: slug,
         type: 'mcp',
         enabled: true,
-        provider: 'craft',
+        provider: 'mortise',
         isAuthenticated,
         mcp: { url: `https://${slug}.example.com`, authType: 'oauth' },
       }),
@@ -121,8 +121,8 @@ describe('sendMessage OAuth refresh ordering (#710)', () => {
 
     // Reload source list the same way sendMessage does and verify the failed
     // source is no longer usable.
-    const { getSourcesBySlugs } = await import('@craft-agent/shared/sources')
-    const { isSourceUsable } = await import('@craft-agent/shared/sources/storage')
+    const { getSourcesBySlugs } = await import('@mortise/shared/sources')
+    const { isSourceUsable } = await import('@mortise/shared/sources/storage')
     const reloaded = getSourcesBySlugs(tmpRoot, ['failing-mcp'])
     // In-memory mutation happened on the source instance passed to refreshSources;
     // disk wasn't touched in this stub, so reloaded copy still says authenticated.

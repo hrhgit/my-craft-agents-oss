@@ -2,18 +2,18 @@
  * Pi Backend (Pi RpcClient)
  *
  * Thin host-side adapter for the Pi coding agent. Uses Pi's public RpcClient
- * API and keeps Craft-specific scaffolding (permission gating, source/tool
+ * API and keeps Mortise-specific scaffolding (permission gating, source/tool
  * proxying, UI event translation) on the host side.
  *
  * Pi owns agent runtime, session storage, provider/model registry, and native
- * extension execution. Craft talks to it through RpcClient only.
+ * extension execution. Mortise talks to it through RpcClient only.
  */
 
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AgentEvent } from '@craft-agent/core/types';
+import type { AgentEvent } from '@mortise/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import { createSanitizedEnv } from '../utils/env.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
@@ -27,7 +27,7 @@ import {
   type RpcCommandType as PiRpcCommandType,
   type RpcHostToolResult as PiRpcHostToolResult,
   type RpcExtensionHostCapabilityResponse as PiRpcExtensionHostCapabilityResponse,
-} from '@earendil-works/pi-coding-agent/rpc';
+} from '@mortise/pi-coding-agent/rpc';
 import { piHostManager, type PiHostLease } from './backend/pi-host-manager.ts';
 
 import type {
@@ -68,7 +68,7 @@ import { PiEventAdapter } from './backend/pi/event-adapter.ts';
 import { PiProjectionBuilder } from './backend/pi/projection-builder.ts';
 import { EventQueue } from './backend/event-queue.ts';
 
-// System prompt for Craft Agent context
+// System prompt for Mortise Agent context
 import { getSystemPrompt } from '../prompts/system.ts';
 import { getCoAuthorPreference } from '../config/preferences.ts';
 
@@ -84,16 +84,21 @@ import {
 } from './session-scoped-tools.ts';
 import { attachSessionSelfManagementBindings } from './session-self-management-bindings.ts';
 
-// Session tool proxy definitions (for registering with Pi RpcClient)
-import { getSessionToolProxyDefs, SESSION_TOOL_NAMES } from './backend/pi/session-tool-defs.ts';
+// Session host-tool definitions (registered with Pi RpcClient)
+import {
+  getSessionHostToolDefs,
+  PI_EXTENSION_OWNED_SESSION_TOOL_NAMES,
+  SESSION_TOOL_NAMES,
+} from './backend/pi/session-tool-defs.ts';
 
 // Session tool registry (for executing proxy tool calls)
 import {
   SESSION_BACKEND_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
+  normalizeSessionToolName,
   type ToolResult as SessionToolResult,
   type TextContent,
-} from '@craft-agent/session-tools-core';
+} from '@mortise/session-tools-core';
 import { createSessionToolContext, type SessionToolContext } from './session-tool-context.ts';
 import { getPermissionModeDiagnostics } from './mode-manager.ts';
 
@@ -112,6 +117,12 @@ import { parseError, type AgentError } from './errors.ts';
 import { isDataSourceToolName, runPreToolUseChecks, type PreToolUseCheckResult } from './core/pre-tool-use.ts';
 import { getRtkPath } from './core/rtk-detector.ts';
 import { getDataSourcesEnabled, getRtkEnabled, getPiShellFullPassthrough } from '../config/storage.ts';
+import {
+  getCustomCompactionPrompt,
+  getDisabledAgentTools,
+  resolveMainAgentSystemPrompt,
+  type AgentRuntimeProfile,
+} from '../config/agent-settings.ts';
 import type { RtkContext } from './core/rtk-rewrite.ts';
 
 // Workspace slug extraction for skill qualification
@@ -120,6 +131,10 @@ import { extractWorkspaceSlug } from '../utils/workspace.ts';
 // LLM tool types
 import type { LLMQueryRequest, LLMQueryResult } from './llm-tool.ts';
 import { writeRuntimeLog, type RuntimeLogLevel } from '../utils/runtime-log.ts';
+import {
+  WorkspaceCoordinationBridge,
+  type CoordinationToolResultRequest,
+} from './workspace-coordination-bridge.ts';
 
 /**
  * Convert the renderer's typed RemoteUI payload back to Pi's scalar dialog
@@ -157,12 +172,12 @@ const PI_ABORT_ACK_TIMEOUT_MS = 5_000;
 const SETTLED_EXTENSION_INTERACTION_TTL_MS = 5 * 60_000;
 const MAX_SETTLED_EXTENSION_INTERACTIONS = 512;
 
-function craftRpcUiCapabilities() {
-  const validationEnabled = process.env.CRAFT_UI_VALIDATION_BUILD === '1'
-    && process.env.CRAFT_UI_TEST_HOST === '1'
+function mortiseRpcUiCapabilities() {
+  const validationEnabled = process.env.MORTISE_UI_VALIDATION_BUILD === '1'
+    && process.env.MORTISE_UI_TEST_HOST === '1'
     && process.env.NODE_ENV !== 'production';
   return {
-    kind: 'craft' as const,
+    kind: 'mortise' as const,
     dialogs: true,
     widgets: true,
     editorControl: true,
@@ -202,6 +217,11 @@ const AWS_ENVIRONMENT_AUTH_VARS = [
 type PiRpcToolPermissionRequest = Extract<PiRpcClientEvent, { type: 'tool_permission_request' }>;
 type PiRpcToolExecuteRequest = Extract<PiRpcClientEvent, { type: 'tool_execute_request' }>;
 type PiSessionRpcClient = PiRpcClient | PiRuntimeHandle;
+interface PiCoordinationRpcClient {
+  setToolResultHandler(
+    handler: ((request: CoordinationToolResultRequest) => Promise<void>) | null,
+  ): Promise<void>;
+}
 type PiRpcHostToolDefinition = {
   name: string;
   description: string;
@@ -222,7 +242,7 @@ export function mapBrowserToolErrorCode(code: string): string | null {
     case 'BROWSER_NO_CAPABLE_CLIENT':
     case 'CAPABILITY_UNAVAILABLE':
       return 'No connected desktop client supports browser tools, or no client is currently connected. ' +
-        'Ask the user to open this workspace from the Craft Agent desktop app.';
+        'Ask the user to open this workspace from the Mortise Agent desktop app.';
     case 'CLIENT_DISCONNECTED':
       return 'The desktop client that owned this browser session disconnected. ' +
         'Ask the user to reconnect and retry.';
@@ -291,7 +311,7 @@ export interface PiChildSessionInfo {
  * planning heuristics, config watching, usage tracking).
  */
 export class PiAgent extends BaseAgent {
-  protected backendName = 'Craft Agents Backend';
+  protected backendName = 'Mortise Backend';
 
   // ============================================================
   // Pi RpcClient State
@@ -342,7 +362,7 @@ export class PiAgent extends BaseAgent {
       scope: 'pi-rpc',
       event,
       meta: {
-        sessionId: this.config.session?.craftId,
+        sessionId: this.config.session?.mortiseId,
         piSessionId: this.piSessionId,
         workspaceId: this.config.workspace.id,
         workspaceRootPath: this.config.workspace.rootPath,
@@ -397,6 +417,7 @@ export class PiAgent extends BaseAgent {
 
   // RPC request counter for unique IDs
   private rpcIdCounter: number = 0;
+  private coordinationBridge: WorkspaceCoordinationBridge | null = null;
 
   // OAuth token refresh (ChatGPT Plus)
   private tokenRefreshInProgress: Promise<void> | null = null;
@@ -423,10 +444,10 @@ export class PiAgent extends BaseAgent {
     }
 
     // Set session dir on adapter for concurrent-safe toolMetadataStore lookups.
-    // session dir is the Pi sidecar `.craft/{sessionId}/` under the
+    // session dir is the Pi sidecar `.mortise/{sessionId}/` under the
     // Pi sessions bucket, NOT the legacy `workspaces/{id}/sessions/{sessionId}/`.
-    if (config.session?.craftId && config.workspace.rootPath) {
-      this.adapter.setSessionDir(getSessionPath(config.workspace.rootPath, config.session.craftId));
+    if (config.session?.mortiseId && config.workspace.rootPath) {
+      this.adapter.setSessionDir(getSessionPath(config.workspace.rootPath, config.session.mortiseId));
     }
 
     if (!config.isHeadless) {
@@ -440,9 +461,7 @@ export class PiAgent extends BaseAgent {
    */
   private assertBackendSessionToolParity(): void {
     const missing = [...SESSION_BACKEND_TOOL_NAMES].filter(
-      (name) => name !== 'browser_tool',
-    ).filter(
-      (name) => !PI_BACKEND_SESSION_TOOL_NAMES.has(name),
+      (name) => !PI_BACKEND_SESSION_TOOL_NAMES.has(name) && !PI_EXTENSION_OWNED_SESSION_TOOL_NAMES.has(name),
     );
 
     if (missing.length > 0) {
@@ -511,7 +530,7 @@ export class PiAgent extends BaseAgent {
     }
 
     try {
-      const resolved = import.meta.resolve('@earendil-works/pi-coding-agent');
+      const resolved = import.meta.resolve('@mortise/pi-coding-agent');
       const packageDist = dirname(fileURLToPath(resolved));
       const cliPath = join(packageDist, 'cli.js');
       checkedPaths.push(cliPath);
@@ -520,7 +539,7 @@ export class PiAgent extends BaseAgent {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      checkedPaths.push(`@earendil-works/pi-coding-agent resolution failed: ${message}`);
+      checkedPaths.push(`@mortise/pi-coding-agent resolution failed: ${message}`);
     }
 
     throw new Error(`Pi CLI entrypoint not found. Checked: ${checkedPaths.join('; ')}`);
@@ -528,15 +547,15 @@ export class PiAgent extends BaseAgent {
 
   private buildRpcArgs(): string[] {
     const args: string[] = [];
-    const browserExtensionPath = process.env.CRAFT_BROWSER_EXTENSION_PATH;
+    const browserExtensionPath = process.env.MORTISE_BROWSER_EXTENSION_PATH;
     if (browserExtensionPath && existsSync(browserExtensionPath)) {
       args.push('--extension', browserExtensionPath);
     }
-    const messagingExtensionPath = process.env.CRAFT_MESSAGING_EXTENSION_PATH;
+    const messagingExtensionPath = process.env.MORTISE_MESSAGING_EXTENSION_PATH;
     if (messagingExtensionPath && existsSync(messagingExtensionPath)) {
       args.push('--extension', messagingExtensionPath);
     }
-    const sessionId = this.config.session?.craftId;
+    const sessionId = this.config.session?.mortiseId;
     const branchFromPiSessionFile = this.config.session?.branchFromPiSessionFile;
     const sessionDir = this.config.session
       ? getPiNativeSessionDir(this.config.workspace.rootPath, this.config.session.workingDirectory)
@@ -561,7 +580,7 @@ export class PiAgent extends BaseAgent {
   }
 
   private getCraftExtensionPaths(): string[] {
-    return [process.env.CRAFT_BROWSER_EXTENSION_PATH, process.env.CRAFT_MESSAGING_EXTENSION_PATH]
+    return [process.env.MORTISE_BROWSER_EXTENSION_PATH, process.env.MORTISE_MESSAGING_EXTENSION_PATH]
       .filter((value): value is string => Boolean(value && existsSync(value)));
   }
 
@@ -592,11 +611,11 @@ export class PiAgent extends BaseAgent {
   }
 
   private shouldUseSharedPiHost(runtime: { piAuthProvider?: string }): boolean {
-    if (process.env.PI_GLOBAL_HOST === '0' || process.env.CRAFT_PI_HOST_MODE === 'legacy') return false;
+    if (process.env.PI_GLOBAL_HOST === '0' || process.env.MORTISE_PI_HOST_MODE === 'legacy') return false;
     if (runtime.piAuthProvider === 'amazon-bedrock') return false;
     if (this.config.authType === 'environment' || this.config.authType === 'iam_credentials') return false;
     const processScopedOverrides = Object.keys(this.config.envOverrides ?? {}).filter(
-      (key) => key !== 'CRAFT_WORKSPACE_PATH',
+      (key) => key !== 'MORTISE_WORKSPACE_PATH',
     );
     return processScopedOverrides.length === 0;
   }
@@ -612,8 +631,8 @@ export class PiAgent extends BaseAgent {
     this.resetRpcErrorDedup();
     this.rpcProcessFailureHandled = false;
 
-    const sessionId = this.config.session?.craftId || `agent-${Date.now()}`;
-    const craftSessionDir = this.config.session
+    const sessionId = this.config.session?.mortiseId || `agent-${Date.now()}`;
+    const mortiseSessionDir = this.config.session
       ? getSessionPath(this.config.workspace.rootPath, sessionId)
       : undefined;
 
@@ -631,7 +650,7 @@ export class PiAgent extends BaseAgent {
     const piAuth = await this.getPiAuth();
     const awsEnv = this.buildAwsEnv(piAuth, runtime);
     const rpcArgs = this.buildRpcArgs();
-    const pipeStderr = process.env.CRAFT_DEBUG === '1';
+    const pipeStderr = process.env.MORTISE_DEBUG === '1';
 
     this.writePiRuntimeLog('info', 'startup.begin', {
       command: nodePath,
@@ -640,7 +659,7 @@ export class PiAgent extends BaseAgent {
       runtimeProvider: runtime.piAuthProvider,
       authType: this.config.authType,
       rpcArgs,
-      craftSessionDir,
+      mortiseSessionDir,
       pipeStderr,
     });
 
@@ -657,8 +676,8 @@ export class PiAgent extends BaseAgent {
         ...createSanitizedEnv(),
         ...getProxyEnvVars(),
         ...awsEnv,
-        PI_EXTENSION_TARGET: 'craft',
-        CRAFT_DEBUG: (process.argv.includes('--debug') || process.env.CRAFT_DEBUG === '1') ? '1' : '0',
+        PI_EXTENSION_TARGET: 'mortise',
+        MORTISE_DEBUG: (process.argv.includes('--debug') || process.env.MORTISE_DEBUG === '1') ? '1' : '0',
       },
       pipeStderr,
     };
@@ -669,7 +688,7 @@ export class PiAgent extends BaseAgent {
         const sessionDir = this.config.session
           ? getPiNativeSessionDir(this.config.workspace.rootPath, this.config.session.workingDirectory)
           : undefined;
-        const runtimeId = this.config.session?.craftId ?? `runtime-${Date.now()}`;
+        const runtimeId = this.config.session?.mortiseId ?? `runtime-${Date.now()}`;
         const lease = await piHostManager.acquire({
           key: `${nodePath}\u0000${cliPath}\u0000${PI_AGENT_DIR}`,
           client: clientOptions,
@@ -677,12 +696,12 @@ export class PiAgent extends BaseAgent {
             runtimeId,
             cwd,
             agentDir: PI_AGENT_DIR,
-            extensionTarget: 'craft',
+            extensionTarget: 'mortise',
             extensionPaths: this.getCraftExtensionPaths(),
             sessionDir,
-            sessionId: this.config.session?.craftId,
+            sessionId: this.config.session?.mortiseId,
             forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
-            uiCapabilities: craftRpcUiCapabilities(),
+            uiCapabilities: mortiseRpcUiCapabilities(),
           },
         });
         this.rpcHostLease = lease;
@@ -706,8 +725,8 @@ export class PiAgent extends BaseAgent {
         env: {
           ...clientOptions.env,
           ...this.config.envOverrides,
-          ...(craftSessionDir ? { CRAFT_SESSION_DIR: craftSessionDir } : {}),
-          PI_RPC_UI_CAPABILITIES: JSON.stringify(craftRpcUiCapabilities()),
+          ...(mortiseSessionDir ? { MORTISE_SESSION_DIR: mortiseSessionDir } : {}),
+          PI_RPC_UI_CAPABILITIES: JSON.stringify(mortiseRpcUiCapabilities()),
         },
       });
       rpcClient = legacyClient;
@@ -785,27 +804,51 @@ export class PiAgent extends BaseAgent {
       this.debug(`Failed to configure PI auto-compaction (continuing): ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    await rpcClient.setToolPermissionHandler((request) => this.handleToolPermissionRequest(request));
+    await rpcClient.setToolPermissionHandler(async (request) => {
+      const decision = await this.handleToolPermissionRequest(request);
+      return this.getCoordinationBridge().afterPermission({
+        toolName: request.toolName,
+        toolCallId: request.toolCallId,
+        input: request.input,
+        ...('assistantResponseId' in request && typeof request.assistantResponseId === 'string'
+          ? { assistantResponseId: request.assistantResponseId }
+          : {}),
+        assistantTimestamp: 'assistantTimestamp' in request && typeof request.assistantTimestamp === 'number'
+          ? request.assistantTimestamp
+          : Date.now(),
+      }, decision);
+    });
+    const coordinationClient = rpcClient as PiSessionRpcClient & PiCoordinationRpcClient;
+    await coordinationClient.setToolResultHandler(request => this.handleCoordinatedToolResult(request));
 
-    // Register session-scoped tools as proxy tools in Pi.
+    // Register canonical session-scoped host tools in Pi.
     // These tools (config_validate, source auth, spawn_session, etc.)
     // are executed in the main process when the LLM calls them.
     this.assertBackendSessionToolParity();
-    let sessionToolDefs = getSessionToolProxyDefs();
+    let sessionToolDefs = getSessionHostToolDefs();
 
-    // Pi owns these tools through the messaging extension and the versioned
-    // Host capability protocol. Other backends keep the canonical registry handlers.
-    sessionToolDefs = sessionToolDefs.filter(d =>
-      d.name !== 'mcp__session__list_messaging_channels'
-      && d.name !== 'mcp__session__unbind_messaging_channel'
-    );
-
-    sessionToolDefs = sessionToolDefs.filter(d => d.name !== 'mcp__session__browser_tool');
+    // Bundled extensions own browser and messaging tools through versioned Host capabilities.
+    sessionToolDefs = sessionToolDefs.filter(d => !PI_EXTENSION_OWNED_SESSION_TOOL_NAMES.has(d.name));
 
     await rpcClient.registerTools(sessionToolDefs as PiRpcHostToolDefinition[], (request) => this.executeHostTool(request));
     this.debug(`Registered ${sessionToolDefs.length} session tools with Pi RpcClient`);
 
     await this.registerPoolToolsWithRpcClient();
+
+    const profile = await rpcClient.getState();
+    const disabledTools = new Set(getDisabledAgentTools());
+    await rpcClient.setActiveTools(profile.activeTools.filter((name) => !disabledTools.has(name)));
+    await rpcClient.setCompactionPrompt(getCustomCompactionPrompt());
+  }
+
+  async getAgentProfile(): Promise<AgentRuntimeProfile> {
+    const state = await (await this.ensureRpcClient()).getState();
+    return {
+      systemPrompt: state.systemPrompt,
+      compactionPrompt: state.compactionPrompt,
+      activeTools: state.activeTools,
+      tools: state.tools,
+    };
   }
 
   /**
@@ -826,9 +869,9 @@ export class PiAgent extends BaseAgent {
    * Returns a provider-aware credential object for Pi startup,
    * or null if no piAuthProvider is configured.
    *
-   * OAuth tokens from Craft (ChatGPT Plus, Copilot) are passed as
+   * OAuth tokens from Mortise (ChatGPT Plus, Copilot) are passed as
    * api_key type because they function as bearer tokens that the Pi SDK's provider
-   * modules use directly. The OAuth exchange happens on the Craft side; by the time
+   * modules use directly. The OAuth exchange happens on the Mortise side; by the time
    * it reaches Pi, it's just an access token.
    */
   private async getPiAuth(): Promise<{
@@ -981,7 +1024,7 @@ export class PiAgent extends BaseAgent {
       try {
         if (piAuthProvider === 'github-copilot') {
           // Copilot: refresh the short-lived Copilot token using the GitHub access token
-          const { refreshGitHubCopilotToken } = await import('@earendil-works/pi-ai/oauth');
+          const { refreshGitHubCopilotToken } = await import('@mortise/pi-ai/oauth');
           const newCreds = await refreshGitHubCopilotToken(stored.refreshToken);
           await credentialManager.setProviderOAuth(slug, {
             accessToken: newCreds.access,
@@ -1094,7 +1137,7 @@ export class PiAgent extends BaseAgent {
     }
 
     if (event.type === 'extension_host_capability_declaration') {
-      const sessionId = this.config.session?.craftId ?? this._sessionId;
+      const sessionId = this.config.session?.mortiseId ?? this._sessionId;
       const runtimeId = this.currentRpcRuntimeId() ?? `legacy:${sessionId}`;
       this.config.onHostCapabilityDeclaration?.({
         version: 1,
@@ -1107,7 +1150,7 @@ export class PiAgent extends BaseAgent {
     }
 
     if (event.type === 'extension_host_capability_cancel') {
-      this.config.onHostCapabilityCancel?.(event.id, this.currentRpcRuntimeId() ?? `legacy:${this.config.session?.craftId ?? this._sessionId}`);
+      this.config.onHostCapabilityCancel?.(event.id, this.currentRpcRuntimeId() ?? `legacy:${this.config.session?.mortiseId ?? this._sessionId}`);
       return;
     }
 
@@ -1174,7 +1217,7 @@ export class PiAgent extends BaseAgent {
   ): Promise<void> {
     const client = this.rpcClient;
     if (!client) return;
-    const sessionId = this.config.session?.craftId ?? this._sessionId;
+    const sessionId = this.config.session?.mortiseId ?? this._sessionId;
     // Runtime identity is assigned by the Host client. Never accept an extension-supplied
     // route value here: capability authorization and cleanup depend on this boundary.
     const runtimeId = 'runtimeId' in client && typeof client.runtimeId === 'string'
@@ -1239,7 +1282,7 @@ export class PiAgent extends BaseAgent {
     return {
       extensionId,
       runtimeId: runtimeId ?? (client && 'runtimeId' in client ? client.runtimeId : 'legacy'),
-      sessionId: this.config.session?.craftId ?? this.piSessionId ?? '',
+      sessionId: this.config.session?.mortiseId ?? this.piSessionId ?? '',
     };
   }
 
@@ -1504,7 +1547,7 @@ export class PiAgent extends BaseAgent {
    */
   private handlePiEvent(event: Record<string, unknown>): void {
 
-    // Detect session MCP tool completions (same pattern as in-process version)
+    // Detect canonical or persisted legacy session tool completions.
     const eventType = event.type as string;
     if (this.suppressAbortedTurnEvents && eventType !== 'turn_end' && eventType !== 'agent_end') {
       return;
@@ -1513,11 +1556,6 @@ export class PiAgent extends BaseAgent {
 
     if (eventType === 'tool_execution_start') {
       const toolName = event.toolName as string;
-      if (toolName?.startsWith('session__') || toolName?.startsWith('mcp__session__')) {
-        // Session tool tracking is handled by Pi; it sends
-        // session_tool_completed events when appropriate.
-      }
-
       // Deterministic metadata bridge: if the Pi event lacks toolMetadata,
       // inject metadata captured from pre_tool_use_request before stripping.
       const toolCallId = event.toolCallId as string | undefined;
@@ -1545,7 +1583,7 @@ export class PiAgent extends BaseAgent {
       }
     }
 
-    // Adapt event to CraftAgentEvents
+    // Adapt event to MortiseAgentEvents
     // The event adapter expects typed PiAgentEvent/AgentSessionEvent objects,
     // but since we're receiving plain JSON, we cast through unknown.
     for (const agentEvent of this.adapter.adaptEvent(adaptedEvent as any)) {
@@ -1576,6 +1614,7 @@ export class PiAgent extends BaseAgent {
     }
 
     if (eventType === 'agent_end') {
+      this.coordinationBridge?.completeTurn();
       this.eventQueue.complete();
     }
 
@@ -1589,7 +1628,7 @@ export class PiAgent extends BaseAgent {
     { action: 'allow' } | { action: 'block'; reason?: string } | { action: 'modify'; input: Record<string, unknown> }
   > {
     const { toolName, toolCallId, input } = req;
-    const debugSessionId = this.config.session?.craftId || this._sessionId;
+    const debugSessionId = this.config.session?.mortiseId || this._sessionId;
     this.debug(`PreToolUse request from Pi RpcClient: ${toolName} (${req.id}, sessionId=${debugSessionId})`);
 
     // Capture metadata BEFORE centralized checks strip it out.
@@ -1614,7 +1653,7 @@ export class PiAgent extends BaseAgent {
 
     const rootPath = this.config.workspace.rootPath ?? this.workingDirectory;
     const workspaceSlug = extractWorkspaceSlug(rootPath, this.config.workspace.id);
-    const sessionId = this.config.session?.craftId || this._sessionId;
+    const sessionId = this.config.session?.mortiseId || this._sessionId;
     const plansFolderPath = sessionId
       ? getSessionPlansPath(rootPath, sessionId)
       : undefined;
@@ -1805,7 +1844,7 @@ export class PiAgent extends BaseAgent {
    */
   private async executeHostTool(request: PiRpcToolExecuteRequest): Promise<PiRpcHostToolResult> {
     if (!getDataSourcesEnabled() && isDataSourceToolName(request.toolName)) {
-      return { content: 'Data sources are disabled in Craft settings.', isError: true };
+      return { content: 'Data sources are disabled in Mortise settings.', isError: true };
     }
 
     // Prerequisite check: block source tools until guide.md is read
@@ -1836,11 +1875,8 @@ export class PiAgent extends BaseAgent {
     toolName: string,
     args: Record<string, unknown>
   ): Promise<{ content: string; isError: boolean }> {
-    // Session-scoped tools — strip mcp__session__ prefix added by the Pi SDK
-    // registration (tools are registered as mcp__session__<name>, etc.)
-    const strippedName = toolName.startsWith('mcp__session__')
-      ? toolName.slice('mcp__session__'.length)
-      : toolName;
+    // Runtime names are canonical. Normalization accepts persisted legacy aliases.
+    const strippedName = normalizeSessionToolName(toolName) ?? toolName;
 
     if (SESSION_TOOL_NAMES.has(strippedName)) {
       return this.executeSessionTool(strippedName, args);
@@ -1865,7 +1901,7 @@ export class PiAgent extends BaseAgent {
   private getSessionToolContext(): SessionToolContext {
     if (this._sessionToolContext) return this._sessionToolContext;
 
-    const sessionId = this.config.session?.craftId || '';
+    const sessionId = this.config.session?.mortiseId || '';
     const workspacePath = this.config.workspace.rootPath;
     const workspaceId = this.config.workspace.id;
 
@@ -1950,11 +1986,11 @@ export class PiAgent extends BaseAgent {
    * Delegates to Pi's native new-session RPC with the current session file as
    * parent metadata so Pi can preserve lineage in its own session tree.
    *
-   * This is the thin-wrapper path used by the spawn_session tool: craft no longer
+   * This is the thin-wrapper path used by the spawn_session tool: mortise no longer
    * creates an independent session file/manager; it just asks pi to branch the
    * active session tree.
    *
-   * @param parentSessionId Active Pi session ID retained for the Craft caller contract.
+   * @param parentSessionId Active Pi session ID retained for the Mortise caller contract.
    * @param options Spawn overrides (prompt, connection, model, etc.)
    * @returns { sessionId, sessionPath } of the newly created child session
    */
@@ -2044,7 +2080,7 @@ export class PiAgent extends BaseAgent {
   }
 
   private getProjectionBuilder(): PiProjectionBuilder | null {
-    const sessionId = this.config.session?.craftId;
+    const sessionId = this.config.session?.mortiseId;
     if (!this.config.onPiProjectionEvent || !sessionId) return null;
     const client = this.rpcClient;
     const runtimeId = client && 'runtimeId' in client && typeof client.runtimeId === 'string'
@@ -2074,7 +2110,9 @@ export class PiAgent extends BaseAgent {
     try {
       const client = await this.ensureRpcClient();
       this.requirePiRpcCommand('list_child_sessions', 'child session listing');
-      const sessions = await client.listChildSessions(parentSessionId);
+      // ensureRpcClient() hydrates piSessionId from getState(). Prefer that
+      // authoritative runtime identity over a pre-readiness Mortise ID hint.
+      const sessions = await client.listChildSessions(this.piSessionId ?? parentSessionId);
       return sessions.map(session => ({
         sessionId: session.id,
         sessionPath: session.path,
@@ -2194,11 +2232,27 @@ export class PiAgent extends BaseAgent {
     return true;
   }
 
+  private getCoordinationBridge(): WorkspaceCoordinationBridge {
+    if (!this.coordinationBridge) {
+      const sessionId = this.config.session?.mortiseId || this._sessionId;
+      this.coordinationBridge = new WorkspaceCoordinationBridge({
+        workspaceRoot: this.config.workspace.rootPath ?? this.workingDirectory,
+        workspaceId: this.config.workspace.id,
+        sessionId,
+      });
+    }
+    return this.coordinationBridge;
+  }
+
+  private async handleCoordinatedToolResult(request: CoordinationToolResultRequest): Promise<void> {
+    await this.coordinationBridge?.recordResult(request);
+  }
+
   /**
    * 调用扩展注册的命令。
    * Uses Pi's typed `invoke_extension_command` RPC and returns the command ack.
    */
-  async sendExtensionCommandInvoke(commandId: string, args?: string, ownerExtensionId?: string): Promise<import('@craft-agent/core/types').ExtensionCommandResult> {
+  async sendExtensionCommandInvoke(commandId: string, args?: string, ownerExtensionId?: string): Promise<import('@mortise/core/types').ExtensionCommandResult> {
     try {
       const client = await this.ensureRpcClient();
       this.requirePiRpcCommand('invoke_extension_command', 'extension command invocation');
@@ -2319,7 +2373,7 @@ export class PiAgent extends BaseAgent {
     });
 
     // Refresh session-scoped callbacks used by source auth and plan review.
-    const sessionId = this.config.session?.craftId;
+    const sessionId = this.config.session?.mortiseId;
     if (sessionId) {
       mergeSessionScopedToolCallbacks(sessionId, {
         onPlanSubmitted: (planPath) => this.onPlanSubmitted?.(planPath),
@@ -2376,18 +2430,20 @@ export class PiAgent extends BaseAgent {
       }
 
       // Build system prompt
-      // 壳模式（fullPassthrough）下跳过 Craft system prompt，使用 Pi 原生 system prompt。
+      // 壳模式（fullPassthrough）下跳过 Mortise system prompt，使用 Pi 原生 system prompt。
       const piShellPassthrough = getPiShellFullPassthrough();
       const systemPrompt = piShellPassthrough
         ? ''
-        : getSystemPrompt(
-            undefined, // pinnedPreferencesPrompt
-            this.config.debugMode,
-            this.config.workspace.rootPath,
-            this.config.session?.workingDirectory,
-            this.config.systemPromptPreset,
-            'Craft Agents Backend', // backendName
-            getCoAuthorPreference() // respect user's includeCoAuthoredBy preference (#576)
+        : resolveMainAgentSystemPrompt(
+            getSystemPrompt(
+              undefined, // pinnedPreferencesPrompt
+              this.config.debugMode,
+              this.config.workspace.rootPath,
+              this.config.session?.workingDirectory,
+              this.config.systemPromptPreset,
+              'Mortise Backend', // backendName
+              getCoAuthorPreference() // respect user's includeCoAuthoredBy preference (#576)
+            )
           );
 
       // Build context from sources
@@ -2677,6 +2733,7 @@ export class PiAgent extends BaseAgent {
       await this.stopRpcClient();
     } finally {
       if (abortTimeout) clearTimeout(abortTimeout);
+      this.coordinationBridge?.completeTurn();
       // Wake the chat consumer even if the transport failed while aborting.
       this.eventQueue.complete();
     }
@@ -2693,6 +2750,7 @@ export class PiAgent extends BaseAgent {
     this.abortReason = reason;
     this._isProcessing = false;
     this.suppressAbortedTurnEvents = true;
+    this.coordinationBridge?.completeTurn();
 
     // Reject all pending permissions
     for (const [, pending] of this.pendingPermissions) {
@@ -2745,6 +2803,8 @@ export class PiAgent extends BaseAgent {
   }
 
   override setWorkspace(workspace: Workspace): void {
+    this.coordinationBridge?.close();
+    this.coordinationBridge = null;
     super.setWorkspace(workspace);
     this.piSessionId = null;
     this._sessionToolContext = null;
@@ -2759,11 +2819,13 @@ export class PiAgent extends BaseAgent {
   }
 
   destroy(): void {
+    this.coordinationBridge?.close();
+    this.coordinationBridge = null;
     this.stopConfigWatcher();
 
     // Unregister session-scoped tool callbacks
-    if (this.config.session?.craftId) {
-      unregisterSessionScopedToolCallbacks(this.config.session.craftId);
+    if (this.config.session?.mortiseId) {
+      unregisterSessionScopedToolCallbacks(this.config.session.mortiseId);
     }
 
     this._sessionToolContext = null;
@@ -2773,10 +2835,12 @@ export class PiAgent extends BaseAgent {
   }
 
   async disposeForRestart(): Promise<void> {
+    this.coordinationBridge?.close();
+    this.coordinationBridge = null;
     this.stopConfigWatcher();
 
-    if (this.config.session?.craftId) {
-      unregisterSessionScopedToolCallbacks(this.config.session.craftId);
+    if (this.config.session?.mortiseId) {
+      unregisterSessionScopedToolCallbacks(this.config.session.mortiseId);
     }
 
     this._sessionToolContext = null;
@@ -2793,6 +2857,7 @@ export class PiAgent extends BaseAgent {
   }
 
   private async stopRpcClient(): Promise<void> {
+    this.coordinationBridge?.releasePending();
     const client = this.rpcClient;
     const runtimeId = this.currentRpcRuntimeId();
     if (runtimeId) {
@@ -2853,7 +2918,7 @@ export class PiAgent extends BaseAgent {
   /**
    * Execute an LLM query.
    *
-   * Uses Pi's typed secondary LLM RPC so Craft no longer needs a private
+   * Uses Pi's typed secondary LLM RPC so Mortise no longer needs a private
    * pi-agent-server `llm_query` bridge.
    */
   async queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {

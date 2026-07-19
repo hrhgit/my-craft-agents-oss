@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import type { AgentEvent } from '@craft-agent/core/types';
+import type { AgentEvent } from '@mortise/core/types';
 import {
   SourceActivationDrainController,
   type PendingActivationRestart,
@@ -9,7 +9,7 @@ import {
 // Event builders
 // ============================================================
 
-function makeToolResult(toolUseId: string, toolName = 'mcp__session__source_test'): AgentEvent {
+function makeToolResult(toolUseId: string, toolName = 'source_test'): AgentEvent {
   return {
     type: 'tool_result',
     toolUseId,

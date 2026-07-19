@@ -15,9 +15,9 @@ describe('validateFilePath', () => {
   })
 
   it('allows paths inside temp directory', async () => {
-    const path = join(tmp, 'craft-test.txt')
+    const path = join(tmp, 'mortise-test.txt')
     const result = await validateFilePath(path)
-    expect(result).toContain('craft-test.txt')
+    expect(result).toContain('mortise-test.txt')
   })
 
   it('denies paths outside all allowed directories', async () => {
@@ -105,7 +105,7 @@ describe('validateFilePath', () => {
   })
 
   it('allows an allowed directory that is itself a symlink or junction', async () => {
-    const sandbox = await mkdtemp(join(tmp, 'craft-path-root-link-'))
+    const sandbox = await mkdtemp(join(tmp, 'mortise-path-root-link-'))
     try {
       const target = join(sandbox, 'target')
       const alias = join(sandbox, 'workspace-link')
@@ -128,8 +128,8 @@ describe('validateFilePath', () => {
   })
 
   it('still blocks existing and future children that escape through a nested link', async () => {
-    const sandbox = await mkdtemp(join(tmp, 'craft-path-nested-link-'))
-    const outside = await mkdtemp(join(tmp, 'craft-path-nested-outside-'))
+    const sandbox = await mkdtemp(join(tmp, 'mortise-path-nested-link-'))
+    const outside = await mkdtemp(join(tmp, 'mortise-path-nested-outside-'))
     try {
       const target = join(sandbox, 'target')
       const alias = join(sandbox, 'workspace-link')
@@ -156,7 +156,7 @@ describe('validateFilePath', () => {
 
   it('treats Windows path casing as the same allowed directory', async () => {
     if (sep !== '\\') return
-    const root = await mkdtemp(join(tmp, 'craft-path-case-'))
+    const root = await mkdtemp(join(tmp, 'mortise-path-case-'))
     try {
       const mixedCaseDir = join(root, 'WorkSpace')
       const file = join(mixedCaseDir, 'notes.txt')

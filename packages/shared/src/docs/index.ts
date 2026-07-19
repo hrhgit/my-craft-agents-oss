@@ -4,7 +4,7 @@
  * Provides access to built-in documentation that Claude can reference
  * when performing configuration tasks (sources, agents, permissions, etc.).
  *
- * Docs are stored at ~/.craft-agent/docs/ and synced from bundled assets.
+ * Docs are stored at ~/.mortise/docs/ and synced from bundled assets.
  * Source content lives in apps/electron/resources/docs/*.md for easier editing.
  */
 
@@ -79,7 +79,7 @@ function getBundledDocs(): Record<string, string> {
 // IMPORTANT: This is intentionally a human-readable, non-instance-aware path.
 // Do NOT use APP_ROOT for real filesystem reads/writes.
 // For runtime filesystem paths, use CONFIG_DIR from config/paths.ts.
-export const APP_ROOT = '~/.craft-agent';
+export const APP_ROOT = '~/.mortise';
 
 /**
  * Documentation file references for use in error messages and tool descriptions.
@@ -102,7 +102,7 @@ export const DOC_REFS = {
   imagePreview: `${APP_ROOT}/docs/image-preview.md`,
   markdownPreview: `${APP_ROOT}/docs/markdown-preview.md`,
   browserTools: `${APP_ROOT}/docs/browser-tools.md`,
-  craftCli: `${APP_ROOT}/docs/craft-cli.md`,
+  mortiseCli: `${APP_ROOT}/docs/mortise-cli.md`,
   docsDir: `${APP_ROOT}/docs/`,
 } as const;
 

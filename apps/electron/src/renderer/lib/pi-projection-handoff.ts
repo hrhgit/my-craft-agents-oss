@@ -1,7 +1,7 @@
 import type {
   PiProjectionEntityV1,
   PiProjectionEventV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 import type { PiProjectionState } from '@/atoms/pi-projection'
 
 export interface PiAgentEndHandoff {

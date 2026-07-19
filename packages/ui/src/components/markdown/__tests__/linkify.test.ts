@@ -74,9 +74,9 @@ describe('preprocessLinks', () => {
 
   describe('strips trailing markdown formatting from URLs', () => {
     it('does not include trailing ** from bold-wrapped URL', () => {
-      const input = 'PR created: **https://github.com/lukilabs/craft-growth/pull/1363**'
+      const input = 'PR created: **https://github.com/hrhgit/mortise-growth/pull/1363**'
       const result = preprocessLinks(input)
-      expect(result).toBe('PR created: **[https://github.com/lukilabs/craft-growth/pull/1363](https://github.com/lukilabs/craft-growth/pull/1363)**')
+      expect(result).toBe('PR created: **[https://github.com/hrhgit/mortise-growth/pull/1363](https://github.com/hrhgit/mortise-growth/pull/1363)**')
     })
 
     it('does not include trailing * from italic-wrapped URL', () => {
@@ -131,7 +131,7 @@ describe('preprocessLinks — placeholder URL stripping', () => {
   })
 
   it('preserves valid GitHub URLs that do not contain /...', () => {
-    const input = '[PR #42](https://github.com/lukilabs/craft-agents/pull/42)'
+    const input = '[PR #42](https://github.com/hrhgit/mortise/pull/42)'
     expect(preprocessLinks(input)).toBe(input)
   })
 
@@ -251,7 +251,7 @@ describe('detectLinks', () => {
 
 describe('isFilePathTarget', () => {
   it('accepts absolute unix image paths', () => {
-    expect(isFilePathTarget('/Users/balintorosz/.craft-agent/sessions/abc/image.jpg')).toBe(true)
+    expect(isFilePathTarget('/Users/balintorosz/.mortise/sessions/abc/image.jpg')).toBe(true)
   })
 
   it('accepts parent-relative image paths', () => {

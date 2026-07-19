@@ -6,7 +6,7 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, rmSync, readdirSync, statSync, cpSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, readdirSync, statSync, cpSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { copyPiRuntime, type BuildConfig } from './common';
 import { assertNoUiValidationProductionInputs, assertNoUiValidationProductionRuntime } from './ui-validation-boundary';
@@ -105,14 +105,15 @@ function buildMainProcess(config: BuildConfig): void {
     '--format=cjs',
     '--outfile=apps/electron/dist/main.cjs',
     '--external:electron',
-    '--define:__CRAFT_UI_VALIDATION_BUILD__=false',
+    '--define:__MORTISE_UI_VALIDATION_BUILD__=false',
+    '--define:__MORTISE_DEV_HOST_BUILD__=false',
     `--metafile=${metafile}`,
     // Replace grammY's bundled polyfills (node-fetch@2 + abort-controller@3)
     // with native Node globals. Keeps parity with electron-dev.ts,
     // electron-build-main.ts, and apps/electron/package.json build:main.
     '--alias:node-fetch=./apps/electron/src/main/shims/node-fetch.cjs',
     '--alias:abort-controller=./apps/electron/src/main/shims/abort-controller.cjs',
-    '--alias:@craft-agent/shared/protocol=./packages/shared/src/protocol/production.ts',
+    '--alias:@mortise/shared/protocol=./packages/shared/src/protocol/production.ts',
   ];
 
   // Add OAuth defines if env vars are set
@@ -151,15 +152,20 @@ export async function buildElectronAppWindows(config: BuildConfig): Promise<void
 
   console.log('Building Electron app...');
   // Packaging must never inherit an opt-in source-development validation build.
-  process.env.CRAFT_UI_VALIDATION_BUILD = '0';
+  process.env.MORTISE_UI_VALIDATION_BUILD = '0';
 
   // Build main process with OAuth defines
   buildMainProcess(config);
+  writeFileSync(
+    join(rootDir, 'apps/electron/dist/.developer-host-build.json'),
+    `${JSON.stringify({ schemaVersion: 1, developerHostBuild: false, uiValidationBuild: false })}\n`,
+    'utf8',
+  );
 
   // Build preload - invoke esbuild directly via node
   console.log('  Building preload...');
   run(
-    `node ./node_modules/esbuild/bin/esbuild apps/electron/src/preload/bootstrap.ts --bundle --platform=node --format=cjs --outfile=apps/electron/dist/bootstrap-preload.cjs --external:electron --define:__CRAFT_UI_VALIDATION_BUILD__=false --define:process.env.CRAFT_UI_VALIDATION_BUILD=\"0\" --metafile=${preloadMetafileArg} --minify-syntax --alias:@craft-agent/shared/protocol=./packages/shared/src/protocol/production.ts`,
+    `node ./node_modules/esbuild/bin/esbuild apps/electron/src/preload/bootstrap.ts --bundle --platform=node --format=cjs --outfile=apps/electron/dist/bootstrap-preload.cjs --external:electron --define:__MORTISE_UI_VALIDATION_BUILD__=false --define:process.env.MORTISE_UI_VALIDATION_BUILD=\"0\" --metafile=${preloadMetafileArg} --minify-syntax --alias:@mortise/shared/protocol=./packages/shared/src/protocol/production.ts`,
     rootDir
   );
   try {

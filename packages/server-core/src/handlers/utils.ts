@@ -1,7 +1,7 @@
 import { basename, dirname, join, normalize, isAbsolute, relative, sep } from 'path'
 import { homedir, tmpdir } from 'os'
 import { realpath } from 'fs/promises'
-import { getWorkspaceByNameOrId, type Workspace } from '@craft-agent/shared/config'
+import { getWorkspaceByNameOrId, type Workspace } from '@mortise/shared/config'
 import type { Logger, PlatformServices } from '../runtime/platform'
 
 /**
@@ -94,10 +94,10 @@ export function buildBackendHostRuntimeContext(platform: PlatformServices) {
  * Sanitizes a filename to prevent path traversal and filesystem issues.
  * Removes dangerous characters and limits length.
  *
- * Re-exported from `@craft-agent/shared/utils` so callers
- * importing from `@craft-agent/server-core/handlers` keep working.
+ * Re-exported from `@mortise/shared/utils` so callers
+ * importing from `@mortise/server-core/handlers` keep working.
  */
-export { sanitizeFilename } from '@craft-agent/shared/utils'
+export { sanitizeFilename } from '@mortise/shared/utils'
 
 /**
  * Resolve allowed directories for a workspace.

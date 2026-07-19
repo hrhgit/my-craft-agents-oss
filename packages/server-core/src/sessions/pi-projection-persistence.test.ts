@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
@@ -10,8 +10,8 @@ import {
   getSessionPath,
   loadSession,
   setSharedPiSessionsDirForTests,
-} from '@craft-agent/shared/sessions'
-import { PiProjectionBuilder } from '@craft-agent/shared/agent/backend'
+} from '@mortise/shared/sessions'
+import { PiProjectionBuilder } from '@mortise/shared/agent/backend'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 
 function projectionEvent(
@@ -54,7 +54,7 @@ describe('Pi projection persistence', () => {
       rootPath: workspaceRoot,
       createdAt: Date.now(),
     } as never
-    const session = createManagedSession({ craftId: 'session-1' }, workspace)
+    const session = createManagedSession({ mortiseId: 'session-1' }, workspace)
     const firstHost = new SessionManager()
     const firstHostInternals = firstHost as unknown as {
       sessions: Map<string, typeof session>
@@ -73,7 +73,7 @@ describe('Pi projection persistence', () => {
       .toEqual(['block-1', 'block-2'])
 
     const restartedHost = new SessionManager()
-    const restartedSession = createManagedSession({ craftId: 'session-1' }, workspace)
+    const restartedSession = createManagedSession({ mortiseId: 'session-1' }, workspace)
     const restartedHostInternals = restartedHost as unknown as {
       sessions: Map<string, typeof restartedSession>
       piProjectionWrites: Map<string, Promise<void>>
@@ -89,7 +89,7 @@ describe('Pi projection persistence', () => {
 
   it('coalesces streaming updates and persists the latest contiguous snapshot', async () => {
     const workspace = { id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now() } as never
-    const session = createManagedSession({ craftId: 'session-1' }, workspace)
+    const session = createManagedSession({ mortiseId: 'session-1' }, workspace)
     const host = new SessionManager()
     const internals = host as unknown as {
       sessions: Map<string, typeof session>
@@ -109,7 +109,7 @@ describe('Pi projection persistence', () => {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
     } as never
     const header = await createSession(workspaceRoot, { name: 'Pi history' })
-    const sessionFile = getSessionFilePath(workspaceRoot, header.craftId)
+    const sessionFile = getSessionFilePath(workspaceRoot, header.mortiseId)
     appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspaceRoot, [
       { id: 'source-user', type: 'user', content: 'question from Pi', timestamp: 100 },
     ])
@@ -140,7 +140,7 @@ describe('Pi projection persistence', () => {
     } as never
     const timestamp = 1_783_861_200_000
     const header = await createSession(workspaceRoot, { name: 'Pi history' })
-    const sessionFile = getSessionFilePath(workspaceRoot, header.craftId)
+    const sessionFile = getSessionFilePath(workspaceRoot, header.mortiseId)
     appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspaceRoot, [
       { id: 'source-user', type: 'user', content: 'restore my timestamp', timestamp },
     ])
@@ -187,7 +187,7 @@ describe('Pi projection persistence', () => {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
     } as never
     const header = await createSession(workspaceRoot, { name: 'Pi history' })
-    const sessionFile = getSessionFilePath(workspaceRoot, header.craftId)
+    const sessionFile = getSessionFilePath(workspaceRoot, header.mortiseId)
     appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspaceRoot, [
       { id: 'source-user', type: 'user', content: 'survives corrupt sidecar', timestamp: 100 },
     ])
@@ -222,7 +222,7 @@ describe('Pi projection persistence', () => {
     const workspace = {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
     } as never
-    const managed = createManagedSession({ craftId: 'session-1' }, workspace, { messagesLoaded: true })
+    const managed = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const host = new SessionManager()
     const internals = host as unknown as {
       sessions: Map<string, typeof managed>
@@ -248,7 +248,7 @@ describe('Pi projection persistence', () => {
     const workspace = {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
     } as never
-    const managed = createManagedSession({ craftId: 'session-1' }, workspace, { messagesLoaded: true })
+    const managed = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const host = new SessionManager()
     const internals = host as unknown as {
       sessions: Map<string, typeof managed>
@@ -340,7 +340,7 @@ describe('Pi projection persistence', () => {
     })
 
     const restarted = createManagedSession({
-      craftId: stored!.craftId,
+      mortiseId: stored!.mortiseId,
       messageCount: stored!.messageCount,
       preview: stored!.preview,
       lastMessageRole: stored!.lastMessageRole,
@@ -358,7 +358,7 @@ describe('Pi projection persistence', () => {
     const workspace = {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
     } as never
-    const managed = createManagedSession({ craftId: 'session-1' }, workspace, { messagesLoaded: true })
+    const managed = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const host = new SessionManager()
     const internals = host as unknown as {
       sessions: Map<string, typeof managed>
@@ -398,7 +398,7 @@ describe('Pi projection persistence', () => {
     const workspace = {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
     } as never
-    const firstSession = createManagedSession({ craftId: 'session-1' }, workspace, { messagesLoaded: true })
+    const firstSession = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const firstHost = new SessionManager()
     const firstInternals = firstHost as unknown as {
       sessions: Map<string, typeof firstSession>
@@ -415,7 +415,7 @@ describe('Pi projection persistence', () => {
     }))
     await firstInternals.piProjectionWrites.get(firstSession.id)
 
-    const restartedSession = createManagedSession({ craftId: 'session-1' }, workspace, { messagesLoaded: true })
+    const restartedSession = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const restartedHost = new SessionManager()
     ;(restartedHost as unknown as { sessions: Map<string, typeof restartedSession> })
       .sessions.set(restartedSession.id, restartedSession)

@@ -120,7 +120,7 @@ export interface AutomationSystemOptions {
   onEventLost?: (events: string[], error: Error) => void;
   /**
    * 是否将 prompt automation 委托给 pi prompt-automation 扩展执行。
-   * 对应配置项 `piExtensions.delegatePromptAutomation`，默认 false（craft 自行处理）。
+   * 对应配置项 `piExtensions.delegatePromptAutomation`，默认 false（mortise 自行处理）。
    * 启用后 prompt action 走 {@link onDelegatePrompts} 回调而非 {@link onPromptsReady}。
    */
   delegatePromptAutomation?: boolean;

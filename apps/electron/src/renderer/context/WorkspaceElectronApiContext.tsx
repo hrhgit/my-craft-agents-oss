@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { isLocalOnly } from '@craft-agent/shared/protocol'
+import { isLocalOnly } from '@mortise/shared/protocol'
 import type { ElectronAPI } from '../../shared/types'
 import type { WorkspaceRoute } from '../../shared/app-layout'
 import { CHANNEL_MAP } from '../../transport/channel-map'

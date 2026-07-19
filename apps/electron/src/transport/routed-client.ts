@@ -10,10 +10,10 @@
  *   listeners are re-subscribed transparently (make-before-break)
  */
 
-import type { WsRpcClient, TransportConnectionState } from '@craft-agent/server-core/transport'
-import type { RpcClient } from '@craft-agent/server-core/transport'
-import type { RemoteServerConfig } from '@craft-agent/core/types'
-import { isLocalOnly, RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import type { WsRpcClient, TransportConnectionState } from '@mortise/server-core/transport'
+import type { RpcClient } from '@mortise/server-core/transport'
+import type { RemoteServerConfig } from '@mortise/core/types'
+import { isLocalOnly, RPC_CHANNELS } from '@mortise/shared/protocol'
 import type { WorkspaceRoute } from '../shared/app-layout'
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntimeRegistration } from './workspace-runtime-registry'
 

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { CRAFT_SESSION_METADATA_FIELDS } from '../types.ts';
+import { MORTISE_SESSION_METADATA_FIELDS } from '../types.ts';
 import { pickSessionFields } from '../utils.ts';
 
 describe('session persistence: previousPermissionMode', () => {
-  it('includes previousPermissionMode in Craft session metadata fields', () => {
-    expect(CRAFT_SESSION_METADATA_FIELDS).toContain('previousPermissionMode');
+  it('includes previousPermissionMode in Mortise session metadata fields', () => {
+    expect(MORTISE_SESSION_METADATA_FIELDS).toContain('previousPermissionMode');
   });
 
   it('pickSessionFields preserves previousPermissionMode when present', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import type { HandlerDeps } from '../handler-deps'
 import type { ISessionManager } from '../session-manager-interface'
 import type { HandlerFn, RequestContext, RpcServer } from '../../transport'

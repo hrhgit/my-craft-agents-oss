@@ -7,6 +7,7 @@
 export { default as SettingsNavigator } from './SettingsNavigator'
 export { default as AppSettingsPage, meta as AppSettingsMeta } from './AppSettingsPage'
 export { default as AiSettingsPage, meta as AiSettingsMeta } from './AiSettingsPage'
+export { default as AgentSettingsPage, meta as AgentSettingsMeta } from './AgentSettingsPage'
 export { default as AppearanceSettingsPage, meta as AppearanceMeta } from './AppearanceSettingsPage'
 export { default as ExtensionsSettingsPage, meta as ExtensionsMeta } from './ExtensionsSettingsPage'
 export { default as InputSettingsPage, meta as InputMeta } from './InputSettingsPage'

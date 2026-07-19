@@ -2,8 +2,8 @@
  * Server DTO types — data shapes used by RPC handlers and SessionManager.
  *
  * These were previously in apps/electron/src/shared/types.ts.
- * Extracted here so handler code in @craft-agent/server-core can import
- * from @craft-agent/shared/protocol without reaching into the app.
+ * Extracted here so handler code in @mortise/server-core can import
+ * from @mortise/shared/protocol without reaching into the app.
  */
 
 import type {
@@ -15,7 +15,7 @@ import type {
   PermissionRequest as BasePermissionRequest,
   Session as CoreSession,
   PlanModeStateV1,
-} from '@craft-agent/core/types'
+} from '@mortise/core/types'
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
 import type {
@@ -25,7 +25,7 @@ import type {
 } from '../agent/index'
 
 // Re-export generateMessageId for handler convenience
-export { generateMessageId } from '@craft-agent/core/types'
+export { generateMessageId } from '@mortise/core/types'
 
 // ---------------------------------------------------------------------------
 // Session types
@@ -46,7 +46,7 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
   lastMessageAt: number
   messages: Message[]
   isProcessing: boolean
-  /** True for sessions projected from Pi runtime that Craft can display but not mutate. */
+  /** True for sessions projected from Pi runtime that Mortise can display but not mutate. */
   readOnly?: boolean
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode

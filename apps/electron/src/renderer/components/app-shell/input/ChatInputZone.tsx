@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 import { CHAT_LAYOUT } from '@/config/layout'
-import type { PermissionMode } from '@craft-agent/shared/agent/modes'
+import type { PermissionMode } from '@mortise/shared/agent/modes'
 import type { BackgroundTask } from '../ActiveTasksBar'
 import { ActiveOptionBadges } from '../ActiveOptionBadges'
 import { InputContainer } from './InputContainer'
@@ -73,7 +73,7 @@ export function ChatInputZone({
 
       {readOnly && (
         <div className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-          此会话来自 Pi CLI（只读）。发送消息将创建新的 Craft 会话。
+          此会话来自 Pi CLI（只读）。发送消息将创建新的 Mortise 会话。
         </div>
       )}
 

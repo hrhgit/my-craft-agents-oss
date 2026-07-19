@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1, ExtensionInteractionBridgeSettledV1 } from '@craft-agent/shared/protocol'
+import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1, ExtensionInteractionBridgeSettledV1 } from '@mortise/shared/protocol'
 import type { RemoteUIRequest } from '../../components/extensions/RemoteUIModal'
 import {
   asExtensionInteractionCancel,

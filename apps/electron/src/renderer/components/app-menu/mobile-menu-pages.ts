@@ -145,7 +145,7 @@ export function buildMobileMenuPages({ hasNewWindow, isDebugMode }: BuildOptions
     })
 
   return [
-    { id: 'root', titleKey: 'menu.craftMenu', rows: rootRows },
+    { id: 'root', titleKey: 'menu.mortiseMenu', rows: rootRows },
     { id: 'workspaces', titleKey: 'workspace.workspaces', rows: [] },
     { id: 'settings', titleKey: 'sidebar.settings', rows: settingsRows },
     { id: 'help', titleKey: 'menu.help', rows: helpRows },

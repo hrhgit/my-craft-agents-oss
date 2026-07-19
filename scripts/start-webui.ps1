@@ -13,7 +13,7 @@ Set-Location $repoRoot
 
 function Write-Step {
   param([string]$Message)
-  Write-Host "[Craft Agents Web] $Message" -ForegroundColor Cyan
+  Write-Host "[Mortise Web] $Message" -ForegroundColor Cyan
 }
 
 function Fail-And-Wait {
@@ -113,27 +113,27 @@ if (-not (Test-Path $nodeModulesPath)) {
 }
 
 $webuiInstance = 1
-$webuiPort = if ($env:CRAFT_WEBUI_PORT) {
-  Get-Port "CRAFT_WEBUI_PORT" 5175
+$webuiPort = if ($env:MORTISE_WEBUI_PORT) {
+  Get-Port "MORTISE_WEBUI_PORT" 5175
 } elseif ($env:PORT) {
   Get-Port "PORT" 5175
 } else {
   if ($PortmuxManaged) {
-    Fail-And-Wait "portmux did not provide CRAFT_WEBUI_PORT or PORT. Check .portmux.json and run portmux doctor."
+    Fail-And-Wait "portmux did not provide MORTISE_WEBUI_PORT or PORT. Check .portmux.json and run portmux doctor."
   }
   5175
 }
 if ($webuiPort -ge 65535) {
-  Fail-And-Wait "CRAFT_WEBUI_PORT must be below 65535 so the derived RPC port remains valid."
+  Fail-And-Wait "MORTISE_WEBUI_PORT must be below 65535 so the derived RPC port remains valid."
 }
 
-$rpcPort = if (-not $PortmuxManaged -and $env:CRAFT_RPC_PORT) {
-  Get-Port "CRAFT_RPC_PORT" 9100
+$rpcPort = if (-not $PortmuxManaged -and $env:MORTISE_RPC_PORT) {
+  Get-Port "MORTISE_RPC_PORT" 9100
 } else {
   $webuiPort + 1
 }
 
-$logDir = Join-Path $env:TEMP "craft-agent-webui\instance-$webuiInstance"
+$logDir = Join-Path $env:TEMP "mortise-webui\instance-$webuiInstance"
 New-Item -ItemType Directory -Force $logDir | Out-Null
 $launchStatePath = Join-Path $logDir 'webui-launch-state.json'
 $staleProcessCount = Stop-WebuiLaunchState -Path $launchStatePath
@@ -156,20 +156,20 @@ foreach ($port in @($webuiPort, $rpcPort)) {
   }
 }
 
-$env:CRAFT_SERVER_TOKEN = New-DevelopmentToken
-$env:CRAFT_RPC_HOST = "127.0.0.1"
-$env:CRAFT_RPC_PORT = "$rpcPort"
-$env:CRAFT_WEBUI_PORT = "$webuiPort"
-$env:CRAFT_WEBUI_INSTANCE = "$webuiInstance"
-$env:CRAFT_CONFIG_DIR = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".craft-agent"
+$env:MORTISE_SERVER_TOKEN = New-DevelopmentToken
+$env:MORTISE_RPC_HOST = "127.0.0.1"
+$env:MORTISE_RPC_PORT = "$rpcPort"
+$env:MORTISE_WEBUI_PORT = "$webuiPort"
+$env:MORTISE_WEBUI_INSTANCE = "$webuiInstance"
+$env:MORTISE_CONFIG_DIR = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".mortise"
 # Vite serves the application in development. The RPC server only needs the
 # source login page so it can host auth/API routes without a production build.
-$env:CRAFT_WEBUI_DIR = (Join-Path $repoRoot "apps\webui\src")
-$env:CRAFT_WEBUI_AUTO_LOGIN = "true"
-$env:CRAFT_WEBUI_HOST = "127.0.0.1"
-$env:CRAFT_WEBUI_WS_URL = "ws://localhost:$webuiPort/ws"
-$env:CRAFT_BUNDLED_ASSETS_ROOT = (Join-Path $repoRoot "apps\electron")
-$env:CRAFT_DEBUG = "true"
+$env:MORTISE_WEBUI_DIR = (Join-Path $repoRoot "apps\webui\src")
+$env:MORTISE_WEBUI_AUTO_LOGIN = "true"
+$env:MORTISE_WEBUI_HOST = "127.0.0.1"
+$env:MORTISE_WEBUI_WS_URL = "ws://localhost:$webuiPort/ws"
+$env:MORTISE_BUNDLED_ASSETS_ROOT = (Join-Path $repoRoot "apps\electron")
+$env:MORTISE_DEBUG = "true"
 
 $bunPath = (Get-Command bun).Source
 $vitePath = Join-Path $repoRoot "node_modules\.bin\vite.exe"
@@ -219,7 +219,7 @@ function Start-HeadlessServer {
 }
 
 try {
-  Write-Step "Starting WebUI instance $webuiInstance (config: $env:CRAFT_CONFIG_DIR)..."
+  Write-Step "Starting WebUI instance $webuiInstance (config: $env:MORTISE_CONFIG_DIR)..."
   $serverState = Start-HeadlessServer
   $server = $serverState.Process
   Save-LaunchState
@@ -243,10 +243,10 @@ try {
     throw "WebUI dev server did not start on http://localhost:$webuiPort within 180 seconds. See $viteErrorLog."
   }
 
-  $testModeQuery = if ($env:CRAFT_TEST_MODE -eq "1") { "?craftTestMode=1" } else { "" }
+  $testModeQuery = if ($env:MORTISE_TEST_MODE -eq "1") { "?mortiseTestMode=1" } else { "" }
   $webuiUrl = "http://localhost:$webuiPort$testModeQuery"
   Write-Step "WebUI is ready: $webuiUrl (RPC: ws://127.0.0.1:$rpcPort)"
-  if (-not $NoBrowser -and $env:CRAFT_WEBUI_NO_BROWSER -ne "1") {
+  if (-not $NoBrowser -and $env:MORTISE_WEBUI_NO_BROWSER -ne "1") {
     Start-Process $webuiUrl
   }
 
@@ -257,7 +257,7 @@ try {
       $rpcUnavailableChecks++
       if ($rpcUnavailableChecks -ge 10) {
         Write-Host ""
-        Write-Host "[Craft Agents Web] Headless server process is alive but RPC port $rpcPort has been unavailable for 5 seconds. Recycling the process tree..." -ForegroundColor Yellow
+        Write-Host "[Mortise Web] Headless server process is alive but RPC port $rpcPort has been unavailable for 5 seconds. Recycling the process tree..." -ForegroundColor Yellow
         & taskkill.exe /PID $server.Id /T /F *> $null
       }
     } else {
@@ -273,8 +273,8 @@ try {
       $delaySeconds = [Math]::Min([Math]::Pow(2, $restartAttempt - 1), 10)
 
       Write-Host ""
-      Write-Host "[Craft Agents Web] Headless server exited with code $($server.ExitCode). Restarting in ${delaySeconds}s..." -ForegroundColor Yellow
-      Write-Host "[Craft Agents Web] Server logs: $($serverState.StdoutLog), $($serverState.StderrLog)" -ForegroundColor DarkYellow
+      Write-Host "[Mortise Web] Headless server exited with code $($server.ExitCode). Restarting in ${delaySeconds}s..." -ForegroundColor Yellow
+      Write-Host "[Mortise Web] Server logs: $($serverState.StdoutLog), $($serverState.StderrLog)" -ForegroundColor DarkYellow
       Start-Sleep -Seconds $delaySeconds
 
       $serverState = Start-HeadlessServer -RestartAttempt $restartAttempt
@@ -284,7 +284,7 @@ try {
       Write-Step "Headless server restart attempt $restartAttempt started (PID $($server.Id))."
 
       if (-not (Wait-ForPort $rpcPort 60)) {
-        Write-Host "[Craft Agents Web] Restart attempt $restartAttempt did not bind port $rpcPort within 60 seconds; monitoring will retry if it exits." -ForegroundColor Yellow
+        Write-Host "[Mortise Web] Restart attempt $restartAttempt did not bind port $rpcPort within 60 seconds; monitoring will retry if it exits." -ForegroundColor Yellow
       } else {
         Write-Step "Headless server recovered on ws://127.0.0.1:$rpcPort. The WebUI will reconnect automatically."
       }

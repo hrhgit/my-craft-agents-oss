@@ -8,7 +8,7 @@ import './playground/mock-utils'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { Provider as JotaiProvider } from 'jotai'
-import { setupI18n } from '@craft-agent/shared/i18n'
+import { setupI18n } from '@mortise/shared/i18n'
 import { initReactI18next } from 'react-i18next'
 import { ThemeProvider } from './context/ThemeContext'
 import { Toaster } from './components/ui/sonner'
@@ -17,7 +17,7 @@ import { EscapeInterruptProvider } from './context/EscapeInterruptContext'
 import { PlaygroundAppShellProvider } from './playground/PlaygroundAppShellProvider'
 import './index.css'
 
-if (__CRAFT_UI_VALIDATION_BUILD__) {
+if (__MORTISE_UI_VALIDATION_BUILD__) {
   void Promise.all([
     import('./ui-validation/app-shell-scenario-service'),
     import('./ui-validation/bridge'),

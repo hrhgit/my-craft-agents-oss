@@ -1,23 +1,21 @@
 {
-  "name": "@craft-agent/electron",
-  "version": "0.10.4",
-  "description": "Electron desktop app for Craft Agents",
+  "name": "@mortise/electron",
+  "version": "0.1.0",
+  "description": "Electron desktop app for Mortise",
   "main": "dist/main.cjs",
   "private": true,
   "author": {
-    "name": "Craft Docs Ltd.",
-    "email": "support@craft.do"
+    "name": "Mortise Contributors"
   },
-  "homepage": "https://agents.craft.do",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=18.0.0"
   },
   "scripts": {
-    "build:main": "source ../../.env 2>/dev/null || true; esbuild src/main/index.ts --bundle --platform=node --format=cjs --outfile=dist/main.cjs --external:electron --external:@earendil-works/pi-coding-agent/host-facade --external:@earendil-works/pi-coding-agent/rpc --alias:node-fetch=./src/main/shims/node-fetch.cjs --alias:abort-controller=./src/main/shims/abort-controller.cjs --alias:@craft-agent/shared/protocol=../../packages/shared/src/protocol/production.ts --define:__CRAFT_UI_VALIDATION_BUILD__=false --define:process.env.GOOGLE_OAUTH_CLIENT_ID=\\\"${GOOGLE_OAUTH_CLIENT_ID:-}\\\" --define:process.env.GOOGLE_OAUTH_CLIENT_SECRET=\\\"${GOOGLE_OAUTH_CLIENT_SECRET:-}\\\" --define:process.env.SLACK_OAUTH_CLIENT_ID=\\\"${SLACK_OAUTH_CLIENT_ID:-}\\\" --define:process.env.SLACK_OAUTH_CLIENT_SECRET=\\\"${SLACK_OAUTH_CLIENT_SECRET:-}\\\" --define:process.env.MICROSOFT_OAUTH_CLIENT_ID=\\\"${MICROSOFT_OAUTH_CLIENT_ID:-}\\\"",
-    "build:main:win": "esbuild src/main/index.ts --bundle --platform=node --format=cjs --outfile=dist/main.cjs --external:electron --external:@earendil-works/pi-coding-agent/host-facade --external:@earendil-works/pi-coding-agent/rpc --alias:node-fetch=./src/main/shims/node-fetch.cjs --alias:abort-controller=./src/main/shims/abort-controller.cjs --alias:@craft-agent/shared/protocol=../../packages/shared/src/protocol/production.ts --define:__CRAFT_UI_VALIDATION_BUILD__=false",
-    "build:preload": "esbuild src/preload/bootstrap.ts --bundle --platform=node --format=cjs --outfile=dist/bootstrap-preload.cjs --external:electron --alias:@craft-agent/shared/protocol=../../packages/shared/src/protocol/production.ts --define:__CRAFT_UI_VALIDATION_BUILD__=false",
+    "build:main": "source ../../.env 2>/dev/null || true; esbuild src/main/index.ts --bundle --platform=node --format=cjs --outfile=dist/main.cjs --external:electron --external:@mortise/pi-coding-agent/host-facade --external:@mortise/pi-coding-agent/rpc --alias:node-fetch=./src/main/shims/node-fetch.cjs --alias:abort-controller=./src/main/shims/abort-controller.cjs --alias:@mortise/shared/protocol=../../packages/shared/src/protocol/production.ts --define:__MORTISE_UI_VALIDATION_BUILD__=false --define:__MORTISE_DEV_HOST_BUILD__=false --define:process.env.GOOGLE_OAUTH_CLIENT_ID=\\\"${GOOGLE_OAUTH_CLIENT_ID:-}\\\" --define:process.env.GOOGLE_OAUTH_CLIENT_SECRET=\\\"${GOOGLE_OAUTH_CLIENT_SECRET:-}\\\" --define:process.env.SLACK_OAUTH_CLIENT_ID=\\\"${SLACK_OAUTH_CLIENT_ID:-}\\\" --define:process.env.SLACK_OAUTH_CLIENT_SECRET=\\\"${SLACK_OAUTH_CLIENT_SECRET:-}\\\" --define:process.env.MICROSOFT_OAUTH_CLIENT_ID=\\\"${MICROSOFT_OAUTH_CLIENT_ID:-}\\\"",
+    "build:main:win": "esbuild src/main/index.ts --bundle --platform=node --format=cjs --outfile=dist/main.cjs --external:electron --external:@mortise/pi-coding-agent/host-facade --external:@mortise/pi-coding-agent/rpc --alias:node-fetch=./src/main/shims/node-fetch.cjs --alias:abort-controller=./src/main/shims/abort-controller.cjs --alias:@mortise/shared/protocol=../../packages/shared/src/protocol/production.ts --define:__MORTISE_UI_VALIDATION_BUILD__=false --define:__MORTISE_DEV_HOST_BUILD__=false",
+    "build:preload": "esbuild src/preload/bootstrap.ts --bundle --platform=node --format=cjs --outfile=dist/bootstrap-preload.cjs --external:electron --alias:@mortise/shared/protocol=../../packages/shared/src/protocol/production.ts --define:__MORTISE_UI_VALIDATION_BUILD__=false --define:__MORTISE_DEV_HOST_BUILD__=false",
     "build:preload-toolbar": "esbuild src/preload/browser-toolbar.ts --bundle --platform=node --format=cjs --outfile=dist/browser-toolbar-preload.cjs --external:electron",
     "build:renderer": "vite build",
     "build:copy": "bun scripts/copy-assets.ts",
@@ -35,11 +33,11 @@
     "lint:fix": "eslint src/ --fix"
   },
   "dependencies": {
-    "@craft-agent/core": "workspace:*",
-    "@craft-agent/messaging-gateway": "workspace:*",
-    "@craft-agent/server-core": "workspace:*",
-    "@craft-agent/shared": "workspace:*",
-    "@craft-agent/ui": "workspace:*",
+    "@mortise/core": "workspace:*",
+    "@mortise/messaging-gateway": "workspace:*",
+    "@mortise/server-core": "workspace:*",
+    "@mortise/shared": "workspace:*",
+    "@mortise/ui": "workspace:*",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",

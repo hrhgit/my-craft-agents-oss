@@ -10,7 +10,7 @@
  */
 
 import { join } from 'node:path';
-import { createPiSkillResolver } from '@craft-agent/shared/pi/skill-resolver';
+import { createPiSkillResolver } from '@mortise/shared/pi/skill-resolver';
 import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { errorResponse } from '../response.ts';

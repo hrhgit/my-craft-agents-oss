@@ -1,5 +1,5 @@
 import { ElectronUiDriverError } from './electron-surface-driver'
-import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@craft-agent/shared/ui-validation'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
 
 interface RendererNavigationWebContents {
   getURL(): string

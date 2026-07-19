@@ -20,7 +20,7 @@ describe("extension v2 definition cache", () => {
 		const extensionPath = join(root, "index.ts");
 		writeFileSync(
 			extensionPath,
-			`import { defineExtensionV2 } from "@earendil-works/pi-coding-agent";
+			`import { defineExtensionV2 } from "@mortise/pi-coding-agent";
 const state = globalThis as typeof globalThis & { __extensionV2LoadCount?: number };
 state.__extensionV2LoadCount = (state.__extensionV2LoadCount ?? 0) + 1;
 export default defineExtensionV2({ isolation: "session", session(pi) { pi.registerCommand("cached", { handler: async () => {} }); } });

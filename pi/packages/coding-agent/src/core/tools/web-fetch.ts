@@ -1,8 +1,8 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 import { createRequire } from "node:module";
 import { isIP } from "node:net";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Text } from "@earendil-works/pi-tui";
+import type { AgentTool } from "@mortise/pi-agent-core";
+import { Text } from "@mortise/pi-tui";
 import type { Readability as ReadabilityInstance } from "@mozilla/readability";
 import type { ConstructorOptions, JSDOM as JSDOMInstance } from "jsdom";
 import { type Static, Type } from "typebox";

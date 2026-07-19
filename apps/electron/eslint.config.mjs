@@ -47,39 +47,39 @@ export default [
       '@typescript-eslint': tsPlugin,
       react: reactPlugin,
       'react-hooks': reactHooksPlugin,
-      // Custom plugin for Craft Agent rules
-      'craft-agent': {
+      // Custom plugin for Mortise Agent rules
+      'mortise': {
         rules: {
           'no-direct-navigation-state': noDirectNavigationState,
           'no-localstorage': noLocalStorage,
         },
       },
       // Custom plugin for platform detection rules
-      'craft-platform': {
+      'mortise-platform': {
         rules: {
           'no-direct-platform-check': noDirectPlatformCheck,
         },
       },
       // Custom plugin for cross-platform path rules
-      'craft-paths': {
+      'mortise-paths': {
         rules: {
           'no-hardcoded-path-separator': noHardcodedPathSeparator,
         },
       },
       // Custom plugin for link interceptor enforcement
-      'craft-links': {
+      'mortise-links': {
         rules: {
           'no-direct-file-open': noDirectFileOpen,
         },
       },
       // Custom plugin for source auth checks (shared with packages/shared)
-      'craft-sources': {
+      'mortise-sources': {
         rules: {
           'no-inline-source-auth-check': noInlineSourceAuthCheck,
         },
       },
       // Custom style rules
-      'craft-styles': {
+      'mortise-styles': {
         rules: {
           'no-hardcoded-z-index': noHardcodedZIndex,
           'no-nonstandard-shadows': noNonstandardShadows,
@@ -96,27 +96,27 @@ export default [
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
 
-      // Custom Craft Agent rules
-      'craft-agent/no-direct-navigation-state': 'error',
-      'craft-agent/no-localstorage': 'warn',
+      // Custom Mortise Agent rules
+      'mortise/no-direct-navigation-state': 'error',
+      'mortise/no-localstorage': 'warn',
 
       // Custom platform detection rule
-      'craft-platform/no-direct-platform-check': 'error',
+      'mortise-platform/no-direct-platform-check': 'error',
 
       // Custom cross-platform path rule
-      'craft-paths/no-hardcoded-path-separator': 'warn',
+      'mortise-paths/no-hardcoded-path-separator': 'warn',
 
       // Custom link interceptor rule — prevents bypassing in-app file preview
-      'craft-links/no-direct-file-open': 'error',
+      'mortise-links/no-direct-file-open': 'error',
 
       // Custom source auth check rule — use isSourceUsable() instead of inline checks
-      'craft-sources/no-inline-source-auth-check': 'error',
+      'mortise-sources/no-inline-source-auth-check': 'error',
 
       // Custom style rule — use z-index token scale instead of hardcoded literals
-      'craft-styles/no-hardcoded-z-index': 'error',
+      'mortise-styles/no-hardcoded-z-index': 'error',
 
       // Custom style rule — enforce approved shadow classes/tokens only
-      'craft-styles/no-nonstandard-shadows': ['error', {
+      'mortise-styles/no-nonstandard-shadows': ['error', {
         allowedClasses: [
           'shadow-none',
           'shadow-xs',
@@ -143,13 +143,13 @@ export default [
         ],
       }],
 
-      // Red line: Pi SDK (@earendil-works/pi-*) is bottom-layer. Electron main/renderer
-      // are scaffolding and must talk to Pi through @craft-agent/shared/agent/backend only.
+      // Red line: Pi SDK (@mortise/pi-*) is bottom-layer. Electron main/renderer
+      // are scaffolding and must talk to Pi through @mortise/shared/agent/backend only.
       // See docs/architecture/red-line.md.
       'no-restricted-syntax': ['error',
         {
-          selector: 'ImportDeclaration[source.value=/^@earendil-works\\/pi-/]',
-          message: 'Pi SDK (@earendil-works/pi-*) is bottom-layer. Electron must talk to Pi through @craft-agent/shared/agent/backend only. See docs/architecture/red-line.md.',
+          selector: 'ImportDeclaration[source.value=/^@mortise\\/pi-/]',
+          message: 'Pi SDK (@mortise/pi-*) is bottom-layer. Electron must talk to Pi through @mortise/shared/agent/backend only. See docs/architecture/red-line.md.',
         },
       ],
     },
@@ -165,7 +165,7 @@ export default [
       'src/renderer/playground/**/*.{ts,tsx}',
     ],
     rules: {
-      'craft-styles/no-nonstandard-shadows': 'off',
+      'mortise-styles/no-nonstandard-shadows': 'off',
     },
   },
 
@@ -176,12 +176,12 @@ export default [
       'no-restricted-imports': ['error', {
         paths: [
           {
-            name: '@craft-agent/shared/codex',
-            message: 'Use provider-agnostic APIs from @craft-agent/shared/agent/backend instead.',
+            name: '@mortise/shared/codex',
+            message: 'Use provider-agnostic APIs from @mortise/shared/agent/backend instead.',
           },
           {
-            name: '@craft-agent/shared/agent/pi-agent',
-            message: 'Provider backends must stay behind @craft-agent/shared/agent/backend.',
+            name: '@mortise/shared/agent/pi-agent',
+            message: 'Provider backends must stay behind @mortise/shared/agent/backend.',
           },
         ],
       }],
@@ -196,7 +196,7 @@ export default [
       'no-restricted-imports': ['error', {
         paths: [
           {
-            name: '@craft-agent/shared/config/models-pi',
+            name: '@mortise/shared/config/models-pi',
             message: 'Pi model/provider catalog touches the Pi SDK and is main/server-only. Use the renderer API instead.',
           },
         ],
@@ -211,14 +211,14 @@ export default [
       'no-restricted-syntax': ['error',
         {
           selector: "CallExpression[callee.name='fetch']",
-          message: 'Do not call provider APIs directly in Electron model fetchers. Delegate to fetchBackendModels() from @craft-agent/shared/agent/backend.',
+          message: 'Do not call provider APIs directly in Electron model fetchers. Delegate to fetchBackendModels() from @mortise/shared/agent/backend.',
         },
         {
-          selector: "ImportDeclaration[source.value='@earendil-works/pi-ai']",
+          selector: "ImportDeclaration[source.value='@mortise/pi-ai']",
           message: 'Provider SDK usage must stay in backend drivers under packages/shared/src/agent/backend/internal/drivers.',
         },
         {
-          selector: "ImportDeclaration[source.value='@earendil-works/pi-coding-agent']",
+          selector: "ImportDeclaration[source.value='@mortise/pi-coding-agent']",
           message: 'Provider SDK usage must stay in backend drivers under packages/shared/src/agent/backend/internal/drivers.',
         },
       ],

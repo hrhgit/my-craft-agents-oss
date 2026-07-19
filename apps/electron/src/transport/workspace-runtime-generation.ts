@@ -1,4 +1,4 @@
-import type { RemoteServerConfig } from '@craft-agent/core/types'
+import type { RemoteServerConfig } from '@mortise/core/types'
 
 interface RuntimeIdentity {
   kind: 'local' | 'remote'

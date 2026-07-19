@@ -1,7 +1,6 @@
-import { describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 import {
-  OAUTH_RELAY_CALLBACK_URL,
   decodeOAuthRelayState,
   encodeOAuthRelayState,
   isOAuthRelayState,
@@ -9,16 +8,22 @@ import {
 } from '../oauth-relay.ts';
 import type { PreparedOAuthFlow } from '../oauth-flow-types.ts';
 
+const OAUTH_RELAY_CALLBACK_URL = 'https://auth.example.com/auth/callback';
+
+beforeEach(() => {
+  process.env.MORTISE_OAUTH_RELAY_URL = OAUTH_RELAY_CALLBACK_URL;
+});
+
 describe('oauth relay state', () => {
   it('round-trips the relay callback target and inner state', () => {
     const encoded = encodeOAuthRelayState(
-      'https://ghalmos.craftdocs-cf-t1.com/api/oauth/callback',
+      'https://server.example.com/api/oauth/callback',
       'inner-state-123',
     );
 
     expect(isOAuthRelayState(encoded)).toBe(true);
     expect(decodeOAuthRelayState(encoded)).toEqual({
-      returnTo: 'https://ghalmos.craftdocs-cf-t1.com/api/oauth/callback',
+      returnTo: 'https://server.example.com/api/oauth/callback',
       innerState: 'inner-state-123',
     });
   });
@@ -43,7 +48,7 @@ describe('wrapPreparedOAuthFlowForRelay', () => {
 
     const wrapped = wrapPreparedOAuthFlowForRelay(
       prepared,
-      'https://ghalmos.craftdocs-cf-t1.com/api/oauth/callback',
+      'https://server.example.com/api/oauth/callback',
     );
 
     expect(wrapped.state).toBe('inner-state-123');
@@ -57,7 +62,7 @@ describe('wrapPreparedOAuthFlowForRelay', () => {
     expect(outerState).not.toBe('inner-state-123');
     expect(isOAuthRelayState(outerState!)).toBe(true);
     expect(decodeOAuthRelayState(outerState!)).toEqual({
-      returnTo: 'https://ghalmos.craftdocs-cf-t1.com/api/oauth/callback',
+      returnTo: 'https://server.example.com/api/oauth/callback',
       innerState: 'inner-state-123',
     });
   });

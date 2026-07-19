@@ -27,5 +27,5 @@ export function shouldRejectUnauthorizedTls(policy?: RemoteTlsPolicy | null): bo
 export function allowsInsecureTlsFromEnvironment(
   environment: Record<string, string | undefined> = process.env,
 ): boolean {
-  return environment.CRAFT_ALLOW_INSECURE_TLS === '1'
+  return environment.MORTISE_ALLOW_INSECURE_TLS === '1'
 }

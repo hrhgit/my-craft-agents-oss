@@ -1,9 +1,9 @@
 /**
  * AutomationsListPanel
  *
- * Navigator panel for displaying automations in the 2nd column.
+ * Page-owned automation navigation for the automation management surface.
  * Follows the SourcesListPanel pattern with avatar, title, subtitle, badges.
- * Title and Plus button are handled by the shared PanelHeader in AppShell.
+ * Title and Plus button are supplied by the owning page surface in AppShell.
  *
  * Supports CMD/CTRL+click multi-select and Shift+click range select,
  * using the shared EntityRow + createEntitySelection infrastructure.
@@ -13,7 +13,7 @@ import * as React from 'react'
 import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Webhook } from 'lucide-react'
-import { Tooltip, TooltipTrigger, TooltipContent } from '@craft-agent/ui'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@mortise/ui'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { EntityListEmptyScreen } from '@/components/ui/entity-list-empty'
 import { EntityRow } from '@/components/ui/entity-row'

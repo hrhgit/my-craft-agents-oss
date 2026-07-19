@@ -6,8 +6,8 @@ import {
 } from '../session-scoped-tools.ts';
 import { createSessionToolContext } from '../session-tool-context.ts';
 import { attachSessionSelfManagementBindings } from '../session-self-management-bindings.ts';
-import type { SessionToolContext, SessionInfo, TextContent } from '@craft-agent/session-tools-core';
-import { SESSION_TOOL_REGISTRY } from '@craft-agent/session-tools-core';
+import type { SessionToolContext, SessionInfo, TextContent } from '@mortise/session-tools-core';
+import { SESSION_TOOL_REGISTRY } from '@mortise/session-tools-core';
 
 const noop = () => {};
 

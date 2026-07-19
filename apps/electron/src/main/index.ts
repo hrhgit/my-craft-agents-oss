@@ -67,8 +67,8 @@ Sentry.init({
 // renderer would restore its language from localStorage on every restart while
 // the main process silently stayed at the fallback language — breaking session title language,
 // the system prompt's "Preferred language" line, and the native menu.
-import { setupI18n, i18n, SUPPORTED_LANGUAGE_CODES, type LanguageCode } from '@craft-agent/shared/i18n'
-import { getPersistedUiLanguage, setPersistedUiLanguage } from '@craft-agent/shared/config'
+import { setupI18n, i18n, SUPPORTED_LANGUAGE_CODES, type LanguageCode } from '@mortise/shared/i18n'
+import { getPersistedUiLanguage, setPersistedUiLanguage } from '@mortise/shared/config'
 setupI18n()
 const persistedUiLanguage = getPersistedUiLanguage()
 if (persistedUiLanguage) {
@@ -94,13 +94,13 @@ function redactBrowserUrl(value: string): string {
 
 import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@craft-agent/server-core/sessions'
-import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createKeychainCapabilityProvider, createMessagingSessionCapabilityProvider, createOAuthCapabilityProvider, createScopedAutomationCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@craft-agent/server-core'
-import { completeOAuthFlow } from '@craft-agent/server-core/handlers/rpc/oauth'
-import { listWorkspaceAutomationsForCapability, setWorkspaceAutomationEnabledById } from '@craft-agent/server-core/handlers/rpc/automations'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@mortise/server-core/sessions'
+import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createKeychainCapabilityProvider, createMessagingSessionCapabilityProvider, createOAuthCapabilityProvider, createScopedAutomationCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
+import { completeOAuthFlow } from '@mortise/server-core/handlers/rpc/oauth'
+import { listWorkspaceAutomationsForCapability, setWorkspaceAutomationEnabledById } from '@mortise/server-core/handlers/rpc/automations'
 import { registerAllRpcHandlers } from './handlers/index'
-import { registerCoreRpcHandlers, cleanupClientFileWatches } from '@craft-agent/server-core/handlers/rpc'
+import { registerCoreRpcHandlers, cleanupClientFileWatches } from '@mortise/server-core/handlers/rpc'
 import type { PlatformServices } from '../runtime/platform'
 import { createElectronPlatform } from './platform'
 import type { HandlerDeps } from './handlers/handler-deps'
@@ -110,55 +110,62 @@ import {
   readLiveServerConnection,
   releaseServerLock,
   removeServerEndpoint,
-} from '@craft-agent/server-core/bootstrap'
-import { createMessagingBootstrap, type MessagingBootstrapHandle } from '@craft-agent/messaging-gateway'
-import { getCredentialManager } from '@craft-agent/shared/credentials'
-import { initModelRefreshService, getModelRefreshService, setFetcherPlatform } from '@craft-agent/server-core/model-fetchers'
-import { setSearchPlatform, setImageProcessor } from '@craft-agent/server-core/services'
+} from '@mortise/server-core/bootstrap'
+import { createMessagingBootstrap, type MessagingBootstrapHandle } from '@mortise/messaging-gateway'
+import { getCredentialManager } from '@mortise/shared/credentials'
+import { initModelRefreshService, getModelRefreshService, setFetcherPlatform } from '@mortise/server-core/model-fetchers'
+import { setSearchPlatform, setImageProcessor } from '@mortise/server-core/services'
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
 import { resolveInitialWindowTarget } from './initial-window-target'
 import { LayoutCoordinator } from './layout-coordinator'
 import { loadWindowState, saveWindowState } from './window-state'
-import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig, CONFIG_DIR } from '@craft-agent/shared/config'
-import { getDefaultWorkspacesDir } from '@craft-agent/shared/workspaces'
-import { initializeDocs } from '@craft-agent/shared/docs'
-import { initializeReleaseNotes } from '@craft-agent/shared/release-notes'
-import { ensureDefaultPermissions } from '@craft-agent/shared/agent/permissions-config'
-import { ensureToolIcons, ensurePresetThemes } from '@craft-agent/shared/config'
-import { setBundledAssetsRoot } from '@craft-agent/shared/utils'
-import { initializeBackendHostRuntime } from '@craft-agent/shared/agent/backend'
-import { setPowerShellValidatorRoot } from '@craft-agent/shared/agent'
+import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig, CONFIG_DIR } from '@mortise/shared/config'
+import { getDefaultWorkspacesDir } from '@mortise/shared/workspaces'
+import { initializeDocs } from '@mortise/shared/docs'
+import { initializeReleaseNotes } from '@mortise/shared/release-notes'
+import { ensureDefaultPermissions } from '@mortise/shared/agent/permissions-config'
+import { ensureToolIcons, ensurePresetThemes } from '@mortise/shared/config'
+import { setBundledAssetsRoot, writeRuntimeLog } from '@mortise/shared/utils'
+import { initializeBackendHostRuntime } from '@mortise/shared/agent/backend'
+import { setPowerShellValidatorRoot } from '@mortise/shared/agent'
 import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
 import { createBrowserCapabilityAdapter } from './browser-capability-adapter'
-import { createCallbackServer, createPendingFlow, OAuthFlowStore } from '@craft-agent/shared/auth'
-import { getSourceCredentialManager, loadSource } from '@craft-agent/shared/sources'
+import { createCallbackServer, createPendingFlow, OAuthFlowStore } from '@mortise/shared/auth'
+import { getSourceCredentialManager, loadSource } from '@mortise/shared/sources'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog } from './logger'
-import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
+import { setPerfEnabled, enableDebug } from '@mortise/shared/utils'
 import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount, showNotification } from './notifications'
-import { checkForUpdatesOnLaunch, setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './auto-update'
-import type { EventSink } from '@craft-agent/server-core/transport'
-import { validateGitBashPath, checkVCRedistInstalled } from '@craft-agent/server-core/services'
+import { setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './auto-update'
+import type { EventSink } from '@mortise/server-core/transport'
+import { validateGitBashPath, checkVCRedistInstalled } from '@mortise/server-core/services'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
 import { spawnWorkspaceServer, type SpawnedWorkspaceServer } from './workspace-server-spawner'
-if (__CRAFT_UI_VALIDATION_BUILD__ && process.env.CRAFT_UI_TEST_HOST === '1' && !app.isPackaged && process.env.NODE_ENV !== 'production') {
-  const isolatedElectronData = process.env.CRAFT_UI_ELECTRON_USER_DATA_DIR
-  if (!isolatedElectronData) throw new Error('CRAFT_UI_ELECTRON_USER_DATA_DIR is required for UI validation runs.')
+import { resolveElectronResourcePaths } from './electron-resource-paths'
+const isPackagedDeveloperHost = __MORTISE_DEV_HOST_BUILD__ && app.isPackaged
+
+if (__MORTISE_UI_VALIDATION_BUILD__ && process.env.MORTISE_UI_TEST_HOST === '1' && ((!app.isPackaged && process.env.NODE_ENV !== 'production') || isPackagedDeveloperHost)) {
+  const isolatedElectronData = process.env.MORTISE_UI_ELECTRON_USER_DATA_DIR
+  if (!isolatedElectronData) throw new Error('MORTISE_UI_ELECTRON_USER_DATA_DIR is required for UI validation runs.')
   app.setPath('userData', isolatedElectronData)
 }
 
 // Initialize electron-log for renderer process support
 log.initialize()
 
-// Host-capability tools are Pi extensions, explicitly injected into every Craft runtime.
-process.env.CRAFT_BROWSER_EXTENSION_PATH = app.isPackaged
-  ? join(process.resourcesPath, 'app', 'resources', 'pi-extensions', 'browser.js')
-  : join(__dirname, '../resources/pi-extensions/browser.js')
-process.env.CRAFT_MESSAGING_EXTENSION_PATH = app.isPackaged
-  ? join(process.resourcesPath, 'app', 'resources', 'pi-extensions', 'messaging.js')
-  : join(__dirname, '../resources/pi-extensions/messaging.js')
+const electronResourcePaths = resolveElectronResourcePaths({
+  isPackaged: app.isPackaged,
+  appPath: app.getAppPath(),
+  resourcesPath: process.resourcesPath,
+  bundledAssetsRoot: __dirname,
+  sourceResourcesPath: process.env.MORTISE_UI_RUNTIME_RESOURCES_DIR,
+})
+
+// Host-capability tools are Pi extensions, explicitly injected into every Mortise runtime.
+process.env.MORTISE_BROWSER_EXTENSION_PATH = electronResourcePaths.browserExtensionPath
+process.env.MORTISE_MESSAGING_EXTENSION_PATH = electronResourcePaths.messagingExtensionPath
 
 // Diagnostic: report main-process i18n hydration result. We log here (not inline
 // at the hydration site above) because mainLog is only available after this point.
@@ -169,54 +176,44 @@ mainLog.info('[i18n] startup hydration', {
 
 // Enable debug/perf in dev mode (running from source)
 if (isDebugMode) {
-  process.env.CRAFT_DEBUG = '1'
+  process.env.MORTISE_DEBUG = '1'
   enableDebug()
   setPerfEnabled(true)
 }
 
 // Bundle CLI tools: resolve platform-specific uv binary and wrapper scripts.
-// These are available to all agent Bash sessions via CRAFT_UV, CRAFT_SCRIPTS env vars
+// These are available to all agent Bash sessions via MORTISE_UV, MORTISE_SCRIPTS env vars
 // and PATH prepend. uv auto-downloads Python 3.12 on first use (~5s, then cached).
 {
-  // In packaged app: resources are at process.resourcesPath/app/resources/
-  // In dev: resources are at __dirname/../resources/ (sibling of dist/)
-  const resourcesBase = app.isPackaged
-    ? join(process.resourcesPath, 'app')
-    : join(__dirname, '..')
   const platformKey = `${process.platform}-${process.arch}`
-  const uvPlatformDir = join(resourcesBase, 'resources', 'bin', platformKey)
+  const uvPlatformDir = join(electronResourcePaths.toolResourcesPath, 'bin', platformKey)
   const uvBinary = join(uvPlatformDir, process.platform === 'win32' ? 'uv.exe' : 'uv')
-  const binDir = join(resourcesBase, 'resources', 'bin')
-  const scriptsDir = join(resourcesBase, 'resources', 'scripts')
+  const binDir = join(electronResourcePaths.toolResourcesPath, 'bin')
+  const scriptsDir = join(electronResourcePaths.toolResourcesPath, 'scripts')
 
   const bundledUvExists = existsSync(uvBinary)
   const fallbackUv = bundledUvExists ? null : 'uv'
 
   // Runtime resolver hints for shared session tools
-  process.env.CRAFT_IS_PACKAGED = app.isPackaged ? '1' : '0'
-  process.env.CRAFT_RESOURCES_BASE = resourcesBase
-  process.env.CRAFT_APP_ROOT = app.isPackaged ? app.getAppPath() : process.cwd()
+  process.env.MORTISE_IS_PACKAGED = app.isPackaged ? '1' : '0'
+  process.env.MORTISE_RESOURCES_BASE = process.env.MORTISE_UI_RUNTIME_RESOURCES_BASE
+    ?? (app.isPackaged ? app.getAppPath() : join(__dirname, '..'))
+  process.env.MORTISE_APP_ROOT = process.env.MORTISE_UI_RUNTIME_APP_ROOT
+    ?? (app.isPackaged ? app.getAppPath() : process.cwd())
 
-  process.env.CRAFT_UV = bundledUvExists ? uvBinary : (fallbackUv ?? uvBinary)
+  process.env.MORTISE_UV = bundledUvExists ? uvBinary : (fallbackUv ?? uvBinary)
 
   // Bun runtime (packaged builds should prefer bundled runtime over PATH)
-  const bunBinary = join(resourcesBase, 'vendor', 'bun', process.platform === 'win32' ? 'bun.exe' : 'bun')
-  if (existsSync(bunBinary)) {
-    process.env.CRAFT_BUN = bunBinary
+  if (electronResourcePaths.bunBinaryPath) {
+    process.env.MORTISE_BUN = electronResourcePaths.bunBinaryPath
   }
 
-  process.env.CRAFT_SCRIPTS = scriptsDir
-  process.env.CRAFT_COMMANDS_ENTRY = app.isPackaged
-    ? join(app.getAppPath(), 'packages', 'craft-agents-commands', 'src', 'main.ts')
-    : join(process.cwd(), 'packages', 'craft-agents-commands', 'src', 'main.ts')
-  process.env.CRAFT_CLI_ENTRY = app.isPackaged
-    ? join(app.getAppPath(), 'packages', 'craft-cli', 'src', 'cli.ts')
-    : join(process.cwd(), 'packages', 'craft-cli', 'src', 'cli.ts')
-  process.env.CRAFT_COMMANDS_DOC_PATH = app.isPackaged
-    ? join(resourcesBase, 'resources', 'docs', 'craft-cli.md')
-    : join(process.cwd(), 'apps', 'electron', 'resources', 'docs', 'craft-cli.md')
-  process.env.CRAFT_CLI_DOC_PATH = process.env.CRAFT_COMMANDS_DOC_PATH
-  process.env.CRAFT_AGENT_VERSION = app.getVersion()
+  process.env.MORTISE_SCRIPTS = scriptsDir
+  delete process.env.MORTISE_COMMANDS_ENTRY
+  delete process.env.MORTISE_CLI_ENTRY
+  process.env.MORTISE_COMMANDS_DOC_PATH = electronResourcePaths.commandDocsPath
+  process.env.MORTISE_CLI_DOC_PATH = process.env.MORTISE_COMMANDS_DOC_PATH
+  process.env.MORTISE_AGENT_VERSION = app.getVersion()
   // Prepend both generic wrappers dir and platform uv dir:
   // - binDir exposes wrapper commands (pdf-tool, docx-tool, ...)
   // - uvPlatformDir exposes raw `uv` for direct shell usage / debugging
@@ -225,18 +222,18 @@ if (isDebugMode) {
   if (!bundledUvExists) {
     mainLog.warn('Bundled uv binary missing, CLI document tools may fail unless uv is available on PATH.', {
       expectedUvPath: uvBinary,
-      usingCraftUv: process.env.CRAFT_UV,
+      usingCraftUv: process.env.MORTISE_UV,
     })
   }
 
   if (isDebugMode) {
-    mainLog.info('CLI tools configured:', { uvBinary: process.env.CRAFT_UV, binDir, scriptsDir, bundledUvExists })
+    mainLog.info('CLI tools configured:', { uvBinary: process.env.MORTISE_UV, binDir, scriptsDir, bundledUvExists })
   }
 }
 
-// Custom URL scheme for deeplinks (e.g., craftagents://auth-complete)
-// Supports multi-instance dev: CRAFT_DEEPLINK_SCHEME env var (craftagents1, craftagents2, etc.)
-const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'
+// Custom URL scheme for deeplinks (e.g., mortise://auth-complete)
+// Supports multi-instance dev: MORTISE_DEEPLINK_SCHEME env var (mortise1, mortise2, etc.)
+const DEEPLINK_SCHEME = process.env.MORTISE_DEEPLINK_SCHEME || 'mortise'
 
 let windowManager: WindowManager | null = null
 let layoutCoordinator: LayoutCoordinator | null = null
@@ -271,12 +268,14 @@ let messagingHandle: MessagingBootstrapHandle | null = null
 let pendingDeepLink: string | null = null
 
 // Set app name early (before app.whenReady) to ensure correct macOS menu bar title
-// Supports multi-instance dev: CRAFT_APP_NAME env var (e.g., "Craft Agents [1]")
-app.setName(process.env.CRAFT_APP_NAME || 'Craft Agents')
+// Supports multi-instance dev: MORTISE_APP_NAME env var (e.g., "Mortise [1]")
+app.setName(process.env.MORTISE_APP_NAME || (__MORTISE_DEV_HOST_BUILD__ ? 'Mortise Developer Host' : 'Mortise'))
 
-// Register as default protocol client for craftagents:// URLs
+// Register as default protocol client for mortise:// URLs
 // This must be done before app.whenReady() on some platforms
-if (process.defaultApp) {
+if (__MORTISE_DEV_HOST_BUILD__ || (__MORTISE_UI_VALIDATION_BUILD__ && process.env.MORTISE_UI_TEST_HOST === '1')) {
+  mainLog.info('Skipping mortise:// protocol registration in the isolated validation host')
+} else if (process.defaultApp) {
   // Development mode: need to pass the app path
   if (process.argv.length >= 2) {
     app.setAsDefaultProtocolClient(DEEPLINK_SCHEME, process.execPath, [process.argv[1]])
@@ -310,10 +309,10 @@ function normalizeOriginForCert(urlStr: string): string {
   return u.origin
 }
 
-if (process.env.CRAFT_SERVER_URL && process.env.CRAFT_ALLOW_INSECURE_TLS === '1') {
+if (process.env.MORTISE_SERVER_URL && process.env.MORTISE_ALLOW_INSECURE_TLS === '1') {
   let serverOrigin: string | undefined
   try {
-    serverOrigin = normalizeOriginForCert(process.env.CRAFT_SERVER_URL)
+    serverOrigin = normalizeOriginForCert(process.env.MORTISE_SERVER_URL)
   } catch {
     // Invalid URL — will fail later during connection, no need to handle here
   }
@@ -441,7 +440,7 @@ async function createInitialWindows(): Promise<void> {
 
 app.whenReady().then(async () => {
   // Export packaged state as env var so logger.ts (and headless Bun) don't need 'electron'
-  process.env.CRAFT_IS_PACKAGED = app.isPackaged ? 'true' : 'false'
+  process.env.MORTISE_IS_PACKAGED = app.isPackaged ? 'true' : 'false'
 
   // Register bundled assets root so all seeding functions can find their files
   // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
@@ -450,7 +449,7 @@ app.whenReady().then(async () => {
   // Initialize backend runtime bootstrapping (Codex vendor root, Pi agent server paths).
   initializeBackendHostRuntime({
     hostRuntime: {
-      appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
+      appRootPath: process.env.MORTISE_UI_RUNTIME_APP_ROOT ?? (app.isPackaged ? app.getAppPath() : process.cwd()),
       resourcesPath: process.resourcesPath,
       isPackaged: app.isPackaged,
     },
@@ -469,10 +468,10 @@ app.whenReady().then(async () => {
   // Ensure default permissions file exists (copies bundled default.json on first run)
   ensureDefaultPermissions()
 
-  // Seed tool icons to ~/.craft-agent/tool-icons/ (copies bundled SVGs on first run)
+  // Seed tool icons to ~/.mortise/tool-icons/ (copies bundled SVGs on first run)
   ensureToolIcons()
 
-  // Seed preset themes to ~/.craft-agent/themes/ (copies bundled theme JSONs on first run)
+  // Seed preset themes to ~/.mortise/themes/ (copies bundled theme JSONs on first run)
   ensurePresetThemes()
 
   // Register thumbnail:// protocol handler (scheme was registered earlier, before app.whenReady)
@@ -502,8 +501,8 @@ app.whenReady().then(async () => {
     }
 
     // Multi-instance dev: show instance number badge on dock icon
-    // CRAFT_INSTANCE_NUMBER is set by detect-instance.sh for numbered folders
-    const instanceNum = process.env.CRAFT_INSTANCE_NUMBER
+    // MORTISE_INSTANCE_NUMBER is set by detect-instance.sh for numbered folders
+    const instanceNum = process.env.MORTISE_INSTANCE_NUMBER
     if (instanceNum) {
       const num = parseInt(instanceNum, 10)
       if (!isNaN(num) && num > 0) {
@@ -515,9 +514,9 @@ app.whenReady().then(async () => {
   try {
     // Initialize window manager
     windowManager = new WindowManager(
-      __CRAFT_UI_VALIDATION_BUILD__
-        && process.env.CRAFT_UI_TEST_HOST === '1'
-        && process.env.CRAFT_UI_WINDOW_MODE === 'background',
+      __MORTISE_UI_VALIDATION_BUILD__
+        && process.env.MORTISE_UI_TEST_HOST === '1'
+        && process.env.MORTISE_UI_WINDOW_MODE === 'background',
     )
     layoutCoordinator = new LayoutCoordinator({
       authorizeContentRef: ref => ref.workspaceId === '' || !!getWorkspaceByNameOrId(ref.workspaceId),
@@ -537,23 +536,23 @@ app.whenReady().then(async () => {
     // Launcher scripts normally configure thin-client mode before Electron
     // starts. Keep a source-development fallback here so direct Electron
     // launches also reuse the backend that owns this config directory.
-    if (!app.isPackaged && !process.env.CRAFT_SERVER_URL) {
+    if (!app.isPackaged && !process.env.MORTISE_SERVER_URL) {
       const sharedBackend = await readLiveServerConnection()
       if (sharedBackend) {
-        process.env.CRAFT_SERVER_URL = sharedBackend.endpoint.url
-        process.env.CRAFT_SERVER_TOKEN = sharedBackend.token
+        process.env.MORTISE_SERVER_URL = sharedBackend.endpoint.url
+        process.env.MORTISE_SERVER_TOKEN = sharedBackend.token
         mainLog.info(`Reusing shared backend PID ${sharedBackend.endpoint.pid} at ${sharedBackend.endpoint.url}`)
       }
     }
 
-    // When CRAFT_SERVER_URL is set, this Electron instance is a thin client —
+    // When MORTISE_SERVER_URL is set, this Electron instance is a thin client —
     // it only creates windows whose preload connects to the remote server.
     // Skip server-side initialization (SessionManager, model refresh, platform injection).
-    const isClientOnly = !!process.env.CRAFT_SERVER_URL
-    const isHeadless = !!process.env.CRAFT_HEADLESS
+    const isClientOnly = !!process.env.MORTISE_SERVER_URL
+    const isHeadless = !!process.env.MORTISE_HEADLESS
 
     if (isClientOnly) {
-      mainLog.info(`Client-only mode: CRAFT_SERVER_URL=${process.env.CRAFT_SERVER_URL} (server initialization skipped)`)
+      mainLog.info(`Client-only mode: MORTISE_SERVER_URL=${process.env.MORTISE_SERVER_URL} (server initialization skipped)`)
     }
 
     // Initialize notification service (always — triggered by server push events)
@@ -623,11 +622,12 @@ app.whenReady().then(async () => {
       }
     })
 
-    if (__CRAFT_UI_VALIDATION_BUILD__) {
+    if (__MORTISE_UI_VALIDATION_BUILD__) {
       const { installUiValidationStateBridge } = await import('./ui-validation.dev')
       installUiValidationStateBridge({
-        enabled: process.env.CRAFT_UI_TEST_HOST === '1',
+        enabled: process.env.MORTISE_UI_TEST_HOST === '1',
         isPackaged: app.isPackaged,
+        allowPackagedDevHost: __MORTISE_DEV_HOST_BUILD__,
       })
     }
 
@@ -651,7 +651,7 @@ app.whenReady().then(async () => {
     if (!isClientOnly) {
       // Restore persisted Git Bash path on Windows (must happen before any SDK subprocess spawn)
       if (process.platform === 'win32') {
-        const { getGitBashPath, clearGitBashPath } = await import('@craft-agent/shared/config')
+        const { getGitBashPath, clearGitBashPath } = await import('@mortise/shared/config')
         const gitBashPath = getGitBashPath()
         if (gitBashPath) {
           const validation = await validateGitBashPath(gitBashPath)
@@ -672,9 +672,9 @@ app.whenReady().then(async () => {
         const vcCheck = checkVCRedistInstalled()
         if (!vcCheck.installed) {
           mainLog.warn('[vcredist]', vcCheck.message)
-          process.env.CRAFT_VCREDIST_MISSING = '1'
+          process.env.MORTISE_VCREDIST_MISSING = '1'
           if (vcCheck.downloadUrl) {
-            process.env.CRAFT_VCREDIST_URL = vcCheck.downloadUrl
+            process.env.MORTISE_VCREDIST_URL = vcCheck.downloadUrl
           }
         } else if (isDebugMode) {
           mainLog.info('[vcredist]', vcCheck.message)
@@ -689,7 +689,7 @@ app.whenReady().then(async () => {
       const resolveClientId = (wcId: number) => clientMap.get(wcId)
 
       // Read embedded server config (Server settings page)
-      const { getServerConfig } = await import('@craft-agent/shared/config')
+      const { getServerConfig } = await import('@mortise/shared/config')
       const embeddedServerConfig = getServerConfig()
       const serverModeEnabled = embeddedServerConfig.enabled && !isClientOnly
 
@@ -697,14 +697,14 @@ app.whenReady().then(async () => {
       const serverToken = serverModeEnabled && embeddedServerConfig.token
         ? embeddedServerConfig.token
         : randomUUID()
-      const rpcHost = process.env.CRAFT_RPC_HOST
+      const rpcHost = process.env.MORTISE_RPC_HOST
         ?? (serverModeEnabled ? '0.0.0.0' : '127.0.0.1')
-      const rpcPort = process.env.CRAFT_RPC_PORT
-        ? parseInt(process.env.CRAFT_RPC_PORT, 10)
+      const rpcPort = process.env.MORTISE_RPC_PORT
+        ? parseInt(process.env.MORTISE_RPC_PORT, 10)
         : (serverModeEnabled ? embeddedServerConfig.port : 0)
 
       // Load TLS certificates if configured
-      let tls: import('@craft-agent/server-core/transport').WsRpcTlsOptions | undefined
+      let tls: import('@mortise/server-core/transport').WsRpcTlsOptions | undefined
       if (serverModeEnabled && embeddedServerConfig.tlsCertPath && embeddedServerConfig.tlsKeyPath) {
         try {
           tls = {
@@ -1064,9 +1064,9 @@ app.whenReady().then(async () => {
             sessionManager: sm,
             credentialManager: getCredentialManager(),
             getMessagingDir: (wsId: string) =>
-              join(process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent'), 'workspaces', wsId, 'messaging'),
+              join(process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise'), 'workspaces', wsId, 'messaging'),
             // Route messaging diagnostics through the dedicated messaging log
-            // at ~/.craft-agent/logs/messaging-gateway.log.
+            // at ~/.mortise/logs/messaging-gateway.log.
             logger: messagingGatewayLog,
             // WhatsApp worker runs under Electron's embedded Node via
             // ELECTRON_RUN_AS_NODE (WhatsAppAdapter defaults nodeBin to
@@ -1187,7 +1187,7 @@ app.whenReady().then(async () => {
         setSessionEventSink: (sm, sink) => sm.setEventSink(sink),
         initializeSessionManager: (sm) => sm.initialize(),
         initModelRefreshService: () => initModelRefreshService(async (slug: string) => {
-          const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+          const { getCredentialManager } = await import('@mortise/shared/credentials')
           const manager = getCredentialManager()
           const [apiKey, oauth] = await Promise.all([
             manager.getProviderApiKey(slug).catch(() => null),
@@ -1254,7 +1254,7 @@ app.whenReady().then(async () => {
 
       // Remove workspace from config (cleanup stale entries)
       ipcMain.handle(PRELOAD_LOCAL_CHANNELS.WORKSPACE_REMOVE, async (_event, workspaceId: string) => {
-        const { removeWorkspace: remove } = await import('@craft-agent/shared/config')
+        const { removeWorkspace: remove } = await import('@mortise/shared/config')
         return remove(workspaceId)
       })
 
@@ -1282,7 +1282,7 @@ app.whenReady().then(async () => {
       ipcMain.handle(PRELOAD_LOCAL_CHANNELS.SESSION_TRANSFER_TO_REMOTE_WORKSPACE, async (_event, sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number) => {
         const idx = sessionIndex ?? 0
         const count = sessionCount ?? 1
-        const { getWorkspaceByNameOrId } = await import('@craft-agent/shared/config')
+        const { getWorkspaceByNameOrId } = await import('@mortise/shared/config')
         const { connectToRemote } = await import('./handlers/workspace')
         const { CHUNKED_TRANSFER_THRESHOLD, getChunkCount, invokeChunked, prepareChunkedPayload } = await import('./chunked-rpc')
 
@@ -1443,13 +1443,13 @@ app.whenReady().then(async () => {
       }
 
       instance.wsServer.handle(RPC_CHANNELS.settings.GET_SERVER_CONFIG, async () => {
-        const { getServerConfig: getConfig } = await import('@craft-agent/shared/config')
+        const { getServerConfig: getConfig } = await import('@mortise/shared/config')
         return getConfig()
       })
 
       instance.wsServer.handle(RPC_CHANNELS.settings.SET_SERVER_CONFIG, async (_ctx: unknown, config: unknown) => {
-        const { setServerConfig: setConfig } = await import('@craft-agent/shared/config')
-        const cfg = config as import('@craft-agent/shared/config/server-config').ServerConfig
+        const { setServerConfig: setConfig } = await import('@mortise/shared/config')
+        const cfg = config as import('@mortise/shared/config/server-config').ServerConfig
         // Validate port range
         if (cfg.port < 1024 || cfg.port > 65535) {
           throw new Error(`Port must be between 1024 and 65535, got ${cfg.port}`)
@@ -1465,7 +1465,7 @@ app.whenReady().then(async () => {
       })
 
       instance.wsServer.handle(RPC_CHANNELS.settings.GET_SERVER_STATUS, async () => {
-        const { getServerConfig: getConfig } = await import('@craft-agent/shared/config')
+        const { getServerConfig: getConfig } = await import('@mortise/shared/config')
         const saved = getConfig()
         const protocol = runningServerState.tls ? 'wss' : 'ws'
 
@@ -1530,47 +1530,55 @@ app.whenReady().then(async () => {
 
       const workspaceServerIsolationEnabled = !isHeadless
         && !serverModeEnabled
-        && process.env.CRAFT_ELECTRON_WORKSPACE_SERVER !== '0'
+        && process.env.MORTISE_ELECTRON_WORKSPACE_SERVER !== '0'
 
-      if (workspaceServerIsolationEnabled && !process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL) {
-        delete process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED
-        delete process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED_REASON
+      if (workspaceServerIsolationEnabled && !process.env.MORTISE_LOCAL_WORKSPACE_SERVER_URL) {
+        delete process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED
+        delete process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED_REASON
         try {
-          const timeoutMs = Number.parseInt(process.env.CRAFT_WORKSPACE_SERVER_STARTUP_TIMEOUT_MS ?? '', 10)
+          const timeoutMs = Number.parseInt(process.env.MORTISE_WORKSPACE_SERVER_STARTUP_TIMEOUT_MS ?? '', 10)
           workspaceServer = await spawnWorkspaceServer({
             isPackaged: app.isPackaged,
             appPath: app.getAppPath(),
             resourcesPath: process.resourcesPath,
             bundledAssetsRoot: __dirname,
             version: app.getVersion(),
+            runtimeCachePath: join(app.getPath('userData'), 'runtime-cache'),
+            nodeBinary: process.execPath,
+            useNodeRuntime: process.env.MORTISE_UI_BUILD_ID !== undefined,
+            messagingWorkerPath: electronResourcePaths.messagingWorkerPath,
             startupTimeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : undefined,
           })
 
-          if (workspaceServer) {
-            process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL = workspaceServer.url
-            process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN = workspaceServer.token
-            delete process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED
-            delete process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED_REASON
-            mainLog.info('[workspace-server] Local workspace RPC isolated in child process', {
-              url: workspaceServer.url,
-              pid: workspaceServer.pid,
-            })
-          }
+          process.env.MORTISE_LOCAL_WORKSPACE_SERVER_URL = workspaceServer.url
+          process.env.MORTISE_LOCAL_WORKSPACE_SERVER_TOKEN = workspaceServer.token
+          delete process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED
+          delete process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED_REASON
+          mainLog.info('[workspace-server] Local workspace RPC isolated in child process', {
+            url: workspaceServer.url,
+            pid: workspaceServer.pid,
+          })
         } catch (err) {
           workspaceServer = null
           const reason = err instanceof Error ? err.message : String(err)
+          writeRuntimeLog('error', {
+            scope: 'workspace-server',
+            event: 'startup.failed',
+            message: reason,
+            meta: { reason, error: err },
+          })
           mainLog.error('[workspace-server] Failed to start child-process workspace server; falling back to embedded runtime:', {
             reason,
             ...(err instanceof Error && err.stack ? { stack: err.stack } : {}),
           })
-          delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL
-          delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN
-          process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED = '1'
-          process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED_REASON = reason
+          delete process.env.MORTISE_LOCAL_WORKSPACE_SERVER_URL
+          delete process.env.MORTISE_LOCAL_WORKSPACE_SERVER_TOKEN
+          process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED = '1'
+          process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED_REASON = reason
         }
-      } else if (process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL) {
+      } else if (process.env.MORTISE_LOCAL_WORKSPACE_SERVER_URL) {
         mainLog.info('[workspace-server] Using preconfigured local workspace server', {
-          url: process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL,
+          url: process.env.MORTISE_LOCAL_WORKSPACE_SERVER_URL,
         })
       } else if (serverModeEnabled) {
         mainLog.info('[workspace-server] Isolation disabled while server mode is enabled; embedded server remains authoritative.')
@@ -1592,8 +1600,8 @@ app.whenReady().then(async () => {
           tokenFile: tokenFilePath,
         })
         if (isHeadless) {
-          console.log(`CRAFT_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
-          console.log(`CRAFT_SERVER_TOKEN_FILE=${tokenFilePath}`)
+          console.log(`MORTISE_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
+          console.log(`MORTISE_SERVER_TOKEN_FILE=${tokenFilePath}`)
         }
       }
     }
@@ -1606,10 +1614,11 @@ app.whenReady().then(async () => {
 
     // Development-only, authenticated UI validation control plane. The host
     // itself enforces the packaged/production guard before binding loopback.
-    if (__CRAFT_UI_VALIDATION_BUILD__ && !isHeadless && process.env.CRAFT_UI_TEST_HOST === '1') {
+    if (__MORTISE_UI_VALIDATION_BUILD__ && !isHeadless && process.env.MORTISE_UI_TEST_HOST === '1') {
       const { loadRendererTarget, startUiTestHost, resolveUiValidationRoute } = await import('./ui-validation.dev')
       uiTestHost = await startUiTestHost({
         isPackaged: app.isPackaged,
+        allowPackagedDevHost: __MORTISE_DEV_HOST_BUILD__,
         windowManager,
         browserPaneManager: browserPaneManager ?? undefined,
         runtimeLogPath: join(CONFIG_DIR, 'logs', 'runtime.log'),
@@ -1620,7 +1629,7 @@ app.whenReady().then(async () => {
             const window = windowManager!.getWindowByWebContentsId(target.webContentsId)
             if (!window || window.isDestroyed()) throw new Error('Target window is no longer available.')
             if (!await windowManager!.updateWindowWorkspace(target.webContentsId, '')) {
-              throw new Error('Target window is not managed by Craft.')
+              throw new Error('Target window is not managed by Mortise.')
             }
             const targetUrl = new URL(window.webContents.getURL())
             targetUrl.pathname = targetUrl.pathname.replace(/[^/]*$/, 'index.html')
@@ -1634,7 +1643,7 @@ app.whenReady().then(async () => {
             }
           }
           if (!resolvedRoute.deepLinkRoute) throw new Error('Resolved route has no renderer target.')
-          const url = `craftagents://${resolvedRoute.deepLinkRoute}`
+          const url = `mortise://${resolvedRoute.deepLinkRoute}`
           const result = await handleDeepLink(
             url,
             windowManager!,
@@ -1658,7 +1667,7 @@ app.whenReady().then(async () => {
     // Skip in thin-client mode — credentials are managed by the remote server.
     if (!isClientOnly) {
       try {
-        const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+        const { getCredentialManager } = await import('@mortise/shared/credentials')
         const credentialManager = getCredentialManager()
         const health = await credentialManager.checkHealth()
         if (!health.healthy) {
@@ -1683,7 +1692,7 @@ app.whenReady().then(async () => {
     // Runs after init so config and auth state are available.
     // Derive values directly from Pi's selected provider and model.
     try {
-      const { readPiGlobalProviders, readPiGlobalSettings } = await import('@craft-agent/shared/config')
+      const { readPiGlobalProviders, readPiGlobalSettings } = await import('@mortise/shared/config')
       const workspaces = getWorkspaces()
       const settings = readPiGlobalSettings()
       const provider = settings.defaultProvider ? readPiGlobalProviders()[settings.defaultProvider] : undefined
@@ -1726,9 +1735,9 @@ app.whenReady().then(async () => {
         }
       }
     })
-    // Auto-update check on launch disabled (local fork, no remote tracking)
-    // Manual "Check for Updates" via menu remains available.
-    mainLog.info('[auto-update] Launch auto-update check disabled (local build)')
+    // Mortise has no built-in update service. Deployments can opt in through
+    // MORTISE_UPDATE_URL and still trigger checks from the menu or settings.
+    mainLog.info('[auto-update] Launch update check disabled; no default update service is configured')
 
     // Process pending deep link from cold start
     if (pendingDeepLink) {
@@ -1771,7 +1780,7 @@ const beforeQuitGate = new BeforeQuitGate()
 let isPreparingUpdateQuit = false
 
 app.on('window-all-closed', () => {
-  if (process.env.CRAFT_HEADLESS) return  // headless server stays alive
+  if (process.env.MORTISE_HEADLESS) return  // headless server stays alive
   if (beforeQuitGate.isPreparing() || isPreparingUpdateQuit) return
   // On macOS, apps typically stay active until explicitly quit
   if (process.platform !== 'darwin') {
@@ -1906,8 +1915,8 @@ app.on('before-quit', async (event) => {
           mainLog.info('[workspace-server] Stopped child-process workspace server')
         } finally {
           workspaceServer = null
-          delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL
-          delete process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN
+          delete process.env.MORTISE_LOCAL_WORKSPACE_SERVER_URL
+          delete process.env.MORTISE_LOCAL_WORKSPACE_SERVER_TOKEN
         }
       },
     },

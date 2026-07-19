@@ -1,15 +1,15 @@
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { appendAutomationHistoryEntry } from '@craft-agent/shared/automations/history-store'
-import { AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER } from '@craft-agent/shared/automations/constants'
-import { withFileLock } from '@craft-agent/shared/storage'
-import { atomicWriteFileSync } from '@craft-agent/shared/utils'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { appendAutomationHistoryEntry } from '@mortise/shared/automations/history-store'
+import { AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER } from '@mortise/shared/automations/constants'
+import { withFileLock } from '@mortise/shared/storage'
+import { atomicWriteFileSync } from '@mortise/shared/utils'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
 
-// History file name — matches AUTOMATIONS_HISTORY_FILE from @craft-agent/shared/automations/constants
+// History file name — matches AUTOMATIONS_HISTORY_FILE from @mortise/shared/automations/constants
 const HISTORY_FILE = 'automations-history.jsonl'
 interface HistoryEntry { id: string; ts: number; ok: boolean; sessionId?: string; prompt?: string; error?: string; webhook?: { method: string; url: string; statusCode: number; durationMs: number; attempts?: number; error?: string; responseBody?: string } }
 
@@ -35,7 +35,7 @@ export interface AutomationCapabilityListItem {
 }
 
 export async function listWorkspaceAutomationsForCapability(workspaceRoot: string): Promise<AutomationCapabilityListItem[]> {
-  const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
+  const { resolveAutomationsConfigPath } = await import('@mortise/shared/automations/resolve-config-path')
   try {
     const config = JSON.parse(await readFile(resolveAutomationsConfigPath(workspaceRoot), 'utf-8')) as AutomationsConfigJson
     const result: AutomationCapabilityListItem[] = []
@@ -66,7 +66,7 @@ export async function listWorkspaceAutomationsForCapability(workspaceRoot: strin
 
 export async function setWorkspaceAutomationEnabledById(workspaceRoot: string, id: string, enabled: boolean): Promise<void> {
   await withConfigMutex(workspaceRoot, async () => {
-    const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
+    const { resolveAutomationsConfigPath } = await import('@mortise/shared/automations/resolve-config-path')
     const configPath = resolveAutomationsConfigPath(workspaceRoot)
     await withFileLock(configPath, async () => {
       const config = JSON.parse(await readFile(configPath, 'utf-8')) as AutomationsConfigJson
@@ -89,7 +89,7 @@ async function withAutomationMatcher(workspaceId: string, eventName: string, mat
   const workspace = getWorkspaceOrThrow(workspaceId)
 
   await withConfigMutex(workspace.rootPath, async () => {
-    const { resolveAutomationsConfigPath, generateShortId } = await import('@craft-agent/shared/automations/resolve-config-path')
+    const { resolveAutomationsConfigPath, generateShortId } = await import('@mortise/shared/automations/resolve-config-path')
     const configPath = resolveAutomationsConfigPath(workspace.rootPath)
 
     await withFileLock(configPath, async () => {
@@ -139,7 +139,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     const workspace = getWorkspaceOrNull(wid, log, 'AUTOMATIONS_GET')
     if (!workspace) return null
     try {
-      const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
+      const { resolveAutomationsConfigPath } = await import('@mortise/shared/automations/resolve-config-path')
       const configPath = resolveAutomationsConfigPath(workspace.rootPath)
       log.info(`AUTOMATIONS_GET: Reading config from: ${configPath}`)
       const content = await readFile(configPath, 'utf-8')
@@ -157,14 +157,14 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     }
   })
 
-  server.handle(RPC_CHANNELS.automations.TEST, async (ctx, payload: import('@craft-agent/shared/protocol').TestAutomationPayload) => {
+  server.handle(RPC_CHANNELS.automations.TEST, async (ctx, payload: import('@mortise/shared/protocol').TestAutomationPayload) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, payload.workspaceId)!
     payload.workspaceId = wid
     const workspace = getWorkspaceOrThrow(wid)
 
-    const results: import('@craft-agent/shared/protocol').TestAutomationActionResult[] = []
-    const { parsePromptReferences } = await import('@craft-agent/shared/automations')
-    const { executeWebhookRequest, createWebhookHistoryEntry, createPromptHistoryEntry } = await import('@craft-agent/shared/automations/webhook-utils')
+    const results: import('@mortise/shared/protocol').TestAutomationActionResult[] = []
+    const { parsePromptReferences } = await import('@mortise/shared/automations')
+    const { executeWebhookRequest, createWebhookHistoryEntry, createPromptHistoryEntry } = await import('@mortise/shared/automations/webhook-utils')
 
     for (const action of payload.actions) {
       const start = Date.now()
@@ -172,7 +172,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
       if (action.type === 'webhook') {
         // Execute webhook action using shared utility (no env expansion for test — raw URLs)
         // Cast needed: protocol DTO uses loose `method?: string`, WebhookAction uses strict union
-        const result = await executeWebhookRequest(action as import('@craft-agent/shared/automations').WebhookAction)
+        const result = await executeWebhookRequest(action as import('@mortise/shared/automations').WebhookAction)
         const method = action.method ?? 'POST'
 
         results.push({
@@ -253,7 +253,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
       }
     }
 
-    return { actions: results } satisfies import('@craft-agent/shared/protocol').TestAutomationResult
+    return { actions: results } satisfies import('@mortise/shared/protocol').TestAutomationResult
   })
 
   // Automation enabled state management (toggle enabled/disabled in automations.json)
@@ -317,7 +317,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
 
-    const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
+    const { resolveAutomationsConfigPath } = await import('@mortise/shared/automations/resolve-config-path')
     const configPath = resolveAutomationsConfigPath(workspace.rootPath)
     const raw = await readFile(configPath, 'utf-8')
     const config = JSON.parse(raw) as { automations?: Record<string, Array<{ id?: string; actions?: Array<{ type: string; [key: string]: unknown }> }>> }
@@ -329,9 +329,9 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     const webhookActions = (matcher.actions ?? []).filter(a => a.type === 'webhook')
     if (webhookActions.length === 0) throw new Error('No webhook actions to replay')
 
-    const { executeWebhookRequest, createWebhookHistoryEntry } = await import('@craft-agent/shared/automations/webhook-utils')
+    const { executeWebhookRequest, createWebhookHistoryEntry } = await import('@mortise/shared/automations/webhook-utils')
     const results = await Promise.all(
-      webhookActions.map(a => executeWebhookRequest(a as unknown as import('@craft-agent/shared/automations').WebhookAction))
+      webhookActions.map(a => executeWebhookRequest(a as unknown as import('@mortise/shared/automations').WebhookAction))
     )
 
     // Write history entries for replay — use index to correctly attribute method per action

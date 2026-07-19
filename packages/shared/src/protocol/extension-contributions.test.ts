@@ -36,6 +36,55 @@ describe('ExtensionContributionV1', () => {
     })).toContain('contributionId')
   })
 
+  it('accepts artifact panes, artifact actions, and bounded step progress', () => {
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'review',
+      surface: 'conversation.artifact.aside',
+      title: 'Review',
+      target: { artifactId: 'plan-1' },
+      content: { type: 'markdown', markdown: '# Review' },
+    })).toBeNull()
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'actions',
+      surface: 'conversation.artifact.footer',
+      target: { artifactId: 'plan-1' },
+      content: { type: 'button', label: 'Execute', emphasis: 'primary', disabled: true, disabledReason: 'Review is unavailable', action: { kind: 'command', command: 'plan-execute' } },
+    })).toBeNull()
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'progress',
+      surface: 'conversation.status',
+      content: { type: 'step-progress', label: 'Plan execution', steps: [
+        { id: 'one', label: 'First step', status: 'completed' },
+        { id: 'two', label: 'Second step', status: 'in_progress' },
+      ] },
+    })).toBeNull()
+  })
+
+  it('rejects malformed artifact targets and step progress', () => {
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1, id: 'review', surface: 'conversation.artifact.aside', title: 'Review',
+      target: { messageId: 'message-1' }, content: { type: 'text', text: 'Review' },
+    })).toContain('target.artifactId')
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1, id: 'review', surface: 'conversation.artifact.aside',
+      target: { artifactId: 'plan-1' }, content: { type: 'text', text: 'Review' },
+    })).toContain('require title')
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1, id: 'progress', surface: 'conversation.status',
+      content: { type: 'step-progress', label: 'Plan execution', steps: [
+        { id: 'same', label: 'One', status: 'pending' },
+        { id: 'same', label: 'Two', status: 'completed' },
+      ] },
+    })).toContain('unique')
+    expect(validateExtensionContributionV1({
+      ...contribution,
+      content: { type: 'button', label: 'Open', disabled: true, disabledReason: 'x'.repeat(513), action: { kind: 'command', command: 'open' } },
+    })).toContain('disabledReason')
+  })
+
   it('only allows a sandbox app as a top-level node on approved surfaces', () => {
     const sandbox = {
       type: 'sandbox-app', appId: 'dashboard', title: 'Dashboard', html: '<main></main>', permissions: [],

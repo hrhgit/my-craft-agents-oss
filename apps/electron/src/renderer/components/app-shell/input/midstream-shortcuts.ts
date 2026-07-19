@@ -1,4 +1,4 @@
-import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
+import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 
 interface EnterShortcutEvent {
   key: string

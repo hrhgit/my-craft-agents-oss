@@ -6,7 +6,7 @@ import type {
   ExtensionInteractionBridgeRequestV1,
   ExtensionInteractionFieldV1,
   ExtensionInteractionResponseV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 import { cn } from '@/lib/utils'
 
 export type InteractionDraft =

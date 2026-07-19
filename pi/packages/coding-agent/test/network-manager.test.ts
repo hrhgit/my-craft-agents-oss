@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@mortise/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NetworkManager } from "../src/core/network-manager.ts";
 import type { SidecarState } from "../src/core/network-sidecar.ts";

@@ -7,6 +7,7 @@ import {
   getSessionSafeAllowedToolNames,
   getSessionSafeBlockedToolNames,
   getToolDefsAsJsonSchema,
+  normalizeSessionToolName,
 } from './tool-defs.ts';
 
 describe('session tool filtering helpers', () => {
@@ -62,7 +63,7 @@ describe('session tool filtering helpers', () => {
     expect(blocked.has('spawn_session')).toBe(true);
   });
 
-  it('safe-mode helpers support MCP prefixing', () => {
+  it('safe-mode helpers still support prefixed protocol adapters', () => {
     const allowedPrefixed = getSessionSafeAllowedToolNames({ prefix: 'mcp__session__' });
     const blockedPrefixed = getSessionSafeBlockedToolNames({ prefix: 'mcp__session__' });
 
@@ -70,5 +71,12 @@ describe('session tool filtering helpers', () => {
     expect(allowedPrefixed.has('mcp__session__script_sandbox')).toBe(true);
     expect(blockedPrefixed.has('mcp__session__source_oauth_trigger')).toBe(true);
     expect(blockedPrefixed.has('mcp__session__spawn_session')).toBe(true);
+  });
+
+  it('normalizes canonical names and persisted legacy aliases', () => {
+    expect(normalizeSessionToolName('source_test')).toBe('source_test');
+    expect(normalizeSessionToolName('mcp__session__source_test')).toBe('source_test');
+    expect(normalizeSessionToolName('session__source_test')).toBe('source_test');
+    expect(normalizeSessionToolName('mcp__linear__source_test')).toBeNull();
   });
 });

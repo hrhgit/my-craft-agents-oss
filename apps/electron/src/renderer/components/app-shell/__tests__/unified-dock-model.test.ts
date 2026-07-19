@@ -27,8 +27,8 @@ function createModel(): Model {
         type: 'tabset',
         id: 'main',
         children: [
-          { type: 'tab', id: 'a', name: 'A', component: 'craft-content' },
-          { type: 'tab', id: 'b', name: 'B', component: 'craft-content' },
+          { type: 'tab', id: 'a', name: 'A', component: 'mortise-content' },
+          { type: 'tab', id: 'b', name: 'B', component: 'mortise-content' },
         ],
       }],
     },
@@ -92,19 +92,19 @@ describe('unified dock FlexLayout adapter', () => {
             type: 'tab',
             id: 'conversation',
             name: 'Conversation',
-            component: 'craft-content',
+            component: 'mortise-content',
             config: { workspaceId: 'workspace-a', serverId: 'wss://old.example.test' },
           }, {
             type: 'tab',
             id: 'files',
             name: 'Files',
-            component: 'craft-content',
+            component: 'mortise-content',
             config: { workspaceId: 'workspace-a', serverId: 'wss://old.example.test' },
           }, {
             type: 'tab',
             id: 'other-workspace',
             name: 'Other',
-            component: 'craft-content',
+            component: 'mortise-content',
             config: { workspaceId: 'workspace-b', serverId: 'wss://other.example.test' },
           }],
         }],
@@ -129,14 +129,14 @@ describe('unified dock FlexLayout adapter', () => {
       type: 'tab',
       id: 'files',
       name: 'Files',
-      component: 'craft-content',
+      component: 'mortise-content',
       config: { source: 'workspace-content', contentKind: 'file', resourceId: 'files' },
       enablePopout: false,
     }, 'main', DockLocation.RIGHT, -1, true))
 
     expect(tabsets(model).map(group => group.getChildren().map(tab => tab.getId())))
       .toEqual([['a', 'b'], ['files']])
-    expect((model.getNodeById('files') as TabNode).getComponent()).toBe('craft-content')
+    expect((model.getNodeById('files') as TabNode).getComponent()).toBe('mortise-content')
     expect(model.toJson().borders).toEqual([])
 
     const toolGroup = tabsets(model).find(group => group.getChildren().some(tab => tab.getId() === 'files'))
@@ -182,7 +182,7 @@ describe('unified dock FlexLayout adapter', () => {
             type: 'tab',
             id: 'files',
             name: 'Files',
-            component: 'craft-content',
+            component: 'mortise-content',
             config: { protection: persisted },
             enableClose: false,
           }],
@@ -220,7 +220,7 @@ describe('unified dock FlexLayout adapter', () => {
             type: 'tab',
             id: 'fixed',
             name: 'Fixed',
-            component: 'craft-content',
+            component: 'mortise-content',
             config: { allowDetach: false },
           }],
         }],
@@ -245,7 +245,7 @@ describe('unified dock FlexLayout adapter', () => {
             type: 'tab',
             id: 'conversation',
             name: 'Conversation',
-            component: 'craft-content',
+            component: 'mortise-content',
             config: { contentKind: 'conversation' },
           }],
         }, {
@@ -256,7 +256,7 @@ describe('unified dock FlexLayout adapter', () => {
             type: 'tab',
             id: 'browser',
             name: 'Browser',
-            component: 'craft-content',
+            component: 'mortise-content',
             config: { contentKind: 'browser' },
           }],
         }],
@@ -293,12 +293,12 @@ describe('unified dock FlexLayout adapter', () => {
         children: [{
           type: 'tabset',
           id: 'files-group',
-          children: [{ type: 'tab', id: 'files', name: 'Files', component: 'craft-content' }],
+          children: [{ type: 'tab', id: 'files', name: 'Files', component: 'mortise-content' }],
         }, {
           type: 'tabset',
           id: 'browser-group',
           active: true,
-          children: [{ type: 'tab', id: 'browser', name: 'Browser', component: 'craft-content' }],
+          children: [{ type: 'tab', id: 'browser', name: 'Browser', component: 'mortise-content' }],
         }],
       },
     })
@@ -317,14 +317,14 @@ describe('unified dock FlexLayout adapter', () => {
             type: 'tab',
             id: 'conversation',
             name: 'Conversation',
-            component: 'craft-content',
+            component: 'mortise-content',
             config: { route: 'allSessions/session/release-readiness' },
           }],
         }, {
           type: 'tabset',
           id: 'tool-group',
           active: true,
-          children: [{ type: 'tab', id: 'files', name: 'Files', component: 'craft-content' }],
+          children: [{ type: 'tab', id: 'files', name: 'Files', component: 'mortise-content' }],
         }],
       },
     })

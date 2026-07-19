@@ -64,7 +64,7 @@ const DropdownMenuTrigger = React.forwardRef<
       <DropdownMenuPrimitive.Trigger
         ref={ref}
         data-slot="dropdown-menu-trigger"
-        data-craft-semantic-id={semanticId}
+        data-mortise-semantic-id={semanticId}
         asChild
         {...props}
       >
@@ -79,7 +79,7 @@ const DropdownMenuTrigger = React.forwardRef<
     <DropdownMenuPrimitive.Trigger
       ref={ref}
       data-slot="dropdown-menu-trigger"
-      data-craft-semantic-id={semanticId}
+      data-mortise-semantic-id={semanticId}
       asChild={asChild}
       className={triggerClassName}
       {...props}
@@ -132,7 +132,7 @@ function DropdownMenuItem({
   return (
     <DropdownMenuPrimitive.Item
       data-slot="dropdown-menu-item"
-      data-craft-semantic-id={semanticId}
+      data-mortise-semantic-id={semanticId}
       data-inset={inset}
       data-variant={variant}
       className={cn(

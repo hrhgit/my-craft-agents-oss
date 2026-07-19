@@ -19,8 +19,8 @@ describe('test host state predicates', () => {
       kind: 'state', predicate: { scope: 'route', phase: 'ready', windowId: '3', detail: { surface: 'settings', section: 'ai' } },
     })
     expect(expectedRendererRoute({ route: 'settings/preferences' })).toBe('settings/preferences')
-    expect(expectedRendererRoute({ route: 'craftagents://settings/preferences' })).toBe('settings/preferences')
-    expect(expectedRendererRoute({ route: 'craftagents://workspace/w1/settings/preferences' })).toBe('settings/preferences')
+    expect(expectedRendererRoute({ route: 'mortise://settings/preferences' })).toBe('settings/preferences')
+    expect(expectedRendererRoute({ route: 'mortise://workspace/w1/settings/preferences' })).toBe('settings/preferences')
   })
 
   it('gates semantic snapshots on the selected renderer app state', () => {

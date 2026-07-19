@@ -1,7 +1,7 @@
 /**
  * PiAgent.queryLlm contract under the public Pi RpcClient backend.
  *
- * The deleted pi-agent-server bridge exposed a Craft-private llm_query RPC.
+ * The deleted pi-agent-server bridge exposed a Mortise-private llm_query RPC.
  * PiAgent now delegates to Pi's public RpcClient typed API.
  */
 import { describe, expect, it, mock } from 'bun:test';
@@ -14,14 +14,14 @@ function createConfig(overrides: Partial<BackendConfig> = {}): BackendConfig {
     workspace: {
       id: 'ws-test',
       name: 'Test Workspace',
-      rootPath: '/tmp/craft-agent-test',
+      rootPath: '/tmp/mortise-test',
     } as any,
     session: {
-      craftId: 'session-test',
-      workspaceRootPath: '/tmp/craft-agent-test',
+      mortiseId: 'session-test',
+      workspaceRootPath: '/tmp/mortise-test',
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
-      workingDirectory: '/tmp/craft-agent-test',
+      workingDirectory: '/tmp/mortise-test',
     } as any,
     isHeadless: true,
     ...overrides,

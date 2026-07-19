@@ -167,10 +167,10 @@ export interface CallbackMessage {
 // Tool Result Types
 // ============================================================
 
-// Re-export ToolResult and TextContent from canonical source (@craft-agent/shared/agent)
-export type { TextContent, ToolResult } from '@craft-agent/shared/agent';
+// Re-export ToolResult and TextContent from canonical source (@mortise/shared/agent)
+export type { TextContent, ToolResult } from '@mortise/shared/agent';
 // Re-export getResultText helper for test consumers
-export { getResultText } from '@craft-agent/shared/agent';
+export { getResultText } from '@mortise/shared/agent';
 
 // ============================================================
 // Validation Result Types

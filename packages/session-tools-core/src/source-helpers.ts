@@ -6,8 +6,8 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { readSessionHeader, sanitizeSessionId, tryGetSessionFilePath } from '@craft-agent/shared/sessions';
-import { expandPath, stripBom } from '@craft-agent/shared/utils';
+import { readSessionHeader, sanitizeSessionId, tryGetSessionFilePath } from '@mortise/shared/sessions';
+import { expandPath, stripBom } from '@mortise/shared/utils';
 import type { SourceConfig } from './types.ts';
 
 /**

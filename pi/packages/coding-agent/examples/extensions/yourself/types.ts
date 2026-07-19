@@ -1,4 +1,4 @@
-import type { SessionEntry, SessionInfo } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry, SessionInfo } from "@mortise/pi-coding-agent";
 
 export const YOURSELF_STATUS_KEY = "yourself";
 export const YOURSELF_OUTPUT_DIR_NAME = "YOURSELF";

@@ -6,11 +6,11 @@
  * satisfy it at runtime.
  */
 
-import type { Workspace, WorkspaceInfo, ActiveSessionInfo } from '@craft-agent/core/types'
-import type { StoredAttachment, AnnotationV1 } from '@craft-agent/core/types'
-import type { PermissionMode } from '@craft-agent/shared/agent/mode-types'
-import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
-import type { AuthResult } from '@craft-agent/shared/agent'
+import type { Workspace, WorkspaceInfo, ActiveSessionInfo } from '@mortise/core/types'
+import type { StoredAttachment, AnnotationV1 } from '@mortise/core/types'
+import type { PermissionMode } from '@mortise/shared/agent/mode-types'
+import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels'
+import type { AuthResult } from '@mortise/shared/agent'
 import type {
   Session,
   CreateSessionOptions,
@@ -22,9 +22,9 @@ import type {
   UnreadSummary,
   PiProjectionEventV1,
   PiProjectionSnapshotV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 import type { ProjectionApplyResult } from '../projection'
-import type { SessionBundle, DispatchMode } from '@craft-agent/shared/sessions'
+import type { SessionBundle, DispatchMode } from '@mortise/shared/sessions'
 import type { SessionShareTransferService } from '../services/session-share-transfer'
 import type { EventSink } from '../transport'
 
@@ -137,19 +137,19 @@ export interface ISessionManager {
     commandId: string,
     args?: string,
     ownerExtensionId?: string,
-  ): Promise<import('@craft-agent/core/types').ExtensionCommandResult>
+  ): Promise<import('@mortise/core/types').ExtensionCommandResult>
 
   /** Reload extensions in all active Pi runtimes; streaming runtimes defer until settled. */
   reloadExtensions(): Promise<{ reloadedSessionCount: number; deferredSessionCount: number }>
 
   /** Settings-initiated reload with an explicit confirmation boundary for running sessions. */
-  requestExtensionReload(interruptRunning: boolean): Promise<import('@craft-agent/shared/config').PiExtensionReloadResult>
+  requestExtensionReload(interruptRunning: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
 
   /**
    * 查询当前会话已注册的 Pi 扩展 slash commands。
    * 非 Pi 后端或会话未就绪时返回空数组。
    */
-  listExtensionCommands(sessionId: string): Promise<import('@craft-agent/shared/agent').PiExtensionCommand[]>
+  listExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent').PiExtensionCommand[]>
 
   /**
    * List child sessions in pi's session tree spawned from the given session.
@@ -158,7 +158,7 @@ export interface ISessionManager {
    */
   listChildSessions(
     sessionId: string,
-  ): Promise<import('@craft-agent/shared/agent').PiChildSessionInfo[]>
+  ): Promise<import('@mortise/shared/agent').PiChildSessionInfo[]>
 
   // ---------------------------------------------------------------------------
   // Plans
@@ -248,6 +248,10 @@ export interface ISessionManager {
    * `getOrCreateAgent`.
    */
   refreshProviderRuntime(provider: string): Promise<void>
+  /** Recreate Pi hosts/runtimes after models.json or auth.json changes. */
+  reloadProviderRuntime(provider?: string): Promise<void>
+  /** Inspect one loaded Pi runtime for the global agent settings surface. */
+  getAgentRuntimeProfile(): Promise<import('@mortise/shared/config').AgentRuntimeProfile | null>
   /** Rebuild active source bridges after the global data-source feature changes. */
   refreshDataSourcesRuntime?(): Promise<void>
   completeAuthRequest(sessionId: string, result: AuthResult): Promise<void>

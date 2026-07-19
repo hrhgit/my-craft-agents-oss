@@ -8,9 +8,9 @@
  */
 
 import { createInterface } from "node:readline";
-import { modelsAreEqual } from "@earendil-works/pi-ai/model-utils";
-import type { ImageContent } from "@earendil-works/pi-ai/types";
-import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
+import { modelsAreEqual } from "@mortise/pi-ai/model-utils";
+import type { ImageContent } from "@mortise/pi-ai/types";
+import { ProcessTerminal, setKeybindings, TUI } from "@mortise/pi-tui";
 import chalk from "chalk";
 import { type Args, parseArgs } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";

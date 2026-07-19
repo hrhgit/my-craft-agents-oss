@@ -7,7 +7,7 @@ import {
   type UiValidationScopedWait,
   type UiValidationScopedWaitOptions,
   type UiValidationEventReadResult,
-} from '@craft-agent/shared/ui-validation'
+} from '@mortise/shared/ui-validation'
 import type { UiValidationRendererStateBatch } from '../../shared/ui-validation-state-bridge'
 import { PRELOAD_LOCAL_CHANNELS } from '../../shared/ipc-channels'
 import { rendererStatesMissingFromBatch } from './renderer-state-batch'
@@ -19,9 +19,9 @@ export class ElectronUiValidationStateBridge {
   private readonly trackedSenders = new Set<number>()
   private installed = false
 
-  install(options: { enabled: boolean; isPackaged: boolean }): void {
+  install(options: { enabled: boolean; isPackaged: boolean; allowPackagedDevHost?: boolean }): void {
     if (!options.enabled) return
-    if (options.isPackaged || process.env.NODE_ENV === 'production') {
+    if ((options.isPackaged || process.env.NODE_ENV === 'production') && !options.allowPackagedDevHost) {
       throw new Error('UI validation state IPC is forbidden in packaged or production runtime.')
     }
     if (this.installed) return
@@ -119,7 +119,11 @@ export class ElectronUiValidationStateBridge {
 
 let bridge: ElectronUiValidationStateBridge | undefined
 
-export function installUiValidationStateBridge(options: { enabled: boolean; isPackaged: boolean }): ElectronUiValidationStateBridge | undefined {
+export function installUiValidationStateBridge(options: {
+  enabled: boolean
+  isPackaged: boolean
+  allowPackagedDevHost?: boolean
+}): ElectronUiValidationStateBridge | undefined {
   if (!options.enabled) return undefined
   bridge ??= new ElectronUiValidationStateBridge()
   bridge.install(options)

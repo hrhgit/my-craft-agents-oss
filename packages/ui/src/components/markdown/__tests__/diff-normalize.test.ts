@@ -49,7 +49,7 @@ const userBareHunksWithHeaders = [
   '+++ b/editor/src/browse-sync/store/browse-store.ts',
   '@@',
   ' import { produce } from "immer";',
-  '+import Monitoring from "@craft-internal/baseapp/src/Monitoring";',
+  '+import Monitoring from "@mortise-internal/baseapp/src/Monitoring";',
   '@@',
   '-import { CACHE_STALE_THRESHOLD_MS, QUEUE_MAX_SIZE } from "../constants";',
   '+import { ... } from "../constants";',
@@ -121,7 +121,7 @@ describe('ensureUnifiedDiffFormat', () => {
       '+++ b/editor/src/browse-sync/store/browse-store.ts',
       '@@ -1,2 +1,3 @@',
       ' import { produce } from "immer";',
-      '+import Monitoring from "@craft-internal/baseapp/src/Monitoring";',
+      '+import Monitoring from "@mortise-internal/baseapp/src/Monitoring";',
       '-import { CACHE_STALE_THRESHOLD_MS, QUEUE_MAX_SIZE } from "../constants";',
       '+import { ... } from "../constants";',
     ].join('\n'))

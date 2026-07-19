@@ -1,4 +1,4 @@
 {
   "start": "bun --cwd=../.. run server:dev:raw",
-  "port_env": ["CRAFT_RPC_PORT", "PORT"]
+  "port_env": ["MORTISE_RPC_PORT", "PORT"]
 }

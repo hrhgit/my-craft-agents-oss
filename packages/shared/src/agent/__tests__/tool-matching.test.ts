@@ -296,7 +296,7 @@ describe('extractToolStarts', () => {
 
   it('extracts displayName from _displayName field', () => {
     const blocks: ContentBlock[] = [
-      makeToolUseBlock('mcp__craft__search', { _displayName: 'Search Docs', _intent: 'Find docs' }, 'toolu_1'),
+      makeToolUseBlock('mcp__mortise__search', { _displayName: 'Search Docs', _intent: 'Find docs' }, 'toolu_1'),
     ]
 
     const events = extractToolStarts(blocks, null, toolIndex, emittedIds)

@@ -2,7 +2,7 @@
  * Validate packaged resource staging before electron-builder runs.
  */
 
-import { existsSync, rmSync, statSync, symlinkSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, statSync, symlinkSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
@@ -48,7 +48,7 @@ const requiredPaths = usesCompiledBinary ? [
   join(piRuntimeRoot, 'dist', 'core', 'export-html', 'template.html'),
   join(piRuntimeRoot, 'dist', 'modes', 'interactive', 'theme', 'dark.json'),
   join(piRuntimeRoot, 'sidecar', 'bin', sidecarTarget, sidecarBinary),
-  join(piRuntimeModules, '@earendil-works', 'pi-ai', 'package.json'),
+  join(piRuntimeModules, '@mortise', 'pi-ai', 'package.json'),
   join(piRuntimeModules, 'ignore', 'package.json'),
   join(piRuntimeModules, 'minimatch', 'package.json'),
   join(piRuntimeModules, 'undici', 'package.json'),
@@ -80,7 +80,11 @@ function evalArgs(script: string): string[] {
     : ['--input-type=module', '-e', script];
 }
 
-function validateSpawn(name: string, args: string[], options?: { command?: string; cwd?: string; input?: string }): void {
+function validateSpawn(
+  name: string,
+  args: string[],
+  options?: { command?: string; cwd?: string; input?: string; env?: NodeJS.ProcessEnv },
+): void {
   const result = spawnSync(options?.command ?? process.execPath, args, {
     cwd: options?.cwd ?? ELECTRON_DIR,
     encoding: 'utf-8',
@@ -89,6 +93,7 @@ function validateSpawn(name: string, args: string[], options?: { command?: strin
       ...process.env,
       PI_CHECK_PACKAGE_UPDATES: '0',
       PI_OFFLINE: '1',
+      ...options?.env,
     },
   });
 
@@ -101,7 +106,7 @@ function validateSpawn(name: string, args: string[], options?: { command?: strin
   if (result.stderr.trim()) {
     console.error(result.stderr.trim());
   }
-  process.exit(1);
+  throw new Error(`${name} failed`);
 }
 
 if (usesCompiledBinary) {
@@ -109,11 +114,27 @@ if (usesCompiledBinary) {
     command: piCompiledBinary,
     cwd: piRuntimeRoot,
   });
-  validateSpawn('Pi compiled binary RPC smoke test', ['--mode', 'rpc', '--no-session', '--offline'], {
-    command: piCompiledBinary,
-    cwd: piRuntimeRoot,
-    input: '{"id":"capabilities","type":"get_capabilities"}\n',
-  });
+  const piSmokeAgentDir = join(ELECTRON_DIR, 'dist', '.pi-smoke-agent');
+  rmSync(piSmokeAgentDir, { recursive: true, force: true });
+  mkdirSync(piSmokeAgentDir, { recursive: true });
+  try {
+    validateSpawn('Pi compiled binary RPC smoke test', [
+      '--mode', 'rpc',
+      '--no-session',
+      '--offline',
+      '--no-extensions',
+      '--no-skills',
+      '--no-prompt-templates',
+      '--no-context-files',
+    ], {
+      command: piCompiledBinary,
+      cwd: piRuntimeRoot,
+      input: '{"id":"capabilities","type":"get_capabilities"}\n',
+      env: { PI_CODING_AGENT_DIR: piSmokeAgentDir },
+    });
+  } finally {
+    rmSync(piSmokeAgentDir, { recursive: true, force: true });
+  }
 } else {
   validateSpawn(
     'Pi CLI bundle smoke test',

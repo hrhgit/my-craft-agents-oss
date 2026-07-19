@@ -1,15 +1,15 @@
 #!/usr/bin/env bun
 /**
- * craft-cli — Terminal client for Craft Agent server.
+ * mortise-cli — Terminal client for Mortise Agent server.
  *
- * Connects over WebSocket (ws:// or wss://) to a running Craft Agent server
+ * Connects over WebSocket (ws:// or wss://) to a running Mortise Agent server
  * and provides commands for listing resources, managing sessions, sending
  * messages with real-time streaming, and validating server health.
  */
 
 import { resolve } from 'path'
-import { resolveCustomEndpointSetup } from '@craft-agent/server-core/domain'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { resolveCustomEndpointSetup } from '@mortise/server-core/domain'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import { CliRpcClient } from './client.ts'
 import { subscribeToConversationStream } from './conversation-stream.ts'
 import {
@@ -164,9 +164,9 @@ export function parseArgs(argv: string[]): CliArgs {
   }
 
   // Env var fallbacks
-  if (!url) url = process.env.CRAFT_SERVER_URL ?? ''
-  if (!token) token = process.env.CRAFT_SERVER_TOKEN ?? ''
-  if (!tlsCa) tlsCa = process.env.CRAFT_TLS_CA
+  if (!url) url = process.env.MORTISE_SERVER_URL ?? ''
+  if (!token) token = process.env.MORTISE_SERVER_TOKEN ?? ''
+  if (!tlsCa) tlsCa = process.env.MORTISE_TLS_CA
   if (!provider) provider = process.env.LLM_PROVIDER ?? 'anthropic'
   if (!model) model = process.env.LLM_MODEL ?? ''
   if (!apiKey) apiKey = process.env.LLM_API_KEY ?? ''
@@ -655,7 +655,7 @@ async function setupProvider(
   args: CliArgs,
 ): Promise<{ provider: string; model: string }> {
   const { provider, baseUrl } = args
-  if (provider === 'amazon-bedrock') throw new Error('Configure Amazon Bedrock through Pi before using craft-cli')
+  if (provider === 'amazon-bedrock') throw new Error('Configure Amazon Bedrock through Pi before using mortise-cli')
   const custom = baseUrl ? resolveCustomEndpointCliSetup(provider, baseUrl, args.apiKey) : null
   const apiKey = custom?.credential ?? resolveApiKey(provider, args.apiKey)
   const catalog = await client.invoke('pi:getProviderModels', provider) as { models?: Array<{ id: string; name?: string }> }
@@ -1084,7 +1084,7 @@ export function getValidateSteps(): ValidateStep[] {
         // Auto-bootstrap a temp workspace for CI environments
         const { mkdtemp } = await import('fs/promises')
         const { tmpdir } = await import('os')
-        const tmpDir = await mkdtemp(`${tmpdir()}/craft-validate-`)
+        const tmpDir = await mkdtemp(`${tmpdir()}/mortise-validate-`)
         const ws = (await client.invoke('workspaces:create', tmpDir, 'validate-workspace')) as { id: string }
         ctx.workspaceId = ws.id
         ctx.workspaceRootPath = tmpDir
@@ -1245,17 +1245,17 @@ export function getValidateSteps(): ValidateStep[] {
     },
     // ----- MCP source validation (pre-committed in .github/agents/sources/) -----
     {
-      name: 'mcp:craft-public (auth:none)',
+      name: 'mcp:mortise-public (auth:none)',
       fn: async (client, ctx) => {
         if (!ctx.createdSessionId) return 'skipped (no session)'
-        // Enable the pre-committed craft-public MCP source on the session
-        const enableSlugs = [ctx.createdSourceSlug, 'craft-public'].filter(Boolean) as string[]
+        // Enable the pre-committed mortise-public MCP source on the session
+        const enableSlugs = [ctx.createdSourceSlug, 'mortise-public'].filter(Boolean) as string[]
         await client.invoke('sessions:command', ctx.createdSessionId, {
           type: 'setSources',
           sourceSlugs: enableSlugs,
         })
         return await waitForSendEvents(client, ctx.createdSessionId,
-          `[source:craft-public] List the documents under the "CraftAgents E2E Test" folder inside the "CraftAgents" folder. Just list their names.`,
+          `[source:mortise-public] List the documents under the "Mortise E2E Test" folder inside the "Mortise" folder. Just list their names.`,
           180_000, false, undefined, ctx.onEvent)
       },
     },
@@ -1268,7 +1268,7 @@ export function getValidateSteps(): ValidateStep[] {
         // Inject credential into store (multi-header JSON format, same as API headerNames)
         await client.invoke('sources:saveCredentials', ctx.workspaceId, 'stitch-mcp', JSON.stringify({ 'X-Goog-Api-Key': apiKey }))
         // Enable stitch-mcp + existing sources on session
-        const enableSlugs = [ctx.createdSourceSlug, 'craft-public', 'stitch-mcp'].filter(Boolean) as string[]
+        const enableSlugs = [ctx.createdSourceSlug, 'mortise-public', 'stitch-mcp'].filter(Boolean) as string[]
         await client.invoke('sessions:command', ctx.createdSessionId, {
           type: 'setSources',
           sourceSlugs: enableSlugs,
@@ -1292,7 +1292,7 @@ export function getValidateSteps(): ValidateStep[] {
 mkdir -p "${skillDir}" && cat > "${skillDir}/SKILL.md" << 'SKILLEOF'
 ---
 name: "CLI Validate Skill"
-description: "Validation skill created by craft-cli"
+description: "Validation skill created by mortise-cli"
 requiredSources:
   - "${sourceSlug}"
 ---
@@ -1636,13 +1636,13 @@ export async function runValidation(
 // ---------------------------------------------------------------------------
 
 function printHelp(): void {
-  process.stdout.write(`craft-cli — Terminal client for Craft Agent server
+  process.stdout.write(`mortise-cli — Terminal client for Mortise Agent server
 
-Usage: craft-cli [options] <command> [args...]
+Usage: mortise-cli [options] <command> [args...]
 
 Connection:
-  --url <ws[s]://...>    Server URL (default: $CRAFT_SERVER_URL)
-  --token <secret>       Auth token (default: $CRAFT_SERVER_TOKEN)
+  --url <ws[s]://...>    Server URL (default: $MORTISE_SERVER_URL)
+  --token <secret>       Auth token (default: $MORTISE_SERVER_TOKEN)
   --workspace <id>       Workspace ID (auto-detected if omitted)
   --timeout <ms>         Request timeout (default: 10000)
   --tls-ca <path>        Custom CA cert for self-signed TLS
@@ -1684,21 +1684,21 @@ Commands:
                          --verbose, -v       Show server stderr output
 
 Examples:
-  craft-cli run "What files are in the current directory?"
-  craft-cli run --source craft-kb "Summarize today's daily note"
-  craft-cli run --workspace-dir .github/agents --source craft-public "Read the doc"
-  craft-cli run --provider openai --model gpt-4o "Summarize this repo"
-  OPENAI_API_KEY=sk-... craft-cli run --provider openai "Hello"
-  GOOGLE_API_KEY=... craft-cli run --provider google --model gemini-2.0-flash "Hello"
-  DEEPSEEK_API_KEY=sk-... craft-cli run --provider deepseek --model deepseek-v4-flash "Hello"
-  echo "Analyze this code" | craft-cli run
-  craft-cli ping
-  craft-cli sessions
-  craft-cli send abc-123 "What files are in the current directory?"
-  echo "Summarize this" | craft-cli send abc-123
-  craft-cli --validate-server
-  craft-cli invoke system:homeDir
-  craft-cli --json workspaces | jq '.[].name'
+  mortise-cli run "What files are in the current directory?"
+  mortise-cli run --source mortise-kb "Summarize today's daily note"
+  mortise-cli run --workspace-dir .github/agents --source mortise-public "Read the doc"
+  mortise-cli run --provider openai --model gpt-4o "Summarize this repo"
+  OPENAI_API_KEY=sk-... mortise-cli run --provider openai "Hello"
+  GOOGLE_API_KEY=... mortise-cli run --provider google --model gemini-2.0-flash "Hello"
+  DEEPSEEK_API_KEY=sk-... mortise-cli run --provider deepseek --model deepseek-v4-flash "Hello"
+  echo "Analyze this code" | mortise-cli run
+  mortise-cli ping
+  mortise-cli sessions
+  mortise-cli send abc-123 "What files are in the current directory?"
+  echo "Summarize this" | mortise-cli send abc-123
+  mortise-cli --validate-server
+  mortise-cli invoke system:homeDir
+  mortise-cli --json workspaces | jq '.[].name'
 `)
 }
 
@@ -1711,7 +1711,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
 
   // F14: 标记 CLI 模式——子进程（spawnLocalServer）继承此环境变量，
   // pi-agent.ts 据此跳过 browser_tool 注册（CLI 无浏览器窗口，调用只会返回运行时错误）。
-  process.env.CRAFT_CLI_MODE = '1'
+  process.env.MORTISE_CLI_MODE = '1'
 
   // Set custom CA before any WS connections
   if (args.tlsCa) {
@@ -1743,7 +1743,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
 
   // All other commands need a server URL
   if (!args.url) {
-    err('No server URL. Use --url <ws://...> or set $CRAFT_SERVER_URL')
+    err('No server URL. Use --url <ws://...> or set $MORTISE_SERVER_URL')
     process.exit(1)
   }
 

@@ -18,7 +18,7 @@ interface HubState {
 const hubs = new WeakMap<Session, HubState>()
 
 /**
- * Electron WebRequest is last-listener-wins rather than additive. All Craft
+ * Electron WebRequest is last-listener-wins rather than additive. All Mortise
  * observers use this hub so diagnostics cannot replace application observers.
  */
 export function observeWebRequests(session: Session, observer: WebRequestObservation): () => void {

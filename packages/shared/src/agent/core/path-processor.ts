@@ -30,11 +30,11 @@ export { expandPath, normalizePath, pathStartsWith, toPortablePath };
  * These files have specific formats (JSON, TOML, YAML) that can break apps if malformed.
  */
 const CONFIG_FILE_PATTERNS = [
-  // Craft Agent configs
-  /\.craft-agent\/.*\/(config|permissions|theme|guide)\.json$/,
-  /\.craft-agent\/config\.json$/,
-  /\.craft-agent\/preferences\.json$/,
-  /\.craft-agent\/.*\/SKILL\.md$/,
+  // Mortise Agent configs
+  /\.mortise\/.*\/(config|permissions|theme|guide)\.json$/,
+  /\.mortise\/config\.json$/,
+  /\.mortise\/preferences\.json$/,
+  /\.mortise\/.*\/SKILL\.md$/,
   // Common config files
   /package\.json$/,
   /tsconfig\.json$/,

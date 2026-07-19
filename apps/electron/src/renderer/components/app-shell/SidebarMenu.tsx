@@ -25,7 +25,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useMenuComponents } from '@/components/ui/menu-context'
-import { getDocUrl, type DocFeature } from '@craft-agent/shared/docs/doc-links'
+import { getDocUrl, type DocFeature } from '@mortise/shared/docs/doc-links'
 
 export type SidebarMenuType = 'allSessions' | 'sources' | 'skills' | 'automations' | 'newSession' | 'workspace'
 
@@ -70,7 +70,7 @@ export function SidebarMenu({
   // New Session: only shows "Open in New Window"
   if (type === 'newSession') {
     return (
-      <MenuItem onClick={() => window.electronAPI.openUrl('craftagents://action/new-session?window=focused')}>
+      <MenuItem onClick={() => window.electronAPI.openUrl('mortise://action/new-session?window=focused')}>
         <AppWindow className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sidebarMenu.openInNewWindow")}</span>
       </MenuItem>

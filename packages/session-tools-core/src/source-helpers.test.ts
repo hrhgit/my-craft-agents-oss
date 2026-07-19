@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSession, setSharedPiSessionsDirForTests } from '@craft-agent/shared/sessions';
+import { createSession, setSharedPiSessionsDirForTests } from '@mortise/shared/sessions';
 import {
   getSkillPath,
   getSourcePath,
@@ -45,7 +45,7 @@ describe('Pi-first paths', () => {
     setSharedPiSessionsDirForTests(piSessionsRoot);
 
     const session = await createSession(workspaceRoot);
-    expect(resolveSessionWorkingDirectory(workspaceRoot, session.craftId)).toBe(workspaceRoot);
+    expect(resolveSessionWorkingDirectory(workspaceRoot, session.mortiseId)).toBe(workspaceRoot);
   });
 
   it('does not read a legacy workspace sessions directory', () => {
@@ -60,7 +60,7 @@ describe('Pi-first paths', () => {
       id: 'legacy-session',
       timestamp: new Date(0).toISOString(),
       cwd: workspaceRoot,
-      craft: { id: 'legacy-session', workingDirectory: workspaceRoot },
+      mortise: { id: 'legacy-session', workingDirectory: workspaceRoot },
     }));
     setSharedPiSessionsDirForTests(join(root, 'empty-pi-sessions'));
 

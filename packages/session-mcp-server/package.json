@@ -1,6 +1,6 @@
 {
-  "name": "@craft-agent/session-mcp-server",
-  "version": "0.10.4",
+  "name": "@mortise/session-mcp-server",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "MCP server that provides session-scoped tools (config_validate, skill_validate, etc.) to the agent via stdio transport",
   "type": "commonjs",
@@ -9,12 +9,12 @@
     "session-mcp-server": "./dist/index.js"
   },
   "scripts": {
-    "build": "bun build src/index.ts --outdir=dist --target=node --format=cjs --define process.env.CRAFT_UI_VALIDATION_BUILD=\\\"0\\\" --define process.env.CRAFT_UI_TEST_HOST=\\\"0\\\" --minify-syntax",
+    "build": "bun build src/index.ts --outdir=dist --target=node --format=cjs --define process.env.MORTISE_UI_VALIDATION_BUILD=\\\"0\\\" --define process.env.MORTISE_UI_TEST_HOST=\\\"0\\\" --minify-syntax",
     "dev": "bun run src/index.ts"
   },
   "dependencies": {
-    "@craft-agent/session-tools-core": "workspace:*",
-    "@craft-agent/shared": "workspace:*",
+    "@mortise/session-tools-core": "workspace:*",
+    "@mortise/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.0.0"
   },

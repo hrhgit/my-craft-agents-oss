@@ -1,6 +1,6 @@
-import type { Model } from "@earendil-works/pi-ai";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Model } from "@mortise/pi-ai";
+import type { ThinkingLevel } from "@mortise/pi-agent-core";
+import type { ExtensionContext } from "@mortise/pi-coding-agent";
 import type { RemoteModel, RemoteState } from "./protocol.ts";
 
 export interface RemoteSettings {

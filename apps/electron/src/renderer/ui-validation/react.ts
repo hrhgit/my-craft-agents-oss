@@ -24,6 +24,6 @@ export function useUiSemanticNode(definition: UiSemanticDefinition | null): Reco
     registration.current?.update({ ...definition, invoke: (...args) => latest.current?.invoke?.(...args) })
   })
 
-  return definition ? { 'data-craft-semantic-id': definition.id } : {}
+  return definition ? { 'data-mortise-semantic-id': definition.id } : {}
 }
 

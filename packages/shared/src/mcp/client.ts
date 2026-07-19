@@ -36,7 +36,7 @@ export type McpClientConfig = HttpMcpClientConfig | StdioMcpClientConfig;
 
 /**
  * Interface for clients managed by McpClientPool.
- * Both CraftMcpClient (remote MCP sources) and ApiSourcePoolClient (API sources) implement this.
+ * Both MortiseMcpClient (remote MCP sources) and ApiSourcePoolClient (API sources) implement this.
  */
 export interface PoolClient {
   listTools(): Promise<Tool[]>;
@@ -44,14 +44,14 @@ export interface PoolClient {
   close(): Promise<void>;
 }
 
-export class CraftMcpClient {
+export class MortiseMcpClient {
   private client: Client;
   private transport: Transport;
   private connected = false;
 
   constructor(config: McpClientConfig) {
     this.client = new Client({
-      name: 'craft-agent',
+      name: 'mortise',
       version: '1.0.0',
     });
 

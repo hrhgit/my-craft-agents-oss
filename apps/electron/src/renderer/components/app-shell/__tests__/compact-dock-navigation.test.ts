@@ -15,8 +15,8 @@ function createModel(): Model {
         type: 'tabset',
         id: 'main',
         children: [
-          { type: 'tab', id: 'session', name: 'Session', component: 'craft-content' },
-          { type: 'tab', id: 'files', name: 'Files', component: 'craft-content' },
+          { type: 'tab', id: 'session', name: 'Session', component: 'mortise-content' },
+          { type: 'tab', id: 'files', name: 'Files', component: 'mortise-content' },
         ],
       }],
     },

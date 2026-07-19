@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
 import { dirname } from 'path';
-import { tryGetSessionFilePath } from '@craft-agent/shared/sessions';
+import { tryGetSessionFilePath } from '@mortise/shared/sessions';
 
 export interface SessionSearchRootInput {
   id: string;

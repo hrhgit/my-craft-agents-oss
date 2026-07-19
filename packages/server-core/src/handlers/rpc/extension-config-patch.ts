@@ -3,7 +3,7 @@ import type {
   PiExtensionConfigPatch,
   PiExtensionConfigPatchResult,
   PiExtensionReloadResult,
-} from '@craft-agent/shared/config'
+} from '@mortise/shared/config'
 
 type PatchExtensionConfig = (
   entry: PiExtensionCatalogEntry,

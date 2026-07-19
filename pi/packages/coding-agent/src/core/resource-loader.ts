@@ -9,6 +9,7 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
+import { parseExtensionTargets } from "./extension-targets.ts";
 import {
 	createExtensionRuntime,
 	type ExtensionLoadMetadata,
@@ -114,7 +115,6 @@ interface StartupExtensionEntry {
 }
 
 const DEFAULT_EXTENSION_TARGET: ExtensionTarget = "pi";
-const EXTENSION_TARGETS: ExtensionTarget[] = ["pi", "craft"];
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
 	if (!input) {
@@ -157,24 +157,6 @@ function getLocalExtensionPath(entry: LocalExtensionSource): string {
 
 function getLocalExtensionActivation(entry: LocalExtensionSource): ExtensionActivation | undefined {
 	return typeof entry === "string" ? undefined : entry.activation;
-}
-
-function parseExtensionTargets(value: unknown): ExtensionTarget[] | undefined {
-	if (!Array.isArray(value)) return undefined;
-	const targets: ExtensionTarget[] = [];
-	for (const target of value) {
-		if (typeof target !== "string") {
-			continue;
-		}
-		if (!EXTENSION_TARGETS.includes(target as ExtensionTarget)) {
-			continue;
-		}
-		const extensionTarget = target as ExtensionTarget;
-		if (!targets.includes(extensionTarget)) {
-			targets.push(extensionTarget);
-		}
-	}
-	return targets;
 }
 
 function getLocalExtensionTargets(entry: LocalExtensionSource): ExtensionTarget[] | undefined {
@@ -524,6 +506,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 			extensionLoadMetadataByPath,
 			phase,
 		);
+		for (const resource of [...snapshot.resolvedPaths.extensions, ...snapshot.cliExtensionPaths.extensions]) {
+			for (const diagnostic of resource.metadata.extensionManifestDiagnostics ?? []) {
+				if (diagnostic.severity !== "error") continue;
+				if (
+					!extensionsResult.errors.some(
+						(existing) => existing.path === resource.path && existing.error === diagnostic.message,
+					)
+				) {
+					extensionsResult.errors.push({ path: resource.path, error: diagnostic.message });
+				}
+			}
+		}
 
 		// Detect extension conflicts (tools, commands, flags with same names from different extensions)
 		// Keep all extensions loaded. Conflicts are reported as diagnostics, and precedence is handled by load order.
@@ -544,7 +538,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
 
 		// Filter out extensions disabled via settings.json (extensionConfig.<name>.enabled = false
-		// or extensions.<name>.enabled = false for craft compatibility)
+		// or extensions.<name>.enabled = false for mortise compatibility)
 		const filteredExtensions = this.extensionsResult.extensions.filter((ext) => {
 			const extName = this.extractExtensionName(ext, metadataByPath);
 			if (!extName) return true; // keep extensions whose name can't be determined
@@ -924,6 +918,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 				id: resource.metadata.extensionId,
 				target: this.extensionTarget,
 				agentDir: this.agentDir,
+				manifest: resource.metadata.extensionManifest,
+				manifestStatus: resource.metadata.extensionManifestStatus,
+				manifestDiagnostics: resource.metadata.extensionManifestDiagnostics,
+				hostVersion: resource.metadata.extensionHostVersion,
 				manifestUI: resource.metadata.extensionUI,
 			};
 			const resolvedPath = this.resolveResourcePath(resource.path);

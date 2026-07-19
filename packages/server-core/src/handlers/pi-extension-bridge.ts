@@ -16,9 +16,9 @@ import {
   type ExtensionContributionDeltaV1,
   validateExtensionContributionDeltaV1,
   validateExtensionUIValidationDeltaV1,
-} from '@craft-agent/shared/protocol'
-import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
-import type { EventSink } from '@craft-agent/server-core/transport'
+} from '@mortise/shared/protocol'
+import type { ExtensionBridgeEvent } from '@mortise/shared/agent/backend/types'
+import type { EventSink } from '@mortise/server-core/transport'
 
 /**
  * 创建扩展事件转发回调。

@@ -5,17 +5,18 @@
  * Uses recursive directory watching for simplicity and reliability.
  *
  * Watched paths:
- * - ~/.craft-agent/config.json - Main app configuration
- * - ~/.craft-agent/preferences.json - User preferences
- * - ~/.craft-agent/theme.json - App-level theme overrides
- * - ~/.craft-agent/themes/*.json - Preset theme files (app-level)
- * - ~/.craft-agent/workspaces/{slug}/ - Workspace directory (recursive)
+ * - ~/.mortise/config.json - Main app configuration
+ * - ~/.mortise/preferences.json - User preferences
+ * - ~/.mortise/theme.json - App-level theme overrides
+ * - ~/.mortise/themes/*.json - Preset theme files (app-level)
+ * - ~/.mortise/workspaces/{slug}/ - Workspace directory (recursive)
  *   - sources/{slug}/config.json, guide.md, permissions.json
  *   - .pi/skills/{slug}/SKILL.md, icon.*
  *   - permissions.json
  */
 
 import { watch, existsSync, readdirSync, statSync, readFileSync, mkdirSync } from 'fs';
+import { createHash } from 'crypto';
 import { join, dirname, basename, relative } from 'path';
 import { platform } from 'os';
 import type { FSWatcher } from 'fs';
@@ -25,7 +26,7 @@ import { expandPath } from '../utils/paths.ts';
 import { readJsonFileSync } from '../utils/files.ts';
 import { perf } from '../utils/perf.ts';
 import { loadStoredConfig, type StoredConfig } from './storage.ts';
-import { readPiGlobalProviders, readPiGlobalSettings, watchPiGlobalModelsFile, type PiGlobalProvider } from './pi-global-config.ts';
+import { readPiGlobalAuth, readPiGlobalProviders, readPiGlobalSettings, watchPiGlobalModelsFile, type PiGlobalProvider } from './pi-global-config.ts';
 import {
   validateConfig,
   validatePreferences,
@@ -110,7 +111,7 @@ export interface ConfigWatcherCallbacks {
   onConfigChange?: (config: StoredConfig) => void;
   /** Called when preferences.json changes */
   onPreferencesChange?: (prefs: UserPreferences) => void;
-  /** Called when Pi providers or their default provider/model changes. */
+  /** Called when Pi providers, credentials, or their defaults change. */
   onProvidersChange?: (providers: Record<string, PiGlobalProvider>) => void;
 
   // Source callbacks
@@ -128,7 +129,7 @@ export interface ConfigWatcherCallbacks {
   onSkillsListChange?: (skills: LoadedSkill[]) => void;
 
   // Permissions callbacks
-  /** Called when app-level default permissions change (~/.craft-agent/permissions/default.json) */
+  /** Called when app-level default permissions change (~/.mortise/permissions/default.json) */
   onDefaultPermissionsChange?: () => void;
   /** Called when workspace permissions.json changes */
   onWorkspacePermissionsChange?: (workspaceId: string) => void;
@@ -303,10 +304,14 @@ export class ConfigWatcher {
 
   private getProvidersHash(): string {
     const settings = readPiGlobalSettings();
+    const authHash = createHash('sha256')
+      .update(JSON.stringify(readPiGlobalAuth() ?? null))
+      .digest('hex');
     return JSON.stringify({
       providers: readPiGlobalProviders(),
       defaultProvider: settings.defaultProvider,
       defaultModel: settings.defaultModel,
+      authHash,
     });
   }
 
@@ -386,7 +391,7 @@ export class ConfigWatcher {
 
   /**
    * Watch Pi's global models.json, which is the source of truth for LLM
-   * connection metadata after the Pi/Craft config migration.
+   * connection metadata after the Pi/Mortise config migration.
    */
   private watchPiGlobalConfigs(): void {
     try {
@@ -956,7 +961,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Watch app-level themes directory (~/.craft-agent/themes/)
+   * Watch app-level themes directory (~/.mortise/themes/)
    */
   private watchAppThemesDir(): void {
     const themesDir = getAppThemesDir();
@@ -986,7 +991,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Watch app-level permissions directory (~/.craft-agent/permissions/)
+   * Watch app-level permissions directory (~/.mortise/permissions/)
    * Watches for changes to default.json which contains the default read-only patterns
    */
   private watchAppPermissionsDir(): void {

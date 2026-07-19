@@ -46,7 +46,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <Comp
         data-slot="button"
-        data-craft-semantic-id={semanticId}
+        data-mortise-semantic-id={semanticId}
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
         {...props}

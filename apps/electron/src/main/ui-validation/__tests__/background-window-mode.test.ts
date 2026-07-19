@@ -11,20 +11,23 @@ describe('ElectronBackgroundWindowController', () => {
     expect(() => parseElectronUiWindowMode('hidden')).toThrow('foreground or background')
   })
 
-  it('minimizes visible windows and suppresses later restore or focus events', () => {
+  it('minimizes a visible startup window and yields after the user restores it', () => {
     const fake = fakeWindow(11, true)
     const manager = { getAllWindows: () => [{ window: fake.window }] } as unknown as WindowManager
     const controller = new ElectronBackgroundWindowController(manager)
 
     expect(fake.minimizeCount).toBe(1)
+    expect(controller.hasUserForegroundControl(fake.window)).toBeFalse()
     fake.restore()
-    expect(fake.minimizeCount).toBe(2)
+    expect(fake.minimizeCount).toBe(1)
+    expect(controller.hasUserForegroundControl(fake.window)).toBeTrue()
     fake.focus()
-    expect(fake.minimizeCount).toBe(3)
+    controller.refresh()
+    expect(fake.minimizeCount).toBe(1)
 
     controller.dispose()
     fake.restore()
-    expect(fake.minimizeCount).toBe(3)
+    expect(fake.minimizeCount).toBe(1)
   })
 
   it('tracks windows that are created after the host starts', () => {
@@ -38,6 +41,10 @@ describe('ElectronBackgroundWindowController', () => {
     expect(fake.minimizeCount).toBe(0)
     fake.show()
     expect(fake.minimizeCount).toBe(1)
+    fake.restore()
+    fake.focus()
+    expect(fake.minimizeCount).toBe(1)
+    expect(controller.hasUserForegroundControl(fake.window)).toBeTrue()
   })
 })
 

@@ -7,8 +7,8 @@ import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '../../protocol
 function createAgent(): PiAgent {
   return new PiAgent({
     provider: 'pi',
-    workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/craft-agent-test' } as any,
-    session: { id: 'session-test', craftId: 'session-test', workspaceRootPath: '/tmp/craft-agent-test', createdAt: 0, lastUsedAt: 0 } as any,
+    workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/mortise-test' } as any,
+    session: { id: 'session-test', mortiseId: 'session-test', workspaceRootPath: '/tmp/mortise-test', createdAt: 0, lastUsedAt: 0 } as any,
     isHeadless: true,
     onPiProjectionEvent: () => {},
   } satisfies BackendConfig)
@@ -43,8 +43,8 @@ describe('PiAgent abort', () => {
     }
     const agent = new PiAgent({
       provider: 'pi',
-      workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/craft-agent-test' } as any,
-      session: { id: 'session-test', craftId: 'session-test', workspaceRootPath: '/tmp/craft-agent-test', createdAt: 0, lastUsedAt: 0 } as any,
+      workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/mortise-test' } as any,
+      session: { id: 'session-test', mortiseId: 'session-test', workspaceRootPath: '/tmp/mortise-test', createdAt: 0, lastUsedAt: 0 } as any,
       isHeadless: true,
       getPiProjectionSnapshot: () => seed,
       onPiProjectionEvent: event => emitted.push(event),

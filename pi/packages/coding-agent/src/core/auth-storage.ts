@@ -6,9 +6,9 @@
  * try to refresh tokens simultaneously.
  */
 
-import { findEnvKeys, getEnvApiKey } from "@earendil-works/pi-ai/env-api-keys";
-import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderId } from "@earendil-works/pi-ai/oauth";
-import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import { findEnvKeys, getEnvApiKey } from "@mortise/pi-ai/env-api-keys";
+import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderId } from "@mortise/pi-ai/oauth";
+import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@mortise/pi-ai/oauth";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -26,8 +26,8 @@ export type OAuthCredential = {
 } & OAuthCredentials;
 
 /**
- * Craft source credentials for non-pi providers (e.g. external APIs, data
- * sources, upstream services). These are stored under the "craft.<slug>"
+ * Mortise source credentials for non-pi providers (e.g. external APIs, data
+ * sources, upstream services). These are stored under the "mortise.<slug>"
  * namespace in auth.json and are opaque to pi's own auth flow.
  */
 export type BearerCredential = {
@@ -229,13 +229,13 @@ export class InMemoryAuthStorageBackend implements AuthStorageBackend {
  * Credential storage backed by a JSON file.
  *
  * Namespace convention:
- * - `craft.<slug>` keys store non-pi credentials written by the craft shell
+ * - `mortise.<slug>` keys store non-pi credentials written by the mortise shell
  *   (LLM API keys, OAuth tokens, source credentials, etc.) so that pi's
  *   auth.json is the single source of truth.
  * - When pi CLI runs standalone, it never reads from or writes to the
- *   `craft.*` namespace; these entries are opaque to pi's own auth flow.
- * - The craft shell's CredentialManager reads/writes craft credentials
- *   exclusively through the `*CraftCredential*` helper methods below, which
+ *   `mortise.*` namespace; these entries are opaque to pi's own auth flow.
+ * - The mortise shell's CredentialManager reads/writes mortise credentials
+ *   exclusively through the `*MortiseCredential*` helper methods below, which
  *   keep the namespace prefix consistent and prevent slug collisions.
  */
 export class AuthStorage {
@@ -370,53 +370,53 @@ export class AuthStorage {
 	}
 
 	/**
-	 * Set a craft-namespaced credential.
-	 * Craft shell stores non-pi credentials under "craft.<slug>" in pi's auth.json.
+	 * Set a mortise-namespaced credential.
+	 * Mortise shell stores non-pi credentials under "mortise.<slug>" in pi's auth.json.
 	 * The slug must not contain a dot to prevent namespace pollution.
 	 */
 	setCraftCredential(slug: string, credential: AuthCredential): void {
 		if (slug.includes(".")) {
-			throw new Error(`Invalid craft credential slug: "${slug}" (must not contain '.')`);
+			throw new Error(`Invalid mortise credential slug: "${slug}" (must not contain '.')`);
 		}
-		this.set(`craft.${slug}`, credential);
+		this.set(`mortise.${slug}`, credential);
 	}
 
 	/**
-	 * Get a craft-namespaced credential.
+	 * Get a mortise-namespaced credential.
 	 */
 	getCraftCredential(slug: string): AuthCredential | undefined {
-		return this.get(`craft.${slug}`);
+		return this.get(`mortise.${slug}`);
 	}
 
 	/**
-	 * Remove a craft-namespaced credential.
+	 * Remove a mortise-namespaced credential.
 	 */
 	deleteCraftCredential(slug: string): void {
-		this.remove(`craft.${slug}`);
+		this.remove(`mortise.${slug}`);
 	}
 
 	/**
-	 * List all craft credential slugs (without the "craft." prefix).
+	 * List all mortise credential slugs (without the "mortise." prefix).
 	 */
 	listCraftSlugs(): string[] {
-		const prefix = "craft.";
+		const prefix = "mortise.";
 		return this.list()
 			.filter((key) => key.startsWith(prefix))
 			.map((key) => key.slice(prefix.length));
 	}
 
 	/**
-	 * Remove all craft-namespaced credentials in a single batch write.
-	 * Used during craft logout to clear non-pi credentials while preserving
+	 * Remove all mortise-namespaced credentials in a single batch write.
+	 * Used during mortise logout to clear non-pi credentials while preserving
 	 * pi's own auth entries.
 	 *
 	 * Unlike iterating `deleteCraftCredential` (which triggers a full
 	 * read-modify-write per entry — O(n) file I/O for n credentials), this
-	 * method collects all craft.* keys and removes them in one atomic
+	 * method collects all mortise.* keys and removes them in one atomic
 	 * `withLock` round-trip.
 	 */
 	deleteAllCraftCredentials(): void {
-		const prefix = "craft.";
+		const prefix = "mortise.";
 		const keys = this.list().filter((key) => key.startsWith(prefix));
 		if (keys.length === 0) return;
 
@@ -425,7 +425,7 @@ export class AuthStorage {
 			delete this.data[key];
 		}
 
-		// Single batched write: read current file, strip all craft.* keys, write back
+		// Single batched write: read current file, strip all mortise.* keys, write back
 		if (this.loadError) return;
 		try {
 			this.storage.withLock((current) => {

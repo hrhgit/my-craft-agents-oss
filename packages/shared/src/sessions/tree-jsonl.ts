@@ -8,10 +8,10 @@ import { dirname, join } from 'path';
 import {
   SessionManager as PiSessionManager,
   setCraftSessionMetadata as setPiCraftSessionMetadata,
-} from '@earendil-works/pi-coding-agent/host-facade';
-import type { MessageRole } from '@craft-agent/core/types';
+} from '@mortise/pi-coding-agent/host-facade';
+import type { MessageRole } from '@mortise/core/types';
 import type {
-  CraftSessionMetadata,
+  MortiseSessionMetadata,
   SessionComputedMetadata,
   SessionHeader,
   SessionTokenUsage,
@@ -25,22 +25,22 @@ import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { atomicWriteFileSync } from '../utils/files.ts';
 import { stripLeadingCraftInjectedUserContext } from '../prompts/strip-injected-user-context.ts';
 import { applyPlanCustomMessageToStored } from './plan-artifact-projection.ts';
-import type { PlanModeStateV1 } from '@craft-agent/core/types';
+import type { PlanModeStateV1 } from '@mortise/core/types';
 
 /**
- * On-disk shape of Craft extension fields in Pi tree JSONL v3 header.
+ * On-disk shape of Mortise extension fields in Pi tree JSONL v3 header.
  *
- * Maps `id` ↔ `CraftSessionMetadata.craftId`.
+ * Maps `id` ↔ `MortiseSessionMetadata.mortiseId`.
  */
-export type CraftMetadataOnDisk =
-  Partial<Omit<CraftSessionMetadata, 'craftId'>>
+export type MortiseMetadataOnDisk =
+  Partial<Omit<MortiseSessionMetadata, 'mortiseId'>>
   & Partial<SessionComputedMetadata>
   & {
-  /** Craft session ID (on-disk 字段名是 id，对应 SessionHeader.craftId) */
+  /** Mortise session ID (on-disk 字段名是 id，对应 SessionHeader.mortiseId) */
   id?: string;
 };
 
-type CraftMetadataWithLegacyProviderLock = CraftMetadataOnDisk & {
+type MortiseMetadataWithLegacyProviderLock = MortiseMetadataOnDisk & {
   connectionLocked?: unknown;
   providerLocked?: unknown;
 };
@@ -57,7 +57,7 @@ export interface TreeSessionSpawnConfig {
 export interface TreeSessionHeader {
   type: 'session';
   version?: number;
-  /** Pi session UUID (Pi runtime 主键). The Craft session ID is stored in `craft.id`. */
+  /** Pi session UUID (Pi runtime 主键). The Mortise session ID is stored in `mortise.id`. */
   id: string;
   timestamp: string;
   cwd: string;
@@ -65,7 +65,7 @@ export interface TreeSessionHeader {
   /** Pi shell-spawn parent session ID, used by spawn_session/listChildSessions. */
   spawnedFrom?: string;
   spawnConfig?: TreeSessionSpawnConfig;
-  craft?: CraftMetadataOnDisk;
+  mortise?: MortiseMetadataOnDisk;
 }
 
 interface TreeEntryBase {
@@ -173,7 +173,7 @@ interface ParsedTreeSession {
   entries: TreeSessionEntry[];
 }
 
-interface CraftOverlayFile {
+interface MortiseOverlayFile {
   version: 1;
   messages?: Array<Partial<StoredMessage> & { id: string }>;
   annotations?: Record<string, StoredMessage['annotations']>;
@@ -207,20 +207,20 @@ export function getCraftIdFromTreeHeader(
   header: TreeSessionHeader,
   sessionIdPrefix = '',
 ): string {
-  return header.craft?.id ?? `${sessionIdPrefix}${header.id}`;
+  return header.mortise?.id ?? `${sessionIdPrefix}${header.id}`;
 }
 
-function getCraftHeaderMetadataSignature(craft: Partial<CraftMetadataOnDisk>): string {
+function getCraftHeaderMetadataSignature(mortise: Partial<MortiseMetadataOnDisk>): string {
   return JSON.stringify({
-    name: craft.name,
-    permissionMode: craft.permissionMode,
-    hasUnread: craft.hasUnread,
-    lastReadMessageId: craft.lastReadMessageId,
+    name: mortise.name,
+    permissionMode: mortise.permissionMode,
+    hasUnread: mortise.hasUnread,
+    lastReadMessageId: mortise.lastReadMessageId,
   });
 }
 
 function hasExternalMetadataChange(
-  previousCraft: Partial<CraftMetadataOnDisk>,
+  previousCraft: Partial<MortiseMetadataOnDisk>,
   options: WriteTreeSessionCraftMetadataOptions,
 ): boolean {
   return !!options.lastWrittenHeaderSignature
@@ -229,13 +229,13 @@ function hasExternalMetadataChange(
 
 function buildCraftMetadataOnDisk(
   session: StoredSession,
-  previousCraft: CraftMetadataOnDisk = {},
+  previousCraft: MortiseMetadataOnDisk = {},
   options: WriteTreeSessionCraftMetadataOptions = {},
-): CraftMetadataOnDisk {
-  const craftMetadata = {
+): MortiseMetadataOnDisk {
+  const mortiseMetadata = {
     ...previousCraft,
-    ...(pickCraftSessionMetadata(session) as Partial<CraftSessionMetadata>),
-    id: session.craftId,
+    ...(pickCraftSessionMetadata(session) as Partial<MortiseSessionMetadata>),
+    id: session.mortiseId,
     workspaceRootPath: toPortablePath(session.workspaceRootPath),
     workingDirectory: toPortablePath(session.workspaceRootPath),
     lastUsedAt: session.lastUsedAt ?? Date.now(),
@@ -244,7 +244,7 @@ function buildCraftMetadataOnDisk(
     lastMessageRole: session.lastMessageRole ?? extractLastMessageRole(session.messages),
     lastFinalMessageId: session.lastFinalMessageId ?? extractLastFinalMessageId(session.messages),
     tokenUsage: session.tokenUsage,
-  } as CraftMetadataOnDisk & { craftId?: unknown };
+  } as MortiseMetadataOnDisk & { mortiseId?: unknown };
 
   if (hasExternalMetadataChange(previousCraft, options)) {
     for (const field of [
@@ -254,29 +254,29 @@ function buildCraftMetadataOnDisk(
       'lastReadMessageId',
     ] as const) {
       if (field in previousCraft) {
-        (craftMetadata as Record<string, unknown>)[field] = previousCraft[field];
+        (mortiseMetadata as Record<string, unknown>)[field] = previousCraft[field];
       } else {
-        delete (craftMetadata as Record<string, unknown>)[field];
+        delete (mortiseMetadata as Record<string, unknown>)[field];
       }
     }
   }
 
-  delete craftMetadata.craftId;
+  delete mortiseMetadata.mortiseId;
   // Provider selection is no longer locked after agent creation. Remove both
   // the old connection flag and its short-lived migration alias on rewrite.
-  delete (craftMetadata as Record<string, unknown>).connectionLocked;
-  delete (craftMetadata as Record<string, unknown>).providerLocked;
-  delete (craftMetadata as Record<string, unknown>).sessionStatus;
-  delete (craftMetadata as Record<string, unknown>).labels;
-  delete (craftMetadata as Record<string, unknown>).isFlagged;
-  delete (craftMetadata as Record<string, unknown>).isArchived;
-  delete (craftMetadata as Record<string, unknown>).archivedAt;
-  return craftMetadata;
+  delete (mortiseMetadata as Record<string, unknown>).connectionLocked;
+  delete (mortiseMetadata as Record<string, unknown>).providerLocked;
+  delete (mortiseMetadata as Record<string, unknown>).sessionStatus;
+  delete (mortiseMetadata as Record<string, unknown>).labels;
+  delete (mortiseMetadata as Record<string, unknown>).isFlagged;
+  delete (mortiseMetadata as Record<string, unknown>).isArchived;
+  delete (mortiseMetadata as Record<string, unknown>).archivedAt;
+  return mortiseMetadata;
 }
 
-function getCraftOverlayPath(sessionFile: string, craftId: string): string {
-  const safeCraftId = sanitizeSessionId(craftId) || '_invalid-session';
-  return join(dirname(sessionFile), '.craft', safeCraftId, 'overlay.json');
+function getCraftOverlayPath(sessionFile: string, mortiseId: string): string {
+  const safeCraftId = sanitizeSessionId(mortiseId) || '_invalid-session';
+  return join(dirname(sessionFile), '.mortise', safeCraftId, 'overlay.json');
 }
 
 function isCanonicalStoredMessage(message: StoredMessage): boolean {
@@ -313,7 +313,7 @@ function buildCraftOnlyMessagePatch(message: StoredMessage): (Partial<StoredMess
   return Object.keys(patch).length > 1 ? patch : null;
 }
 
-function buildCraftOverlay(session: StoredSession): CraftOverlayFile | null {
+function buildCraftOverlay(session: StoredSession): MortiseOverlayFile | null {
   const messages = session.messages.flatMap((message) => {
     if (!isCanonicalStoredMessage(message)) return [message];
     const patch = buildCraftOnlyMessagePatch(message);
@@ -340,7 +340,7 @@ function buildCraftOverlay(session: StoredSession): CraftOverlayFile | null {
 
 export function writeCraftSessionOverlay(sessionFile: string, session: StoredSession): void {
   const overlay = buildCraftOverlay(session);
-  const overlayPath = getCraftOverlayPath(sessionFile, session.craftId);
+  const overlayPath = getCraftOverlayPath(sessionFile, session.mortiseId);
   if (!overlay) {
     if (existsSync(overlayPath)) {
       atomicWriteFileSync(overlayPath, JSON.stringify({ version: 1 }, null, 2) + '\n');
@@ -355,8 +355,8 @@ export function writeCraftSessionOverlay(sessionFile: string, session: StoredSes
   atomicWriteFileSync(overlayPath, JSON.stringify(overlay, null, 2) + '\n');
 }
 
-function readCraftSessionOverlay(sessionFile: string, craftId: string): CraftOverlayFile | null {
-  const overlayPath = getCraftOverlayPath(sessionFile, craftId);
+function readCraftSessionOverlay(sessionFile: string, mortiseId: string): MortiseOverlayFile | null {
+  const overlayPath = getCraftOverlayPath(sessionFile, mortiseId);
   if (!existsSync(overlayPath)) return null;
 
   try {
@@ -370,12 +370,12 @@ function readCraftSessionOverlay(sessionFile: string, craftId: string): CraftOve
       : undefined;
     return { version: 1, messages, annotations };
   } catch (error) {
-    debug('[tree-jsonl] Failed to read Craft overlay:', overlayPath, error);
+    debug('[tree-jsonl] Failed to read Mortise overlay:', overlayPath, error);
     return null;
   }
 }
 
-function mergeCraftOverlayMessages(messages: StoredMessage[], overlay: CraftOverlayFile | null): StoredMessage[] {
+function mergeCraftOverlayMessages(messages: StoredMessage[], overlay: MortiseOverlayFile | null): StoredMessage[] {
   if (!overlay) return messages;
 
   const merged = messages.map(message => {
@@ -410,11 +410,11 @@ function mergeCraftOverlayMessages(messages: StoredMessage[], overlay: CraftOver
         content: _overlayContent,
         timestamp: _overlayTimestamp,
         type: _overlayType,
-        ...craftPatch
+        ...mortisePatch
       } = overlayMessage;
       merged[existingIndex] = {
         ...existingMessage,
-        ...craftPatch,
+        ...mortisePatch,
       };
     }
   }
@@ -449,9 +449,9 @@ export function isTreeSessionHeader(value: unknown): value is TreeSessionHeader 
  * Unlike {@link readTreeSessionJsonl}, this reads only through the first
  * newline and avoids parsing the (potentially huge) message body. It is intended for sessionId
  * lookup scenarios (e.g. findSharedPiSessionFileInDir) that only need the
- * header's `id` / `craft.id` fields.
+ * header's `id` / `mortise.id` fields.
  */
-const RETIRED_CRAFT_METADATA_FIELDS = [
+const RETIRED_LEGACY_METADATA_FIELDS = [
   'sessionStatus',
   'labels',
   'isFlagged',
@@ -462,12 +462,12 @@ const RETIRED_CRAFT_METADATA_FIELDS = [
 function stripRetiredCraftMetadata(
   header: TreeSessionHeader,
 ): { header: TreeSessionHeader; changed: boolean } {
-  if (!isRecord(header.craft)) return { header, changed: false };
+  if (!isRecord(header.mortise)) return { header, changed: false };
 
   let changed = false;
-  for (const field of RETIRED_CRAFT_METADATA_FIELDS) {
-    if (field in header.craft) {
-      delete (header.craft as Record<string, unknown>)[field];
+  for (const field of RETIRED_LEGACY_METADATA_FIELDS) {
+    if (field in header.mortise) {
+      delete (header.mortise as Record<string, unknown>)[field];
       changed = true;
     }
   }
@@ -524,7 +524,7 @@ export function readTreeSessionHeader(sessionFile: string): TreeSessionHeader | 
       try {
         persistCleanedTreeHeader(sessionFile, cleaned.header);
       } catch (error) {
-        debug('[tree-jsonl] Failed to persist retired Craft metadata cleanup:', sessionFile, error);
+        debug('[tree-jsonl] Failed to persist retired Mortise metadata cleanup:', sessionFile, error);
       }
     }
     return cleaned.header;
@@ -545,8 +545,8 @@ export function looksLikeTreeSessionJsonl(sessionFile: string): boolean {
 
 export function readTreeSessionJsonl(sessionFile: string): ParsedTreeSession | null {
   try {
-    // Keep the raw first-line header reader so Craft metadata (`header.craft`)
-    // is preserved. Pi's public SessionManager intentionally ignores Craft's
+    // Keep the raw first-line header reader so Mortise metadata (`header.mortise`)
+    // is preserved. Pi's public SessionManager intentionally ignores Mortise's
     // opaque header extension fields.
     const header = readTreeSessionHeader(sessionFile);
     if (!header) return null;
@@ -572,19 +572,19 @@ export function writeTreeSessionCraftMetadata(
     const header = readTreeSessionHeader(sessionFile);
     if (!isTreeSessionHeader(header)) return false;
 
-    const previousCraft = isRecord(header.craft) ? header.craft as CraftMetadataOnDisk : {};
-    const craftMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
+    const previousCraft = isRecord(header.mortise) ? header.mortise as MortiseMetadataOnDisk : {};
+    const mortiseMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
 
     setPiCraftSessionMetadata({
       sessionPath: sessionFile,
       sessionDir: dirname(sessionFile),
       cwdOverride: session.workspaceRootPath,
-      metadata: craftMetadata,
+      metadata: mortiseMetadata,
     });
     writeCraftSessionOverlay(sessionFile, session);
     return true;
   } catch (error) {
-    debug('[tree-jsonl] Failed to update tree session Craft metadata:', sessionFile, error);
+    debug('[tree-jsonl] Failed to update tree session Mortise metadata:', sessionFile, error);
     return false;
   }
 }
@@ -601,19 +601,19 @@ export async function writeTreeSessionCraftMetadataAsync(
     const header = readTreeSessionHeader(sessionFile);
     if (!isTreeSessionHeader(header)) return false;
 
-    const previousCraft = isRecord(header.craft) ? header.craft as CraftMetadataOnDisk : {};
-    const craftMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
+    const previousCraft = isRecord(header.mortise) ? header.mortise as MortiseMetadataOnDisk : {};
+    const mortiseMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
 
     setPiCraftSessionMetadata({
       sessionPath: sessionFile,
       sessionDir: dirname(sessionFile),
       cwdOverride: session.workspaceRootPath,
-      metadata: craftMetadata,
+      metadata: mortiseMetadata,
     });
     writeCraftSessionOverlay(sessionFile, session);
     return true;
   } catch (error) {
-    debug('[tree-jsonl] Failed to update tree session Craft metadata:', sessionFile, error);
+    debug('[tree-jsonl] Failed to update tree session Mortise metadata:', sessionFile, error);
     return false;
   }
 }
@@ -692,9 +692,9 @@ function piMessagesEquivalent(existing: TreeAgentMessage, expected: PiAppendMess
 /**
  * Import canonical transcript entries through Pi's public SessionManager API.
  *
- * The caller must create the header file first (Craft is allowed to write
+ * The caller must create the header file first (Mortise is allowed to write
  * header metadata). This function appends only user/assistant/tool transcript
- * messages; UI-only messages remain in the Craft overlay. Repeated calls with
+ * messages; UI-only messages remain in the Mortise overlay. Repeated calls with
  * the same source messages are idempotent: existing matching Pi entries are
  * reused and only a missing suffix is appended.
  */
@@ -1168,27 +1168,27 @@ function projectParsedTreeSessionAsStoredSession(
   const createdAt = new Date(parsed.header.timestamp).getTime() || Date.now();
   const stat = existsSync(sessionFile) ? statSync(sessionFile) : undefined;
   const lastUsedAt = stat?.mtimeMs ?? createdAt;
-  const workspaceRootPath = options.workspaceRootPath ?? parsed.header.craft?.workspaceRootPath ?? parsed.header.cwd ?? dirname(sessionFile);
-  const craft = parsed.header.craft ?? {}
-  // on-disk craft.id → 扁平 SessionHeader.craftId
-  // 优先用 craft.id（Craft 人类可读 ID），无则退回 Pi 顶层 id + 前缀
-  const craftId = getCraftIdFromTreeHeader(parsed.header, options.sessionIdPrefix ?? '');
-  const messages = mergeCraftOverlayMessages(baseMessages, readCraftSessionOverlay(sessionFile, craftId));
+  const workspaceRootPath = options.workspaceRootPath ?? parsed.header.mortise?.workspaceRootPath ?? parsed.header.cwd ?? dirname(sessionFile);
+  const mortise = parsed.header.mortise ?? {}
+  // on-disk mortise.id → 扁平 SessionHeader.mortiseId
+  // 优先用 mortise.id（Mortise 人类可读 ID），无则退回 Pi 顶层 id + 前缀
+  const mortiseId = getCraftIdFromTreeHeader(parsed.header, options.sessionIdPrefix ?? '');
+  const messages = mergeCraftOverlayMessages(baseMessages, readCraftSessionOverlay(sessionFile, mortiseId));
 
   // Strip on-disk `id` before spreading so it doesn't leak as a phantom `id`
-  // field onto SessionHeader (which declares only `craftId`). Without this,
-  // tree-derived headers would carry `.id === craftId` while legacy-derived
+  // field onto SessionHeader (which declares only `mortiseId`). Without this,
+  // tree-derived headers would carry `.id === mortiseId` while legacy-derived
   // headers carry no `.id`, causing silent source-dependent divergence.
   const {
     id: _craftIdOnDisk,
     connectionLocked: _connectionLocked,
     providerLocked: _providerLocked,
-    ...craftRest
-  } = craft as CraftMetadataWithLegacyProviderLock;
+    ...mortiseRest
+  } = mortise as MortiseMetadataWithLegacyProviderLock;
 
   return {
-    ...craftRest,
-    craftId,
+    ...mortiseRest,
+    mortiseId,
     // Pi 原生字段（扁平化）
     type: parsed.header.type,
     version: parsed.header.version,
@@ -1196,26 +1196,26 @@ function projectParsedTreeSessionAsStoredSession(
     piTimestamp: parsed.header.timestamp,
     piCwd: parsed.header.cwd,
     parentSession: parsed.header.parentSession,
-    // Craft 字段（从 craft 子对象取，无则用 fallback）
+    // Mortise 字段（从 mortise 子对象取，无则用 fallback）
     workspaceRootPath: expandPath(workspaceRootPath),
     // sdkSessionId 不回退到 parsed.header.id（Pi session id）。
-    // 历史上回退到 header.id 会在 craft.sdkSessionId 缺失时把 Pi id 当作 sdkSessionId，
-    // 但写入端在无 sdkSessionId 时会把 header.id 写成 craftId，导致重载后 sdkSessionId 被错误
-    // 设为 craftId 并自我 perpetuating。保持 undefined 让上层显式处理。
-    sdkSessionId: craft.sdkSessionId,
-    createdAt: craft.createdAt ?? createdAt,
-    lastUsedAt: craft.lastUsedAt ?? lastUsedAt,
-    lastMessageAt: craft.lastMessageAt ?? lastUsedAt,
-    name: craft.name ?? latestSessionName(parsed.entries),
+    // 历史上回退到 header.id 会在 mortise.sdkSessionId 缺失时把 Pi id 当作 sdkSessionId，
+    // 但写入端在无 sdkSessionId 时会把 header.id 写成 mortiseId，导致重载后 sdkSessionId 被错误
+    // 设为 mortiseId 并自我 perpetuating。保持 undefined 让上层显式处理。
+    sdkSessionId: mortise.sdkSessionId,
+    createdAt: mortise.createdAt ?? createdAt,
+    lastUsedAt: mortise.lastUsedAt ?? lastUsedAt,
+    lastMessageAt: mortise.lastMessageAt ?? lastUsedAt,
+    name: mortise.name ?? latestSessionName(parsed.entries),
     workingDirectory: workspaceRootPath,
-    sdkCwd: craft.sdkCwd ?? workspaceRootPath,
-    messageCount: craft.messageCount ?? messages.length,
-    preview: craft.preview ?? extractPreview(messages),
-    lastMessageRole: craft.lastMessageRole ?? extractLastMessageRole(messages),
-    lastFinalMessageId: craft.lastFinalMessageId ?? extractLastFinalMessageId(messages),
-    planModeState: planProjection.planModeState ?? craft.planModeState,
+    sdkCwd: mortise.sdkCwd ?? workspaceRootPath,
+    messageCount: mortise.messageCount ?? messages.length,
+    preview: mortise.preview ?? extractPreview(messages),
+    lastMessageRole: mortise.lastMessageRole ?? extractLastMessageRole(messages),
+    lastFinalMessageId: mortise.lastFinalMessageId ?? extractLastFinalMessageId(messages),
+    planModeState: planProjection.planModeState ?? mortise.planModeState,
     messages,
-    tokenUsage: craft.tokenUsage ?? tokenUsageFromEntries(parsed.entries),
+    tokenUsage: mortise.tokenUsage ?? tokenUsageFromEntries(parsed.entries),
   } as StoredSession;
 }
 
@@ -1238,21 +1238,21 @@ export function projectTreeSessionHeaderAsSessionHeader(
   const stat = existsSync(sessionFile) ? statSync(sessionFile) : undefined;
   const lastUsedAt = stat?.mtimeMs ?? createdAt;
   const workspaceRootPath = options.workspaceRootPath
-    ?? header.craft?.workspaceRootPath
+    ?? header.mortise?.workspaceRootPath
     ?? header.cwd
     ?? dirname(sessionFile);
-  const craft = header.craft ?? {};
-  const craftId = getCraftIdFromTreeHeader(header, options.sessionIdPrefix ?? '');
+  const mortise = header.mortise ?? {};
+  const mortiseId = getCraftIdFromTreeHeader(header, options.sessionIdPrefix ?? '');
   const {
     id: _craftIdOnDisk,
     connectionLocked: _connectionLocked,
     providerLocked: _providerLocked,
-    ...craftRest
-  } = craft as CraftMetadataWithLegacyProviderLock;
+    ...mortiseRest
+  } = mortise as MortiseMetadataWithLegacyProviderLock;
 
   return {
-    ...craftRest,
-    craftId,
+    ...mortiseRest,
+    mortiseId,
     type: header.type,
     version: header.version,
     piSessionId: header.id,
@@ -1260,14 +1260,14 @@ export function projectTreeSessionHeaderAsSessionHeader(
     piCwd: header.cwd,
     parentSession: header.parentSession,
     workspaceRootPath: expandPath(workspaceRootPath),
-    sdkSessionId: craft.sdkSessionId,
-    createdAt: craft.createdAt ?? createdAt,
-    lastUsedAt: craft.lastUsedAt ?? lastUsedAt,
-    lastMessageAt: craft.lastMessageAt ?? lastUsedAt,
+    sdkSessionId: mortise.sdkSessionId,
+    createdAt: mortise.createdAt ?? createdAt,
+    lastUsedAt: mortise.lastUsedAt ?? lastUsedAt,
+    lastMessageAt: mortise.lastMessageAt ?? lastUsedAt,
     workingDirectory: workspaceRootPath,
-    sdkCwd: craft.sdkCwd ?? workspaceRootPath,
-    messageCount: craft.messageCount ?? 0,
-    tokenUsage: craft.tokenUsage ?? emptySessionTokenUsage(),
+    sdkCwd: mortise.sdkCwd ?? workspaceRootPath,
+    messageCount: mortise.messageCount ?? 0,
+    tokenUsage: mortise.tokenUsage ?? emptySessionTokenUsage(),
   } as SessionHeader;
 }
 
@@ -1292,7 +1292,7 @@ export function projectTreeSessionProjectionAsStoredSession(
 
 /**
  * Read session as flat SessionHeader (for list loading).
- * 合并 Pi 顶层字段和 craft 子对象为扁平 SessionHeader。
+ * 合并 Pi 顶层字段和 mortise 子对象为扁平 SessionHeader。
  */
 export function readTreeSessionMetadata(
   sessionFile: string,
@@ -1302,7 +1302,7 @@ export function readTreeSessionMetadata(
   const header = readTreeSessionHeader(sessionFile);
   if (!header) return null;
 
-  // Session list metadata is cached in the first-line `craft` object. Do not
+  // Session list metadata is cached in the first-line `mortise` object. Do not
   // open/project the full Pi message tree here: this function runs once per
   // session during server startup and large histories can otherwise delay the
   // workspace-server ready signal beyond its startup timeout.

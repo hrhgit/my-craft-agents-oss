@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { validateEnvelopeShape, deserializeEnvelope, serializeEnvelope } from '@craft-agent/server-core/transport'
+import { validateEnvelopeShape, deserializeEnvelope, serializeEnvelope } from '@mortise/server-core/transport'
 
 describe('validateEnvelopeShape', () => {
   it('rejects non-object', () => {

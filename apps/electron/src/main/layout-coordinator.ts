@@ -29,7 +29,7 @@ export class LayoutCoordinator {
 
   constructor(private readonly options: LayoutCoordinatorOptions = {}) {
     this.storagePath = options.storagePath
-      ?? join(process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent'), 'app-layout.v1.json')
+      ?? join(process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise'), 'app-layout.v1.json')
     this.layouts = this.loadFromDisk()
     this.changedHandler = options.onChanged
     if (this.needsPersistAfterLoad) this.persist()

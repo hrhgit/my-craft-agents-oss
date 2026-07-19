@@ -1,6 +1,6 @@
 import { dirname, resolve } from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
-import { isWithin, isPathWithinDirectory } from '@craft-agent/shared/utils';
+import { isWithin, isPathWithinDirectory } from '@mortise/shared/utils';
 
 // Re-export unified isPathWithinDirectory from shared for existing consumers.
 export { isPathWithinDirectory };

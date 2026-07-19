@@ -26,14 +26,14 @@ describe('Pi messaging capability extension', () => {
       'list-bindings': [{ id: 'binding-1', platform: 'telegram', channelId: 'chat-1', channelName: 'Team', threadId: 7, enabled: true }],
     })
     expect(f.declarations).toEqual([[{ capability: 'messaging.session', operations: ['list-bindings', 'unbind'] }]])
-    const result = await f.tools.get('mcp__session__list_messaging_channels').execute('call', {}, new AbortController().signal, () => {}, f.ctx)
+    const result = await f.tools.get('list_messaging_channels').execute('call', {}, new AbortController().signal, () => {}, f.ctx)
     expect(result.content[0].text).toContain('- telegram: Team › Topic #7 (active)')
     expect(f.calls).toEqual([{ operation: 'list-bindings', input: {} }])
   })
 
   it('unbinds only the Host-owned current session and reports removed count', async () => {
     const f = loadExtension({ unbind: { removed: 2 } })
-    const result = await f.tools.get('mcp__session__unbind_messaging_channel').execute(
+    const result = await f.tools.get('unbind_messaging_channel').execute(
       'call', { platform: 'whatsapp' }, new AbortController().signal, () => {}, f.ctx,
     )
     expect(result.content[0].text).toBe('Unbound 2 messaging channel(s) for whatsapp.')

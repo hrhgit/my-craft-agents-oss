@@ -1,5 +1,5 @@
-import type { ModelFetcher, ModelFetchResult, ModelFetcherCredentials, PiGlobalProvider } from '@craft-agent/shared/config'
-import { fetchBackendModels } from '@craft-agent/shared/agent/backend'
+import type { ModelFetcher, ModelFetchResult, ModelFetcherCredentials, PiGlobalProvider } from '@mortise/shared/config'
+import { fetchBackendModels } from '@mortise/shared/agent/backend'
 import { getHostRuntime } from './runtime'
 
 export class PiModelFetcher implements ModelFetcher {

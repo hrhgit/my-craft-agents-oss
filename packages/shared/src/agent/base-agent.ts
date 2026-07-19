@@ -16,7 +16,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { AgentEvent } from '@craft-agent/core/types';
+import type { AgentEvent } from '@mortise/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import { buildTransferredSessionContext } from './conversation-summary.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
@@ -214,7 +214,7 @@ export abstract class BaseAgent implements AgentBackend {
   protected _currentTurnUserMessage: string | null = null;
 
   setPendingSourceActivationRestart(pending: { sourceSlug: string; userMessage: string }): void {
-    // First-writer-wins under parallel `mcp__session__source_test` calls. The
+    // First-writer-wins under parallel `source_test` calls. The
     // overwrite race itself is harmless (each activation runs independently and
     // succeeds), but the surviving slug is what the renderer displays in the
     // "[{slug} activated]" suffix on the auto-resend. Keeping the first writer
@@ -267,7 +267,7 @@ export abstract class BaseAgent implements AgentBackend {
     this.config = config;
     // Use session's workingDirectory if set (user-changeable), fallback to workspace root
     this.workingDirectory = config.session?.workingDirectory ?? config.workspace.rootPath ?? process.cwd();
-    this._sessionId = config.session?.craftId || `agent-${Date.now()}`;
+    this._sessionId = config.session?.mortiseId || `agent-${Date.now()}`;
     this._model = config.model || defaultModel;
     this._thinkingLevel = normalizeThinkingLevel(config.thinkingLevel) ?? DEFAULT_THINKING_LEVEL;
 
@@ -398,11 +398,11 @@ export abstract class BaseAgent implements AgentBackend {
   }
 
   // ============================================================
-  // Session MCP Tool Completion Handling
+  // Session Host Tool Completion Handling
   // ============================================================
 
   /**
-   * Handle successful completion of a session MCP tool (auth tools).
+   * Handle successful completion of a session host tool (auth tools).
    *
    * WHY THIS IS ON BaseAgent:
    * -------------------------
@@ -411,14 +411,14 @@ export abstract class BaseAgent implements AgentBackend {
    * has its own process memory, so when it calls getSessionScopedToolCallbacks(),
    * the callback registry is empty — it was populated in THIS process, not the subprocess.
    *
-   * Instead, PiAgent detects session MCP tool completions from its own event
+   * Instead, PiAgent detects session tool completions from its own event
    * stream and calls THIS shared method to fire the appropriate callback.
    *
    * CALLBACKS FIRED:
    * - Auth tools → this.onAuthRequest(authRequest)
    *   → Electron shows auth dialog, calls interruptForHandoff(AuthRequest)
    */
-  protected handleSessionMcpToolCompletion(
+  protected handleSessionToolCompletion(
     toolName: string,
     args: Record<string, unknown>
   ): void {
@@ -441,7 +441,7 @@ export abstract class BaseAgent implements AgentBackend {
       this.onAuthRequest({
         type: authType,
         requestId: `${Date.now()}-auth`,
-        sessionId: this.config.session?.craftId || '',
+        sessionId: this.config.session?.mortiseId || '',
         sourceSlug,
         sourceName,
         ...(authType === 'credential' && {
@@ -824,8 +824,8 @@ ${formattedMessages}
    * @returns Session path, or undefined if session/workspace not configured
    */
   protected getSessionStoragePath(): string | undefined {
-    if (!this.config.session?.craftId || !this.config.workspace.rootPath) return undefined;
-    return getSessionPath(this.config.workspace.rootPath, this.config.session.craftId);
+    if (!this.config.session?.mortiseId || !this.config.workspace.rootPath) return undefined;
+    return getSessionPath(this.config.workspace.rootPath, this.config.session.mortiseId);
   }
 
   // ============================================================

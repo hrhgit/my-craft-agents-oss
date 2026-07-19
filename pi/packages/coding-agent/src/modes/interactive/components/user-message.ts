@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai/types";
+import type { ImageContent, TextContent } from "@mortise/pi-ai/types";
 import {
 	Box,
 	Container,
@@ -11,7 +11,7 @@ import {
 	Spacer,
 	Text,
 	type TUI,
-} from "@earendil-works/pi-tui";
+} from "@mortise/pi-tui";
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 

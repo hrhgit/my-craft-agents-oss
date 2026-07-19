@@ -4,7 +4,7 @@ import { access, constants } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { Readable } from "node:stream";
-import { TransportError, type TransportErrorCode, type TransportPhase } from "@earendil-works/pi-ai/transport/errors";
+import { TransportError, type TransportErrorCode, type TransportPhase } from "@mortise/pi-ai/transport/errors";
 import { getPackageDir } from "../config.ts";
 import type {
 	EffectiveNetworkSettings,

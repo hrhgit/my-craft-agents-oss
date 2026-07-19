@@ -59,9 +59,9 @@ class SessionPersistenceQueue {
    * session, it will be replaced with the new data and the timer reset.
    */
   enqueue(session: StoredSession): void {
-    const sessionId = session.craftId
+    const sessionId = session.mortiseId
     if (!sessionId) {
-      console.error('[PersistenceQueue] Refusing to enqueue session without craftId')
+      console.error('[PersistenceQueue] Refusing to enqueue session without mortiseId')
       return
     }
 
@@ -72,7 +72,7 @@ class SessionPersistenceQueue {
 
     const normalizedSession: StoredSession = {
       ...session,
-      craftId: sessionId,
+      mortiseId: sessionId,
     }
 
     const existing = this.pending.get(sessionId)
@@ -138,17 +138,17 @@ class SessionPersistenceQueue {
   /**
    * Write a session to disk immediately in Pi tree JSONL v3 format.
    *
-   * The write path is unconditionally Pi tree JSONL v3. Legacy Craft JSONL
+   * The write path is unconditionally Pi tree JSONL v3. Legacy Mortise JSONL
    * transcripts are neither accepted here nor read by the runtime storage
    * layer.
    *
    * Pi tree format:
-   *   Line 1:  {type:"session", version:3, id, timestamp, cwd, craft?: {...}}
+   *   Line 1:  {type:"session", version:3, id, timestamp, cwd, mortise?: {...}}
    *   Line 2+: tree entries (message, compaction, branch_summary, etc.)
    *
-   * Craft-specific metadata is merged into the header's `craft` field via
+   * Mortise-specific metadata is merged into the header's `mortise` field via
    * writeTreeSessionCraftMetadata(). The Pi entry body is owned by the Pi
-   * runtime and is not rewritten by Craft.
+   * runtime and is not rewritten by Mortise.
    */
   private async write(sessionId: string): Promise<void> {
     const entry = this.pending.get(sessionId)
@@ -170,7 +170,7 @@ class SessionPersistenceQueue {
         lastUsedAt: data.lastUsedAt ?? Date.now(),
       }
 
-      // Create/update the Pi tree JSONL file and merge Craft metadata into its header.
+      // Create/update the Pi tree JSONL file and merge Mortise metadata into its header.
       const intendedHeaderSignature = getHeaderMetadataSignature(storageSession as SessionHeader)
       const treeFilePath = await ensureSharedPiTreeSessionFileAsync(storageSession, {
         lastWrittenHeaderSignature: this.lastWrittenHeaderSignature.get(sessionId),
@@ -224,7 +224,7 @@ class SessionPersistenceQueue {
    *
    * In addition to clearing the pending debounced timer, this also awaits any
    * in-progress write so the caller can safely delete the on-disk files
-   * without the in-progress write resurrecting them (or their craft metadata
+   * without the in-progress write resurrecting them (or their mortise metadata
    * sidecar) after this returns. Idempotent: multiple calls for the same
    * sessionId are safe.
    */

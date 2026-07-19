@@ -3,14 +3,14 @@ import type {
   PlanArtifactV1,
   PlanModeStateV1,
   StoredMessage,
-} from '@craft-agent/core/types';
+} from '@mortise/core/types';
 import {
   PLAN_ARTIFACT_CUSTOM_TYPE,
   PLAN_ARTIFACT_UPDATE_CUSTOM_TYPE,
   PLAN_MODE_STATE_CUSTOM_TYPE,
   parsePlanArtifactMessageDetails,
   parsePlanModeStateMessageDetails,
-} from '@craft-agent/core/types';
+} from '@mortise/core/types';
 
 export interface PlanCustomMessageInput {
   id: string;

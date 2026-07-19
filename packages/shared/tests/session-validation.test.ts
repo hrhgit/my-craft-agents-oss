@@ -24,9 +24,9 @@ import {
 } from '../src/sessions/storage.ts';
 import { encodePiSessionCwd } from '../src/config/paths.ts';
 
-const workspaceRoot = '/Users/test/.craft-agent/workspaces/test-workspace';
-const piSessionsRoot = mkdtempSync(join(tmpdir(), 'craft-session-validation-'));
-const expectedSidecarRoot = join(piSessionsRoot, encodePiSessionCwd(workspaceRoot), '.craft');
+const workspaceRoot = '/Users/test/.mortise/workspaces/test-workspace';
+const piSessionsRoot = mkdtempSync(join(tmpdir(), 'mortise-session-validation-'));
+const expectedSidecarRoot = join(piSessionsRoot, encodePiSessionCwd(workspaceRoot), '.mortise');
 
 beforeAll(() => {
   setSharedPiSessionsDirForTests(piSessionsRoot);
@@ -189,7 +189,7 @@ describe('getSessionPath - defense in depth', () => {
     // Even if validation is bypassed, defense-in-depth should protect
     const result = getSessionPath(workspaceRoot, '../../../tmp');
 
-    // The path should NOT escape the Pi session's .craft sidecar directory
+    // The path should NOT escape the Pi session's .mortise sidecar directory
     expect(result).toBe(join(expectedSidecarRoot, 'tmp'));
     expect(result.startsWith(expectedSidecarRoot)).toBe(true);
 

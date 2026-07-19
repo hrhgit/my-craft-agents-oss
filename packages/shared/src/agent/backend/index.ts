@@ -10,7 +10,7 @@
  *
  * Usage:
  * ```typescript
- * import { createBackend, type AgentBackend } from '@craft-agent/shared/agent/backend';
+ * import { createBackend, type AgentBackend } from '@mortise/shared/agent/backend';
  *
  * const agent = createBackend({
  *   provider: 'pi',
@@ -73,6 +73,7 @@ export {
 // Shared infrastructure
 export { BaseEventAdapter } from './base-event-adapter.ts';
 export { EventQueue } from './event-queue.ts';
+export { piHostManager, PiHostManager, PiHostProtocolError } from './pi-host-manager.ts';
 
 // Provider-specific event adapters
 export { PiEventAdapter } from './pi/event-adapter.ts';

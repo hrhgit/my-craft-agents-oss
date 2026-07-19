@@ -3,12 +3,12 @@
 	"compilerOptions": {
 		"outDir": "./dist",
 		"paths": {
-			"@earendil-works/pi-agent-core": ["../agent/dist/index.d.ts"],
-			"@earendil-works/pi-agent-core/*": ["../agent/dist/*.d.ts"],
-			"@earendil-works/pi-ai": ["../ai/dist/index.d.ts"],
-			"@earendil-works/pi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"],
-			"@earendil-works/pi-tui": ["../tui/dist/index.d.ts"],
-			"@earendil-works/pi-tui/*": ["../tui/dist/*.d.ts", "../tui/dist/components/*.d.ts"]
+			"@mortise/pi-agent-core": ["../agent/dist/index.d.ts"],
+			"@mortise/pi-agent-core/*": ["../agent/dist/*.d.ts"],
+			"@mortise/pi-ai": ["../ai/dist/index.d.ts"],
+			"@mortise/pi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"],
+			"@mortise/pi-tui": ["../tui/dist/index.d.ts"],
+			"@mortise/pi-tui/*": ["../tui/dist/*.d.ts", "../tui/dist/components/*.d.ts"]
 		},
 		"rootDir": "./src"
 	},

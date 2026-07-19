@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   RpcClient as PiRpcClient,
   type PiRuntimeHandle,
@@ -5,10 +6,11 @@ import {
   type RpcClientEvent,
   type RpcClientOptions,
   type RpcRuntimeOpenOptions,
-} from '@earendil-works/pi-coding-agent/rpc';
+} from '@mortise/pi-coding-agent/rpc';
 import { writeRuntimeLog } from '../../utils/runtime-log.ts';
 
 const DEFAULT_IDLE_TIMEOUT_MS = 0;
+const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
 
 export interface PiHostLease {
   client: PiRpcClient;
@@ -26,6 +28,7 @@ export interface PiHostAcquireOptions {
 
 interface HostRecord {
   key: string;
+  instanceId: string;
   client: PiRpcClient;
   ready: Promise<RpcCapabilities>;
   capabilities?: RpcCapabilities;
@@ -34,6 +37,7 @@ interface HostRecord {
   pendingStartupEvents: Map<string, RpcClientEvent[]>;
   idleTimer?: ReturnType<typeof setTimeout>;
   unsubscribeLifecycle?: () => void;
+  stale?: boolean;
 }
 
 export class PiHostProtocolError extends Error {
@@ -50,13 +54,16 @@ export class PiHostProtocolError extends Error {
 export class PiHostManager {
   private readonly hosts = new Map<string, HostRecord>();
   private readonly idleTimeoutMs: number;
+  private readonly startupTimeoutMs: number;
   private readonly createClient: (options: RpcClientOptions) => PiRpcClient;
 
   constructor(options: {
     idleTimeoutMs?: number;
+    startupTimeoutMs?: number;
     createClient?: (options: RpcClientOptions) => PiRpcClient;
   } = {}) {
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
     this.createClient = options.createClient ?? ((clientOptions) => new PiRpcClient(clientOptions));
   }
 
@@ -76,7 +83,7 @@ export class PiHostManager {
     try {
       capabilities = await record.ready;
     } catch (error) {
-      if (this.hosts.get(options.key) === record) this.hosts.delete(options.key);
+      await this.stopRecord(record, 'startup-failed');
       throw error;
     }
 
@@ -97,6 +104,9 @@ export class PiHostManager {
       let handle: PiRuntimeHandle;
       try {
         handle = await record.client.openRuntime(options.runtime);
+      } catch (error) {
+        if (record.runtimeCount === 0) await this.stopRecord(record, 'runtime-open-failed');
+        throw error;
       } finally {
         if (captureId) {
           startupEvents = record.pendingStartupEvents.get(captureId) ?? startupEvents;
@@ -145,14 +155,30 @@ export class PiHostManager {
     await Promise.allSettled(records.map((record) => this.stopRecord(record, 'manager-dispose')));
   }
 
+  /**
+   * Fence hosts that cached an older models/auth generation. Existing turns
+   * may finish on their current record; all new acquisitions use a fresh host.
+   */
+  async invalidateAll(reason = 'configuration-changed'): Promise<void> {
+    const records = Array.from(this.hosts.values());
+    for (const record of records) {
+      if (this.hosts.get(record.key) === record) this.hosts.delete(record.key);
+      record.stale = true;
+      this.log('info', 'host.invalidated', record, { reason });
+      if (record.runtimeCount === 0) await this.stopRecord(record, reason);
+    }
+  }
+
   private createHost(key: string, options: RpcClientOptions): HostRecord {
+    const instanceId = randomUUID();
     const client = this.createClient({
       ...options,
-      globalHost: { enabled: true },
+      globalHost: { ...options.globalHost, enabled: true, instanceId },
       env: { ...options.env, PI_GLOBAL_HOST_PROCESS: '1' },
     });
     const record: HostRecord = {
       key,
+      instanceId,
       client,
       ready: Promise.resolve(undefined as never),
       runtimeCount: 0,
@@ -161,7 +187,7 @@ export class PiHostManager {
     };
     this.log('info', 'host.start', record, { cwd: options.cwd, cliPath: options.cliPath });
     record.unsubscribeLifecycle = client.onClientEvent((event) => this.handleLifecycle(record, event));
-    record.ready = client.start()
+    const startup = client.start()
       .then(() => client.getCapabilities())
       .then((capabilities) => {
         record.capabilities = capabilities;
@@ -171,7 +197,20 @@ export class PiHostManager {
         });
         return capabilities;
       });
+    record.ready = this.withStartupTimeout(startup);
     return record;
+  }
+
+  private withStartupTimeout<T>(startup: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Pi shared host startup timed out after ${this.startupTimeoutMs}ms`));
+      }, this.startupTimeoutMs);
+    });
+    return Promise.race([startup, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
   }
 
   private handleLifecycle(record: HostRecord, event: RpcClientEvent): void {
@@ -207,7 +246,12 @@ export class PiHostManager {
   }
 
   private scheduleIdleStop(record: HostRecord): void {
-    if (record.runtimeCount > 0 || this.hosts.get(record.key) !== record) return;
+    if (record.runtimeCount > 0) return;
+    if (record.stale) {
+      void this.stopRecord(record, 'stale-host-idle');
+      return;
+    }
+    if (this.hosts.get(record.key) !== record) return;
     if (record.idleTimer) clearTimeout(record.idleTimer);
     record.idleTimer = setTimeout(() => {
       record.idleTimer = undefined;
@@ -235,7 +279,12 @@ export class PiHostManager {
     writeRuntimeLog(level, {
       scope: 'pi-rpc',
       event,
-      meta: { hostKey: record.key, runtimeCount: record.runtimeCount, ...meta },
+      meta: {
+        hostKey: record.key,
+        hostInstanceId: record.instanceId,
+        runtimeCount: record.runtimeCount,
+        ...meta,
+      },
     });
   }
 }

@@ -2,9 +2,9 @@ import * as React from 'react'
 import { useMemo, useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react'
 import i18n from 'i18next'
 import { useTranslation } from 'react-i18next'
-import type { ToolDisplayMeta, AnnotationV1, PlanArtifactV1 } from '@craft-agent/core'
-import { normalizePath, pathStartsWith, stripPathPrefix } from '@craft-agent/shared/utils/path-strings'
-import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
+import type { ToolDisplayMeta, AnnotationV1, PlanArtifactV1 } from '@mortise/core'
+import { normalizePath, pathStartsWith, stripPathPrefix } from '@mortise/shared/utils/path-strings'
+import { isParentTaskTool } from '@mortise/shared/utils/toolNames'
 import { motion, AnimatePresence } from 'motion/react'
 import {
   ChevronRight,
@@ -245,6 +245,24 @@ export interface ResponseContent {
   annotations?: AnnotationV1[]
   /** Validated structured artifact attached to this assistant response. */
   artifact?: PlanArtifactV1
+}
+
+export interface ArtifactContributionPresentation {
+  aside?: React.ReactNode
+  asideTitle?: string
+  footer?: React.ReactNode
+}
+
+const ArtifactContributionContext = React.createContext<ArtifactContributionPresentation | null>(null)
+
+export function ArtifactContributionProvider({
+  presentation,
+  children,
+}: {
+  presentation: ArtifactContributionPresentation
+  children: React.ReactNode
+}) {
+  return <ArtifactContributionContext.Provider value={presentation}>{children}</ArtifactContributionContext.Provider>
 }
 
 // ============================================================================
@@ -524,8 +542,8 @@ function stripSessionFolderPath(filePath: string, sessionFolderPath?: string): s
   if (!sessionFolderPath) return filePath
 
   const normalizedSessionPath = normalizePath(sessionFolderPath)
-  const sessionBucketPath = normalizedSessionPath.includes('/.craft/')
-    ? normalizedSessionPath.replace(/\/\.craft\/[^/]+$/, '')
+  const sessionBucketPath = normalizedSessionPath.includes('/.mortise/')
+    ? normalizedSessionPath.replace(/\/\.mortise\/[^/]+$/, '')
     : normalizedSessionPath.replace(/\/[^/]+$/, '')
 
   // Try session folder first (more specific)
@@ -1383,6 +1401,8 @@ export interface ResponseCardProps {
   onPopOut?: () => void
   /** Card variant - 'response' for AI messages, 'plan' for plan messages */
   variant?: 'response' | 'plan'
+  /** Structured artifact associated with this response. */
+  artifact?: PlanArtifactV1
   /** Parent session ID (used to reset local annotation/island UI state on session switches) */
   sessionId?: string
   /** Underlying message ID for annotation actions */
@@ -1652,6 +1672,7 @@ export function ResponseCard({
   onOpenUrl,
   onPopOut,
   variant = 'response',
+  artifact,
   sessionId,
   messageId,
   annotations,
@@ -1671,6 +1692,9 @@ export function ResponseCard({
   annotationInteractionMode = 'interactive',
 }: ResponseCardProps) {
   const { t } = useTranslation()
+  const artifactPresentation = React.useContext(ArtifactContributionContext)
+  const [artifactPane, setArtifactPane] = useState<'primary' | 'aside'>('primary')
+  const hasArtifactAside = Boolean(artifact && artifactPresentation?.aside)
   const hasCompletionTiming = completedAt !== undefined && durationMs !== undefined
   // Throttled content for display - updates every CONTENT_THROTTLE_MS during streaming
   const [displayedText, setDisplayedText] = useState(text)
@@ -1681,6 +1705,10 @@ export function ResponseCard({
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Dark mode detection - scroll fade only shown in dark mode
   const [isDarkMode, setIsDarkMode] = useState(false)
+
+  useEffect(() => {
+    setArtifactPane('primary')
+  }, [artifact?.artifactId])
   // Pending text selection waiting for explicit follow-up action
   const interaction = useAnnotationInteractionController()
   const {
@@ -2444,6 +2472,29 @@ export function ResponseCard({
   // Completed response or plan - show with max height and footer
   if (isCompleted || variant === 'plan') {
     const isPlan = variant === 'plan'
+    const primaryContent = (
+      <div
+        ref={contentRef}
+        data-search-root="response"
+        onMouseDown={handleSelectionPointerDown}
+        onMouseUp={handleTextSelection}
+        className="overflow-y-auto py-3 pl-[22px] pr-[16px] text-sm scrollbar-hover"
+        style={{
+          maxHeight: MAX_HEIGHT,
+          ...(isDarkMode && {
+            maskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
+          }),
+        }}
+      >
+        <div ref={contentLayerRef} className="relative">
+          <Markdown mode="minimal" onUrlClick={onOpenUrl} onFileClick={onOpenFile}>
+            {text}
+          </Markdown>
+          {annotationOverlayLayer}
+        </div>
+      </div>
+    )
 
     return (
       <>
@@ -2478,33 +2529,43 @@ export function ResponseCard({
             </div>
           )}
 
-          {/* Scrollable content area with subtle fade at edges (dark mode only) */}
-          <div
-            ref={contentRef}
-            data-search-root="response"
-            onMouseDown={handleSelectionPointerDown}
-            onMouseUp={handleTextSelection}
-            className="pl-[22px] pr-[16px] py-3 text-sm overflow-y-auto scrollbar-hover"
-            style={{
-              maxHeight: MAX_HEIGHT,
-              // Subtle fade at top and bottom edges (16px) - only in dark mode for better contrast
-              ...(isDarkMode && {
-                maskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
-                WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
-              }),
-            }}
-          >
-            <div ref={contentLayerRef} className="relative">
-              <Markdown
-                mode="minimal"
-                onUrlClick={onOpenUrl}
-                onFileClick={onOpenFile}
-              >
-                {text}
-              </Markdown>
-              {annotationOverlayLayer}
+          {hasArtifactAside ? (
+            <div className="@container/plan-artifact">
+              <div className="flex border-b border-border/30 bg-muted/15 p-1 @2xl/plan-artifact:hidden" role="tablist" aria-label="Plan artifact views">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={artifactPane === 'primary'}
+                  onClick={() => setArtifactPane('primary')}
+                  className={cn('min-h-8 flex-1 rounded-[5px] px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', artifactPane === 'primary' ? 'bg-background text-foreground shadow-minimal' : 'text-muted-foreground hover:text-foreground')}
+                >
+                  Plan
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={artifactPane === 'aside'}
+                  onClick={() => setArtifactPane('aside')}
+                  className={cn('min-h-8 flex-1 rounded-[5px] px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', artifactPane === 'aside' ? 'bg-background text-foreground shadow-minimal' : 'text-muted-foreground hover:text-foreground')}
+                >
+                  {artifactPresentation?.asideTitle ?? 'Review'}
+                </button>
+              </div>
+              <div className="@2xl/plan-artifact:grid @2xl/plan-artifact:grid-cols-2">
+                <div className={cn('min-w-0', artifactPane !== 'primary' && 'hidden @2xl/plan-artifact:block')} role="tabpanel">
+                  {primaryContent}
+                </div>
+                <aside className={cn('min-w-0 border-border/30 @2xl/plan-artifact:border-l', artifactPane !== 'aside' && 'hidden @2xl/plan-artifact:block')} role="tabpanel" aria-label={artifactPresentation?.asideTitle ?? 'Review'}>
+                  <div className="hidden h-9 items-center border-b border-border/30 bg-muted/15 px-4 text-xs font-medium text-muted-foreground @2xl/plan-artifact:flex">
+                    {artifactPresentation?.asideTitle ?? 'Review'}
+                  </div>
+                  <div className="max-h-[280px] overflow-y-auto px-4 py-3 text-sm scrollbar-hover">
+                    {artifactPresentation?.aside}
+                  </div>
+                </aside>
+              </div>
             </div>
-          </div>
+          ) : primaryContent}
 
           {/* Desktop footer with actions (Copy / Markdown / Accept Plan / Branch).
               Compact mode falls through to the slim Accept-Plan-only footer below. */}
@@ -2554,7 +2615,7 @@ export function ResponseCard({
               <div className="flex items-center gap-3">
                 <CompletionTiming completedAt={completedAt} durationMs={durationMs} />
                 {/* Accept Plan dropdown (plan variant only, last response) */}
-                {isPlan && showAcceptPlan && onAccept && onAcceptWithCompact && (
+                {isPlan && !artifact && showAcceptPlan && onAccept && onAcceptWithCompact && (
                   <div
                     className={cn(
                       "flex items-center gap-3 transition-all duration-200",
@@ -2578,7 +2639,7 @@ export function ResponseCard({
 
           {/* Compact footer keeps completion metadata and the last-plan action. */}
           {compactMode && (hasCompletionTiming
-            || (isPlan && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact)) && (
+            || (isPlan && !artifact && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact)) && (
             <div
               className={cn(
                 "pl-3 pr-2 py-1.5 border-t border-border/30 flex items-center justify-between gap-2 bg-muted/20",
@@ -2586,7 +2647,7 @@ export function ResponseCard({
               )}
             >
               <CompletionTiming completedAt={completedAt} durationMs={durationMs} />
-              {isPlan && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact && (
+              {isPlan && !artifact && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact && (
                 <CompactAcceptPlanDrawer
                   onAccept={onAccept}
                   onAcceptWithCompact={onAcceptWithCompact}
@@ -2594,6 +2655,12 @@ export function ResponseCard({
                   acceptOptionLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.accept')}
                 />
               )}
+            </div>
+          )}
+
+          {artifact && artifactPresentation?.footer && (
+            <div className="border-t border-border/30 bg-muted/15 px-3 py-2" data-artifact-footer={artifact.artifactId}>
+              {artifactPresentation.footer}
             </div>
           )}
         </div>
@@ -2604,6 +2671,8 @@ export function ResponseCard({
           isOpen={isFullscreen}
           onClose={() => setIsFullscreen(false)}
           variant={isPlan ? 'plan' : undefined}
+          aside={hasArtifactAside ? artifactPresentation?.aside : undefined}
+          asideTitle={artifactPresentation?.asideTitle}
           onOpenUrl={onOpenUrl}
           onOpenFile={onOpenFile}
           sessionId={sessionId}
@@ -3206,7 +3275,8 @@ export const TurnCard = React.memo(function TurnCard({
                 onOpenFile={onOpenFile}
                 onOpenUrl={onOpenUrl}
                 onPopOut={onPopOut ? () => onPopOut(response.text) : undefined}
-                variant={response.isPlan ? 'plan' : 'response'}
+                variant={response.artifact || response.isPlan ? 'plan' : 'response'}
+                artifact={response.artifact}
                 messageId={response.messageId}
                 annotations={response.annotations}
                 onAddAnnotation={onAddAnnotation}
@@ -3240,7 +3310,8 @@ export const TurnCard = React.memo(function TurnCard({
             onOpenFile={onOpenFile}
             onOpenUrl={onOpenUrl}
             onPopOut={onPopOut ? () => onPopOut(response.text) : undefined}
-            variant={response.isPlan ? 'plan' : 'response'}
+            variant={response.artifact || response.isPlan ? 'plan' : 'response'}
+            artifact={response.artifact}
             messageId={response.messageId}
             annotations={response.annotations}
             onAddAnnotation={onAddAnnotation}

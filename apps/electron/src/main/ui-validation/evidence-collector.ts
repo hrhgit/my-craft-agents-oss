@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import type { WebContents } from 'electron'
-import type { UiValidationEventReadResult, UiValidationScopedStateSnapshot } from '@craft-agent/shared/ui-validation'
+import type { UiValidationEventReadResult, UiValidationScopedStateSnapshot } from '@mortise/shared/ui-validation'
 import type { UiDriverSnapshot, UiDriverWindowSelector, UiVerificationLevel } from './electron-surface-driver'
 import { observeWebRequests } from '../web-request-observer-hub'
 

@@ -2,12 +2,12 @@
  * Pi CLI Global Config facade.
  *
  * This is the single source of truth for "pure Pi + custom provider" mode.
- * Craft keeps this module as a compatibility wrapper for older settings IPC
+ * Mortise keeps this module as a compatibility wrapper for older settings IPC
  * handlers, but storage reads/writes go through Pi's host facade.
  */
 
 import { existsSync, mkdirSync, watch, type FSWatcher } from 'fs';
-import { DefaultPackageManager, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { DefaultPackageManager, SettingsManager } from '@mortise/pi-coding-agent';
 import {
   deleteGlobalApiKey as deletePiHostGlobalApiKey,
   deleteGlobalProvider as deletePiHostGlobalProvider,
@@ -15,7 +15,7 @@ import {
   hasGlobalProviderAuth as hasPiHostGlobalProviderAuth,
   maskApiKey as maskPiHostApiKey,
   migrateGlobalProviderApiKeysToAuth as migratePiHostGlobalProviderApiKeysToAuth,
-  readCraftAgentSettings as readPiHostCraftAgentSettings,
+  readMortiseSettings as readPiHostMortiseSettings,
   readExtensionConfig as readPiHostExtensionConfig,
   readExtensionNamespace as readPiHostExtensionNamespace,
   readGlobalAuthFile as readPiHostGlobalAuthFile,
@@ -33,9 +33,9 @@ import {
   setGlobalApiKey as setPiHostGlobalApiKey,
   setGlobalDefault as setPiHostGlobalDefault,
   setShellGuiEntry as setPiHostShellGuiEntry,
-  writeCraftAgentSettingsBulk as writePiHostCraftAgentSettingsBulk,
+  writeMortiseSettingsBulk as writePiHostMortiseSettingsBulk,
   type HostGlobalProvider,
-} from '@earendil-works/pi-coding-agent/host-facade';
+} from '@mortise/pi-coding-agent/host-facade';
 import type { PiExtensionCatalogEntry, PiExtensionCatalogResult, PiExtensionConfigPatch, PiExtensionSettingField, PiExtensionSettingScalar } from './pi-extension-settings.ts';
 import type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
 import { PI_AGENT_DIR } from './paths';
@@ -55,7 +55,7 @@ export interface PiGlobalSettings {
   defaultProvider?: string;
   defaultModel?: string;
   defaultThinkingLevel?: string;
-  craft?: {
+  mortise?: {
     agent?: Record<string, unknown>;
     [key: string]: unknown;
   };
@@ -121,7 +121,7 @@ export interface PiGlobalAuthCredential {
 /**
  * Pi auth.json top-level structure.
  * Keyed by provider name (e.g. 'anthropic', 'openai', 'github-copilot').
- * Craft-owned credentials live under opaque `craft.*` keys in the same file,
+ * Mortise-owned credentials live under opaque `mortise.*` keys in the same file,
  * so helpers below always narrow entries before treating them as Pi credentials.
  */
 export type PiGlobalAuthFile = Record<string, unknown>;
@@ -228,7 +228,7 @@ export function watchPiGlobalModelsFile(onModelsChanged: () => void): FSWatcher 
   ensurePiAgentDir();
   return watch(PI_AGENT_DIR, (_eventType, filename) => {
     if (!filename) return;
-    if (filename === 'models.json' || filename === 'settings.json') {
+    if (filename === 'models.json' || filename === 'settings.json' || filename === 'auth.json') {
       onModelsChanged();
     }
   });
@@ -419,45 +419,45 @@ export async function setPiGlobalDefault(
 /**
  * Set only the top-level `defaultThinkingLevel` in ~/.pi/agent/settings.json
  * without touching defaultProvider/defaultModel. This is the authoritative
- * SoT read by the pi subprocess; craft's setDefaultThinkingLevel() mirrors
+ * SoT read by the pi subprocess; mortise's setDefaultThinkingLevel() mirrors
  * its value here so the subprocess picks it up immediately.
  */
 export async function setPiGlobalDefaultThinkingLevel(level: string): Promise<void> {
   await setPiHostDefaultThinkingLevel(level);
 }
 
-// ===== Craft agent runtime namespace (craft.agent.*) =====
+// ===== Mortise agent runtime namespace (mortise.agent.*) =====
 //
-// Craft-only UI/window preferences stay in ~/.craft-agent/config.json. Runtime
+// Mortise-only UI/window preferences stay in ~/.mortise/config.json. Runtime
 // toggles that affect agent behavior live in ~/.pi/agent/settings.json under
-// craft.agent.* so Pi/Craft subprocesses read the same source of truth.
+// mortise.agent.* so Pi/Mortise subprocesses read the same source of truth.
 
-export type PiCraftAgentSettings = Record<string, unknown>;
+export type PiMortiseSettings = Record<string, unknown>;
 
-export function readPiCraftAgentSettings(): PiCraftAgentSettings {
-  return readPiHostCraftAgentSettings();
+export function readPiMortiseSettings(): PiMortiseSettings {
+  return readPiHostMortiseSettings();
 }
 
-export function readPiCraftAgentSetting(key: string, fallback: unknown): unknown {
-  const value = readPiCraftAgentSettings()[key];
+export function readPiMortiseSetting(key: string, fallback: unknown): unknown {
+  const value = readPiMortiseSettings()[key];
   return value != null ? value : fallback;
 }
 
-export function readPiCraftAgentBoolean(key: string, fallback = false): boolean {
-  const value = readPiCraftAgentSetting(key, fallback);
+export function readPiMortiseBoolean(key: string, fallback = false): boolean {
+  const value = readPiMortiseSetting(key, fallback);
   return typeof value === 'boolean' ? value : fallback;
 }
 
-export function writePiCraftAgentSettingsBulk(updates: Record<string, unknown>): void {
-  writePiHostCraftAgentSettingsBulk(updates);
+export function writePiMortiseSettingsBulk(updates: Record<string, unknown>): void {
+  writePiHostMortiseSettingsBulk(updates);
 }
 
-export function writePiCraftAgentSetting(key: string, value: unknown): void {
-  writePiCraftAgentSettingsBulk({ [key]: value });
+export function writePiMortiseSetting(key: string, value: unknown): void {
+  writePiMortiseSettingsBulk({ [key]: value });
 }
 
-export function writePiCraftAgentBoolean(key: string, value: boolean): void {
-  writePiCraftAgentSetting(key, value);
+export function writePiMortiseBoolean(key: string, value: boolean): void {
+  writePiMortiseSetting(key, value);
 }
 
 // ===== 扩展命名空间（extensionConfig.<name>.*）=====
@@ -550,7 +550,7 @@ export async function writePiExtensionConcurrency(name: string, concurrency: num
 
 /**
  * 读取 Pi 扩展 catalog。扩展发现、metadata、enabled/config 均来自 Pi host facade；
- * Craft 只把结果作为设置 UI 的展示 DTO。
+ * Mortise 只把结果作为设置 UI 的展示 DTO。
  */
 export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: string } = {}): Promise<PiExtensionCatalogResult> {
   const cwd = options.cwd ?? process.cwd();
@@ -561,7 +561,7 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
       cwd,
       agentDir,
       settingsManager,
-      extensionTarget: 'craft',
+      extensionTarget: 'mortise',
     });
     const result = await packageManager.resolve();
     return {
@@ -571,16 +571,29 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
         .filter((resource) => resource.metadata.extensionId)
         .map((resource): PiExtensionCatalogEntry => {
           const id = resource.metadata.extensionId!;
-          const ui = resource.metadata.extensionUI as PiExtensionCatalogEntry['ui'];
+          const metadata = resource.metadata as typeof resource.metadata & {
+            extensionManifest?: PiExtensionCatalogEntry['manifest'];
+            extensionManifestStatus?: PiExtensionCatalogEntry['manifestStatus'];
+            extensionManifestDiagnostics?: PiExtensionCatalogEntry['manifestDiagnostics'];
+            extensionHostVersion?: string;
+            extensionLoadable?: boolean;
+          };
+          const ui = metadata.extensionUI as PiExtensionCatalogEntry['ui'];
+          const manifest = metadata.extensionManifest;
           const config = settingsManager.getExtensionConfig(id) as Record<string, unknown> | undefined;
           return {
             id,
-            target: 'craft',
+            target: 'mortise',
             loaded: false,
-            title: ui?.title ?? id,
-            description: ui?.description ?? '',
+            title: ui?.title ?? manifest?.name ?? id,
+            description: ui?.description ?? manifest?.description ?? '',
             category: ui?.category ?? 'other',
             configurable: (ui?.settings?.fields.length ?? 0) > 0,
+            manifest,
+            manifestStatus: metadata.extensionManifestStatus ?? 'legacy',
+            manifestDiagnostics: metadata.extensionManifestDiagnostics ?? [],
+            hostVersion: metadata.extensionHostVersion ?? '0.0.0',
+            loadable: metadata.extensionLoadable ?? resource.enabled,
             ui,
             enabled: config?.enabled === undefined ? true : config.enabled !== false,
             path: resource.path,
@@ -597,7 +610,7 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
   } catch (error) {
     return {
       extensions: [],
-      errors: [{ path: '', error: error instanceof Error ? error.message : String(error), target: 'craft' }],
+      errors: [{ path: '', error: error instanceof Error ? error.message : String(error), target: 'mortise' }],
     };
   }
 }
@@ -660,8 +673,8 @@ export async function patchPiExtensionConfig(
 
 // ===== Shell GUI 命名空间（shellGui.<name>.*）=====
 //
-// craft shell 的 GUI 开关与 agent 行为字段（showStatusBadge/widgetVisible/
-// craft 全局开关等）回归 ~/.pi/agent/settings.json 的 `shellGui.<name>.*`
+// mortise shell 的 GUI 开关与 agent 行为字段（showStatusBadge/widgetVisible/
+// mortise 全局开关等）回归 ~/.pi/agent/settings.json 的 `shellGui.<name>.*`
 // 命名空间。pi CLI 单独运行时忽略此字段（pi settings-manager.ts 中 shellGui 为可选）。
 
 /**
@@ -721,7 +734,7 @@ export async function writePiShellGuiSetting(name: string, key: string, value: u
  * F2 修复：替代多次独立调用 writePiShellGuiSetting/writePiShellGuiBoolean，
  * 避免每次都读全文件→改一字段→写全文件造成的竞态窗口与性能开销。
  *
- * @param updates 形如 `{ 'craft': { enabled: true, ... }, 'subagent': { reviewEnabled: false } }` 的对象
+ * @param updates 形如 `{ 'mortise': { enabled: true, ... }, 'subagent': { reviewEnabled: false } }` 的对象
  */
 export async function writePiShellGuiSettingsBulk(
   updates: Record<string, Record<string, unknown>>,

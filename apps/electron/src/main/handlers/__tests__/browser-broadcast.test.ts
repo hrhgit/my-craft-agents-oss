@@ -7,16 +7,16 @@
  */
 
 import { describe, it, expect, beforeEach, mock } from 'bun:test'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
-import { RPC_CHANNELS, type BrowserInstanceInfo } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type BrowserInstanceInfo } from '@mortise/shared/protocol'
 
 const remoteWorkspaceAliases = new Map<string, string>()
 
 mock.module('electron', () => ({
   ipcMain: { handle: () => {}, on: () => {} },
 }))
-mock.module('@craft-agent/shared/config', () => ({
+mock.module('@mortise/shared/config', () => ({
   getWorkspaceByNameOrId: (workspaceId: string) => {
     const remoteWorkspaceId = remoteWorkspaceAliases.get(workspaceId)
     return remoteWorkspaceId ? { id: workspaceId, remoteServer: { remoteWorkspaceId } } : null

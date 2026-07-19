@@ -25,7 +25,7 @@ import {
   type ExtensionInteractionBridgeRequestV1,
   type ExtensionInteractionBridgeSettledV1,
   type ExtensionInteractionResponseV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 import type {
   RemoteUIRequest,
   RemoteUIResult,

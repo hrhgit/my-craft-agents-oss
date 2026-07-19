@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { extname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import * as lark from '@larksuiteoapi/node-sdk'
-import { errorMessage } from '@craft-agent/shared/utils'
+import { errorMessage } from '@mortise/shared/utils'
 import type {
   PlatformAdapter,
   PlatformConfig,

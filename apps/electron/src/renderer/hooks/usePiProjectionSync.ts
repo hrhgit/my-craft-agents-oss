@@ -5,7 +5,7 @@ import {
   applyPiProjectionSnapshotAtom,
   piProjectionAtomFamily,
 } from '@/atoms/pi-projection'
-import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 import type { PiProjectionState } from '@/atoms/pi-projection'
 import { useWorkspaceElectronApi } from '@/context/WorkspaceElectronApiContext'
 

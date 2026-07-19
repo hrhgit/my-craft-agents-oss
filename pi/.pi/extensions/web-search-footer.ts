@@ -1,9 +1,9 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@mortise/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+} from "@mortise/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@mortise/pi-tui";
 
 function formatTokens(count: number): string {
   if (count < 1000) return count.toString();

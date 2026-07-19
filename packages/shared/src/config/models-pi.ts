@@ -1,7 +1,7 @@
 /**
  * Pi model/provider discovery wrapper.
  *
- * Craft keeps this module as a stable import seam for existing handlers, but
+ * Mortise keeps this module as a stable import seam for existing handlers, but
  * all model/provider catalog semantics now come from Pi's host facade.
  */
 
@@ -9,7 +9,7 @@ import {
   getModelCatalog,
   isDeprecatedClaudeOpus46Model,
   type HostModelCatalogModel,
-} from '@earendil-works/pi-coding-agent/host-facade';
+} from '@mortise/pi-coding-agent/host-facade';
 import type { ModelDefinition } from './models.ts';
 
 function piModelToDefinition(model: HostModelCatalogModel): ModelDefinition {

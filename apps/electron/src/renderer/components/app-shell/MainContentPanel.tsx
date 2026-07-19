@@ -43,19 +43,19 @@ import { SendResourceToWorkspaceDialog, type SendResourceType } from './SendReso
 
 export interface MainContentPanelProps {
   /** Whether both sidebar and navigator are hidden (focus mode / CMD+.) */
-  isSidebarAndNavigatorHidden?: boolean
+  isLeadingChromeHidden?: boolean
   /** Optional className for the container */
   className?: string
   /**
    * Override the navigation state for this panel.
    * When provided, this panel renders based on the override instead of the global NavigationState.
-   * Used by PanelSlot to render panels in the panel stack.
+   * Used by dock tabs and page-owned management surfaces.
    */
   navStateOverride?: import('../../../shared/types').NavigationState | null
 }
 
 export function MainContentPanel({
-  isSidebarAndNavigatorHidden = false,
+  isLeadingChromeHidden = false,
   className,
   navStateOverride,
 }: MainContentPanelProps) {
@@ -147,7 +147,7 @@ export function MainContentPanel({
   // Wrap content with StoplightProvider so PanelHeaders auto-compensate in focused mode.
   // Also renders the Send to Workspace dialog (portal-based, so it overlays regardless of position).
   const wrapWithStoplight = (content: React.ReactNode) => (
-    <StoplightProvider value={isSidebarAndNavigatorHidden}>
+    <StoplightProvider value={isLeadingChromeHidden}>
       {content}
       <SendResourceToWorkspaceDialog
         open={sendDialogOpen}
@@ -163,8 +163,8 @@ export function MainContentPanel({
 
   // Settings navigator - uses component map from settings-pages.ts.
   // Bare `settings` route (subpage === null) means navigator-only view in compact mode;
-  // PanelStackContainer hides the content panel entirely. On desktop the panel still
-  // mounts, so fall back to the App page so it isn't empty.
+  // Compact settings starts at its page-owned navigator. Desktop renders the
+  // App page as the default detail so the right side is never empty.
   if (isSettingsNavigation(navState)) {
     const subpage = navState.subpage ?? 'app'
     const SettingsPageComponent = getSettingsPageComponent(subpage)

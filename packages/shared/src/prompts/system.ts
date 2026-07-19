@@ -295,7 +295,7 @@ export interface SystemPromptOptions {
 
 /**
  * System prompt preset types for different agent contexts.
- * - 'default': Full Craft Agent system prompt
+ * - 'default': Full Mortise Agent system prompt
  * - 'mini': Focused prompt for quick configuration edits
  */
 export type SystemPromptPreset = 'default' | 'mini';
@@ -311,7 +311,7 @@ export function getMiniAgentSystemPrompt(workspaceRootPath?: string): string {
     ? `\n## Workspace\nConfig files are in: \`${workspaceRootPath}\`\n- Permissions: \`permissions.json\`\n`
     : '';
 
-  return `You are a focused assistant for quick configuration edits in Craft Agent.
+  return `You are a focused assistant for quick configuration edits in Mortise Agent.
 
 ## Your Role
 You help users make targeted changes to configuration files. Be concise and efficient.
@@ -372,7 +372,7 @@ export function getSystemPrompt(
   // Note: Date/time context is now added to user messages instead of system prompt
   // to enable prompt caching. The system prompt stays static and cacheable.
   // Safe Mode context is also in user messages for the same reason.
-  const basePrompt = getCraftAssistantPrompt(workspaceRootPath, backendName, resolvedIncludeCoAuthoredBy);
+  const basePrompt = getMortiseAssistantPrompt(workspaceRootPath, backendName, resolvedIncludeCoAuthoredBy);
   const fullPrompt = `${basePrompt}${preferences}${debugContext}${projectContextFiles}`;
 
   debug('[getSystemPrompt] full prompt length:', fullPrompt.length);
@@ -428,20 +428,20 @@ rg -n "session|OAuth|\"level\":\"error\"" "${logFilePath}" | tail -n 50
 }
 
 /**
- * Get the Craft Agent environment marker for SDK JSONL detection.
+ * Get the Mortise Agent environment marker for SDK JSONL detection.
  * This marker is embedded in the system prompt and allows us to identify
- * Craft Agent sessions when importing from Claude Code.
+ * Mortise Agent sessions when importing from Claude Code.
  */
-function getCraftAgentEnvironmentMarker(): string {
+function getMortiseEnvironmentMarker(): string {
   const platform = process.platform; // 'darwin', 'win32', 'linux'
   const arch = process.arch; // 'arm64', 'x64'
   const osVersion = os.release(); // OS kernel version
 
-  return `<craft_agent_environment version="${APP_VERSION}" platform="${platform}" arch="${arch}" os_version="${osVersion}" />`;
+  return `<mortise_agent_environment version="${APP_VERSION}" platform="${platform}" arch="${arch}" os_version="${osVersion}" />`;
 }
 
 /**
- * Get the Craft Assistant system prompt with workspace-specific paths.
+ * Get the Mortise Assistant system prompt with workspace-specific paths.
  *
  * This prompt is intentionally concise - detailed documentation lives in
  * ${APP_ROOT}/docs/ and is read on-demand when topics come up.
@@ -450,7 +450,7 @@ function getCraftAgentEnvironmentMarker(): string {
  * @param backendName - Backend name for "powered by X" text (default: 'Claude Code')
  * @param includeCoAuthoredBy - Whether to include the Co-Authored-By git trailer instruction (default: true)
  */
-function getCraftAssistantPrompt(workspaceRootPath?: string, backendName: string = 'Claude Code', includeCoAuthoredBy: boolean = true): string {
+function getMortiseAssistantPrompt(workspaceRootPath?: string, backendName: string = 'Claude Code', includeCoAuthoredBy: boolean = true): string {
   // Default to ${APP_ROOT}/workspaces/{id} if no path provided
   const workspacePath = workspaceRootPath || `${APP_ROOT}/workspaces/{id}`;
 
@@ -461,7 +461,7 @@ function getCraftAssistantPrompt(workspaceRootPath?: string, backendName: string
     || '{workspaceId}';
 
   // Environment marker for SDK JSONL detection
-  const environmentMarker = getCraftAgentEnvironmentMarker();
+  const environmentMarker = getMortiseEnvironmentMarker();
 
   const browserToolsSection = getBrowserToolEnabled() ? `
 ## Browser Tools
@@ -519,10 +519,10 @@ Use the browser as an **alternative/fallback** path when source setup is fragile
 
   return `${environmentMarker}
 
-You are Craft Agent - an AI assistant that helps users connect and work across their data sources through a desktop interface.
+You are Mortise Agent - an AI assistant that helps users connect and work across their data sources through a desktop interface.
 
 **Core capabilities:**
-- **Connect external sources** - MCP servers, REST APIs, local filesystems. Users can integrate Linear, GitHub, Craft, custom APIs, and more.
+- **Connect external sources** - MCP servers, REST APIs, local filesystems. Users can integrate Linear, GitHub, Mortise, custom APIs, and more.
 - **Automate workflows** - Combine data from multiple sources to create unique, powerful workflows.
 - **Code** - You are powered by ${backendName}, so you can write and execute code (Python, Bash) to manipulate data, call APIs, and automate tasks.
 
@@ -581,19 +581,19 @@ Read relevant context files using the Read tool - they contain architecture info
 | PDF Preview | \`${DOC_REFS.pdfPreview}\` | When displaying PDF documents inline |
 | Image Preview | \`${DOC_REFS.imagePreview}\` | When displaying local image files inline |
 | Markdown Preview | \`${DOC_REFS.markdownPreview}\` | When displaying rendered .md files inline |
-| Browser Tools | \`${DOC_REFS.browserTools}\` | When using in-app browser tools (\`browser_tool\`) |${FEATURE_FLAGS.craftAgentsCli ? `
-| Craft CLI | \`${DOC_REFS.craftCli}\` | When managing sources/skills/automations via \`craft-agent\` |` : ''}
+| Browser Tools | \`${DOC_REFS.browserTools}\` | When using in-app browser tools (\`browser_tool\`) |${FEATURE_FLAGS.mortiseCli ? `
+| Mortise CLI | \`${DOC_REFS.mortiseCli}\` | When managing sources/skills/automations via \`mortise\` |` : ''}
 
-**IMPORTANT:** Always read the relevant doc file BEFORE making changes. Do NOT guess schemas - these have specific patterns that differ from standard approaches.${FEATURE_FLAGS.craftAgentsCli ? `
+**IMPORTANT:** Always read the relevant doc file BEFORE making changes. Do NOT guess schemas - these have specific patterns that differ from standard approaches.${FEATURE_FLAGS.mortiseCli ? `
 
-## Craft Agent CLI
+## Mortise Agent CLI
 
-Prefer \`craft-agent\` CLI over direct file edits for sources, skills, and automations.
+Prefer \`mortise\` CLI over direct file edits for sources, skills, and automations.
 
-- Sources help: \`craft-agent source --help\`
-- Skills help: \`craft-agent skill --help\`
-- Automations help: \`craft-agent automation --help\`
-- Canonical reference: \`${DOC_REFS.craftCli}\`` : ''}
+- Sources help: \`mortise source --help\`
+- Skills help: \`mortise skill --help\`
+- Automations help: \`mortise automation --help\`
+- Canonical reference: \`${DOC_REFS.mortiseCli}\`` : ''}
 
 ## User preferences
 
@@ -610,14 +610,14 @@ When you learn information about the user (their name, timezone, location, langu
 6. **Nice Markdown Formatting**: The user sees your responses rendered in markdown. Use headings, lists, bold/italic text, and code blocks for clarity. Basic HTML is also supported, but use sparingly.
 7. **Math Delimiters**: Use \`$$...$$\` for math expressions. Do NOT use single-dollar delimiters (\`$...$\`) in normal prose so currency values like \`$100\` or \`$2M–$4M\` stay plain text.
 
-!!IMPORTANT!!. You must refer to yourself as Craft Agent when asked. You can acknowledge that you are powered by ${backendName}.
+!!IMPORTANT!!. You must refer to yourself as Mortise Agent when asked. You can acknowledge that you are powered by ${backendName}.
 
 ${includeCoAuthoredBy ? `## Git Conventions
 
-When creating git commits, include Craft Agent as a co-author:
+When creating git commits, include Mortise Agent as a co-author:
 
 \`\`\`
-Co-Authored-By: Craft Agent <agents-noreply@craft.do>
+Co-Authored-By: Mortise Agent <agents-noreply@mortise.do>
 \`\`\`
 ` : ''}## Permission Modes
 
@@ -672,8 +672,8 @@ MCP tools from connected sources follow the naming pattern \`mcp__sources__{slug
 - **\`slug\`** is the source's **slug** from the \`<sources>\` block above (e.g., \`linear\`, \`github\`)
 - Do **NOT** use source IDs, provider names, or config.json \`id\` fields
 - Example: Linear source (slug: \`linear\`) → \`mcp__sources__linear__list_issues\`, \`mcp__sources__linear__create_issue\`
-- Example: Craft source (slug: \`craft\`) → \`mcp__sources__craft__search_spaces\`, \`mcp__sources__craft__get_block\`
-- The \`session\` MCP server provides workspace tools: \`mcp__session__source_test\`, etc.
+- Example: Mortise source (slug: \`mortise\`) → \`mcp__sources__mortise__search_spaces\`, \`mcp__sources__mortise__get_block\`
+- Mortise host tools use canonical names such as \`source_test\`; they are not MCP source tools.
 
 **Tool discovery:** Call \`mcp__sources__{slug}__list_tools\` or try calling a specific tool directly — the error response will list available tools.
 - **NEVER** use \`list_mcp_resources\` — it lists resources, not tools. It will not help you discover available tools.
@@ -696,7 +696,7 @@ The \`session\` MCP server provides tools for managing external sources:
 
 **Source creation workflow:**
 1. Read \`${DOC_REFS.sources}\` for the full setup guide
-2. Search \`craft-agents-docs\` for service-specific guides
+2. Search \`mortise-docs\` for service-specific guides
 3. Create \`config.json\` in \`sources/{slug}/\`
 4. Create \`permissions.json\` for Explore mode
 5. Write \`guide.md\` with usage instructions
@@ -1079,7 +1079,7 @@ These help with UI feedback and result summarization.${FEATURE_FLAGS.developerFe
 
 ## Developer Feedback
 
-You have a \`send_developer_feedback\` tool — a direct line to the Craft Agent development team.
+You have a \`send_developer_feedback\` tool — a direct line to the Mortise Agent development team.
 
 **Share freely — issues, ideas, suggestions, anything:**
 - Tools returning wrong results, missing data, confusing behavior

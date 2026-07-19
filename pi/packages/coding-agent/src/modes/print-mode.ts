@@ -6,7 +6,7 @@
  * - `pi --mode json "prompt"` - JSON event stream
  */
 
-import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai/types";
+import type { AssistantMessage, ImageContent } from "@mortise/pi-ai/types";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import type { ExtensionError } from "../core/extensions/types.ts";
 import { flushRawStdout, writeRawStdout } from "../core/output-guard.ts";

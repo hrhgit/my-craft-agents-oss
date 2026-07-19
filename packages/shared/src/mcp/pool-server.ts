@@ -97,16 +97,16 @@ export class McpPoolServer {
 
   /**
    * Create an MCP Server instance wired to the pool.
-   * Tools from pool use `mcp__craft__search_spaces` naming internally.
+   * Tools from pool use `mcp__mortise__search_spaces` naming internally.
    * We strip the `mcp__` prefix so Codex (which adds its own `mcp__sources__`
    * prefix based on the POOL_SERVER_MCP_NAME) sees clean names:
-   *   pool internal: mcp__craft__search_spaces
-   *   exposed here:  craft__search_spaces
-   *   Codex sees:    mcp__sources__craft__search_spaces
+   *   pool internal: mcp__mortise__search_spaces
+   *   exposed here:  mortise__search_spaces
+   *   Codex sees:    mcp__sources__mortise__search_spaces
    */
   private createMcpServer(): Server {
     const server = new Server(
-      { name: 'craft-pool-proxy', version: '1.0.0' },
+      { name: 'mortise-pool-proxy', version: '1.0.0' },
       { capabilities: { tools: {} } }
     );
 

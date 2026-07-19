@@ -5,8 +5,8 @@
  * Users can create permissions.json files to extend the default rules.
  *
  * File locations:
- * - Workspace: ~/.craft-agent/workspaces/{slug}/permissions.json
- * - Per-source: ~/.craft-agent/workspaces/{slug}/sources/{sourceSlug}/permissions.json
+ * - Workspace: ~/.mortise/workspaces/{slug}/permissions.json
+ * - Per-source: ~/.mortise/workspaces/{slug}/sources/{sourceSlug}/permissions.json
  *
  * Rules are additive - custom configs extend the defaults (more permissive).
  */
@@ -50,11 +50,11 @@ let permissionsInitialized = false;
 
 /**
  * Get the app-level permissions directory.
- * Default permissions are stored at ~/.craft-agent/permissions/
- * Reads env var dynamically so tests can override via CRAFT_CONFIG_DIR.
+ * Default permissions are stored at ~/.mortise/permissions/
+ * Reads env var dynamically so tests can override via MORTISE_CONFIG_DIR.
  */
 export function getAppPermissionsDir(): string {
-  const configDir = process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent');
+  const configDir = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise');
   return join(configDir, 'permissions');
 }
 
@@ -190,7 +190,7 @@ function migratePermissions(
 }
 
 /**
- * Load default permissions from ~/.craft-agent/permissions/default.json
+ * Load default permissions from ~/.mortise/permissions/default.json
  * Returns null if file doesn't exist or is invalid.
  */
 export function loadDefaultPermissions(): PermissionsCustomConfig | null {
@@ -397,7 +397,7 @@ function compileBlockedCommandHint(hint: BlockedCommandHintRule): CompiledBlocke
 }
 
 function shouldCompileBashPattern(pattern: string): boolean {
-  if (!FEATURE_FLAGS.craftAgentsCli && pattern.startsWith('^craft-agent\\s')) {
+  if (!FEATURE_FLAGS.mortiseCli && pattern.startsWith('^mortise\\s')) {
     return false;
   }
   return true;
@@ -615,12 +615,12 @@ class PermissionsConfigCache {
   private sourceConfigs: Map<string, PermissionsCustomConfig | null> = new Map();
   private mergedConfigs: Map<string, MergedPermissionsConfig> = new Map();
 
-  // App-level default permissions (loaded from ~/.craft-agent/permissions/default.json)
+  // App-level default permissions (loaded from ~/.mortise/permissions/default.json)
   private defaultConfig: PermissionsCustomConfig | null | undefined = undefined; // undefined = not loaded yet
 
   /**
    * Get or load app-level default permissions
-   * These come from ~/.craft-agent/permissions/default.json
+   * These come from ~/.mortise/permissions/default.json
    */
   private getDefaultConfig(): PermissionsCustomConfig | null {
     if (this.defaultConfig === undefined) {
@@ -774,7 +774,7 @@ class PermissionsConfigCache {
     // Add allowed bash patterns (as CompiledBashPattern with metadata for error messages)
     for (const patternEntry of config.allowedBashPatterns) {
       if (!shouldCompileBashPattern(patternEntry.pattern)) {
-        debug(`[Permissions] Skipping craft-agent bash pattern (feature disabled): ${patternEntry.pattern}`);
+        debug(`[Permissions] Skipping mortise bash pattern (feature disabled): ${patternEntry.pattern}`);
         continue;
       }
 
@@ -829,7 +829,7 @@ class PermissionsConfigCache {
     // Add allowed bash patterns (making config more permissive)
     for (const patternEntry of custom.allowedBashPatterns) {
       if (!shouldCompileBashPattern(patternEntry.pattern)) {
-        debug(`[Permissions] Skipping craft-agent bash pattern (feature disabled): ${patternEntry.pattern}`);
+        debug(`[Permissions] Skipping mortise bash pattern (feature disabled): ${patternEntry.pattern}`);
         continue;
       }
 
@@ -915,7 +915,7 @@ class PermissionsConfigCache {
     // Bash patterns - apply normally (not source-specific)
     for (const patternEntry of custom.allowedBashPatterns) {
       if (!shouldCompileBashPattern(patternEntry.pattern)) {
-        debug(`[Permissions] Skipping craft-agent bash pattern (feature disabled): ${patternEntry.pattern}`);
+        debug(`[Permissions] Skipping mortise bash pattern (feature disabled): ${patternEntry.pattern}`);
         continue;
       }
 

@@ -44,8 +44,8 @@ function bindingOpts(binding: ChannelBinding): SendOptions {
   return binding.threadId !== undefined ? { threadId: binding.threadId } : {}
 }
 import type { PlanTokenRegistry } from './plan-tokens'
-import type { PermissionRequest } from '@craft-agent/core/types'
-import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
+import type { PermissionRequest } from '@mortise/core/types'
+import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 
 /** Session event shape (subset of the full SessionEvent from server-core). */
 export interface SessionEvent {
@@ -196,7 +196,7 @@ export class Renderer {
     }
   }
 
-  /** Render the Pi-native conversation envelope without depending on Craft transcript events. */
+  /** Render the Pi-native conversation envelope without depending on Mortise transcript events. */
   async handleProjection(
     event: PiProjectionEventV1,
     binding: ChannelBinding,

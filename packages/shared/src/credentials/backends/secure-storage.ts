@@ -1,16 +1,16 @@
 /**
  * Pi Credential Store - pi auth.json wrapper
  *
- * 凭证统一存储在 ~/.pi/agent/auth.json 的 craft.<slug> 命名空间。此模块为
+ * 凭证统一存储在 ~/.pi/agent/auth.json 的 mortise.<slug> 命名空间。此模块为
  * auth.json 的 thin wrapper，保留对外方法签名以兼容调用方。
  *
  * 设计要点：
  * - 所有凭证（含非 pi 的 LLM/OAuth/source/workspace 凭证）写入 pi auth.json 的
- *   `craft.<slug>` 命名空间。
+ *   `mortise.<slug>` 命名空间。
  * - pi 自身的凭证（auth.json 顶层 `providers` 命名空间）由 pi CLI / Pi RpcClient
- *   维护，craft 不触碰；pi CLI 单独运行时也不会读取 `craft.*` 条目。
- * - `craft.<slug>` 命名空间对 pi 是 opaque（pi auth-storage.ts 注释明确说明），
- *   因此 craft 可以用自定义 envelope 无损存储任意 StoredCredential。
+ *   维护，mortise 不触碰；pi CLI 单独运行时也不会读取 `mortise.*` 条目。
+ * - `mortise.<slug>` 命名空间对 pi 是 opaque（pi auth-storage.ts 注释明确说明），
+ *   因此 mortise 可以用自定义 envelope 无损存储任意 StoredCredential。
  *
  * Slug 命名约定（沿用 credentialIdToAccount 的 `::` 分隔格式，无 `.`，符合
  * pi setCraftCredential 的 slug 校验）：
@@ -26,7 +26,7 @@
  *   - messaging_bearer::<workspaceId>::<platform>
  *   - <type>::global（legacy global credentials）
  *
- * 在 auth.json 中最终 key 形如 `craft.llm_api_key::my-connection`。
+ * 在 auth.json 中最终 key 形如 `mortise.llm_api_key::my-connection`。
  */
 
 import {
@@ -35,7 +35,7 @@ import {
   getCraftCredential as getPiHostCraftCredential,
   listCraftCredentialSlugs as listPiHostCraftCredentialSlugs,
   setCraftCredential as setPiHostCraftCredential,
-} from '@earendil-works/pi-coding-agent/host-facade';
+} from '@mortise/pi-coding-agent/host-facade';
 import type { CredentialBackend } from './types.ts';
 import type { CredentialId, CredentialType, StoredCredential } from '../types.ts';
 import {
@@ -46,19 +46,19 @@ import {
 type AuthCredential = Record<string, unknown>;
 
 /**
- * Envelope persisted in auth.json under `craft.<slug>`.
+ * Envelope persisted in auth.json under `mortise.<slug>`.
  *
  * pi 的 AuthCredential 联合（ApiKeyCredential | OAuthCredential | SourceCredential）
- * 无法无损承载 craft 的所有 StoredCredential 字段（如 IAM 的 awsAccessKeyId、
+ * 无法无损承载 mortise 的所有 StoredCredential 字段（如 IAM 的 awsAccessKeyId、
  * service_account 的 gcpProjectId、source_apikey 的任意 JSON value）。由于
- * `craft.*` 命名空间对 pi 是 opaque（pi 不解析这些条目），我们用自定义 envelope
- * 保存原始 StoredCredential 与 craft 凭证类型，保证零数据丢失。这与
+ * `mortise.*` 命名空间对 pi 是 opaque（pi 不解析这些条目），我们用自定义 envelope
+ * 保存原始 StoredCredential 与 mortise 凭证类型，保证零数据丢失。这与
  * Pi RpcClient 处理 IAM 凭证时的做法一致（`as unknown as AuthCredential`）。
  */
-interface CraftCredentialEnvelope {
-  type: 'craft_credential';
-  /** craft 凭证类型（CredentialType），用于 list() 过滤 */
-  craftType: CredentialType;
+interface MortiseCredentialEnvelope {
+  type: 'mortise_credential';
+  /** mortise 凭证类型（CredentialType），用于 list() 过滤 */
+  mortiseType: CredentialType;
   /** 原始 StoredCredential，所有字段完整保留 */
   stored: StoredCredential;
 }
@@ -86,8 +86,8 @@ function listCraftSlugs(): string[] {
 }
 
 /**
- * Slug 点号转义：pi 的 setCraftCredential 校验 slug 不含 `.`（与 `craft.<slug>`
- * 命名空间前缀冲突），而 craft 的 scope 段（providerKey / sourceId / 自定义
+ * Slug 点号转义：pi 的 setCraftCredential 校验 slug 不含 `.`（与 `mortise.<slug>`
+ * 命名空间前缀冲突），而 mortise 的 scope 段（providerKey / sourceId / 自定义
  * 连接名）可能含 `.`。使用百分号编码 `%2E`——可逆且无碰撞风险。
  *
  * 例：`source_oauth::ws1::my.api.source` → `source_oauth::ws1::my%2Eapi%2Esource`
@@ -102,25 +102,25 @@ export function unescapeSlugSegment(s: string): string {
 }
 
 /** 将 StoredCredential 封装为 envelope，再 cast 为 AuthCredential 写入 pi auth.json */
-function encodeCredential(stored: StoredCredential, craftType: CredentialType): AuthCredential {
-  const envelope: CraftCredentialEnvelope = {
-    type: 'craft_credential',
-    craftType,
+function encodeCredential(stored: StoredCredential, mortiseType: CredentialType): AuthCredential {
+  const envelope: MortiseCredentialEnvelope = {
+    type: 'mortise_credential',
+    mortiseType,
     stored,
   };
   return envelope as unknown as AuthCredential;
 }
 
 /** 从 pi AuthCredential 还原为 StoredCredential；非 envelope 返回 null */
-function decodeCredential(cred: AuthCredential | undefined): { stored: StoredCredential; craftType: CredentialType } | null {
+function decodeCredential(cred: AuthCredential | undefined): { stored: StoredCredential; mortiseType: CredentialType } | null {
   if (!cred) return null;
-  const candidate = cred as unknown as Partial<CraftCredentialEnvelope>;
-  if (candidate?.type !== 'craft_credential' || !candidate.stored || typeof candidate.stored !== 'object') {
+  const candidate = cred as unknown as Partial<MortiseCredentialEnvelope>;
+  if (candidate?.type !== 'mortise_credential' || !candidate.stored || typeof candidate.stored !== 'object') {
     return null;
   }
   return {
     stored: candidate.stored as StoredCredential,
-    craftType: candidate.craftType as CredentialType,
+    mortiseType: candidate.mortiseType as CredentialType,
   };
 }
 

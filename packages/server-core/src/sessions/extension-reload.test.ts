@@ -7,7 +7,7 @@ function addSession(manager: SessionManager, id: string, isProcessing: boolean, 
   order?: string[]
 }) {
   const managed = createManagedSession(
-    { craftId: id, name: `Session ${id}` },
+    { mortiseId: id, name: `Session ${id}` },
     { id: 'workspace-1', name: 'Workspace', rootPath: process.cwd(), createdAt: 0 } as never,
     { messagesLoaded: true },
   )

@@ -1,9 +1,9 @@
 /** Versioned structured plan protocol shared by Pi, persistence, and UI. */
 
 export const PLAN_ARTIFACT_SCHEMA_VERSION = 1 as const;
-export const PLAN_ARTIFACT_CUSTOM_TYPE = 'craft-plan-artifact' as const;
-export const PLAN_ARTIFACT_UPDATE_CUSTOM_TYPE = 'craft-plan-artifact-update' as const;
-export const PLAN_MODE_STATE_CUSTOM_TYPE = 'craft-plan-state' as const;
+export const PLAN_ARTIFACT_CUSTOM_TYPE = 'mortise-plan-artifact' as const;
+export const PLAN_ARTIFACT_UPDATE_CUSTOM_TYPE = 'mortise-plan-artifact-update' as const;
+export const PLAN_MODE_STATE_CUSTOM_TYPE = 'mortise-plan-state' as const;
 
 export type PlanArtifactState =
   | 'reviewing'

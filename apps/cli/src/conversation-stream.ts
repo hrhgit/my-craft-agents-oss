@@ -1,4 +1,4 @@
-import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 import type { CliRpcClient } from './client.ts'
 
 export interface ConversationStreamEvent {
@@ -9,7 +9,7 @@ export interface ConversationStreamEvent {
   raw: unknown
 }
 
-/** Pi projection is the only transcript stream for new Craft sessions. */
+/** Pi projection is the only transcript stream for new Mortise sessions. */
 export function subscribeToConversationStream(
   client: Pick<CliRpcClient, 'on'>,
   sessionId: string,

@@ -3,7 +3,7 @@ import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, File, Image, Load
 import type { PiProjectionState } from '@/atoms/pi-projection'
 import { cn } from '@/lib/utils'
 import { CollapsibleMarkdownProvider, Markdown, StreamingMarkdown } from '@/components/markdown'
-import { ActivityCardsOverlay, UserMessageBubble, extractOverlayCards, type ActivityItem } from '@craft-agent/ui'
+import { ActivityCardsOverlay, UserMessageBubble, extractOverlayCards, type ActivityItem } from '@mortise/ui'
 import type { CredentialResponse } from '../../../shared/types'
 import { MemoizedAuthRequestCard } from '@/components/chat/AuthRequestCard'
 import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, type PiTimelineItem } from './pi-timeline-model'

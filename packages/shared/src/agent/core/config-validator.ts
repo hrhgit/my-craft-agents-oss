@@ -26,22 +26,22 @@ const CONFIG_FILE_PATTERNS: { pattern: RegExp; type: ConfigFileType }[] = [
 ];
 
 /**
- * Craft Agent specific config files that have known schemas.
+ * Mortise Agent specific config files that have known schemas.
  */
-const CRAFT_AGENT_CONFIG_PATTERNS = [
+const MORTISE_AGENT_CONFIG_PATTERNS = [
   // Main config
-  /\.craft-agent\/config\.json$/,
+  /\.mortise\/config\.json$/,
   // Preferences
-  /\.craft-agent\/preferences\.json$/,
+  /\.mortise\/preferences\.json$/,
   // Source configs
-  /\.craft-agent\/workspaces\/[^/]+\/sources\/[^/]+\/config\.json$/,
+  /\.mortise\/workspaces\/[^/]+\/sources\/[^/]+\/config\.json$/,
   // Permissions
-  /\.craft-agent\/workspaces\/[^/]+\/permissions\.json$/,
-  /\.craft-agent\/permissions\/[^/]+\.json$/,
+  /\.mortise\/workspaces\/[^/]+\/permissions\.json$/,
+  /\.mortise\/permissions\/[^/]+\.json$/,
   // Theme
-  /\.craft-agent\/workspaces\/[^/]+\/theme\.json$/,
+  /\.mortise\/workspaces\/[^/]+\/theme\.json$/,
   // Tool icons
-  /\.craft-agent\/tool-icons\/tool-icons\.json$/,
+  /\.mortise\/tool-icons\/tool-icons\.json$/,
 ];
 
 /**
@@ -93,16 +93,16 @@ export class ConfigValidator {
   }
 
   /**
-   * Check if a file path is a Craft Agent config file.
+   * Check if a file path is a Mortise Agent config file.
    *
    * @param filePath - Path to check
-   * @returns true if this is a Craft Agent config
+   * @returns true if this is a Mortise Agent config
    */
-  isCraftAgentConfig(filePath: string): boolean {
+  isMortiseConfig(filePath: string): boolean {
     const normalizedPath = process.platform === 'win32'
       ? filePath.replace(/\\/g, '/').toLowerCase()
       : filePath.replace(/\\/g, '/');
-    return CRAFT_AGENT_CONFIG_PATTERNS.some((pattern) => pattern.test(normalizedPath));
+    return MORTISE_AGENT_CONFIG_PATTERNS.some((pattern) => pattern.test(normalizedPath));
   }
 
   // ============================================================

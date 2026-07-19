@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { Message } from '@craft-agent/core'
+import type { Message } from '@mortise/core'
 import { groupMessagesByTurn } from '../turn-utils'
 
 describe('turn-utils plan artifact projection', () => {

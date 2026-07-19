@@ -1,27 +1,27 @@
-# Craft GUI Extension Style And Placement V2 Proposal
+# Mortise GUI Extension Style And Placement V2 Proposal
 
-Status: design proposal. The `workspace.content` portion describes the current contribution API; the remaining V2 presentation types are future design shapes.
+Status: design proposal. `workspace.content` and its `workspaceContent` metadata describe the current public contribution API. Message-part presentation, host task-status popovers, the V2 style context, and the remaining V2 types are future design shapes, not shipped author APIs.
 
 Snapshot date: 2026-07-17.
 
 ## 1. 结论
 
-- Recommendation: `reuse-first`，复用当前主流 Agent 桌面端的产品模式；Craft 自行维护版本化 extension presentation 与 style contract。
+- Recommendation: `reuse-first`，复用当前主流 Agent 桌面端的产品模式；Mortise 自行维护版本化 extension presentation 与 style contract。
 - Recommended candidate: OpenAI Codex App。
-- One-line reason: Codex 的 workspace/session 导航、连续 transcript、渐进式 task/tool 状态、review 辅助面和稳定 composer，与 Craft 的 workspace-centric agent 桌面端目标最接近。
+- One-line reason: Codex 的 workspace/session 导航、连续 transcript、渐进式 task/tool 状态、review 辅助面和稳定 composer，与 Mortise 的 workspace-centric agent 桌面端目标最接近。
 
-主参考顺序是 OpenAI Codex App、Claude Desktop / Claude Code Desktop，再用 assistant-ui 验证 message-part 组合模型的实现可行性。IDE 不适合作为 Craft GUI 扩展的主要 UX 参考；它只补充“完整工具如何成为可移动 workspace content”这一小段。消息旁 UI、工具调用、追问、计划状态、composer、review finding 和 Artifact 预览都应先按 Agent 桌面端设计。
+主参考顺序是 OpenAI Codex App、Claude Desktop / Claude Code Desktop，再用 assistant-ui 验证 message-part 组合模型的实现可行性。IDE 不适合作为 Mortise GUI 扩展的主要 UX 参考；它只补充“完整工具如何成为可移动 workspace content”这一小段。消息旁 UI、工具调用、追问、计划状态、composer、review finding 和 Artifact 预览都应先按 Agent 桌面端设计。
 
-这里的 `reuse-first` 是复用产品模式和交互语法，不是引入 Codex 或 Claude 的闭源 runtime。Craft 的 extension ownership、序列化协议、sandbox 隔离、冲突处理和 universal dock 仍然自建。
+这里的 `reuse-first` 是复用产品模式和交互语法，不是引入 Codex 或 Claude 的闭源 runtime。Mortise 的 extension ownership、序列化协议、sandbox 隔离、冲突处理和 universal dock 仍然自建。
 
-当前 Craft GUI 扩展的安全和生命周期基础已经较好：贡献协议可序列化、host-rendered 与 sandbox 分层、宿主拥有冲突处理、扩展 UI 有开发态验证契约。当前真正缺少的是一套 conversation-first 的作者模型：
+当前 Mortise GUI 扩展的安全和生命周期基础已经较好：贡献协议可序列化、host-rendered 与 sandbox 分层、宿主拥有冲突处理、扩展 UI 有开发态验证契约。当前真正缺少的是一套 conversation-first 的作者模型：
 
 1. 现有文档按 surface 名称罗列能力，没有先回答“这块 UI 属于哪次对话事件”。
 2. `before/after/overlay/topRight` 容易诱导作者从坐标出发，而不是从消息 part、工具状态和用户任务出发。
 3. 运行中的 tool、完成后的 result、HITL question 和 Artifact preview 没有统一的对话组件语法。
 4. 原 `workbench.right` 已从公共协议移除；完整扩展工具使用 `workspace.content`，不再暴露固定方向或宽度。
-5. host-rendered UI 只有少量 `tone`/`gap`；sandbox 只拿到少数颜色 token，无法稳定跟随 Craft 的排版、密度、focus、motion 和容器尺寸。
-6. 协议接受 badge tone，但当前 renderer 没有按 tone 渲染 badge；文本状态色也没有完整使用 Craft 语义 token。
+5. host-rendered UI 只有少量 `tone`/`gap`；sandbox 只拿到少数颜色 token，无法稳定跟随 Mortise 的排版、密度、focus、motion 和容器尺寸。
+6. host-rendered 文本状态色还没有完整使用 Mortise 语义 token，sandbox 也只拿到少量颜色 token，尚未形成稳定的排版、密度、focus、motion 和容器上下文。
 
 V2 的第一原则：
 
@@ -30,7 +30,7 @@ V2 的第一原则：
 三层职责：
 
 1. Conversation event UI：tool、HITL、review finding、Artifact preview 和 trace 绑定产生它的 message/tool/turn，在 transcript 中原位恢复和解决。
-2. Host task/environment status：Craft 聚合跨消息或跨会话仍需关注的 working、needs-input、completed、scheduled、unread 和环境摘要；扩展只贡献结构化状态。
+2. Host task/environment status：Mortise 聚合跨消息或跨会话仍需关注的 working、needs-input、completed、scheduled、unread 和环境摘要；扩展只贡献结构化状态。
 3. Workspace content：完整 Artifact、Review、Browser、调试器和扩展工具作为 universal dock 的普通 content tab，可移动、分组和 detach。
 
 升级阶梯：
@@ -43,7 +43,7 @@ message part -> turn/thread contribution -> task status popover -> workspace con
 推荐空间模型：
 
 ```text
-┌──────────────────────────── Craft window ────────────────────────────┐
+┌──────────────────────────── Mortise window ────────────────────────────┐
 │ workspace / session navigation                         task status   │
 ├──────────────────┬──────────────────────────┬────────────────────────┤
 │ workspace sidebar│ conversation             │ optional dock group    │
@@ -57,7 +57,7 @@ message part -> turn/thread contribution -> task status popover -> workspace con
 └──────────────────┴──────────────────────────┴────────────────────────┘
 ```
 
-右侧只是某次布局结果，不是扩展 API。用户提供的 Codex 实机截图中，右侧“环境信息”是由顶栏动作打开的临时检查 popover；官网中的完整 changed-files/review 则进入辅助面。Craft 同样应让紧凑状态停留在宿主 popover，让完整工具成为 workspace-owned content tab，可进入任意 dock group 或独立窗口；对话中的 UI 仍留在产生它的消息位置。
+右侧只是某次布局结果，不是扩展 API。用户提供的 Codex 实机截图中，右侧“环境信息”是由顶栏动作打开的临时检查 popover；官网中的完整 changed-files/review 则进入辅助面。Mortise 同样应让紧凑状态停留在宿主 popover，让完整工具成为 workspace-owned content tab，可进入任意 dock group 或独立窗口；对话中的 UI 仍留在产生它的消息位置。
 
 ## 2. 候选对比
 
@@ -67,7 +67,7 @@ message part -> turn/thread contribution -> task status popover -> workspace con
 |---|---:|---|---|---|---|
 | OpenAI Codex App | 98.75 | pass | L2 | 闭源产品，只能复用 UX 模式，不能依赖内部协议 | [Product](https://openai.com/codex/), [Terms](https://openai.com/policies/terms-of-use/) |
 | Claude Desktop and Claude Code Desktop | 98.50 | pass | L2 | 产品壳层不是扩展 contribution contract，部分能力可能随版本变化 | [Desktop navigation](https://claude.com/resources/tutorials/navigating-the-claude-desktop-app), [Desktop redesign](https://claude.com/blog/claude-code-desktop-redesign), [Agent view](https://claude.com/blog/agent-view-in-claude-code), [Artifacts](https://claude.com/blog/artifacts-in-claude-code) |
-| assistant-ui Conversation Primitives | 96.50 | pass | L2 | 是组件/runtime 库，不提供 Craft 所需的跨进程隔离和多扩展冲突策略 | [GitHub](https://github.com/assistant-ui/assistant-ui), [Thread](https://www.assistant-ui.com/docs/primitives/thread), [Message](https://www.assistant-ui.com/docs/primitives/message), [Tool UI](https://www.assistant-ui.com/docs/tools/tool-ui) |
+| assistant-ui Conversation Primitives | 96.50 | pass | L2 | 是组件/runtime 库，不提供 Mortise 所需的跨进程隔离和多扩展冲突策略 | [GitHub](https://github.com/assistant-ui/assistant-ui), [Thread](https://www.assistant-ui.com/docs/primitives/thread), [Message](https://www.assistant-ui.com/docs/primitives/message), [Tool UI](https://www.assistant-ui.com/docs/tools/tool-ui) |
 
 复用结论：
 
@@ -75,7 +75,7 @@ message part -> turn/thread contribution -> task status popover -> workspace con
 - 从 Claude Desktop / Claude Code Desktop 交叉验证并行 session、`Needs input / Working / Completed` 状态筛选、side chat、可调整 pane、Artifact 持续视图和 Summary/Normal/Verbose 透明度。
 - 从 assistant-ui 复用 thread/message/composer/parts 的组合模型：tool UI 是 message part，不是任意浮层。
 - CopilotKit 仅作为 controlled tool UI、HITL、declarative UI 与 sandbox app 分层的二级实现参考；LibreChat 仅作为完整对话产品的补充观察对象。
-- Craft 不直接引入这些 runtime。现有 Pi RPC revision、extension ownership、sandbox bridge、WebUI/Electron capability contract 和 universal dock 仍由 Craft 自己实现。
+- Mortise 不直接引入这些 runtime。现有 Pi RPC revision、extension ownership、sandbox bridge、WebUI/Electron capability contract 和 universal dock 仍由 Mortise 自己实现。
 - VS Code/JupyterLab 只作为 universal dock、overflow 和用户可移动布局的二级参考，不再决定对话 surface。
 
 Open WebUI 适合做产品观察，但当前许可证包含品牌保留限制，因此不作为可复用实现候选：[License](https://github.com/open-webui/open-webui/blob/main/LICENSE)。
@@ -156,14 +156,14 @@ type ExtensionPresentationV2 =
     };
 ```
 
-`task-status` 是结构化数据贡献，不是让扩展渲染任意浮层。Craft 统一把所有来源聚合为 `Needs input / Working / Completed / Scheduled / Unread`，负责排序、去重、attention、已读状态和 overflow；扩展只提供状态、摘要和打开详情的动作。
+`task-status` 是结构化数据贡献，不是让扩展渲染任意浮层。Mortise 统一把所有来源聚合为 `Needs input / Working / Completed / Scheduled / Unread`，负责排序、去重、attention、已读状态和 overflow；扩展只提供状态、摘要和打开详情的动作。
 
 渲染自由度再单独分层：
 
-| Level | 适用场景 | Craft 边界 |
+| Level | 适用场景 | Mortise 边界 |
 |---|---|---|
-| Host primitive | status、question、tool summary、button、progress、key-value | Craft 渲染、主题化和验证，默认选择 |
-| Declarative catalog | 已注册的复杂图表、表格、表单组合 | 扩展提供 schema/data，Craft 从批准组件 catalog 组合 |
+| Host primitive | status、question、tool summary、button、progress、key-value | Mortise 渲染、主题化和验证，默认选择 |
+| Declarative catalog | 已注册的复杂图表、表格、表单组合 | 扩展提供 schema/data，Mortise 从批准组件 catalog 组合 |
 | Sandbox app | 独立应用、未知 MCP UI、完整自定义交互 | iframe 隔离、显式权限、host frame、semantic bridge |
 
 placement 与 renderer level 正交：sandbox app 可以是 message part 或 workspace content，但不能因为使用 sandbox 就自行选择绝对坐标。
@@ -183,7 +183,7 @@ V1/V2 关系：
 
 Conversation：
 
-- 扩展贡献继承 Craft 当前 message/tool 容器，不得给既有对话内容额外再包一层外卡片；这条规则不要求重做 Craft 现有用户或 assistant 消息样式。
+- 扩展贡献继承 Mortise 当前 message/tool 容器，不得给既有对话内容额外再包一层外卡片；这条规则不要求重做 Mortise 现有用户或 assistant 消息样式。
 - annotation/source/status 使用低强调行或折叠 section；只有需要边界和交互的 tool/HITL/Artifact preview 才使用 card。
 - tool card header 固定一行：icon、tool label、状态、duration、展开控制。运行时展开关键进度，完成后默认收起明细并保留结果摘要。
 - 多个连续的轻量 tool call 由宿主分组，避免形成长串重复卡片。
@@ -199,7 +199,7 @@ Composer：
 
 Transparency / detail level：
 
-- Craft 拥有 `Summary / Normal / Verbose` 选择，扩展提供结构化 `summary`、`detail` 和可选 `trace`，不能各自发明密度开关。
+- Mortise 拥有 `Summary / Normal / Verbose` 选择，扩展提供结构化 `summary`、`detail` 和可选 `trace`，不能各自发明密度开关。
 - Summary 只保留结果、等待用户的动作、失败和 changed-files 等关键摘要；已完成的普通 tool 默认折叠。
 - Normal 展示运行步骤、重要参数和结果，作为默认模式。
 - Verbose 展示可安全公开的完整 tool 输入、输出和 trace，但仍遵守权限、secret redaction 和内容上限。
@@ -207,7 +207,7 @@ Transparency / detail level：
 
 Workspace content：
 
-- Craft 拥有 tab、标题、icon、拖拽、detach、close、权限和错误恢复；扩展只渲染 body/内部 toolbar。
+- Mortise 拥有 tab、标题、icon、拖拽、detach、close、权限和错误恢复；扩展只渲染 body/内部 toolbar。
 - 扩展不重复 app title bar，不假设自己在右侧，不使用全局 fixed positioning。
 - 即使 `stateScope` 是 global，渲染出来的 tab/window 仍属于当前 workspace layout，绝不混入其他 workspace 内容。
 
@@ -218,28 +218,28 @@ Host-rendered style contract：
 - `emphasis`: quiet / normal / strong；一个 contribution 最多一个 strong action。
 - `density`: compact / regular；宿主可按 presentation 和 viewport 覆盖。
 - 熟悉命令使用 Lucide icon；不熟悉 icon 必须有 accessible name 和 tooltip。
-- Button、badge、progress、empty/error state 和 focus ring 由 Craft primitive 渲染。
+- Button、badge、progress、empty/error state 和 focus ring 由 Mortise primitive 渲染。
 
 Sandbox style context：
 
 ```css
 /* color */
---craft-canvas; --craft-surface; --craft-surface-subtle;
---craft-text; --craft-text-muted; --craft-border; --craft-focus;
---craft-accent; --craft-info; --craft-success; --craft-warning; --craft-danger;
+--mortise-canvas; --mortise-surface; --mortise-surface-subtle;
+--mortise-text; --mortise-text-muted; --mortise-border; --mortise-focus;
+--mortise-accent; --mortise-info; --mortise-success; --mortise-warning; --mortise-danger;
 
 /* typography */
---craft-font-sans; --craft-font-mono;
---craft-font-xs: 12px; --craft-font-sm: 13px; --craft-font-md: 14px;
+--mortise-font-sans; --mortise-font-mono;
+--mortise-font-xs: 12px; --mortise-font-sm: 13px; --mortise-font-md: 14px;
 
 /* geometry */
---craft-space-1: 4px; --craft-space-2: 8px; --craft-space-3: 12px;
---craft-space-4: 16px; --craft-space-6: 24px;
---craft-radius-sm: 4px; --craft-radius-md: 6px; --craft-radius-lg: 8px;
---craft-control-compact: 28px; --craft-control-regular: 32px;
+--mortise-space-1: 4px; --mortise-space-2: 8px; --mortise-space-3: 12px;
+--mortise-space-4: 16px; --mortise-space-6: 24px;
+--mortise-radius-sm: 4px; --mortise-radius-md: 6px; --mortise-radius-lg: 8px;
+--mortise-control-compact: 28px; --mortise-control-regular: 32px;
 
 /* motion */
---craft-motion-fast: 120ms; --craft-motion-normal: 180ms;
+--mortise-motion-fast: 120ms; --mortise-motion-normal: 180ms;
 ```
 
 Surface metrics：
@@ -255,20 +255,21 @@ Surface metrics：
 
 Shared visual rules：
 
-1. 不嵌套 card；只有重复实体或独立交互单元使用 card，圆角不超过 8px。
-2. 不使用装饰性渐变、发光 orb、大面积品牌色背景或营销式 hero。
-3. 状态不能只靠颜色；始终配合 icon、label 或可访问描述。
-4. 文本必须截断或换行，动态内容不能改变 toolbar/control 的稳定尺寸。
-5. 每个交互 UI 实现 streaming/loading、waiting、resolved、empty、error、disconnected、unsupported 和 permission-denied 中适用的状态。
-6. 支持键盘导航、可见 focus、200% zoom、reduced motion、light/dark/high-contrast。
-7. sandbox 可在数据内容区表达自己的视觉风格，但 shell、message rhythm、tab 和共享动作继续使用 Craft 语言。
+1. Button 默认使用清晰可见的边框；只有用户明确要求无边框样式时才移除边框。
+2. 不嵌套 card；只有重复实体或独立交互单元使用 card，圆角不超过 8px。
+3. 不使用装饰性渐变、发光 orb、大面积品牌色背景或营销式 hero。
+4. 状态不能只靠颜色；始终配合 icon、label 或可访问描述。
+5. 文本必须截断或换行，动态内容不能改变 toolbar/control 的稳定尺寸。
+6. 每个交互 UI 实现 streaming/loading、waiting、resolved、empty、error、disconnected、unsupported 和 permission-denied 中适用的状态。
+7. 支持键盘导航、可见 focus、200% zoom、reduced motion、light/dark/high-contrast。
+8. sandbox 可在数据内容区表达自己的视觉风格，但 shell、message rhythm、tab 和共享动作继续使用 Mortise 语言。
 
 ### 3.4 Host frame and live context
 
 Sandbox 初始化和更新消息应至少提供：
 
 ```ts
-type CraftPresentationContextV2 = {
+type MortisePresentationContextV2 = {
   schemaVersion: 2;
   presentation: ExtensionPresentationV2;
   frame: "inline" | "card" | "popover" | "content";
@@ -287,7 +288,7 @@ type CraftPresentationContextV2 = {
 
 1. 对话因果归属和 target identity。
 2. 用户已经做出的 move/pin/collapse 选择。
-3. Craft 核心控件和安全提示的保留空间。
+3. Mortise 核心控件和安全提示的保留空间。
 4. 当前 run 与 workspace 的上下文相关性。
 5. `needs-user` / failure 等语义 attention。
 6. 稳定 extension ID + contribution ID。
@@ -317,8 +318,8 @@ type CraftPresentationContextV2 = {
 
 ## 4. 风险与回滚
 
-- Risk 1: Codex 与 Claude 是持续演进的闭源产品，逐像素模仿会让 Craft 被某个版本绑住。
-- Mitigation: 只提炼稳定的任务语义、信息层级和升级路径；Craft visual tokens、协议与布局所有权保持独立。
+- Risk 1: Codex 与 Claude 是持续演进的闭源产品，逐像素模仿会让 Mortise 被某个版本绑住。
+- Mitigation: 只提炼稳定的任务语义、信息层级和升级路径；Mortise visual tokens、协议与布局所有权保持独立。
 - Risk 2: message-part 模型让扩展误以为所有 UI 都必须塞进 transcript。
 - Mitigation: 文档明确升级阶梯；需要持续操作、编辑或并行查看时直接打开 workspace content。
 - Risk 3: 旧 `before/after` contribution 无法可靠推断 part 类型。
@@ -336,15 +337,15 @@ type CraftPresentationContextV2 = {
 
 ## 5. 下一步执行
 
-1. 先做 doc-only 收敛：作者指南从 surface 清单改为 message/tool/HITL/Artifact/composer/task/workspace 的选择表，并明确升级阶梯。
-2. 补齐 V1 低风险一致性：badge tone 实际渲染、文本色改用语义 token、sandbox theme/context update 和基础 style recipe。
+1. 持续保持作者指南的语义选择表：先按 message/tool/HITL/Artifact/composer/task/workspace 归属选型，再列出仍受支持的 V1 surface；不要恢复坐标式 placement 指南。
+2. 补齐 V1 低风险一致性：文本色改用语义 token、sandbox theme/context update 和基础 style recipe。
 3. 为 `message-part` 增加显式 part/lifecycle/target contract，先覆盖 tool rendering、HITL question、review finding 和 Artifact preview 四个高价值场景。
 4. 增加 host-owned task status popover，统一 `Needs input / Working / Completed / Scheduled / Unread`，承接 background task、plan、TODO、automation 和 child-session summary；详情仍由用户打开 content tool。
 5. 继续用 `workspace.content` 的真实扩展示例验证 active/adjacent 初始放置、用户移动、分组、detach、恢复和 workspace isolation；不恢复方向型 surface。
-6. 用 source-only `craft-ui` 验证 streaming -> waiting -> resolved、tool grouping、Summary/Normal/Verbose、thread switch/reload、theme switch、compact overflow、content move/detach 和 workspace isolation。
+6. 用 source-only `mortise-ui` 验证 streaming -> waiting -> resolved、tool grouping、Summary/Normal/Verbose、thread switch/reload、theme switch、compact overflow、content move/detach 和 workspace isolation。
 7. 三类真实扩展示例通过验收后，再决定是否从重复 UI 中提炼 declarative component catalog。
 
 相关本地文档：
 
 - [Pi Extension GUI Architecture](./pi-extension-gui.md)
-- [Craft GUI Extensions Author Guide](../../apps/electron/resources/docs/pi-extensions.md)
+- [Mortise GUI Extensions Author Guide](../../apps/electron/resources/docs/pi-extensions.md)

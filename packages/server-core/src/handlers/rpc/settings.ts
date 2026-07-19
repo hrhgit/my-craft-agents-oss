@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'path'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import {
   getPreferencesPath,
   getSessionDraft,
@@ -11,15 +11,19 @@ import {
   setDefaultThinkingLevel,
   getMidStreamBehavior,
   setMidStreamBehavior,
-} from '@craft-agent/shared/config'
-import { normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
-import * as configStorage from '@craft-agent/shared/config/storage'
+  getAgentSettingsSnapshot,
+  updateMainAgentSettings,
+  upsertSubagent,
+  deleteSubagent,
+} from '@mortise/shared/config'
+import { normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@mortise/shared/agent/thinking-levels'
+import * as configStorage from '@mortise/shared/config/storage'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
-import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '@craft-agent/server-core/handlers'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '@mortise/server-core/handlers'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
-import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
+import { requestClientOpenFileDialog } from '@mortise/server-core/transport'
 import { applyExtensionConfigPatch } from './extension-config-patch'
 
 export const HANDLED_CHANNELS = [
@@ -46,6 +50,10 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL,
   RPC_CHANNELS.settings.GET_MID_STREAM_BEHAVIOR,
   RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR,
+  RPC_CHANNELS.agentSettings.GET,
+  RPC_CHANNELS.agentSettings.UPDATE_MAIN,
+  RPC_CHANNELS.agentSettings.UPSERT_SUBAGENT,
+  RPC_CHANNELS.agentSettings.DELETE_SUBAGENT,
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED,
@@ -65,6 +73,34 @@ export const HANDLED_CHANNELS = [
 ] as const
 
 export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): void {
+  server.handle(RPC_CHANNELS.agentSettings.GET, async () => {
+    const runtimeProfile = await deps.sessionManager.getAgentRuntimeProfile()
+    return getAgentSettingsSnapshot(runtimeProfile)
+  })
+
+  server.handle(RPC_CHANNELS.agentSettings.UPDATE_MAIN, async (
+    _ctx,
+    update: import('@mortise/shared/config').MainAgentSettingsUpdate,
+  ) => {
+    const runtimeProfile = await deps.sessionManager.getAgentRuntimeProfile()
+    updateMainAgentSettings(update)
+    await deps.sessionManager.reloadProviderRuntime()
+    return getAgentSettingsSnapshot(runtimeProfile)
+  })
+
+  server.handle(RPC_CHANNELS.agentSettings.UPSERT_SUBAGENT, async (
+    _ctx,
+    update: import('@mortise/shared/config').SubagentUpsert,
+  ) => {
+    const agent = upsertSubagent(update)
+    return { success: true, agent }
+  })
+
+  server.handle(RPC_CHANNELS.agentSettings.DELETE_SUBAGENT, async (_ctx, id: string) => {
+    deleteSubagent(id)
+    return { success: true }
+  })
+
   // ============================================================
   // Settings - Default Thinking Level (App-Level)
   // ============================================================
@@ -147,7 +183,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     if (!workspace) return null
 
     // Load workspace config
-    const { loadWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
+    const { loadWorkspaceConfig } = await import('@mortise/shared/workspaces')
     const config = loadWorkspaceConfig(workspace.rootPath)
 
     return {
@@ -172,7 +208,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
     }
 
-    const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
+    const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@mortise/shared/workspaces')
     const config = loadWorkspaceConfig(workspace.rootPath)
     if (!config) {
       throw new Error(`Failed to load workspace config: ${wid}`)
@@ -232,7 +268,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Set draft for a session (empty drafts are cleared)
-  server.handle(RPC_CHANNELS.drafts.SET, async (_ctx, sessionId: string, draft: import('@craft-agent/shared/config').SessionDraft) => {
+  server.handle(RPC_CHANNELS.drafts.SET, async (_ctx, sessionId: string, draft: import('@mortise/shared/config').SessionDraft) => {
     setSessionDraft(sessionId, draft)
   })
 
@@ -340,21 +376,21 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     return configStorage.getPiExtensionSettings()
   })
 
-  server.handle(RPC_CHANNELS.piExtensions.SET_SETTINGS, async (_ctx, settings: import('@craft-agent/shared/config').StoredPiExtensionSettings) => {
+  server.handle(RPC_CHANNELS.piExtensions.SET_SETTINGS, async (_ctx, settings: import('@mortise/shared/config').StoredPiExtensionSettings) => {
     return await configStorage.setPiExtensionSettings(settings)
   })
 
-  server.handle(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS, async (_ctx, patch: import('@craft-agent/shared/config').StoredPiExtensionSettings) => {
+  server.handle(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS, async (_ctx, patch: import('@mortise/shared/config').StoredPiExtensionSettings) => {
     return await configStorage.updatePiExtensionSettings(patch)
   })
 
   server.handle(RPC_CHANNELS.piExtensions.GET_CATALOG, async () => {
-    const { getPiExtensionCatalog } = await import('@craft-agent/shared/config/pi-global-config')
+    const { getPiExtensionCatalog } = await import('@mortise/shared/config/pi-global-config')
     return await getPiExtensionCatalog()
   })
 
-  server.handle(RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG, async (_ctx, patch: import('@craft-agent/shared/config').PiExtensionConfigPatch) => {
-    const { getPiExtensionCatalog, patchPiExtensionConfig } = await import('@craft-agent/shared/config/pi-global-config')
+  server.handle(RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG, async (_ctx, patch: import('@mortise/shared/config').PiExtensionConfigPatch) => {
+    const { getPiExtensionCatalog, patchPiExtensionConfig } = await import('@mortise/shared/config/pi-global-config')
     const catalog = await getPiExtensionCatalog()
     const extension = catalog.extensions.find((entry) => entry.id === patch.extensionId)
     if (!extension) throw new Error(`Unknown extension: ${patch.extensionId}`)
@@ -378,7 +414,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // 逐扩展启停：读写 Pi settings.json 的 extensionConfig.<name>.enabled
   server.handle(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES, async () => {
-    const { getPiExtensionCatalog } = await import('@craft-agent/shared/config/pi-global-config')
+    const { getPiExtensionCatalog } = await import('@mortise/shared/config/pi-global-config')
     const { extensions } = await getPiExtensionCatalog()
     const states: Record<string, boolean> = {}
     for (const extension of extensions) {
@@ -388,7 +424,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   server.handle(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED, async (_ctx, payload: { name: string; enabled: boolean }) => {
-    const { writePiExtensionEnabled } = await import('@craft-agent/shared/config/pi-global-config')
+    const { writePiExtensionEnabled } = await import('@mortise/shared/config/pi-global-config')
     await writePiExtensionEnabled(payload.name, payload.enabled)
     return await deps.sessionManager.requestExtensionReload(false)
   })

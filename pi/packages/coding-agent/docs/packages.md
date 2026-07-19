@@ -120,7 +120,20 @@ Add a `pi` manifest to `package.json` or use conventional directories. Include t
   "name": "my-package",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./extensions"],
+    "extensions": [
+      {
+        "id": "my-package",
+        "path": "./extensions/index.ts",
+        "targets": ["pi"],
+        "manifest": {
+          "schemaVersion": 1,
+          "name": "My Package",
+          "version": "1.0.0",
+          "author": { "name": "Example Author" },
+          "engines": { "pi": "^0.1.0" }
+        }
+      }
+    ],
     "skills": ["./skills"],
     "prompts": ["./prompts"],
     "themes": ["./themes"]
@@ -128,26 +141,47 @@ Add a `pi` manifest to `package.json` or use conventional directories. Include t
 }
 ```
 
-Paths are relative to the package root. Arrays support glob patterns and `!exclusions`.
+Paths are relative to the package root. Non-extension resource arrays support glob patterns and `!exclusions`. Extension entries are strict objects with `id`, `path`, and explicit `targets`.
 
-Extension manifest entries may use object form to control when an extension loads and which host can load it:
+Extension entries use object form to define identity, activation, host targets, and distributable Manifest V1 metadata:
 
 ```json
 {
   "pi": {
     "extensions": [
-      { "path": "./extensions/editor-ui.ts", "activation": "startup" },
-      { "path": "./extensions/model-tools.ts", "activation": "beforeFirstRequest" },
-      { "path": "./extensions/craft-ui.ts", "targets": ["craft"] },
-      { "path": "./extensions/shared.ts", "targets": ["pi", "craft"] }
+      {
+        "id": "editor-ui",
+        "path": "./extensions/editor-ui.ts",
+        "activation": "startup",
+        "targets": ["pi"],
+        "manifest": {
+          "schemaVersion": 1,
+          "name": "Editor UI",
+          "version": "1.0.0",
+          "author": { "name": "Example Author" },
+          "engines": { "pi": "^0.1.0" }
+        }
+      },
+      {
+        "id": "mortise-ui",
+        "path": "./extensions/mortise-ui.ts",
+        "targets": ["mortise"],
+        "manifest": {
+          "schemaVersion": 1,
+          "name": "Mortise UI",
+          "version": "1.0.0",
+          "author": { "name": "Example Author" },
+          "engines": { "mortise": "^0.1.0" }
+        }
+      }
     ]
   }
 }
 ```
 
-`startup` extensions load before the first screen. `beforeFirstRequest` extensions load after the first screen but before the first model request. `lazy` extensions are left for later explicit activation. String extension entries default to `beforeFirstRequest`.
+`startup` extensions load before the first screen. `beforeFirstRequest` extensions load after the first screen but before the first model request. `lazy` extensions are left for later explicit activation. Omitted activation defaults to `beforeFirstRequest`.
 
-`targets` can contain `pi`, `craft`, or both. Entries without `targets` default to `["pi"]`, so Craft hosts only load extensions that explicitly include `craft`.
+`targets` can contain `pi`, `mortise`, or both and must be explicit. Manifest V1 requires exact SemVer `version`, an `author`, and an `engines` range for every target. It also supports required and optional extension dependencies, conflicts, capability and permission declarations, and deterministic load-order hints. Mortise Developer Kit's `pi-extensions.md` is the full contract.
 
 ### Gallery Metadata
 
@@ -158,7 +192,6 @@ The [package gallery](https://pi.dev/packages) displays packages tagged with `pi
   "name": "my-package",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./extensions"],
     "video": "https://example.com/demo.mp4",
     "image": "https://example.com/screenshot.png"
   }
@@ -185,7 +218,7 @@ If no `pi` manifest is present, pi auto-discovers resources from these directori
 
 Third party runtime dependencies belong in `dependencies` in `package.json`. Dependencies that do not register extensions, skills, prompt templates, or themes also belong in `dependencies`. When pi installs a package from npm or git, it runs `npm install`, so those dependencies are installed automatically.
 
-Pi bundles core packages for extensions and skills. If you import any of these, list them in `peerDependencies` with a `"*"` range and do not bundle them: `@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, `typebox`.
+Pi bundles core packages for extensions and skills. If you import any of these, list them in `peerDependencies` with a `"*"` range and do not bundle them: `@mortise/pi-ai`, `@mortise/pi-agent-core`, `@mortise/pi-coding-agent`, `@mortise/pi-tui`, `typebox`.
 
 Other pi packages must be bundled in your tarball. Add them to `dependencies` and `bundledDependencies`, then reference their resources through `node_modules/` paths. Pi loads packages with separate module roots, so separate installs do not collide or share modules.
 
@@ -198,11 +231,12 @@ Example:
   },
   "bundledDependencies": ["shitty-extensions"],
   "pi": {
-    "extensions": ["extensions", "node_modules/shitty-extensions/extensions"],
     "skills": ["skills", "node_modules/shitty-extensions/skills"]
   }
 }
 ```
+
+Bundled extension code must still be represented by normal Manifest V1 entries. Do not point an extension entry at another package's unversioned directory.
 
 ## Package Filtering
 

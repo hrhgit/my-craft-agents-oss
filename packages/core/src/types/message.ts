@@ -503,7 +503,7 @@ export interface TypedError {
 /**
  * Permission request type categories
  */
-export type PermissionRequestType = 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
+export type PermissionRequestType = 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
 
 /**
  * Permission request from agent (e.g., bash command approval)
@@ -511,7 +511,7 @@ export type PermissionRequestType = 'bash' | 'file_write' | 'mcp_mutation' | 'ap
 export interface PermissionRequest {
   requestId: string;
   toolName: string;
-  command?: string;  // Optional: bash commands have it, MCP tools may not
+  command?: string;  // Optional: bash and mutation prompts may provide a stable command key
   description: string;
   type?: PermissionRequestType;  // Type of permission request
   /** Friendly app/package label for admin approval prompts */
@@ -531,7 +531,7 @@ export interface PermissionRequest {
 }
 
 /**
- * Usage data emitted by CraftAgent in 'complete' events
+ * Usage data emitted by MortiseAgent in 'complete' events
  * Note: This is a subset of TokenUsage - totalTokens/contextTokens are computed by consumers
  */
 export interface AgentEventUsage {
@@ -545,7 +545,7 @@ export interface AgentEventUsage {
 }
 
 /**
- * Events emitted by CraftAgent during chat
+ * Events emitted by MortiseAgent during chat
  * turnId: Correlation ID from the API's message.id, groups all events in an assistant turn
  */
 export type AgentEvent =

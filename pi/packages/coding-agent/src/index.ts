@@ -46,6 +46,7 @@ export {
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
+	DEFAULT_COMPACTION_PROMPT,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateTokens,
 	type FileOperations,
@@ -60,6 +61,15 @@ export {
 	shouldCompact,
 } from "./core/compaction/index.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+export type {
+	ExtensionManifestAuthorV1,
+	ExtensionManifestDiagnostic,
+	ExtensionManifestDiagnosticCode,
+	ExtensionManifestHost,
+	ExtensionManifestLoadOrderV1,
+	ExtensionManifestStatus,
+	ExtensionManifestV1,
+} from "./core/extension-manifest.ts";
 // Extension system
 export type {
 	AgentEndEvent,
@@ -124,6 +134,10 @@ export type {
 	ExtensionUIVerificationLevel,
 	ExtensionV2Definition,
 	ExtensionWidgetOptions,
+	ExtensionWorkspaceContentInstancePolicy,
+	ExtensionWorkspaceContentMetadataV1,
+	ExtensionWorkspaceContentPreferredGroup,
+	ExtensionWorkspaceContentScope,
 	FindToolCallEvent,
 	GrepToolCallEvent,
 	InputEvent,
@@ -259,7 +273,6 @@ export {
 	migrateGlobalProviderApiKeysToAuth,
 	normalizeHostThinkingLevel,
 	patchExtensionConfig,
-	readCraftAgentSettings,
 	readCraftLlmConnections,
 	readExtensionConfig,
 	readExtensionNamespace,
@@ -270,6 +283,7 @@ export {
 	readGlobalProviders,
 	readGlobalProvidersForDisplay,
 	readGlobalSettings,
+	readMortiseSettings,
 	readShellGuiEntry,
 	readShellGuiNamespace,
 	resolveSkill,
@@ -283,8 +297,8 @@ export {
 	setShellGuiEntry,
 	toHostErrorPayload,
 	upsertCraftLlmConnection,
-	writeCraftAgentSettingsBulk,
 	writeCraftLlmConnections,
+	writeMortiseSettingsBulk,
 } from "./core/host-facade.ts";
 export { convertToLlm } from "./core/messages.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
@@ -384,6 +398,7 @@ export {
 	type SkillFrontmatter,
 } from "./core/skills.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
+export { buildSystemPrompt } from "./core/system-prompt.ts";
 // Tools
 export {
 	type BashOperations,

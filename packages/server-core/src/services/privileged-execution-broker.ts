@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { CONFIG_DIR } from '@craft-agent/shared/config'
+import { CONFIG_DIR } from '@mortise/shared/config'
 import type { Logger } from '../runtime/platform'
 
 export interface PrivilegedExecutionRequest {

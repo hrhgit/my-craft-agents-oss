@@ -1,4 +1,4 @@
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
 import { registerAuthHandlers } from './auth'
@@ -21,6 +21,7 @@ import { registerSourcesHandlers } from './sources'
 import { registerSystemCoreHandlers } from './system'
 import { registerTransferHandlers } from './transfer'
 import { registerWorkspaceCoreHandlers } from './workspace'
+import { registerWorkspaceCoordinationHandlers } from './workspace-coordination'
 import { registerMessagingHandlers } from './messaging'
 
 export function cleanupClientFileWatches(clientId: string): void {
@@ -48,5 +49,6 @@ export function registerCoreRpcHandlers(
   registerSystemCoreHandlers(server, deps)
   registerTransferHandlers(server)
   registerWorkspaceCoreHandlers(server, deps)
+  registerWorkspaceCoordinationHandlers(server, deps)
   registerMessagingHandlers(server, deps)
 }

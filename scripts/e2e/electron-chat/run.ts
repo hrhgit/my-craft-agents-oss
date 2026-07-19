@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { requestCraftUiHost } from '../../craft-ui/client.ts'
-import { DEFAULT_CRAFT_UI_RUN_ROOT, startCraftUiRun, stopCraftUiRun } from '../../craft-ui/controller.ts'
+import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
+import { DEFAULT_MORTISE_UI_RUN_ROOT, startMortiseUiRun, stopMortiseUiRun } from '../../mortise-ui/controller.ts'
 
 interface SnapshotNode {
   ref: string
@@ -18,27 +18,27 @@ interface Snapshot {
 
 interface EvidenceResult { bundleDir: string; artifacts?: Array<{ path?: string }> }
 
-const sourceCraftConfigDir = requiredDirectory('CRAFT_E2E_SOURCE_CRAFT_PROFILE')
-const sourcePiAgentDir = requiredDirectory('CRAFT_E2E_SOURCE_PI_PROFILE')
+const sourceMortiseConfigDir = requiredDirectory('MORTISE_E2E_SOURCE_PROFILE')
+const sourcePiAgentDir = requiredDirectory('MORTISE_E2E_SOURCE_PI_PROFILE')
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-')
-const resultPath = resolve(process.env.CRAFT_E2E_RESULT_PATH
-  ?? join(DEFAULT_CRAFT_UI_RUN_ROOT, `electron-chat-${stamp}.json`))
-const providerLogPath = resolve(process.env.CRAFT_E2E_PROVIDER_LOG_FILE
-  ?? join(DEFAULT_CRAFT_UI_RUN_ROOT, `electron-chat-provider-${stamp}.jsonl`))
+const resultPath = resolve(process.env.MORTISE_E2E_RESULT_PATH
+  ?? join(DEFAULT_MORTISE_UI_RUN_ROOT, `electron-chat-${stamp}.json`))
+const providerLogPath = resolve(process.env.MORTISE_E2E_PROVIDER_LOG_FILE
+  ?? join(DEFAULT_MORTISE_UI_RUN_ROOT, `electron-chat-provider-${stamp}.jsonl`))
 const providerHookPath = resolve(import.meta.dir, 'provider-hook.cjs')
-const sentinel = `CRAFT_E2E_${stamp.replace(/[^A-Z0-9]/gi, '_').toUpperCase()}`
+const sentinel = `MORTISE_E2E_${stamp.replace(/[^A-Z0-9]/gi, '_').toUpperCase()}`
 const prompt = `Reply with exactly this token and no extra text: ${sentinel}`
 
-const manifest = await startCraftUiRun({
+const manifest = await startMortiseUiRun({
   surface: 'electron',
   profileMode: 'clone',
-  sourceCraftConfigDir,
+  sourceMortiseConfigDir,
   sourcePiAgentDir,
   waitMs: 300_000,
   extraEnv: {
     PI_HOST_HOOKS_MODULE: providerHookPath,
-    CRAFT_E2E_PROVIDER_LOG_FILE: providerLogPath,
-    CRAFT_E2E_RUN_ID: stamp,
+    MORTISE_E2E_PROVIDER_LOG_FILE: providerLogPath,
+    MORTISE_E2E_RUN_ID: stamp,
   },
 })
 
@@ -122,8 +122,8 @@ try {
   })
   throw error
 } finally {
-  const stopped = await stopCraftUiRun(manifest.runDir)
-  if (stopped.status !== 'stopped' && !failure) throw new Error(`craft-ui stop failed: ${stopped.error ?? stopped.cleanupError ?? 'unknown error'}`)
+  const stopped = await stopMortiseUiRun(manifest.runDir)
+  if (stopped.status !== 'stopped' && !failure) throw new Error(`mortise-ui stop failed: ${stopped.error ?? stopped.cleanupError ?? 'unknown error'}`)
 }
 
 async function command<T = Record<string, unknown>>(
@@ -131,7 +131,7 @@ async function command<T = Record<string, unknown>>(
   params: Record<string, unknown> = {},
   expectedLevel?: string,
 ): Promise<T & { verificationLevel: string; seq: number }> {
-  const response = await requestCraftUiHost<T>({ ...manifest, command: name, params, timeoutMs: 240_000 })
+  const response = await requestMortiseUiHost<T>({ ...manifest, command: name, params, timeoutMs: 240_000 })
   if (response.ok === false) throw new Error(`${name} failed: ${response.error.code}: ${response.error.message}`)
   if (expectedLevel && response.verificationLevel !== expectedLevel) {
     throw new Error(`${name} returned ${response.verificationLevel}; expected ${expectedLevel}.`)

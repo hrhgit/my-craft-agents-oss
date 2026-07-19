@@ -5,10 +5,10 @@
  * No dependency on ipcMain, sessionManager, credential manager, or file I/O.
  */
 
-import type { ModelDefinition } from '@craft-agent/shared/config/models'
+import type { ModelDefinition } from '@mortise/shared/config/models'
 import {
   type PiCustomApi,
-} from '@craft-agent/shared/config'
+} from '@mortise/shared/config'
 
 // ============================================================
 // Error Parsing

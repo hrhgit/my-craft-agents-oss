@@ -1,4 +1,4 @@
-import type { AssistantMessageEvent, Context, Model } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, Context, Model } from "@mortise/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamProxy } from "../src/proxy.ts";
 

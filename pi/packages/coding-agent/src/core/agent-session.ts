@@ -15,17 +15,10 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import type {
-	Agent,
-	AgentEvent,
-	AgentMessage,
-	AgentState,
-	AgentTool,
-	ThinkingLevel,
-} from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel, getSupportedThinkingLevels, modelsAreEqual } from "@earendil-works/pi-ai/model-utils";
-import { cleanupSessionResources } from "@earendil-works/pi-ai/session-resources";
-import { resetDefaultApiProviders, streamSimple } from "@earendil-works/pi-ai/stream";
+import type { Agent, AgentEvent, AgentMessage, AgentState, AgentTool, ThinkingLevel } from "@mortise/pi-agent-core";
+import { clampThinkingLevel, getSupportedThinkingLevels, modelsAreEqual } from "@mortise/pi-ai/model-utils";
+import { cleanupSessionResources } from "@mortise/pi-ai/session-resources";
+import { resetDefaultApiProviders, streamSimple } from "@mortise/pi-ai/stream";
 import type {
 	AssistantMessage,
 	ImageContent,
@@ -33,9 +26,9 @@ import type {
 	Model,
 	TextContent,
 	UserAttachmentMetadata,
-} from "@earendil-works/pi-ai/types";
-import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
-import { supportsBuiltinWebSearch } from "@earendil-works/pi-ai/web-search";
+} from "@mortise/pi-ai/types";
+import { isContextOverflow } from "@mortise/pi-ai/utils/overflow";
+import { supportsBuiltinWebSearch } from "@mortise/pi-ai/web-search";
 import { theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -48,6 +41,7 @@ import {
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
+	DEFAULT_COMPACTION_PROMPT,
 	estimateContextTokens,
 	generateBranchSummary,
 	prepareCompaction,
@@ -233,6 +227,14 @@ export interface ExtensionBindings {
 	 * shells, RPC hosts) that enforce their own permission policy.
 	 */
 	toolPermissionHandler?: ToolPermissionHandler;
+	/**
+	 * Host-side observer for finalized tool results.
+	 *
+	 * Runs after extension `tool_result` handlers have produced the final result
+	 * and is awaited before the tool result is published. Host failures are
+	 * reported as runtime diagnostics and never change the tool result.
+	 */
+	toolResultHandler?: ToolResultHandler;
 }
 
 /** Request passed to a host {@link ToolPermissionHandler}. */
@@ -241,6 +243,10 @@ export interface ToolPermissionRequest {
 	toolCallId: string;
 	/** Tool input after extension `tool_call` handlers have run (mutations applied). */
 	input: Record<string, unknown>;
+	/** Provider response identifier when the assistant API exposed one. */
+	assistantResponseId?: string;
+	/** Timestamp of the assistant response that requested the tool call. */
+	assistantTimestamp: number;
 }
 
 /** Result returned by a host {@link ToolPermissionHandler}. */
@@ -251,6 +257,27 @@ export type ToolPermissionResult =
 
 /** Host-side permission gate invoked before every tool execution. */
 export type ToolPermissionHandler = (request: ToolPermissionRequest) => Promise<ToolPermissionResult>;
+
+/** Finalized tool result passed to a host {@link ToolResultHandler}. */
+export interface ToolResultRequest {
+	toolName: string;
+	toolCallId: string;
+	/** Final tool input after extension and host permission mutations. */
+	input: Record<string, unknown>;
+	/** Final content after extension `tool_result` handlers. */
+	content: (TextContent | ImageContent)[];
+	/** Final details after extension `tool_result` handlers. */
+	details?: unknown;
+	/** Final error state after extension `tool_result` handlers. */
+	isError: boolean;
+	/** Provider response identifier when the assistant API exposed one. */
+	assistantResponseId?: string;
+	/** Timestamp of the assistant response that requested the tool call. */
+	assistantTimestamp: number;
+}
+
+/** Host-side observer invoked after extension tool-result processing. */
+export type ToolResultHandler = (request: ToolResultRequest) => Promise<void>;
 
 /** Options for AgentSession.prompt() */
 export interface PromptOptions {
@@ -387,8 +414,11 @@ export class AgentSession {
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _toolPermissionHandler?: ToolPermissionHandler;
+	private _toolResultHandler?: ToolResultHandler;
 	/** Host-set system prompt (PromptOptions.systemPrompt); wins over the loader-built prompt. */
 	private _hostSystemPromptOverride?: string;
+	/** Host-set compaction prompt used by both manual and automatic compaction. */
+	private _compactionPromptOverride?: string;
 	private _extensionErrorUnsubscriber?: () => void;
 
 	// Model registry for API key resolution
@@ -492,7 +522,7 @@ export class AgentSession {
 	 * happens here instead of in wrappers.
 	 */
 	private _installAgentToolHooks(): void {
-		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+		this.agent.beforeToolCall = async ({ assistantMessage, toolCall, args }) => {
 			const runner = this._extensionRunner;
 			let extensionResult: ToolCallEventResult | undefined;
 			const effectiveArgs = args as Record<string, unknown>;
@@ -525,6 +555,8 @@ export class AgentSession {
 					toolName: toolCall.name,
 					toolCallId: toolCall.id,
 					input: effectiveArgs,
+					assistantResponseId: assistantMessage.responseId,
+					assistantTimestamp: assistantMessage.timestamp,
 				});
 				if (permission.action === "block") {
 					return { block: true, reason: permission.reason };
@@ -544,31 +576,46 @@ export class AgentSession {
 			return extensionResult;
 		};
 
-		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
+		this.agent.afterToolCall = async ({ assistantMessage, toolCall, args, result, isError }) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_result")) {
-				return undefined;
+			const hookResult = runner.hasHandlers("tool_result")
+				? await runner.emitToolResult({
+						type: "tool_result",
+						toolName: toolCall.name,
+						toolCallId: toolCall.id,
+						input: args as Record<string, unknown>,
+						content: result.content,
+						details: result.details,
+						isError,
+					})
+				: undefined;
+			const finalContent = hookResult?.content ?? result.content;
+			const finalDetails = hookResult?.details ?? result.details;
+			const finalIsError = hookResult?.isError ?? isError;
+
+			if (this._toolResultHandler) {
+				try {
+					await this._toolResultHandler({
+						toolName: toolCall.name,
+						toolCallId: toolCall.id,
+						input: args as Record<string, unknown>,
+						content: finalContent,
+						details: finalDetails,
+						isError: finalIsError,
+						assistantResponseId: assistantMessage.responseId,
+						assistantTimestamp: assistantMessage.timestamp,
+					});
+				} catch (error) {
+					this._recordRuntimeDiagnostics([
+						{
+							type: "warning",
+							message: `Host tool result handler failed for ${toolCall.name} (${toolCall.id}): ${error instanceof Error ? error.message : String(error)}`,
+						},
+					]);
+				}
 			}
 
-			const hookResult = await runner.emitToolResult({
-				type: "tool_result",
-				toolName: toolCall.name,
-				toolCallId: toolCall.id,
-				input: args as Record<string, unknown>,
-				content: result.content,
-				details: result.details,
-				isError,
-			});
-
-			if (!hookResult) {
-				return undefined;
-			}
-
-			return {
-				content: hookResult.content,
-				details: hookResult.details,
-				isError: hookResult.isError ?? isError,
-			};
+			return hookResult ? { content: finalContent, details: finalDetails, isError: finalIsError } : undefined;
 		};
 	}
 
@@ -931,6 +978,10 @@ export class AgentSession {
 		return this.agent.state.systemPrompt;
 	}
 
+	get compactionPrompt(): string {
+		return this._compactionPromptOverride ?? DEFAULT_COMPACTION_PROMPT;
+	}
+
 	get requestResourcesReady(): boolean {
 		return this._requestResourcesReady;
 	}
@@ -1002,6 +1053,11 @@ export class AgentSession {
 
 		// Rebuild base system prompt with new tool set
 		this.refreshSystemPrompt();
+	}
+
+	setCompactionPrompt(prompt?: string): void {
+		const normalized = prompt?.trim();
+		this._compactionPromptOverride = normalized || undefined;
 	}
 
 	refreshSystemPrompt(): void {
@@ -1982,6 +2038,7 @@ export class AgentSession {
 					this.agent.streamFn,
 					{
 						systemPrompt: this.systemPrompt,
+						compactionPrompt: this._compactionPromptOverride,
 						sessionId: this.sessionId,
 						cacheRetention: "short",
 						tools: this.agent.state.tools,
@@ -2276,6 +2333,7 @@ export class AgentSession {
 					this.agent.streamFn,
 					{
 						systemPrompt: this.systemPrompt,
+						compactionPrompt: this._compactionPromptOverride,
 						sessionId: this.sessionId,
 						cacheRetention: "short",
 						tools: this.agent.state.tools,
@@ -2513,6 +2571,9 @@ export class AgentSession {
 		if (bindings.toolPermissionHandler !== undefined) {
 			this._toolPermissionHandler = bindings.toolPermissionHandler;
 		}
+		if (bindings.toolResultHandler !== undefined) {
+			this._toolResultHandler = bindings.toolResultHandler;
+		}
 
 		this._applyExtensionBindings(this._extensionRunner);
 		await this._extensionRunner.emit(this._sessionStartEvent);
@@ -2543,6 +2604,9 @@ export class AgentSession {
 		}
 		if (bindings.toolPermissionHandler !== undefined) {
 			this._toolPermissionHandler = bindings.toolPermissionHandler;
+		}
+		if (bindings.toolResultHandler !== undefined) {
+			this._toolResultHandler = bindings.toolResultHandler;
 		}
 
 		this._applyExtensionBindings(this._extensionRunner);

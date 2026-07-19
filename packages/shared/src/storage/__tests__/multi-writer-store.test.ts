@@ -16,9 +16,9 @@ const repositoryRoot = resolve(import.meta.dir, '../../../../..')
 const workerPath = join(import.meta.dir, 'fixtures', 'multi-writer-worker.ts')
 
 function createDatabasePath(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'craft-multi-writer-'))
+  const directory = mkdtempSync(join(tmpdir(), 'mortise-multi-writer-'))
   temporaryDirectories.push(directory)
-  return join(directory, 'craft-state.sqlite')
+  return join(directory, 'mortise-state.sqlite')
 }
 
 function electronExecutablePath(): string {
@@ -215,7 +215,7 @@ describe('MultiWriterStore', () => {
 
       const database = await openCraftSqliteDatabase(databasePath)
       try {
-        database.prepare(`UPDATE craft_capabilities SET version = 2 WHERE name = 'records'`).run()
+        database.prepare(`UPDATE mortise_capabilities SET version = 2 WHERE name = 'records'`).run()
       } finally {
         database.close()
       }
@@ -249,7 +249,7 @@ describe('MultiWriterStore', () => {
 
     const database = await openCraftSqliteDatabase(databasePath)
     database.prepare(`
-      INSERT INTO craft_schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)
+      INSERT INTO mortise_schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)
     `).run('9999_future_additive', 'future-checksum', Date.now())
     database.close()
 
@@ -258,7 +258,7 @@ describe('MultiWriterStore', () => {
 
     const tamper = await openCraftSqliteDatabase(databasePath)
     tamper.prepare(`
-      UPDATE craft_schema_migrations SET checksum = 'invalid'
+      UPDATE mortise_schema_migrations SET checksum = 'invalid'
       WHERE id = '0001_multi_writer_core'
     `).run()
     tamper.close()

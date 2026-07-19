@@ -1,10 +1,10 @@
 /**
- * Centralized path configuration for Craft Agent.
+ * Centralized path configuration for Mortise Agent.
  *
- * Supports alternate profiles via CRAFT_CONFIG_DIR. All normal launch modes use
- * Electron's existing ~/.craft-agent directory unless an explicit override is set.
+ * Supports alternate profiles via MORTISE_CONFIG_DIR. All normal launch modes use
+ * Electron's existing ~/.mortise directory unless an explicit override is set.
  *
- * Default: ~/.craft-agent/
+ * Default: ~/.mortise/
  */
 
 import { realpathSync } from 'fs';
@@ -13,8 +13,8 @@ import { join, resolve } from 'path';
 import { expandPath } from '../utils/paths.ts';
 
 // Allow override via environment variable for multi-instance dev
-// Falls back to default ~/.craft-agent/ for production and non-numbered dev folders
-export const CONFIG_DIR = process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent');
+// Falls back to default ~/.mortise/ for production and non-numbered dev folders
+export const CONFIG_DIR = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise');
 
 // Pi CLI global config directory (~/.pi/agent by default).
 // Respects PI_CODING_AGENT_DIR to stay consistent with Pi SDK's getAgentDir().
@@ -23,13 +23,13 @@ export const PI_MODELS_FILE = join(PI_AGENT_DIR, 'models.json');
 export const PI_SETTINGS_FILE = join(PI_AGENT_DIR, 'settings.json');
 export const PI_AUTH_FILE = join(PI_AGENT_DIR, 'auth.json');
 
-// Pi skills directories (shared with Craft in full-passthrough shell mode)
+// Pi skills directories (shared with Mortise in full-passthrough shell mode)
 /** Global Pi skills directory: ~/.pi/agent/skills/ */
 export const PI_SKILLS_DIR = join(PI_AGENT_DIR, 'skills');
 /** Project-level Pi skills relative directory name */
 export const PI_PROJECT_SKILLS_DIR = '.pi/skills';
 
-// Pi sessions directory (shared with Craft in full-passthrough shell mode)
+// Pi sessions directory (shared with Mortise in full-passthrough shell mode)
 /** Global Pi sessions directory: ~/.pi/agent/sessions/ */
 export const PI_SESSIONS_DIR = join(PI_AGENT_DIR, 'sessions');
 /** Project-level Pi sessions relative directory name */
@@ -59,7 +59,7 @@ export const PI_PROJECT_SESSIONS_DIR = '.pi/sessions';
  * encode to `--C-a-b-c--`). This is intentional: the encoding must stay
  * consistent with Pi's algorithm (see pi session-manager.ts
  * getDefaultSessionDirPath()), otherwise Pi-created sessions would be invisible
- * to Craft and vice versa. Craft must NOT diverge from Pi's encoding. The
+ * to Mortise and vice versa. Mortise must NOT diverge from Pi's encoding. The
  * realpathSync normalization above reduces collisions in practice because the
  * same physical directory always yields one canonical path; the residual
  * collision risk is mitigated by relying on Pi-side cwd normalization.
@@ -70,7 +70,7 @@ export const PI_PROJECT_SESSIONS_DIR = '.pi/sessions';
  * buckets (`--C-...--`). Additionally the server/share components are not
  * upper/lower-cased uniformly with Pi. This is a known limitation: UNC paths
  * are rare in this codebase and Pi's own algorithm does not special-case them
- * either, so diverging here would break Pi/Craft visibility symmetry. If UNC
+ * either, so diverging here would break Pi/Mortise visibility symmetry. If UNC
  * support becomes a requirement, coordinate a paired change with Pi's
  * session-manager.ts getDefaultSessionDirPath().
  */

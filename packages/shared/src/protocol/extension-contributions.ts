@@ -1,9 +1,10 @@
 export const EXTENSION_UI_SURFACES = [
   'conversation.timeline.before', 'conversation.timeline.after',
   'conversation.turn.before', 'conversation.turn.after', 'conversation.turn.replace',
-  'conversation.message.before', 'conversation.message.after', 'conversation.message.replace',
+  'conversation.message.before', 'conversation.message.after', 'conversation.message.footer', 'conversation.message.replace',
+  'conversation.artifact.aside', 'conversation.artifact.footer',
   'conversation.tool.before', 'conversation.tool.after', 'conversation.tool.replace',
-  'conversation.inline', 'conversation.overlay',
+  'conversation.inline', 'conversation.overlay', 'conversation.status',
   'composer.above', 'composer.below', 'composer.toolbar', 'composer.status', 'composer.replace',
   'sidebar.header', 'sidebar.section', 'sidebar.footer',
   'navigation.item', 'session.badge',
@@ -15,6 +16,13 @@ export type ExtensionUISurface = typeof EXTENSION_UI_SURFACES[number]
 export type ExtensionUITone = 'default' | 'muted' | 'info' | 'success' | 'warning' | 'danger'
 export type ExtensionUIIconName = 'activity' | 'alert-circle' | 'check' | 'chevron-right' | 'circle' | 'clock' | 'info' | 'loader' | 'settings' | 'sparkles' | 'x'
 export type ExtensionUIAction = { kind: 'command'; command: string; args?: string }
+export type ExtensionUIButtonEmphasis = 'primary' | 'secondary' | 'quiet'
+export type ExtensionUIStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped'
+export interface ExtensionUIStepV1 {
+  id: string
+  label: string
+  status: ExtensionUIStepStatus
+}
 export type ExtensionWorkspaceContentScope = 'session' | 'workspace' | 'global'
 export type ExtensionWorkspaceContentInstancePolicy = 'singleton' | 'multiple'
 export type ExtensionWorkspaceContentPreferredGroup = 'active' | 'adjacent'
@@ -32,7 +40,8 @@ export type ExtensionUINode =
   | { type: 'icon'; name: ExtensionUIIconName; label: string }
   | { type: 'badge'; label: string; tone?: Exclude<ExtensionUITone, 'muted'> }
   | { type: 'divider' }
-  | { type: 'button'; label: string; icon?: ExtensionUIIconName; action: ExtensionUIAction; disabled?: boolean }
+  | { type: 'button'; label: string; icon?: ExtensionUIIconName; action: ExtensionUIAction; disabled?: boolean; disabledReason?: string; emphasis?: ExtensionUIButtonEmphasis }
+  | { type: 'step-progress'; label: string; steps: ExtensionUIStepV1[] }
   | {
       type: 'sandbox-app'
       appId: string
@@ -54,13 +63,15 @@ export interface ExtensionContributionV1 {
   id: string
   surface: ExtensionUISurface
   content: ExtensionUINode
+  /** User-facing title for host-rendered pane surfaces. */
+  title?: string
   priority?: number
   order?: number
   group?: string
   collapse?: 'never' | 'auto' | 'always'
   overflow?: 'menu' | 'collapse' | 'hide'
   exclusive?: boolean
-  target?: { turnId?: string; messageId?: string; toolCallId?: string }
+  target?: { turnId?: string; messageId?: string; toolCallId?: string; artifactId?: string }
   workspaceContent?: ExtensionWorkspaceContentMetadataV1
 }
 
@@ -109,7 +120,7 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
     return boundedString(node.label, 256) ? null : 'badge label is required'
   }
   if (node.type === 'button') {
-    if (!onlyKeys(node, ['type', 'label', 'icon', 'action', 'disabled'])) return 'Unsupported button node field'
+    if (!onlyKeys(node, ['type', 'label', 'icon', 'action', 'disabled', 'disabledReason', 'emphasis'])) return 'Unsupported button node field'
     if (!boundedString(node.label, 256)) return 'button label is required'
     if (node.icon !== undefined && !iconSet.has(String(node.icon))) return 'Unsupported button icon'
     if (!node.action || typeof node.action !== 'object' || Array.isArray(node.action)) return 'button action is required'
@@ -118,6 +129,24 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
     if (action.kind !== 'command' || !boundedString(action.command, 256)) return 'button action must reference a command'
     if (action.args !== undefined && (typeof action.args !== 'string' || action.args.length > 20_000)) return 'button action args are too large'
     if (node.disabled !== undefined && typeof node.disabled !== 'boolean') return 'button disabled must be boolean'
+    if (node.disabledReason !== undefined && !boundedString(node.disabledReason, 512)) return 'button disabledReason must be a bounded non-empty string'
+    if (node.emphasis !== undefined && !['primary', 'secondary', 'quiet'].includes(String(node.emphasis))) return 'Unsupported button emphasis'
+    return null
+  }
+  if (node.type === 'step-progress') {
+    if (!onlyKeys(node, ['type', 'label', 'steps'])) return 'Unsupported step-progress node field'
+    if (!boundedString(node.label, 256)) return 'step-progress label is required'
+    if (!Array.isArray(node.steps) || node.steps.length === 0 || node.steps.length > 128) return 'step-progress steps must be a bounded non-empty array'
+    const ids = new Set<string>()
+    for (const value of node.steps) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return 'step-progress step must be an object'
+      const step = value as Record<string, unknown>
+      if (!onlyKeys(step, ['id', 'label', 'status'])) return 'Unsupported step-progress step field'
+      if (!boundedString(step.id, 128) || ids.has(step.id as string)) return 'step-progress step ids must be unique bounded strings'
+      if (!boundedString(step.label, 512)) return 'step-progress step label is required'
+      if (!['pending', 'in_progress', 'completed', 'failed', 'skipped'].includes(String(step.status))) return 'Unsupported step-progress step status'
+      ids.add(step.id as string)
+    }
     return null
   }
   if (node.type === 'sandbox-app') {
@@ -186,9 +215,10 @@ export function validateExtensionContributionV1(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'Contribution must be an object'
   const item = value as Record<string, unknown>
   if (item.schemaVersion !== 1) return 'Unsupported contribution schema version'
-  if (!onlyKeys(item, ['schemaVersion', 'id', 'surface', 'content', 'priority', 'order', 'group', 'collapse', 'overflow', 'exclusive', 'target', 'workspaceContent'])) return 'Unsupported contribution field'
+  if (!onlyKeys(item, ['schemaVersion', 'id', 'surface', 'content', 'title', 'priority', 'order', 'group', 'collapse', 'overflow', 'exclusive', 'target', 'workspaceContent'])) return 'Unsupported contribution field'
   if (!boundedString(item.id, 256)) return 'id must be a non-empty bounded string'
   if (!surfaceSet.has(String(item.surface))) return 'Unsupported contribution surface'
+  if (item.title !== undefined && !boundedString(item.title, 256)) return 'title must be a bounded non-empty string'
   if (item.priority !== undefined && (!Number.isInteger(item.priority) || Number(item.priority) < -1000 || Number(item.priority) > 1000)) return 'priority must be an integer between -1000 and 1000'
   if (item.order !== undefined && (!Number.isInteger(item.order) || Number(item.order) < -10000 || Number(item.order) > 10000)) return 'order must be a bounded integer'
   if (item.group !== undefined && !boundedString(item.group, 128)) return 'group must be a bounded string'
@@ -211,13 +241,16 @@ export function validateExtensionContributionV1(value: unknown): string | null {
   if (item.target !== undefined) {
     if (!item.target || typeof item.target !== 'object' || Array.isArray(item.target)) return 'target must be an object'
     const target = item.target as Record<string, unknown>
-    if (!onlyKeys(target, ['turnId', 'messageId', 'toolCallId'])) return 'Unsupported target field'
-    if (!['turnId', 'messageId', 'toolCallId'].some(key => target[key] !== undefined)) return 'target must identify an entity'
-    for (const key of ['turnId', 'messageId', 'toolCallId']) if (target[key] !== undefined && !boundedString(target[key], 256)) return `${key} must be a bounded string`
+    if (!onlyKeys(target, ['turnId', 'messageId', 'toolCallId', 'artifactId'])) return 'Unsupported target field'
+    if (!['turnId', 'messageId', 'toolCallId', 'artifactId'].some(key => target[key] !== undefined)) return 'target must identify an entity'
+    for (const key of ['turnId', 'messageId', 'toolCallId', 'artifactId']) if (target[key] !== undefined && !boundedString(target[key], 256)) return `${key} must be a bounded string`
   }
   if (surface.startsWith('conversation.message.') && (!item.target || !boundedString((item.target as Record<string, unknown>).messageId, 256))) return 'message surfaces require target.messageId'
   if (surface.startsWith('conversation.tool.') && (!item.target || !boundedString((item.target as Record<string, unknown>).toolCallId, 256))) return 'tool surfaces require target.toolCallId'
   if (surface.startsWith('conversation.turn.') && (!item.target || !boundedString((item.target as Record<string, unknown>).turnId, 256))) return 'turn surfaces require target.turnId'
+  if (surface.startsWith('conversation.artifact.') && (!item.target || !boundedString((item.target as Record<string, unknown>).artifactId, 256))) return 'artifact surfaces require target.artifactId'
+  if (item.title !== undefined && surface !== 'conversation.artifact.aside') return 'title is only allowed on artifact aside contributions'
+  if (surface === 'conversation.artifact.aside' && !boundedString(item.title, 256)) return 'artifact aside contributions require title'
   const nodeError = validateNode(item.content)
   if (nodeError) return nodeError
   if (['composer.toolbar', 'composer.status', 'window.topLeft', 'window.topRight', 'navigation.item', 'session.badge'].includes(surface)) {
@@ -227,7 +260,7 @@ export function validateExtensionContributionV1(value: unknown): string | null {
   const content = item.content as ExtensionUINode
   if ((content.type === 'row' || content.type === 'stack') && containsSandboxNode(content)) return 'Sandbox apps must be the top-level contribution node'
   if (content.type === 'sandbox-app' && !sandboxSurfaces.has(surface)) return 'Sandbox apps are not allowed on this surface'
-  if (item.target !== undefined && !surface.startsWith('conversation.message.') && !surface.startsWith('conversation.tool.') && !surface.startsWith('conversation.turn.')) return 'This surface does not accept a target'
+  if (item.target !== undefined && !surface.startsWith('conversation.message.') && !surface.startsWith('conversation.tool.') && !surface.startsWith('conversation.turn.') && !surface.startsWith('conversation.artifact.')) return 'This surface does not accept a target'
   return null
 }
 

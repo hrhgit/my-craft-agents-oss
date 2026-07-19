@@ -1,10 +1,5 @@
 import * as fs from "node:fs/promises";
-import {
-	type ExtensionContext,
-	type SessionEntry,
-	type SessionInfo,
-	SessionManager,
-} from "@earendil-works/pi-coding-agent";
+import { type ExtensionContext, type SessionEntry, type SessionInfo, SessionManager } from "@mortise/pi-coding-agent";
 import {
 	hashText,
 	hasSummaryMarker,

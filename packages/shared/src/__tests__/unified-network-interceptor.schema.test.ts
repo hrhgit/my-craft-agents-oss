@@ -14,11 +14,11 @@ let previousCraftConfigDir: string | undefined;
 let previousPiAgentDir: string | undefined;
 
 beforeAll(async () => {
-  tempRoot = mkdtempSync(join(tmpdir(), 'craft-interceptor-settings-'));
+  tempRoot = mkdtempSync(join(tmpdir(), 'mortise-interceptor-settings-'));
   piAgentDir = join(tempRoot, 'pi-agent');
-  previousCraftConfigDir = process.env.CRAFT_CONFIG_DIR;
+  previousCraftConfigDir = process.env.MORTISE_CONFIG_DIR;
   previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
-  process.env.CRAFT_CONFIG_DIR = join(tempRoot, 'craft');
+  process.env.MORTISE_CONFIG_DIR = join(tempRoot, 'mortise');
   process.env.PI_CODING_AGENT_DIR = piAgentDir;
   mkdirSync(piAgentDir, { recursive: true });
 
@@ -28,9 +28,9 @@ beforeAll(async () => {
 
 afterAll(() => {
   if (previousCraftConfigDir === undefined) {
-    delete process.env.CRAFT_CONFIG_DIR;
+    delete process.env.MORTISE_CONFIG_DIR;
   } else {
-    process.env.CRAFT_CONFIG_DIR = previousCraftConfigDir;
+    process.env.MORTISE_CONFIG_DIR = previousCraftConfigDir;
   }
 
   if (previousPiAgentDir === undefined) {
@@ -159,7 +159,7 @@ describe('upgradePromptCacheTtl', () => {
     mkdirSync(piAgentDir, { recursive: true });
     writeFileSync(
       join(piAgentDir, 'settings.json'),
-      JSON.stringify({ craft: { agent: { extendedPromptCache } } }, null, 2),
+      JSON.stringify({ mortise: { agent: { extendedPromptCache } } }, null, 2),
       'utf-8',
     );
   }

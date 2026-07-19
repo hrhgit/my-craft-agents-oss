@@ -7,7 +7,7 @@ import { pathToFileURL } from 'url'
 const STORAGE_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'storage.ts')).href
 
 function setupConfigDir() {
-  const configDir = mkdtempSync(join(tmpdir(), 'craft-agent-data-sources-'))
+  const configDir = mkdtempSync(join(tmpdir(), 'mortise-data-sources-'))
   const configPath = join(configDir, 'config.json')
   writeFileSync(
     configPath,
@@ -43,7 +43,7 @@ function runEval(configDir: string, code: string): string {
     '--eval',
     `import { getDataSourcesEnabled, setDataSourcesEnabled } from '${STORAGE_MODULE_PATH}'; ${code}`,
   ], {
-    env: { ...process.env, CRAFT_CONFIG_DIR: configDir },
+    env: { ...process.env, MORTISE_CONFIG_DIR: configDir },
     stdout: 'pipe',
     stderr: 'pipe',
   })

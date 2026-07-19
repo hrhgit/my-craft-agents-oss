@@ -74,36 +74,36 @@ describe('McpClientPool.sync — config change detection', () => {
   });
 
   it('reconnects when Authorization header changes (token refresh)', async () => {
-    await pool.sync({ craft: httpConfig('old-token') });
-    expect(pool.isConnected('craft')).toBe(true);
+    await pool.sync({ mortise: httpConfig('old-token') });
+    expect(pool.isConnected('mortise')).toBe(true);
     pool.resetTracking();
 
-    await pool.sync({ craft: httpConfig('new-token') });
+    await pool.sync({ mortise: httpConfig('new-token') });
 
-    expect(pool.disconnectCalls).toEqual(['craft']);
+    expect(pool.disconnectCalls).toEqual(['mortise']);
     expect(pool.connectCalls).toHaveLength(1);
     expect(pool.connectCalls[0].config.headers?.Authorization).toBe('Bearer new-token');
-    expect(pool.isConnected('craft')).toBe(true);
+    expect(pool.isConnected('mortise')).toBe(true);
   });
 
   it('does not reconnect when config is unchanged', async () => {
     const config = httpConfig('token-1');
-    await pool.sync({ craft: config });
+    await pool.sync({ mortise: config });
     pool.resetTracking();
 
-    await pool.sync({ craft: config });
+    await pool.sync({ mortise: config });
 
     expect(pool.connectCalls).toHaveLength(0);
     expect(pool.disconnectCalls).toHaveLength(0);
   });
 
   it('reconnects when URL changes', async () => {
-    await pool.sync({ craft: httpConfig('token', 'https://old.example.com') });
+    await pool.sync({ mortise: httpConfig('token', 'https://old.example.com') });
     pool.resetTracking();
 
-    await pool.sync({ craft: httpConfig('token', 'https://new.example.com') });
+    await pool.sync({ mortise: httpConfig('token', 'https://new.example.com') });
 
-    expect(pool.disconnectCalls).toEqual(['craft']);
+    expect(pool.disconnectCalls).toEqual(['mortise']);
     expect(pool.connectCalls).toHaveLength(1);
   });
 
@@ -121,10 +121,10 @@ describe('McpClientPool.sync — config change detection', () => {
       headers: { Authorization: 'Bearer same', 'X-Request-Id': 'bbb' },
     };
 
-    await pool.sync({ craft: config1 });
+    await pool.sync({ mortise: config1 });
     pool.resetTracking();
 
-    await pool.sync({ craft: config2 });
+    await pool.sync({ mortise: config2 });
 
     expect(pool.connectCalls).toHaveLength(0);
     expect(pool.disconnectCalls).toHaveLength(0);
@@ -132,34 +132,34 @@ describe('McpClientPool.sync — config change detection', () => {
 
   it('disconnects sources removed from config', async () => {
     const config = httpConfig('token');
-    await pool.sync({ craft: config, linear: config });
+    await pool.sync({ mortise: config, linear: config });
     pool.resetTracking();
 
-    await pool.sync({ craft: config });
+    await pool.sync({ mortise: config });
 
     expect(pool.disconnectCalls).toEqual(['linear']);
-    expect(pool.isConnected('craft')).toBe(true);
+    expect(pool.isConnected('mortise')).toBe(true);
     expect(pool.isConnected('linear')).toBe(false);
   });
 
   it('handles add + remove + refresh in a single sync', async () => {
     await pool.sync({
-      craft: httpConfig('old-craft-token'),
+      mortise: httpConfig('old-mortise-token'),
       linear: httpConfig('linear-token', 'https://linear.example.com'),
     });
     pool.resetTracking();
 
-    // craft: token refreshed, linear: removed, github: added
+    // mortise: token refreshed, linear: removed, github: added
     await pool.sync({
-      craft: httpConfig('new-craft-token'),
+      mortise: httpConfig('new-mortise-token'),
       github: httpConfig('gh-token', 'https://github.example.com'),
     });
 
     expect(pool.disconnectCalls).toContain('linear');
-    expect(pool.disconnectCalls).toContain('craft');
-    expect(pool.connectCalls.find(c => c.slug === 'craft')?.config.headers?.Authorization).toBe('Bearer new-craft-token');
+    expect(pool.disconnectCalls).toContain('mortise');
+    expect(pool.connectCalls.find(c => c.slug === 'mortise')?.config.headers?.Authorization).toBe('Bearer new-mortise-token');
     expect(pool.connectCalls.find(c => c.slug === 'github')).toBeDefined();
-    expect(pool.isConnected('craft')).toBe(true);
+    expect(pool.isConnected('mortise')).toBe(true);
     expect(pool.isConnected('linear')).toBe(false);
     expect(pool.isConnected('github')).toBe(true);
   });
@@ -174,13 +174,13 @@ describe('McpClientPool.sync — config change detection', () => {
       return origConnect(slug, config);
     };
 
-    await failPool.sync({ craft: httpConfig('old-token') });
-    expect(failPool.isConnected('craft')).toBe(true);
+    await failPool.sync({ mortise: httpConfig('old-token') });
+    expect(failPool.isConnected('mortise')).toBe(true);
 
     // Token refresh — disconnect succeeds but reconnect throws
-    const failures = await failPool.sync({ craft: httpConfig('new-token') });
+    const failures = await failPool.sync({ mortise: httpConfig('new-token') });
 
-    expect(failures).toContain('craft');
-    expect(failPool.isConnected('craft')).toBe(false);
+    expect(failures).toContain('mortise');
+    expect(failPool.isConnected('mortise')).toBe(false);
   });
 });

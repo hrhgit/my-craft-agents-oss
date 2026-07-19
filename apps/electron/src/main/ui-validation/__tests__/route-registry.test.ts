@@ -23,6 +23,7 @@ describe('UI validation route registry', () => {
       { scope: 'transport', phase: 'ready' },
       { scope: 'workspace', phase: 'ready' },
     ])
+    expect(resolveUiValidationRoute({ surface: 'automations', section: 'scheduled' }).deepLinkRoute).toBe('automations/scheduled')
     expect(resolveUiValidationRoute({ surface: 'workspace-picker' }, '9')).toEqual({
       route: { surface: 'workspace-picker' },
       dependencies: [
@@ -36,6 +37,7 @@ describe('UI validation route registry', () => {
   it('rejects unknown routes and parameters', () => {
     expect(() => resolveUiValidationRoute({ surface: 'settings', section: 'not-real' })).toThrow('Unknown settings section')
     expect(() => resolveUiValidationRoute({ surface: 'chat', selector: '#private' })).toThrow('Unsupported route parameter')
+    expect(() => resolveUiValidationRoute({ surface: 'automations', section: 'not-real' })).toThrow('Automations section must be scheduled, event, or agentic.')
     expect(() => resolveUiValidationRoute({ surface: 'workspace-picker', workspaceId: 'not-allowed' })).toThrow('Unsupported route parameter')
   })
 })

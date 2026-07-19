@@ -4,8 +4,8 @@ import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
 import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
-import type { SessionDraft, DraftAttachmentRef } from '@craft-agent/shared/config'
-import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
+import type { SessionDraft, DraftAttachmentRef } from '@mortise/shared/config'
+import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
 import { generateMessageId } from '../shared/types'
@@ -18,7 +18,7 @@ import type { AppShellContextType } from '@/context/AppShellContext'
 import { OnboardingWizard, ReauthScreen } from '@/components/onboarding'
 import { WorkspacePicker } from '@/components/workspace'
 import { SplashScreen } from '@/components/SplashScreen'
-import { TooltipProvider } from '@craft-agent/ui'
+import { TooltipProvider } from '@mortise/ui'
 import { FocusProvider } from '@/context/FocusContext'
 import { ModalProvider } from '@/context/ModalContext'
 import { DismissibleLayerProvider } from '@/context/DismissibleLayerContext'
@@ -51,9 +51,9 @@ import {
   settlePiUserOverlayCarrier,
   upsertPiUserOverlayCarrier,
 } from './lib/pi-message-overlay'
-import { extractWorkspaceSlugFromPath } from '@craft-agent/shared/utils/workspace-slug'
-import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES } from '@craft-agent/shared/utils/attachment-limits'
-import { DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
+import { extractWorkspaceSlugFromPath } from '@mortise/shared/utils/workspace-slug'
+import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES } from '@mortise/shared/utils/attachment-limits'
+import { DEFAULT_THINKING_LEVEL } from '@mortise/shared/agent/thinking-levels'
 import { initRendererPerf } from './lib/perf'
 import {
   initializeSessionsAtom,
@@ -90,7 +90,7 @@ import {
   CodePreviewOverlay,
   DocumentFormattedMarkdownOverlay,
   JSONPreviewOverlay,
-} from '@craft-agent/ui'
+} from '@mortise/ui'
 import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
 import { useUiValidationStateBridge } from '@/ui-validation/state-bridge'
@@ -721,7 +721,7 @@ export default function App() {
         setSetupNeeds(needs)
 
         if (needs.isFullyConfigured) {
-          // If no workspace is selected (thin client without CRAFT_WORKSPACE_ID),
+          // If no workspace is selected (thin client without MORTISE_WORKSPACE_ID),
           // show workspace picker before entering the main app
           if (!wsId) {
             setAppState('workspace-picker')
@@ -835,8 +835,8 @@ export default function App() {
       if (warnings.workspaceRuntimeDegraded) {
         toast.warning('Workspace runtime degraded', {
           description: warnings.workspaceRuntimeDegradedReason
-            ? `Workspace isolation failed and Craft is using the embedded runtime. Reason: ${warnings.workspaceRuntimeDegradedReason}`
-            : 'Workspace isolation failed and Craft is using the embedded runtime. Heavy agent work may affect app responsiveness.',
+            ? `Workspace isolation failed and Mortise is using the embedded runtime. Reason: ${warnings.workspaceRuntimeDegradedReason}`
+            : 'Workspace isolation failed and Mortise is using the embedded runtime. Heavy agent work may affect app responsiveness.',
           duration: Infinity,
         })
       }
@@ -944,7 +944,7 @@ export default function App() {
             handleInputChange(sessionId, restored)
             // handleInputChange updates the ref but ChatPage has local state.
             // Dispatch a custom event so ChatPage re-reads the draft.
-            window.dispatchEvent(new CustomEvent('craft:restore-input', {
+            window.dispatchEvent(new CustomEvent('mortise:restore-input', {
               detail: { sessionId, text: restored },
             }))
             break
@@ -1023,7 +1023,7 @@ export default function App() {
       // Note: markCompactionComplete is called on the backend (sessions.ts) to ensure
       // it happens even if CMD+R occurs during compaction
       if (event.type === 'info' && event.statusType === 'compaction_complete') {
-        window.dispatchEvent(new CustomEvent('craft:compaction-complete', {
+        window.dispatchEvent(new CustomEvent('mortise:compaction-complete', {
           detail: { sessionId }
         }))
       }
@@ -1164,7 +1164,7 @@ export default function App() {
         }
       }
 
-      // Retry the Craft-owned overlay when the normal refresh failed. Pi
+      // Retry the Mortise-owned overlay when the normal refresh failed. Pi
       // transcript recovery is handled independently by usePiProjectionSync.
       if (sessionSelection.selected && !activeSessionRefreshed) {
         console.warn('[App] Active session overlay refresh failed after stale reconnect — forcing reload')
@@ -1428,7 +1428,7 @@ export default function App() {
         })
       }
 
-      // Step 5: Create a Craft-owned UI overlay keyed by the projected message.
+      // Step 5: Create a Mortise-owned UI overlay keyed by the projected message.
       // Pi owns text and order; this carrier supplies persistent attachment paths,
       // badges, and optimistic queue state until projection confirmation arrives.
       optimisticMessageId = generateMessageId()
@@ -2066,7 +2066,7 @@ export default function App() {
     openNewChat,
   ])
 
-  // Platform actions for @craft-agent/ui components (overlays, etc.)
+  // Platform actions for @mortise/ui components (overlays, etc.)
   // Memoized to prevent re-renders when these callbacks don't change
   // NOTE: Must be defined before early returns to maintain consistent hook order
   const platformActions = useMemo(() => ({

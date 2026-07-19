@@ -197,6 +197,7 @@ export const pushPanelAtom = atom(
     afterIndex?: number
     intent?: OpenIntent
   }) => {
+    if (getPanelTypeFromRoute(route) !== 'session') return
     const stack = get(panelStackAtom)
     let insertAt = stack.length
     if (afterIndex !== undefined && afterIndex >= 0 && afterIndex < stack.length) {
@@ -239,15 +240,23 @@ export const reconcilePanelStackAtom = atom(
     entries: { route: ViewRoute; proportion: number }[]
     focusedIndex?: number
   }): boolean => {
-    if (entries.length === 0) return false
+    const workspaceEntries = entries.filter(entry => getPanelTypeFromRoute(entry.route) === 'session')
+    if (workspaceEntries.length === 0) return false
 
     const current = get(panelStackAtom)
     const used = new Set<string>()
 
-    const requestedFocusIndex = Math.min(focusedIndex ?? 0, entries.length - 1)
-    const requestedFocusRoute = entries[requestedFocusIndex]?.route ?? entries[0].route
+    const originalFocusIndex = Math.min(focusedIndex ?? 0, entries.length - 1)
+    const originalFocusEntry = entries[originalFocusIndex]
+    const mappedFocusIndex = originalFocusEntry
+      ? workspaceEntries.indexOf(originalFocusEntry)
+      : -1
+    const requestedFocusIndex = mappedFocusIndex >= 0
+      ? mappedFocusIndex
+      : Math.min(originalFocusIndex, workspaceEntries.length - 1)
+    const requestedFocusRoute = workspaceEntries[requestedFocusIndex]?.route ?? workspaceEntries[0].route
 
-    const newStack = entries.map((target, i) => {
+    const newStack = workspaceEntries.map((target, i) => {
       const positional = current[i]
 
       if (positional && positional.route === target.route && !used.has(positional.id)) {
@@ -328,6 +337,7 @@ export const resizePanelsAtom = atom(
 export const updateFocusedPanelRouteAtom = atom(
   null,
   (get, set, route: ViewRoute) => {
+    if (getPanelTypeFromRoute(route) !== 'session') return
     const stack = get(panelStackAtom)
 
     if (stack.length === 0) {

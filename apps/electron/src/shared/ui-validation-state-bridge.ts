@@ -1,4 +1,4 @@
-import type { UiValidationScopedStateUpdate } from '@craft-agent/shared/ui-validation'
+import type { UiValidationScopedStateUpdate } from '@mortise/shared/ui-validation'
 
 export interface UiValidationRendererStateBatch {
   version: 1

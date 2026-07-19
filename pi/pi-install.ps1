@@ -108,10 +108,10 @@ function Invoke-NpmPackInDirectory {
 $installCli = -not $WebOnly
 $installWeb = $WebOnly
 $cliPackages = @(
-	"@earendil-works/pi-tui",
-	"@earendil-works/pi-ai",
-	"@earendil-works/pi-agent-core",
-	"@earendil-works/pi-coding-agent"
+	"@mortise/pi-tui",
+	"@mortise/pi-ai",
+	"@mortise/pi-agent-core",
+	"@mortise/pi-coding-agent"
 )
 $cliPackageDirectories = @(
 	"packages/tui",

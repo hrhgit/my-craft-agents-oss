@@ -4,10 +4,9 @@
  * Provides a global `navigate()` function that decouples components from
  * direct session/action imports. All navigation goes through typed routes.
  *
- * PEER PANEL MODEL:
- * All panels are equal. The **focused** panel drives the NavigationState
- * (which determines sidebar highlight, navigator content, etc.).
- * `navigate(route)` updates the focused panel's route.
+ * ROOT PAGE + WORKSPACE DOCK MODEL:
+ * Session routes belong to the workspace dock. Management routes belong to a
+ * root page surface and leave the focused dock tab unchanged underneath.
  *
  * URL-DRIVEN HISTORY:
  * The URL is the source of truth. Every meaningful navigation pushes a
@@ -48,11 +47,18 @@ import {
   type ParsedRoute,
 } from '../../shared/route-parser'
 import { routes, type Route, type ViewRoute } from '../../shared/routes'
-import { parsePermissionMode } from '@craft-agent/shared/agent/mode-types'
+import { parsePermissionMode } from '@mortise/shared/agent/mode-types'
 import { NAVIGATE_EVENT, type NavigateOptions } from '../lib/navigate'
 import { waitForRendererCommit } from '../lib/workspace-transition'
 import { normalizePanelRouteForReconcile } from './navigation-reconcile'
 import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch, shouldNavigateToInitialDefault, type WorkspaceSwitchDestination } from './navigation-history'
+import {
+  isPageSurfaceNavigation,
+  isPageSurfaceRoute,
+  isWorkspacePanelRoute,
+  resolveVisibleRoute,
+  shouldEncodePanelStack,
+} from './navigation-surface'
 import * as storage from '@/lib/local-storage'
 import type {
   DeepLinkNavigation,
@@ -101,7 +107,7 @@ interface NavigationContextValue {
   navigate: (route: Route, options?: NavigateOptions) => void | Promise<void>
   /** Check if navigation is ready */
   isReady: boolean
-  /** Unified navigation state derived from the focused panel. */
+  /** Visible root-page or focused workspace navigation state. */
   navigationState: NavigationState
   /** Whether we can go back in history */
   canGoBack: boolean
@@ -181,17 +187,25 @@ export function NavigationProvider({
   const skills = useAtomValue(skillsAtom)
 
   // =========================================================================
-  // DERIVED NAVIGATION STATE (from focused panel)
+  // DERIVED NAVIGATION STATE
   // =========================================================================
 
   const focusedRoute = useAtomValue(focusedPanelRouteAtom)
+  const [pageSurfaceRoute, setPageSurfaceRouteState] = useState<ViewRoute | null>(null)
+  const pageSurfaceRouteRef = useRef<ViewRoute | null>(null)
+  const setPageSurfaceRoute = useCallback((route: ViewRoute | null) => {
+    pageSurfaceRouteRef.current = route
+    setPageSurfaceRouteState(route)
+  }, [])
 
-  // NavigationState derived from the focused panel's route
+  // Management modules own a root page surface. The focused dock route stays
+  // intact underneath it and becomes active again when the page closes.
   const navigationState: NavigationState = useMemo(() => {
-    return focusedRoute
-      ? parseRouteToNavigationState(focusedRoute) ?? DEFAULT_NAVIGATION_STATE
+    const visibleRoute = resolveVisibleRoute(pageSurfaceRoute, focusedRoute)
+    return visibleRoute
+      ? parseRouteToNavigationState(visibleRoute) ?? DEFAULT_NAVIGATION_STATE
       : DEFAULT_NAVIGATION_STATE
-  }, [focusedRoute])
+  }, [focusedRoute, pageSurfaceRoute])
 
   // =========================================================================
   // BROWSER HISTORY TRACKING
@@ -216,7 +230,7 @@ export function NavigationProvider({
   const isPopstateSwitchRef = useRef(false)
 
   // Queue navigation if not ready yet
-  const pendingNavigationRef = useRef<ParsedRoute | null>(null)
+  const pendingNavigationRef = useRef<Route | null>(null)
 
   // Suppress auto-select for one cycle (used by skipAutoSelect to prevent the effect from re-selecting)
   const suppressAutoSelectRef = useRef(false)
@@ -239,6 +253,7 @@ export function NavigationProvider({
     const focusedIdx = store.get(focusedPanelIndexAtom)
     return buildSemanticHistoryKey({
       workspaceSlug,
+      pageSurfaceRoute: pageSurfaceRouteRef.current,
       panelRoutes: panels.map(p => p.route),
       focusedPanelIndex: focusedIdx,
     })
@@ -268,9 +283,9 @@ export function NavigationProvider({
   const syncUrl = useCallback((push: boolean = false) => {
     const panels = store.get(panelStackAtom)
     const focusedIdx = store.get(focusedPanelIndexAtom)
-    if (panels.length === 0) return
-
-    const focusedPanel = panels[focusedIdx] ?? panels[0]
+    const focusedPanel = panels[focusedIdx] ?? panels[0] ?? null
+    const visibleRoute = resolveVisibleRoute(pageSurfaceRouteRef.current, focusedPanel?.route ?? null)
+    if (!visibleRoute) return
     const url = new URL(window.location.href)
 
     // ?ws= workspace slug
@@ -278,11 +293,12 @@ export function NavigationProvider({
       url.searchParams.set('ws', workspaceSlug)
     }
 
-    // ?route= is the focused panel's route
-    url.searchParams.set('route', focusedPanel.route)
+    // ?route= is the visible page route. While a management page is open,
+    // ?panels= preserves the hidden workspace dock without making it visible.
+    url.searchParams.set('route', visibleRoute)
 
     // ?panels= encodes ALL panels in stack order
-    if (panels.length > 1) {
+    if (shouldEncodePanelStack(panels.length, pageSurfaceRouteRef.current)) {
       const encoded = panels.map(p => `${p.route}:${p.proportion.toFixed(4)}`).join(',')
       url.searchParams.set('panels', encoded)
     } else {
@@ -357,6 +373,21 @@ export function NavigationProvider({
     return unsub
   }, [store, maybePushHistoryForSemanticChange])
 
+  // Root page changes are meaningful navigation even though the dock model is
+  // deliberately untouched.
+  const previousPageSurfaceRouteRef = useRef(pageSurfaceRoute)
+  useEffect(() => {
+    if (previousPageSurfaceRouteRef.current === pageSurfaceRoute) return
+    previousPageSurfaceRouteRef.current = pageSurfaceRoute
+    if (suppressPushRef.current || !initialRouteRestoredRef.current) return
+    if (pendingPushRef.current) return
+    pendingPushRef.current = true
+    queueMicrotask(() => {
+      pendingPushRef.current = false
+      maybePushHistoryForSemanticChange()
+    })
+  }, [maybePushHistoryForSemanticChange, pageSurfaceRoute])
+
   // Focus changes: push history when active panel changes
   useEffect(() => {
     let prevFocusId = store.get(focusedPanelIdAtom)
@@ -387,6 +418,13 @@ export function NavigationProvider({
       const initialRoute = params.get('route')
       const panelsParam = params.get('panels')
       const focusedIndexParam = params.get('fi')
+      const initialNavState = initialRoute ? parseRouteToNavigationState(initialRoute) : null
+      let nextPageSurfaceRoute: ViewRoute | null = null
+
+      if (initialRoute && isPageSurfaceNavigation(initialNavState)) {
+        const resolved = resolveAutoSelectionRef.current(initialNavState!)
+        nextPageSurfaceRoute = buildRouteFromNavigationState(resolved) as ViewRoute
+      }
 
       // Parse panel entries from URL
       let entries: { route: ViewRoute; proportion: number }[] = []
@@ -399,7 +437,7 @@ export function NavigationProvider({
           const colonIdx = entry.lastIndexOf(':')
           if (colonIdx > 0) {
             const proportion = parseFloat(entry.slice(colonIdx + 1))
-            if (!isNaN(proportion) && proportion > 0 && proportion < 1) {
+            if (!isNaN(proportion) && proportion > 0 && proportion <= 1) {
               const rawRoute = entry.slice(0, colonIdx) as ViewRoute
               const route = normalizePanelRouteForReconcile(rawRoute, (state) => resolveAutoSelectionRef.current(state))
               return { route, proportion }
@@ -422,7 +460,7 @@ export function NavigationProvider({
         }
 
         focusedIndex = focusedIndexParam != null ? (parseInt(focusedIndexParam, 10) || 0) : 0
-      } else if (initialRoute) {
+      } else if (initialRoute && !isPageSurfaceRoute(initialRoute)) {
         // Single panel from ?route=
         const navState = parseRouteToNavigationState(initialRoute)
         if (navState) {
@@ -433,11 +471,21 @@ export function NavigationProvider({
         }
       }
 
+      if (nextPageSurfaceRoute && !entries.some(entry => isWorkspacePanelRoute(entry.route))) {
+        const fallbackState = resolveAutoSelectionRef.current(DEFAULT_NAVIGATION_STATE)
+        entries = [{
+          route: buildRouteFromNavigationState(fallbackState) as ViewRoute,
+          proportion: 1,
+        }]
+      }
+
+      setPageSurfaceRoute(nextPageSurfaceRoute)
+
       if (entries.length > 0) {
         store.set(reconcilePanelStackAtom, { entries, focusedIndex })
       }
     },
-    [store]
+    [setPageSurfaceRoute, store]
   )
 
   // Keep ref fresh for use in event handlers / effects that capture stale closures
@@ -654,6 +702,7 @@ export function NavigationProvider({
           }
 
           const filter: import('../../shared/types').SessionFilter = { kind: 'allSessions' }
+          setPageSurfaceRoute(null)
 
           if (options?.newPanel) {
             // Open the new session in a new panel using lane-aware routing (pushPanel auto-focuses it)
@@ -753,7 +802,7 @@ export function NavigationProvider({
           console.warn('[Navigation] Unknown action:', parsed.name)
       }
     },
-    [workspaceId, onCreateSession, onInputChange, pushPanel, store, updateSessionMeta]
+    [workspaceId, onCreateSession, onInputChange, pushPanel, setPageSurfaceRoute, store, updateSessionMeta]
   )
 
   // =========================================================================
@@ -774,27 +823,13 @@ export function NavigationProvider({
       }
 
       if (!isReady) {
-        pendingNavigationRef.current = parsed
+        pendingNavigationRef.current = route
         return
       }
 
       // Handle actions (side effects)
       if (parsed.type === 'action') {
         await handleActionNavigation(parsed, options)
-        return
-      }
-
-      // For view routes with newPanel: push a panel using lane-aware routing.
-      //
-      // Important distinction:
-      // - explicit opens (intent='explicit') can target a specific lane
-      // - implicit navigation (updateFocusedPanelRouteAtom path) applies lock/fallback
-      // This mirrors VS Code-style "locked group" behavior.
-      if (options?.newPanel) {
-        pushPanel({
-          route: route as ViewRoute,
-          intent: 'explicit',
-        })
         return
       }
 
@@ -819,12 +854,22 @@ export function NavigationProvider({
           storage.set(storage.KEYS.lastSelectedSessionId, resolvedState.details.sessionId, workspaceId)
         }
 
-        // Update the focused panel's route (atom update is synchronous)
-        // The panelStack atom subscription detects the route change and calls syncUrl(true)
-        store.set(updateFocusedPanelRouteAtom, finalRoute)
+        if (isPageSurfaceNavigation(resolvedState)) {
+          setPageSurfaceRoute(finalRoute)
+          return
+        }
+
+        // Returning to workspace content restores the existing dock. Explicit
+        // new-panel opens are meaningful only for workspace-owned content.
+        setPageSurfaceRoute(null)
+        if (options?.newPanel) {
+          pushPanel({ route: finalRoute, intent: 'explicit' })
+        } else {
+          store.set(updateFocusedPanelRouteAtom, finalRoute)
+        }
       }
     },
-    [isReady, handleActionNavigation, resolveAutoSelection, store, pushPanel, workspaceId]
+    [isReady, handleActionNavigation, resolveAutoSelection, setPageSurfaceRoute, store, pushPanel, workspaceId]
   )
 
   // =========================================================================
@@ -978,21 +1023,9 @@ export function NavigationProvider({
     if (isReady && pendingNavigationRef.current) {
       const pending = pendingNavigationRef.current
       pendingNavigationRef.current = null
-
-      if (pending.type === 'action') {
-        handleActionNavigation(pending)
-        return
-      }
-
-      const routeStr = `${pending.name}${pending.id ? `/${pending.id}` : ''}`
-      const navState = parseRouteToNavigationState(routeStr)
-      if (navState) {
-        const resolved = resolveAutoSelection(navState)
-        const finalRoute = buildRouteFromNavigationState(resolved) as ViewRoute
-        store.set(updateFocusedPanelRouteAtom, finalRoute)
-      }
+      void navigate(pending)
     }
-  }, [isReady, handleActionNavigation, resolveAutoSelection, store])
+  }, [isReady, navigate])
 
   // =========================================================================
   // DEEP LINK LISTENER

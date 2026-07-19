@@ -1,13 +1,27 @@
 import { describe, it, expect } from 'bun:test';
-import { SESSION_BACKEND_TOOL_NAMES } from '@craft-agent/session-tools-core';
-import { PI_BACKEND_SESSION_TOOL_NAMES } from '../../pi-agent.ts';
+import { SESSION_BACKEND_TOOL_NAMES } from '@mortise/session-tools-core';
+import {
+  PI_BACKEND_SESSION_TOOL_NAMES,
+} from '../../pi-agent.ts';
+import {
+  getSessionHostToolDefs,
+  PI_EXTENSION_OWNED_SESSION_TOOL_NAMES,
+} from './session-tool-defs.ts';
 
 describe('Pi backend session tool parity', () => {
   it('implements all backend-mode session tools from core registry', () => {
     const missing = [...SESSION_BACKEND_TOOL_NAMES].filter(
-      (toolName) => !PI_BACKEND_SESSION_TOOL_NAMES.has(toolName),
+      (toolName) =>
+        !PI_BACKEND_SESSION_TOOL_NAMES.has(toolName)
+        && !PI_EXTENSION_OWNED_SESSION_TOOL_NAMES.has(toolName),
     );
 
     expect(missing).toEqual([]);
+  });
+
+  it('registers canonical names without transport prefixes', () => {
+    const names = getSessionHostToolDefs().map((tool) => tool.name);
+    expect(names).toContain('source_test');
+    expect(names.some((name) => name.startsWith('mcp__session__'))).toBe(false);
   });
 });

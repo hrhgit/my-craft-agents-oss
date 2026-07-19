@@ -1,6 +1,6 @@
 # Testing
 
-Craft Agent uses Bun for TypeScript tests and Python `unittest` for the bundled document-tool smoke tests.
+Mortise Agent uses Bun for TypeScript tests and Python `unittest` for the bundled document-tool smoke tests.
 
 ## Layout
 
@@ -32,7 +32,7 @@ bun run test:doc-tools
 
 ## Typed AppShell UI Scenarios
 
-The source-only UI Test Host includes a controlled production-component surface named `app-shell-scenario-host`. Open that playground component before applying AppShell scenarios. The renderer installs `__CRAFT_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__` only when the Electron Test Host capability or WebUI validation bootstrap is present.
+The source-only UI Test Host includes a controlled production-component surface named `app-shell-scenario-host`. Open that playground component before applying AppShell scenarios. The renderer installs `__MORTISE_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__` only when the Electron Test Host capability or WebUI validation bootstrap is present.
 
 The fixed bridge exposes `list()`, `snapshot()`, `apply(request)`, `reset()`, `clock.advance(ms)`, `fault.set(request)`, and `fault.clear(id?)`. It does not expose atoms, React state, DOM queries, JavaScript evaluation, or arbitrary service replacement. `apply` accepts the shared `UiValidationScenarioApplyRequest` and rejects `fixture` for these fixed scenarios.
 
@@ -49,29 +49,40 @@ The frozen clock virtualizes the registered application `timer`, `debounce`, `re
 
 ## Source UI Validation Control Plane
 
-`craft-ui` is source-only and is excluded from production/package module graphs. It exposes a versioned JSON control plane; callers do not use Playwright, CDP, selectors, renderer evaluation, or Electron objects directly.
+`mortise-ui` is source-only and is excluded from production/package module graphs. It exposes a versioned JSON control plane; callers do not use Playwright, CDP, selectors, renderer evaluation, or Electron objects directly.
 
 Cold starts and explicitly requested UI waits allow up to 10 minutes; the default cold-start budget is 10 minutes, ordinary host operations default to 2 minutes, and adapter-level waits default to 1 minute.
+
+Electron source-validation builds are published as immutable, fingerprinted capsules under `output/mortise-ui-builds`. Starts with the same source fingerprint wait for and reuse one completed build; changed source publishes a new capsule without modifying files used by live runs. Each run records its `buildId` and `buildDir`. Normal shutdown releases the run's build lease and automatically removes unreferenced old capsules, retaining the newest two within a 2 GiB cache budget by default. `MORTISE_UI_BUILD_RETAIN_COUNT` and `MORTISE_UI_BUILD_MAX_BYTES` may tighten those bounds; active builds are never removed, so routine use requires no manual cleanup.
 
 For Electron UI work, this CLI is also the primary AI-operated validation surface. Use it to explore the real changed workflow instead of relying only on a prewritten smoke script: start a fixture run, inspect the capability catalog and current snapshot, choose targets from that snapshot, execute a bounded action sequence, then capture evidence. The fixed E2E suites below are regression coverage and do not replace this interactive check.
 
 ```bash
-bun run craft-ui -- start --surface electron --profile fixture --json
-bun run craft-ui -- status --json
-bun run craft-ui -- capabilities list --kind route --json
-bun run craft-ui -- capabilities describe --kind scenario --id session.streaming --json
-bun run craft-ui -- open --params '{"route":{"surface":"settings","section":"extensions"}}' --json
-bun run craft-ui -- snapshot --json
-bun run craft-ui -- wait --params '{"predicate":{"kind":"semantic-ready"}}' --json
-bun run craft-ui -- evidence --params '{"label":"manual-check"}' --json
-bun run craft-ui -- stop --json
+bun run mortise-ui -- start --label settings-extension-reload --surface electron --profile fixture --json
+bun run mortise-ui -- status --run settings-extension-reload --json
+bun run mortise-ui -- capabilities list --kind route --run settings-extension-reload --json
+bun run mortise-ui -- capabilities describe --kind scenario --id session.streaming --run settings-extension-reload --json
+bun run mortise-ui -- open --run settings-extension-reload --params '{"route":{"surface":"settings","section":"extensions"}}' --json
+bun run mortise-ui -- snapshot --run settings-extension-reload --json
+bun run mortise-ui -- wait --run settings-extension-reload --params '{"predicate":{"kind":"semantic-ready"}}' --json
+bun run mortise-ui -- evidence --run settings-extension-reload --params '{"label":"manual-check"}' --json
+bun run mortise-ui -- stop --run settings-extension-reload --json
 ```
+
+Mount an extension package directly from its development directory with a repeatable `--extension` option:
+
+```bash
+bun run mortise-ui -- start --label extension-package --surface electron --profile fixture \
+  --extension /absolute/path/to/extension --json
+```
+
+The directory must contain Manifest V1 `pi.extensions` entries targeting `mortise`. The controller writes their resolved absolute entry paths into the disposable Pi settings file; it does not copy extension source, dependencies, or global user configuration. Mounted command-line entries replace cloned settings entries with the same ID for that run, and duplicate mounted IDs fail before the host starts.
 
 An agent may build a broader disposable data scene before launch. The schema is available without starting the app, so callers do not need to inspect implementation source:
 
 ```bash
-bun run craft-ui -- fixture schema --json
-bun run craft-ui -- start --surface electron --profile fixture --fixture ./fixture.json --json
+bun run mortise-ui -- fixture schema --json
+bun run mortise-ui -- start --label fixture-data-scene --surface electron --profile fixture --fixture ./fixture.json --json
 ```
 
 Fixture V1 declares one or more workspaces, workspace-root files, sessions, conversation messages, session sidecar files, and the initially active workspace/session. For example:
@@ -97,24 +108,26 @@ Fixture V1 declares one or more workspaces, workspace-root files, sessions, conv
 }
 ```
 
-Workspace files are materialized under the real disposable workspace root. Session files are materialized under the normal Craft sidecar and must start with `attachments/`, `data/`, `downloads/`, `long_responses/`, or `plans/`. Conversation history is written through the canonical Pi session projection rather than a renderer mock. The validator bounds counts and bytes, rejects duplicate identities and paths, and prevents path escape or Windows-unsafe names. The entire profile is removed by `craft-ui stop`.
+Workspace files are materialized under the real disposable workspace root. Session files are materialized under the normal Mortise sidecar and must start with `attachments/`, `data/`, `downloads/`, `long_responses/`, or `plans/`. Conversation history is written through the canonical Pi session projection rather than a renderer mock. The validator bounds counts and bytes, rejects duplicate identities and paths, and prevents path escape or Windows-unsafe names. The entire profile is removed by `mortise-ui stop`.
 
-The usual interactive loop keeps the run id returned by `start` and passes it to subsequent commands:
+Give AI-operated runs a short lowercase semantic label. The label is stored separately from the immutable run ID and may be passed to `--run`; exact run IDs remain available for protocol identity and disambiguation. If historical runs share a label, a single active match wins, while multiple active or stopped matches require the full run ID.
+
+The usual interactive loop uses the semantic label for routine commands while retaining the returned run ID as the exact fallback:
 
 ```bash
-bun run craft-ui -- start --surface electron --profile fixture --json
-bun run craft-ui -- capabilities list --kind action --run <run-id> --json
-bun run craft-ui -- snapshot --run <run-id> --json
-bun run craft-ui -- action --run <run-id> \
+bun run mortise-ui -- start --label changed-workflow --surface electron --profile fixture --json
+bun run mortise-ui -- capabilities list --kind action --run changed-workflow --json
+bun run mortise-ui -- snapshot --run changed-workflow --json
+bun run mortise-ui -- action --run changed-workflow \
   --params '{"revision":<revision>,"target":{"ref":"<ref>"},"action":"click","mode":"physical"}' --json
-bun run craft-ui -- evidence --run <run-id> --params '{"label":"changed-workflow"}' --json
-bun run craft-ui -- stop --run <run-id> --json
+bun run mortise-ui -- evidence --run changed-workflow --params '{"label":"changed-workflow"}' --json
+bun run mortise-ui -- stop --run changed-workflow --json
 ```
 
 Use Electron background mode when validation must not take over the active desktop:
 
 ```bash
-bun run craft-ui -- start --surface electron --profile fixture --window-mode background --json
+bun run mortise-ui -- start --label background-validation --surface electron --profile fixture --window-mode background --json
 ```
 
 The run starts real source-development Electron windows with renderer background throttling disabled and keeps every managed window minimized. Semantic actions, renderer snapshots and waits, CDP-backed physical input, renderer screenshots, and background-safe Windows UIA patterns remain available. A native background snapshot advertises only operations that do not require a foreground window: `Invoke`, `Value`, and `SelectionItem` patterns plus window minimize/close. Coordinate mouse fallback, focus, restore, maximize, and native dialogs return `UNSUPPORTED` instead of restoring or focusing the window. `status.windowMode` and `status.nativeDriver.windowMode` report the active contract. WebUI runs do not accept this option because they have no Electron window lifecycle.
@@ -130,8 +143,8 @@ Use `capabilities list` before composing a flow and `capabilities describe` to o
 Use `isolated` only for onboarding and pristine-profile behavior. When real provider or user configuration is required, clone mode requires both source paths explicitly and redirects every write into temporary directories:
 
 ```bash
-bun run craft-ui -- start --surface electron --profile clone \
-  --source-craft-profile /explicit/craft/profile \
+bun run mortise-ui -- start --label real-provider-clone --surface electron --profile clone \
+  --source-mortise-profile /explicit/mortise/profile \
   --source-pi-profile /explicit/pi/agent --json
 ```
 
@@ -144,23 +157,23 @@ Verification levels are cumulative evidence, not interchangeable labels:
 Run the focused and real-host suites with:
 
 ```bash
-bun run test:craft-ui
+bun run test:mortise-ui
 bun run test:ui-validation:electron
 bun run test:ui-validation:extension
 bun run test:ui-validation:recovery
 bun run test:ui-validation:runtime-contract
 bun run test:ui-validation:surface-parity
-CRAFT_UI_STABILITY_SURFACES=webui,electron CRAFT_UI_STABILITY_ITERATIONS=10 bun run test:ui-validation:stability
+MORTISE_UI_STABILITY_SURFACES=webui,electron MORTISE_UI_STABILITY_ITERATIONS=10 bun run test:ui-validation:stability
 bun run test:ui-validation:raw-host-smoke
 ```
 
 `runtime-contract` drives the public fault, frozen-clock, physical retry, and idempotent reset APIs against a real Electron renderer. `surface-parity` applies the same real AppShell scenario to WebUI and Electron and compares stable semantic roles, actions, and state. They are explicit source-development acceptance checks and are not part of the fast unit suite.
 
-`test:electron:chat-real` now uses only `craft-ui`. It deliberately refuses implicit access to a home profile:
+`test:electron:chat-real` now uses only `mortise-ui`. It deliberately refuses implicit access to a home profile:
 
 ```bash
-CRAFT_E2E_SOURCE_CRAFT_PROFILE=/explicit/craft/profile \
-CRAFT_E2E_SOURCE_PI_PROFILE=/explicit/pi/agent \
+MORTISE_E2E_SOURCE_PROFILE=/explicit/mortise/profile \
+MORTISE_E2E_SOURCE_PI_PROFILE=/explicit/pi/agent \
 bun run test:electron:chat-real
 ```
 

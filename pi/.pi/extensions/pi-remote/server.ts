@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mortise/pi-coding-agent";
+import { SessionManager } from "@mortise/pi-coding-agent";
 import type { RemoteAuth } from "./auth.ts";
 import { asRecord, isDeliveryMode, isThinkingLevel, type ClientEvent, type RemoteSessionInfo, type ServerEvent } from "./protocol.ts";
 import { createRemoteState, toRemoteModel, type RemoteSettings } from "./state.ts";

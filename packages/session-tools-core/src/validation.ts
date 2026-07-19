@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import matter from 'gray-matter';
 import { existsSync, readFileSync } from 'node:fs';
-import { stripBom } from '@craft-agent/shared/utils';
+import { stripBom } from '@mortise/shared/utils';
 import type { ValidationResult, ValidationIssue } from './types.ts';
 
 // ============================================================
@@ -154,11 +154,11 @@ export function zodErrorToIssues(error: z.ZodError, filePath: string): Validatio
 }
 
 // ============================================================
-// Slug Validation (re-exported from @craft-agent/shared)
+// Slug Validation (re-exported from @mortise/shared)
 // ============================================================
 
-export { SLUG_REGEX, validateSlug } from '@craft-agent/shared/config';
-import { validateSlug } from '@craft-agent/shared/config';
+export { SLUG_REGEX, validateSlug } from '@mortise/shared/config';
+import { validateSlug } from '@mortise/shared/config';
 
 // ============================================================
 // Skill Validation

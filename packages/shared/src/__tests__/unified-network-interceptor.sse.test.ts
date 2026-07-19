@@ -102,7 +102,7 @@ describe('unified-network-interceptor SSE processors', () => {
   it('OpenAI Responses: strips metadata on function_call done events', async () => {
     const sse = [
       'data: {"type":"response.function_call_arguments.done","call_id":"call_resp_1","arguments":"{\\"foo\\":1,\\"_intent\\":\\"do thing\\",\\"_displayName\\":\\"Do Thing\\"}"}\n\n',
-      'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_resp_1","id":"fc_1","name":"mcp__craft__search","arguments":"{\\"foo\\":1,\\"_intent\\":\\"do thing\\",\\"_displayName\\":\\"Do Thing\\"}"}}\n\n',
+      'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_resp_1","id":"fc_1","name":"mcp__mortise__search","arguments":"{\\"foo\\":1,\\"_intent\\":\\"do thing\\",\\"_displayName\\":\\"Do Thing\\"}"}}\n\n',
       'data: [DONE]\n\n',
     ];
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { AssistantMessage } from "@earendil-works/pi-ai/types";
-import { createAssistantMessageDiagnostic } from "@earendil-works/pi-ai/utils/diagnostics";
+import type { AssistantMessage } from "@mortise/pi-ai/types";
+import { createAssistantMessageDiagnostic } from "@mortise/pi-ai/utils/diagnostics";
 import { NetworkRouteDispatcher } from "./network-dispatcher.ts";
 import { SidecarManager, type SidecarState } from "./network-sidecar.ts";
 import type {

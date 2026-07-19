@@ -6,7 +6,7 @@ import type {
   RpcClientEventListener,
   RpcClientOptions,
   RpcRuntimeOpenOptions,
-} from '@earendil-works/pi-coding-agent';
+} from '@mortise/pi-coding-agent';
 import { PiHostManager, PiHostProtocolError, type PiHostAcquireOptions } from '../pi-host-manager.ts';
 
 function capabilities(protocolVersion = 3): RpcCapabilities {
@@ -84,7 +84,7 @@ describe('PiHostManager process-level sharing', () => {
       key: 'default',
       client: {},
       runtime: {
-        runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft',
+        runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise',
         extensionPaths: ['E:/extensions/browser.js', 'E:/extensions/messaging.js'],
       },
     };
@@ -112,7 +112,7 @@ describe('PiHostManager process-level sharing', () => {
     await expect(manager.acquire({
       key: 'legacy',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
     })).rejects.toBeInstanceOf(PiHostProtocolError);
     expect(fake.openRuntime).not.toHaveBeenCalled();
     expect(fake.stop).toHaveBeenCalledTimes(1);
@@ -131,7 +131,7 @@ describe('PiHostManager process-level sharing', () => {
     const lease = await manager.acquire({
       key: 'startup-events',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
     });
 
     expect(lease.startupEvents).toEqual([startupEvent]);
@@ -149,7 +149,7 @@ describe('PiHostManager process-level sharing', () => {
     const options: PiHostAcquireOptions = {
       key: 'recoverable',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'craft' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
     };
 
     const firstLease = await manager.acquire(options);
@@ -162,5 +162,51 @@ describe('PiHostManager process-level sharing', () => {
     await firstLease.release();
     await secondLease.release();
     await manager.dispose();
+  });
+
+  it('moves new acquisitions to a fresh host after configuration invalidation', async () => {
+    const firstFake = createFakeClient();
+    const secondFake = createFakeClient();
+    const createClient = mock()
+      .mockReturnValueOnce(firstFake.client)
+      .mockReturnValueOnce(secondFake.client);
+    const manager = new PiHostManager({ createClient });
+    const options: PiHostAcquireOptions = {
+      key: 'config-generation',
+      client: {},
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
+    };
+
+    const oldLease = await manager.acquire(options);
+    await manager.invalidateAll('provider-config-changed');
+    const newLease = await manager.acquire(options);
+
+    expect(createClient).toHaveBeenCalledTimes(2);
+    const firstOptions = createClient.mock.calls[0]?.[0] as RpcClientOptions;
+    const secondOptions = createClient.mock.calls[1]?.[0] as RpcClientOptions;
+    expect(firstOptions.globalHost?.instanceId).toBeTruthy();
+    expect(secondOptions.globalHost?.instanceId).toBeTruthy();
+    expect(secondOptions.globalHost?.instanceId).not.toBe(firstOptions.globalHost?.instanceId);
+    expect(firstFake.stop).not.toHaveBeenCalled();
+    await oldLease.release();
+    expect(firstFake.stop).toHaveBeenCalledTimes(1);
+    await newLease.release();
+    await manager.dispose();
+  });
+
+  it('stops a shared host whose startup times out', async () => {
+    const fake = createFakeClient();
+    fake.client.start = mock(() => new Promise<void>(() => {}));
+    const manager = new PiHostManager({
+      startupTimeoutMs: 5,
+      createClient: () => fake.client,
+    });
+
+    await expect(manager.acquire({
+      key: 'stuck',
+      client: {},
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
+    })).rejects.toThrow('startup timed out');
+    expect(fake.stop).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 import { ConversationProjector, ProjectionIdentityError } from './conversation-projector'
 
 function event(

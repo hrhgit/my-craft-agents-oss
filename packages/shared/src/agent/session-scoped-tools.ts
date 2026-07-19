@@ -5,7 +5,7 @@
  * instance of these tools with session-specific callbacks and state.
  *
  * This file is a thin adapter that wraps the shared handlers from
- * @craft-agent/session-tools-core for use as in-process MCP tools.
+ * @mortise/session-tools-core for use as in-process MCP tools.
  *
  * All tool definitions, schemas, and handlers live in session-tools-core.
  * This adapter only handles:
@@ -36,7 +36,7 @@ import {
   type ToolResult,
   type TextContent,
   type AuthRequest,
-} from '@craft-agent/session-tools-core';
+} from '@mortise/session-tools-core';
 import { createSpawnSessionTool, type SpawnSessionFn } from './spawn-session-tool.ts';
 import { createBrowserTools, type BrowserPaneFns } from './browser-tools.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
@@ -56,7 +56,7 @@ export type {
   GoogleService,
   SlackService,
   MicrosoftService,
-} from '@craft-agent/session-tools-core';
+} from '@mortise/session-tools-core';
 
 // Re-export browser pane types for session manager wiring
 export type { BrowserPaneFns } from './browser-tools.ts';

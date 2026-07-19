@@ -27,7 +27,7 @@ export const isBunRuntime = !!process.versions.bun;
 // =============================================================================
 
 export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
-export type UpdateChannel = "official" | "fork";
+export type UpdateChannel = "published" | "disabled";
 
 interface SelfUpdateCommandStep {
 	command: string;
@@ -295,7 +295,7 @@ export function getSelfUpdateCommand(
 	npmCommand?: string[],
 	updatePackageName = packageName,
 ): SelfUpdateCommand | undefined {
-	if (!usesOfficialUpdateChannel()) {
+	if (!usesPublishedUpdateChannel()) {
 		return undefined;
 	}
 	const method = detectInstallMethod();
@@ -311,12 +311,12 @@ export function getSelfUpdateUnavailableInstruction(
 	npmCommand?: string[],
 	updatePackageName = packageName,
 ): string {
-	if (!usesOfficialUpdateChannel()) {
-		return "Self-update is disabled for this fork. Update it from your fork's source checkout or release process.";
+	if (!usesPublishedUpdateChannel()) {
+		return "Self-update is disabled for this distribution. Update it from this distribution's source checkout or release process.";
 	}
 	const method = detectInstallMethod();
 	if (method === "bun-binary") {
-		return `Download from: https://github.com/earendil-works/pi-mono/releases/latest`;
+		return `Download from: https://github.com/hrhgit/mortise/releases/latest`;
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
 	if (command) {
@@ -329,7 +329,7 @@ export function getSelfUpdateUnavailableInstruction(
 }
 
 export function getUpdateInstruction(packageName: string): string {
-	if (!usesOfficialUpdateChannel()) {
+	if (!usesPublishedUpdateChannel()) {
 		return getSelfUpdateUnavailableInstruction(packageName);
 	}
 	const method = detectInstallMethod();
@@ -469,7 +469,7 @@ interface PackageJson {
 }
 
 function normalizeUpdateChannel(value: string | undefined): UpdateChannel | undefined {
-	if (value === "official" || value === "fork") {
+	if (value === "published" || value === "disabled") {
 		return value;
 	}
 	return undefined;
@@ -478,9 +478,9 @@ function normalizeUpdateChannel(value: string | undefined): UpdateChannel | unde
 const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
 
 const piConfigName: string | undefined = pkg.piConfig?.name;
-const configuredUpdateChannel = normalizeUpdateChannel(pkg.piConfig?.updateChannel) ?? "official";
+const configuredUpdateChannel = normalizeUpdateChannel(pkg.piConfig?.updateChannel) ?? "published";
 const configuredVersionSuffix = pkg.piConfig?.versionSuffix?.trim() ?? "";
-export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent";
+export const PACKAGE_NAME: string = pkg.name || "@mortise/pi-coding-agent";
 export const APP_NAME: string = piConfigName || "pi";
 export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
@@ -491,8 +491,8 @@ export function getUpdateChannel(): UpdateChannel {
 	return normalizeUpdateChannel(process.env.PI_UPDATE_CHANNEL) ?? configuredUpdateChannel;
 }
 
-export function usesOfficialUpdateChannel(): boolean {
-	return getUpdateChannel() === "official";
+export function usesPublishedUpdateChannel(): boolean {
+	return getUpdateChannel() === "published";
 }
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR

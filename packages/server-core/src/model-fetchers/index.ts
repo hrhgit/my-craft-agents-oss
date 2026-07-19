@@ -1,5 +1,5 @@
-import type { ModelFetcherMap, ModelFetcherCredentials, PiGlobalModel } from '@craft-agent/shared/config'
-import { readPiGlobalProviders, savePiGlobalProvider } from '@craft-agent/shared/config'
+import type { ModelFetcherMap, ModelFetcherCredentials, PiGlobalModel } from '@mortise/shared/config'
+import { readPiGlobalProviders, savePiGlobalProvider } from '@mortise/shared/config'
 import { MODEL_FETCHERS } from './registry'
 import { handlerLog } from './runtime'
 

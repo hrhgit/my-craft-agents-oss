@@ -11,14 +11,14 @@ function createConfig(): BackendConfig {
     workspace: {
       id: 'ws-host-recovery',
       name: 'Host Recovery',
-      rootPath: '/tmp/craft-agent-host-recovery',
+      rootPath: '/tmp/mortise-host-recovery',
     } as BackendConfig['workspace'],
     session: {
-      craftId: 'session-host-recovery',
-      workspaceRootPath: '/tmp/craft-agent-host-recovery',
+      mortiseId: 'session-host-recovery',
+      workspaceRootPath: '/tmp/mortise-host-recovery',
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
-      workingDirectory: '/tmp/craft-agent-host-recovery',
+      workingDirectory: '/tmp/mortise-host-recovery',
     } as NonNullable<BackendConfig['session']>,
     isHeadless: true,
   };
@@ -127,7 +127,7 @@ describe('PiAgent GlobalHost recovery', () => {
     agent.destroy();
   });
 
-  it('routes extension host capability requests through the Craft host callback', async () => {
+  it('routes extension host capability requests through the Mortise host callback', async () => {
     const onHostCapabilityRequest = mock(async (_request, onProgress) => {
       onProgress({ version: 1, requestId: 'cap-1', sequence: 1, progress: { phase: 'picking' } });
       return { requestId: 'cap-1', status: 'success' as const, output: { paths: ['C:/picked.txt'] } };

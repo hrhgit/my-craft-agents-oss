@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ExtensionInteractionBridgeRequestV1, ExtensionInteractionFieldV1 } from '@craft-agent/shared/protocol'
+import type { ExtensionInteractionBridgeRequestV1, ExtensionInteractionFieldV1 } from '@mortise/shared/protocol'
 import {
   ExtensionInteractionComposer,
   interactionDraftAnswer,

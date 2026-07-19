@@ -41,9 +41,9 @@ function Test-WebuiHttpReady {
   }
 }
 
-function Get-CraftServerEndpoint {
+function Get-MortiseServerEndpoint {
   param(
-    [string]$ConfigDir = $(if ($env:CRAFT_CONFIG_DIR) { $env:CRAFT_CONFIG_DIR } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.craft-agent' }),
+    [string]$ConfigDir = $(if ($env:MORTISE_CONFIG_DIR) { $env:MORTISE_CONFIG_DIR } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.mortise' }),
     [switch]$RequireWebuiAutoLogin
   )
 

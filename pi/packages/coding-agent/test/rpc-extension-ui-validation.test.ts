@@ -10,7 +10,7 @@ import type { RpcExtensionUIRequest, RpcExtensionUIValidationEvent } from "../sr
 type RpcContributionRequest = Extract<RpcExtensionUIRequest, { method: "contribution" }>;
 
 const baseCapabilities = {
-	kind: "craft",
+	kind: "mortise",
 	dialogs: true,
 	widgets: true,
 	editorControl: true,
@@ -166,8 +166,8 @@ describe("extension UI validation capability", () => {
 	});
 
 	it("publishes both host-rendered and sandbox validation examples through a real RPC runtime", async () => {
-		const root = join(tmpdir(), `pi-craft-gui-example-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-		const extensionPath = resolve(process.cwd(), "examples", "extensions", "craft-gui.ts");
+		const root = join(tmpdir(), `pi-mortise-gui-example-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const extensionPath = resolve(process.cwd(), "examples", "extensions", "mortise-gui.ts");
 		mkdirSync(root, { recursive: true });
 		writeFileSync(
 			join(root, "models.json"),
@@ -186,7 +186,9 @@ describe("extension UI validation capability", () => {
 		writeFileSync(
 			join(root, "settings.json"),
 			JSON.stringify({
-				extensions: [{ id: "craft-gui-example", path: extensionPath, activation: "startup", targets: ["craft"] }],
+				extensions: [
+					{ id: "mortise-gui-example", path: extensionPath, activation: "startup", targets: ["mortise"] },
+				],
 			}),
 			"utf8",
 		);
@@ -201,7 +203,7 @@ describe("extension UI validation capability", () => {
 			args: ["--no-session", "--no-skills", "--no-prompt-templates", "--no-context-files"],
 			env: {
 				PI_CODING_AGENT_DIR: root,
-				PI_EXTENSION_TARGET: "craft",
+				PI_EXTENSION_TARGET: "mortise",
 				PI_RPC_UI_CAPABILITIES: JSON.stringify({ ...baseCapabilities, validation: true }),
 			},
 			pipeStderr: false,
@@ -220,10 +222,10 @@ describe("extension UI validation capability", () => {
 					? event.contributions
 					: [],
 		);
-		expect(published.map((item) => item.id)).toContain("craft-gui-example.status");
+		expect(published.map((item) => item.id)).toContain("mortise-gui-example.status");
 		expect(published).toContainEqual(
 			expect.objectContaining({
-				id: "craft-gui-example.sandbox",
+				id: "mortise-gui-example.sandbox",
 				content: expect.objectContaining({
 					type: "sandbox-app",
 					permissions: ["commands", "resize", "validation"],

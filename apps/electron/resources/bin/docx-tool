@@ -1,2 +1,2 @@
 #!/bin/sh
-exec "$CRAFT_UV" run --python 3.12 "$CRAFT_SCRIPTS/docx_tool.py" "$@"
+exec "$MORTISE_UV" run --python 3.12 "$MORTISE_SCRIPTS/docx_tool.py" "$@"

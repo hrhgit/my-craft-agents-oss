@@ -9,7 +9,7 @@ const workerPath = join(import.meta.dir, 'fixtures', 'multi-writer-config-worker
 const temporaryDirectories: string[] = []
 
 function setupConfigDir(): string {
-  const configDir = mkdtempSync(join(tmpdir(), 'craft-config-multi-writer-'))
+  const configDir = mkdtempSync(join(tmpdir(), 'mortise-config-multi-writer-'))
   temporaryDirectories.push(configDir)
   writeFileSync(join(configDir, 'config.json'), JSON.stringify({
     workspaces: [],
@@ -42,7 +42,7 @@ function spawnWorker(configDir: string, field: string, value: string): ChildProc
     [workerPath, configDir, field, value],
     {
       cwd: repositoryRoot,
-      env: { ...process.env, CRAFT_CONFIG_DIR: configDir },
+      env: { ...process.env, MORTISE_CONFIG_DIR: configDir },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   )

@@ -14,8 +14,8 @@ import type {
 	AgentToolUpdateCallback,
 	ThinkingLevel,
 	ToolExecutionMode,
-} from "@earendil-works/pi-agent-core";
-import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai/oauth";
+} from "@mortise/pi-agent-core";
+import type { OAuthCredentials, OAuthLoginCallbacks } from "@mortise/pi-ai/oauth";
 import type {
 	Api,
 	AssistantMessageEvent,
@@ -26,7 +26,7 @@ import type {
 	SimpleStreamOptions,
 	TextContent,
 	ToolResultMessage,
-} from "@earendil-works/pi-ai/types";
+} from "@mortise/pi-ai/types";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -37,13 +37,18 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	TUI,
-} from "@earendil-works/pi-tui";
+} from "@mortise/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
+import type {
+	ExtensionManifestDiagnostic,
+	ExtensionManifestStatus,
+	ExtensionManifestV1,
+} from "../extension-manifest.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
 import type {
 	GlobalBackgroundTaskEventListener,
@@ -176,7 +181,7 @@ export interface ExtensionWidgetOptions {
 	placement?: WidgetPlacement;
 }
 
-/** Craft host surfaces available to serializable extension UI contributions. */
+/** Mortise host surfaces available to serializable extension UI contributions. */
 export type ExtensionUISurface =
 	| "conversation.timeline.before"
 	| "conversation.timeline.after"
@@ -185,12 +190,16 @@ export type ExtensionUISurface =
 	| "conversation.turn.replace"
 	| "conversation.message.before"
 	| "conversation.message.after"
+	| "conversation.message.footer"
 	| "conversation.message.replace"
+	| "conversation.artifact.aside"
+	| "conversation.artifact.footer"
 	| "conversation.tool.before"
 	| "conversation.tool.after"
 	| "conversation.tool.replace"
 	| "conversation.inline"
 	| "conversation.overlay"
+	| "conversation.status"
 	| "composer.above"
 	| "composer.below"
 	| "composer.toolbar"
@@ -201,6 +210,7 @@ export type ExtensionUISurface =
 	| "sidebar.footer"
 	| "navigation.item"
 	| "session.badge"
+	| "workspace.content"
 	| "window.topLeft"
 	| "window.topRight";
 
@@ -223,13 +233,42 @@ export type ExtensionUIAction = {
 	args?: string;
 };
 
+export type ExtensionUIButtonEmphasis = "primary" | "secondary" | "quiet";
+export type ExtensionUIStepStatus = "pending" | "in_progress" | "completed" | "failed" | "skipped";
+export interface ExtensionUIStepV1 {
+	id: string;
+	label: string;
+	status: ExtensionUIStepStatus;
+}
+
+export type ExtensionWorkspaceContentScope = "session" | "workspace" | "global";
+export type ExtensionWorkspaceContentInstancePolicy = "singleton" | "multiple";
+export type ExtensionWorkspaceContentPreferredGroup = "active" | "adjacent";
+
+export interface ExtensionWorkspaceContentMetadataV1 {
+	title: string;
+	icon: ExtensionUIIconName;
+	scope?: ExtensionWorkspaceContentScope;
+	instancePolicy?: ExtensionWorkspaceContentInstancePolicy;
+	preferredGroup?: ExtensionWorkspaceContentPreferredGroup;
+}
+
 export type ExtensionUINode =
 	| { type: "text"; text: string; tone?: "default" | "muted" | "success" | "warning" | "danger" }
 	| { type: "markdown"; markdown: string }
 	| { type: "icon"; name: ExtensionUIIconName; label: string }
 	| { type: "badge"; label: string; tone?: "default" | "info" | "success" | "warning" | "danger" }
 	| { type: "divider" }
-	| { type: "button"; label: string; icon?: ExtensionUIIconName; action: ExtensionUIAction; disabled?: boolean }
+	| {
+			type: "button";
+			label: string;
+			icon?: ExtensionUIIconName;
+			action: ExtensionUIAction;
+			disabled?: boolean;
+			disabledReason?: string;
+			emphasis?: ExtensionUIButtonEmphasis;
+	  }
+	| { type: "step-progress"; label: string; steps: ExtensionUIStepV1[] }
 	| {
 			type: "sandbox-app";
 			appId: string;
@@ -251,13 +290,15 @@ export interface ExtensionUIContribution {
 	id: string;
 	surface: ExtensionUISurface;
 	content: ExtensionUINode;
+	title?: string;
 	priority?: number;
 	order?: number;
 	group?: string;
 	collapse?: "never" | "auto" | "always";
 	overflow?: "menu" | "collapse" | "hide";
 	exclusive?: boolean;
-	target?: { turnId?: string; messageId?: string; toolCallId?: string };
+	target?: { turnId?: string; messageId?: string; toolCallId?: string; artifactId?: string };
+	workspaceContent?: ExtensionWorkspaceContentMetadataV1;
 }
 
 export type ExtensionUIValidationStatus = "pending" | "busy" | "ready" | "error";
@@ -465,12 +506,12 @@ export interface ExtensionUIContext {
 	 * - `keybindings`: KeybindingsManager for app-level keybindings
 	 *
 	 * For full app keybinding support (escape, ctrl+d, model switching, etc.),
-	 * extend `CustomEditor` from `@earendil-works/pi-coding-agent` and call
+	 * extend `CustomEditor` from `@mortise/pi-coding-agent` and call
 	 * `super.handleInput(data)` for keys you don't handle.
 	 *
 	 * @example
 	 * ```ts
-	 * import { CustomEditor } from "@earendil-works/pi-coding-agent";
+	 * import { CustomEditor } from "@mortise/pi-coding-agent";
 	 *
 	 * class VimEditor extends CustomEditor {
 	 *   private mode: "normal" | "insert" = "insert";
@@ -514,7 +555,7 @@ export interface ExtensionUIContext {
 }
 
 export interface ExtensionUICapabilities {
-	kind: "tui" | "craft" | "none";
+	kind: "tui" | "mortise" | "none";
 	dialogs: boolean;
 	widgets: boolean;
 	customComponents: boolean;
@@ -1388,6 +1429,8 @@ export interface RegisteredCommand {
 	extensionId: string;
 	sourceInfo: SourceInfo;
 	description?: string;
+	/** Omit this command from user-visible command lists while keeping direct invocation available. */
+	hidden?: boolean;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
@@ -1751,7 +1794,7 @@ export function defineExtensionV2(definition: ExtensionV2Definition): ExtensionF
 // ============================================================================
 
 export type ExtensionActivation = "startup" | "beforeFirstRequest" | "lazy";
-export type ExtensionTarget = "pi" | "craft";
+export type ExtensionTarget = "pi" | "mortise";
 
 export type ExtensionUICategory =
 	| "ui"
@@ -1965,6 +2008,10 @@ export interface Extension {
 	resolvedPath: string;
 	sourceInfo: SourceInfo;
 	activation: ExtensionActivation;
+	manifest?: ExtensionManifestV1;
+	manifestStatus?: ExtensionManifestStatus;
+	manifestDiagnostics?: ExtensionManifestDiagnostic[];
+	hostVersion?: string;
 	manifestUI?: ExtensionManifestUIV1;
 	hostCapabilities?: HostCapabilityDeclaration[];
 	handlers: Map<string, HandlerFn[]>;

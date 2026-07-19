@@ -2,7 +2,7 @@
  * Tests for BaseAgent.setPendingSourceActivationRestart first-writer-wins
  * guard (#790).
  *
- * Without the guard, parallel `mcp__session__source_test` calls race on
+ * Without the guard, parallel `source_test` calls race on
  * `_pendingSourceActivationRestart` — only the last writer's slug survives,
  * and the user-facing "[{slug} activated]" suffix on the auto-resend becomes
  * non-deterministic across runs.

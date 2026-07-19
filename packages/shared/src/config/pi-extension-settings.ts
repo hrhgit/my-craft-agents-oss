@@ -1,7 +1,7 @@
 /**
- * Pi 扩展设置（craft GUI 专属字段）
+ * Pi 扩展设置（mortise GUI 专属字段）
  *
- * Task 7 瘦身后：本文件只保留 craft GUI 专属的开关类字段。
+ * Task 7 瘦身后：本文件只保留 mortise GUI 专属的开关类字段。
  * 以下字段位于 `~/.pi/agent/settings.json` 的 `extensionConfig.<id>.*` 命名空间：
  * - `extensionConfig.<id>.enabled`（扩展启停）
  * - `extensionConfig.subagent.defaultModel`
@@ -11,14 +11,14 @@
  * - webSearch（pi 原生搜索配置）
  * - ambiguityDictionary（pi 原生歧义词典）
  *
- * 保留字段均为 craft GUI 专属概念，pi settings.json 无对应项：
+ * 保留字段均为 mortise GUI 专属概念，pi settings.json 无对应项：
  * - `enabled`：控制 pi 扩展相关 UI 组件的可见性（不影响子进程扩展加载）
  * - `delegatePromptAutomation`：automation 委托开关
  * - `managedAgentDir`：测试覆盖用的 agentDir
- * - `subagent.reviewEnabled` / `subagent.reviewModel`：craft 专属 review 流
- * - `traceAudit.reviewSubagentEnabled` / `traceAudit.showStatusBadge`：craft GUI 状态展示
- * - `yourself.showStatusBadge` / `repoMemory.showStatusBadge`：craft GUI 状态展示
- * - `promptAutomation.*`：craft GUI 控件可见性
+ * - `subagent.reviewEnabled` / `subagent.reviewModel`：mortise 专属 review 流
+ * - `traceAudit.reviewSubagentEnabled` / `traceAudit.showStatusBadge`：mortise GUI 状态展示
+ * - `yourself.showStatusBadge` / `repoMemory.showStatusBadge`：mortise GUI 状态展示
+ * - `promptAutomation.*`：mortise GUI 控件可见性
  */
 
 export type PiExtensionCategory =
@@ -58,6 +58,31 @@ export interface PiExtensionManifestUI {
   category?: PiExtensionCategory;
   settings?: PiExtensionSettingsSchema;
 }
+export interface PiExtensionManifestV1 {
+  schemaVersion: 1;
+  name: string;
+  version: string;
+  author: { name: string; url?: string };
+  publisher?: string;
+  description?: string;
+  homepage?: string;
+  repository?: string;
+  license?: string;
+  engines: Partial<Record<'pi' | 'mortise', string>>;
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  conflicts?: Record<string, string>;
+  capabilities?: string[];
+  permissions?: string[];
+  loadOrder?: { priority?: number; after?: string[]; before?: string[] };
+}
+export type PiExtensionManifestStatus = 'compatible' | 'warning' | 'blocked' | 'legacy';
+export interface PiExtensionManifestDiagnostic {
+  code: string;
+  severity: 'warning' | 'error';
+  message: string;
+  relatedExtensionId?: string;
+}
 export interface PiExtensionConfigPatch {
   schemaVersion: 1;
   extensionId: string;
@@ -73,16 +98,21 @@ export interface PiExtensionConfigPatchResult {
 
 /**
  * Pi 返回给 host shell 的扩展展示 DTO。
- * 扩展发现、启停配置和元数据归 Pi；Craft 只消费这个 catalog 渲染设置 UI。
+ * 扩展发现、启停配置和元数据归 Pi；Mortise 只消费这个 catalog 渲染设置 UI。
  */
 export interface PiExtensionCatalogEntry {
   id: string;
-  target: 'pi' | 'craft';
+  target: 'pi' | 'mortise';
   loaded: boolean;
   title: string;
   description: string;
   category: PiExtensionCategory;
   configurable: boolean;
+  manifest?: PiExtensionManifestV1;
+  manifestStatus: PiExtensionManifestStatus;
+  manifestDiagnostics: PiExtensionManifestDiagnostic[];
+  hostVersion: string;
+  loadable: boolean;
   ui?: PiExtensionManifestUI;
   enabled: boolean;
   path: string;
@@ -97,7 +127,7 @@ export interface PiExtensionCatalogEntry {
 export interface PiExtensionCatalogError {
   path: string;
   error: string;
-  target: 'pi' | 'craft';
+  target: 'pi' | 'mortise';
 }
 
 export interface PiExtensionCatalogResult {
@@ -124,7 +154,7 @@ export type PiExtensionReloadResult =
     };
 
 /**
- * Pi 扩展设置——仅 craft GUI 专属字段。
+ * Pi 扩展设置——仅 mortise GUI 专属字段。
  *
  * 扩展级 model/enabled/webSearch/ambiguityDictionary 已回归 pi settings.json，
  * 见文件顶部说明。
@@ -137,14 +167,14 @@ export interface PiExtensionSettings {
   /** 测试覆盖用的 agentDir；生产路径永不传入。 */
   managedAgentDir?: string;
   subagent: {
-    /** craft 专属 review 流程开关（非 pi subagent 默认模型）。 */
+    /** mortise 专属 review 流程开关（非 pi subagent 默认模型）。 */
     reviewEnabled: boolean;
     reviewModel: string;
   };
   traceAudit: {
-    /** craft 专属：是否对 trace-audit 启用 review subagent。 */
+    /** mortise 专属：是否对 trace-audit 启用 review subagent。 */
     reviewSubagentEnabled: boolean;
-    /** craft GUI 状态徽章可见性。 */
+    /** mortise GUI 状态徽章可见性。 */
     showStatusBadge: boolean;
   };
   yourself: {

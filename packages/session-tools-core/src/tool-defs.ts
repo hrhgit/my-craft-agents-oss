@@ -92,7 +92,7 @@ export const UpdatePreferencesSchema = z.object({
   region: z.string().optional().describe("The user's state/region/province"),
   country: z.string().optional().describe("The user's country"),
   notes: z.string().optional().describe('Additional notes about the user that would be helpful to remember (preferences, context, etc.). Replaces any existing notes.'),
-  includeCoAuthoredBy: z.boolean().optional().describe("Whether to include 'Co-Authored-By: Craft Agent' trailer on git commits. Defaults to true."),
+  includeCoAuthoredBy: z.boolean().optional().describe("Whether to include 'Co-Authored-By: Mortise Agent' trailer on git commits. Defaults to true."),
 });
 
 export const TransformDataSchema = z.object({
@@ -179,7 +179,7 @@ export const UnbindMessagingChannelSchema = z.object({
 // ============================================================
 
 export const TOOL_DESCRIPTIONS = {
-  config_validate: `Validate Craft Agent configuration files.
+  config_validate: `Validate Mortise Agent configuration files.
 
 Use this after editing configuration files to check for errors before they take effect.
 Returns structured validation results with errors, warnings, and suggestions.
@@ -378,7 +378,7 @@ Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, \`thinkingLevel
 The spawned session appears in the session list and runs fire-and-forget.
 Only use 'attachments' for existing file paths on disk — the tool reads them automatically.`,
 
-  send_developer_feedback: `Send freeform feedback to the Craft Agent development team.
+  send_developer_feedback: `Send freeform feedback to the Mortise Agent development team.
 
 Use this to share anything that would help improve the product — issues you hit, ideas for better tools, suggestions for improved workflows, or patterns you notice. Write in markdown with as much detail as possible. This is your direct line to the developers.`,
 
@@ -521,7 +521,7 @@ export function getSessionBackendToolNames(options?: SessionToolFilterOptions): 
 }
 
 export interface SessionToolNameOptions extends SessionToolFilterOptions {
-  /** Optional name prefix for consumers (e.g. 'mcp__session__'). */
+  /** Optional compatibility prefix for protocol adapters. Runtime host tools use no prefix. */
   prefix?: string;
 }
 
@@ -555,6 +555,29 @@ export function getSessionSafeBlockedToolNames(options?: SessionToolNameOptions)
 
 /** Set of session tool names for quick membership checks. */
 export const SESSION_TOOL_NAMES = new Set(SESSION_TOOL_DEFS.map(d => d.name));
+
+/** Legacy model-facing prefix retained only for stored-session compatibility. */
+export const LEGACY_SESSION_TOOL_PREFIX = 'mcp__session__';
+
+/** Older non-MCP namespace accepted in persisted events from transitional builds. */
+export const LEGACY_DIRECT_SESSION_TOOL_PREFIX = 'session__';
+
+/**
+ * Resolve a model-facing or persisted tool name to its canonical session-tool name.
+ * New runtimes register canonical names directly; prefixes are compatibility input only.
+ */
+export function normalizeSessionToolName(toolName: string): string | null {
+  const normalized = toolName.startsWith(LEGACY_SESSION_TOOL_PREFIX)
+    ? toolName.slice(LEGACY_SESSION_TOOL_PREFIX.length)
+    : toolName.startsWith(LEGACY_DIRECT_SESSION_TOOL_PREFIX)
+      ? toolName.slice(LEGACY_DIRECT_SESSION_TOOL_PREFIX.length)
+      : toolName;
+  return SESSION_TOOL_NAMES.has(normalized) ? normalized : null;
+}
+
+export function isSessionToolName(toolName: string): boolean {
+  return normalizeSessionToolName(toolName) !== null;
+}
 
 /** Session tool names that must be handled by backend-specific adapters (Pi/Claude/session-mcp-server). */
 export const SESSION_BACKEND_TOOL_NAMES = new Set(
@@ -592,7 +615,7 @@ export interface JsonSchemaToolDef {
 /**
  * Convert session tool definitions to JSON Schema format.
  *
- * @param opts.prefix - Optional prefix for tool names (e.g., 'mcp__session__' for Pi)
+ * @param opts.prefix - Optional prefix for protocol adapters. Pi host tools use canonical names.
  * @param opts.includeDeveloperFeedback - Include experimental feedback tool in output
  * @returns Array of tool definitions with JSON Schema inputSchema
  */

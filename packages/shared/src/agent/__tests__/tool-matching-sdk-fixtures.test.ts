@@ -216,11 +216,11 @@ describe('Fixture: MCP tool', () => {
 
     // MCP tool starts
     const mcpStart: ContentBlock[] = [
-      toolUse('toolu_mcp1', 'mcp__craft__search', { query: 'auth docs', _intent: 'Search docs', _displayName: 'Search' }),
+      toolUse('toolu_mcp1', 'mcp__mortise__search', { query: 'auth docs', _intent: 'Search docs', _displayName: 'Search' }),
     ]
     const startEvents = extractToolStarts(mcpStart, null, index, emitted)
     expect(startEvents[0]).toMatchObject({
-      toolName: 'mcp__craft__search',
+      toolName: 'mcp__mortise__search',
       intent: 'Search docs',
       displayName: 'Search',
     })
@@ -232,7 +232,7 @@ describe('Fixture: MCP tool', () => {
     const resultEvents = extractToolResults(mcpResult, 'toolu_mcp1', undefined, index)
     expect(resultEvents[0]).toMatchObject({
       toolUseId: 'toolu_mcp1',
-      toolName: 'mcp__craft__search',
+      toolName: 'mcp__mortise__search',
     })
   })
 

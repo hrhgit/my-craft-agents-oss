@@ -33,13 +33,14 @@ import {
 } from "lucide-react"
 import { SourceAvatar } from "@/components/ui/source-avatar"
 import { TopBar } from "./TopBar"
+import { WorkspaceCoordinationStatusPopover } from "./WorkspaceCoordinationStatusPopover"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
 import { cn } from "@/lib/utils"
 import { isMac } from "@/lib/platform"
 import { Button } from "@/components/ui/button"
 import { HeaderIconButton } from "@/components/ui/HeaderIconButton"
 import { Separator } from "@/components/ui/separator"
-import { Tooltip, TooltipTrigger, TooltipContent, DocumentFormattedMarkdownOverlay, Spinner } from "@craft-agent/ui"
+import { Tooltip, TooltipTrigger, TooltipContent, DocumentFormattedMarkdownOverlay, Spinner } from "@mortise/ui"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -68,7 +69,8 @@ import {
 import { SessionList, type ChatGroupingMode } from "./SessionList"
 import { SessionMenu } from "./SessionMenu"
 import { MainContentPanel } from "./MainContentPanel"
-import { PanelStackContainer } from "./PanelStackContainer"
+import { RootSurfaceContainer } from "./RootSurfaceContainer"
+import { PageNavigationSurface } from "./PageNavigationSurface"
 import type { ChatDisplayHandle } from "./ChatDisplay"
 import { LeftSidebar, type LinkItem as LeftSidebarLinkItem } from "./LeftSidebar"
 import { ExtensionContributionZone } from "@/components/extensions/ExtensionContributionZone"
@@ -92,9 +94,9 @@ import { dataSourcesEnabledAtom, sourcesAtom } from "@/atoms/sources"
 import { skillsAtom } from "@/atoms/skills"
 import { activeDockTabIdAtom, activeDockTabProtectionAtom, activeDockTabTypeAtom, emptyDockPageSessionRequestAtom, enterCompactDockDetailAtom, exitCompactDockDetailAtom, isEmptyDockPageTabId, panelStackAtom, panelCountAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, resetCompactDockViewIntentAtom, shouldReplaceActiveTabWithSession } from "@/atoms/panel-stack"
 import { useContainerWidth } from "@/hooks/useContainerWidth"
-import { resolveEntityColor } from "@craft-agent/shared/colors"
+import { resolveEntityColor } from "@mortise/shared/colors"
 import * as storage from "@/lib/local-storage"
-import { resolveNavigatorWidth } from "@/lib/nav-helpers"
+import { isDetailNavState } from "@/lib/nav-helpers"
 import { toast } from "sonner"
 import { navigate, routes } from "@/lib/navigate"
 import {
@@ -169,6 +171,7 @@ interface AppShellProps {
 }
 
 const SIDEBAR_DEFAULT_WIDTH = 260
+const PAGE_NAVIGATION_WIDTH = 300
 const SIDEBAR_MIN_WIDTH = 200
 const SIDEBAR_MAX_WIDTH = 320
 
@@ -230,24 +233,20 @@ function AppShellContent({
   const [sidebarWidth, setSidebarWidth] = React.useState(() => {
     return clampSidebarWidth(storage.get(storage.KEYS.sidebarWidth, SIDEBAR_DEFAULT_WIDTH))
   })
-  // Session list width in pixels (min 240, max 480)
-  const [sessionListWidth, setSessionListWidth] = React.useState(() => {
-    return storage.get(storage.KEYS.sessionListWidth, 300)
-  })
   const [canvasLayoutToggleRequest, setCanvasLayoutToggleRequest] = React.useState(0)
   const [isCanvasLayoutFocused, setIsCanvasLayoutFocused] = React.useState(false)
   const enterCompactDockDetail = useSetAtom(enterCompactDockDetailAtom)
   const exitCompactDockDetail = useSetAtom(exitCompactDockDetailAtom)
   const resetCompactDockViewIntent = useSetAtom(resetCompactDockViewIntentAtom)
 
-  // Hides both sidebar and navigator (CMD+. toggle)
+  // Focus mode hides the primary sidebar (CMD+. toggle).
   // Seed from either focused window param or persisted preference, then keep it toggleable.
-  const [isSidebarAndNavigatorHidden, setIsSidebarAndNavigatorHidden] = React.useState(() => {
+  const [isFocusMode, setIsFocusMode] = React.useState(() => {
     return isFocusedMode || storage.get(storage.KEYS.focusModeEnabled, false)
   })
 
-  // Auto-compact mode: shell width below mobile threshold hides sidebar/navigator
-  // and switches to single-panel mode. Works in both webui (narrow viewport) and
+  // Auto-compact mode: shell width below mobile threshold hides the primary
+  // sidebar and switches to single-surface mode. Works in both webui and
   // desktop (narrow window or small screen).
   const shellRef = useRef<HTMLDivElement>(null)
   const shellWidth = useContainerWidth(shellRef)
@@ -265,7 +264,7 @@ function AppShellContent({
     resetCompactDockViewIntent()
   }, [activeWorkspaceId, resetCompactDockViewIntent])
 
-  const effectiveSidebarAndNavigatorHidden = isSidebarAndNavigatorHidden || isAutoCompact
+  const isPrimarySidebarHidden = isFocusMode || isAutoCompact
 
   const [showWhatsNew, setShowWhatsNew] = React.useState(false)
   const [releaseNotesContent, setReleaseNotesContent] = React.useState('')
@@ -279,11 +278,9 @@ function AppShellContent({
     })
   }, [])
 
-  const [isResizing, setIsResizing] = React.useState<'sidebar' | 'session-list' | null>(null)
+  const [isResizing, setIsResizing] = React.useState<'sidebar' | null>(null)
   const [sidebarHandleY, setSidebarHandleY] = React.useState<number | null>(null)
-  const [sessionListHandleY, setSessionListHandleY] = React.useState<number | null>(null)
   const resizeHandleRef = React.useRef<HTMLDivElement>(null)
-  const sessionListHandleRef = React.useRef<HTMLDivElement>(null)
   const { state: session, setState: setSession } = useSessionSelectionStore()
   const { resolvedMode, isDark, setMode } = useTheme()
   const { canGoBack, canGoForward, goBack, goForward, navigateToSource, navigateToSession } = useNavigation()
@@ -291,8 +288,7 @@ function AppShellContent({
   // Double-Esc interrupt feature: first Esc shows warning, second Esc interrupts
   const { handleEscapePress } = useEscapeInterrupt()
 
-  // UNIFIED NAVIGATION STATE - single source of truth from NavigationContext
-  // Derived from focused panel's route — all panels are peers
+  // Visible root-page or focused workspace navigation state.
   const navState = useNavigationState()
 
   const store = useStore()
@@ -651,18 +647,18 @@ function AppShellContent({
   })
 
   const handleToggleSidebar = useCallback(() => {
-    if (isSidebarAndNavigatorHidden) {
-      setIsSidebarAndNavigatorHidden(false)
+    if (isFocusMode) {
+      setIsFocusMode(false)
       return
     }
     setIsSidebarVisible(v => !v)
-  }, [isSidebarAndNavigatorHidden])
+  }, [isFocusMode])
 
   // Sidebar toggle (CMD+B)
   useAction('view.toggleSidebar', handleToggleSidebar)
 
   // Focus mode toggle (CMD+.) - hides both sidebars
-  useAction('view.toggleFocusMode', () => setIsSidebarAndNavigatorHidden(v => !v))
+  useAction('view.toggleFocusMode', () => setIsFocusMode(v => !v))
 
   // Panel focus navigation (CMD+SHIFT+[ / ])
   const focusNextPanel = useSetAtom(focusNextPanelAtom)
@@ -758,7 +754,7 @@ function AppShellContent({
       const filesArray = Array.from(files)
       const targetSessionId = focusedSessionId ?? session.selected
       if (!targetSessionId) return
-      window.dispatchEvent(new CustomEvent('craft:paste-files', {
+      window.dispatchEvent(new CustomEvent('mortise:paste-files', {
         detail: { files: filesArray, sessionId: targetSessionId }
       }))
     }
@@ -767,7 +763,7 @@ function AppShellContent({
     return () => document.removeEventListener('paste', handleGlobalPaste)
   }, [focusedSessionId, session.selected])
 
-  // Resize effect for sidebar, session list, browser host lane, and metadata right sidebar.
+  // Resize effect for the primary workspace sidebar.
   React.useEffect(() => {
     if (!isResizing) return
 
@@ -779,14 +775,6 @@ function AppShellContent({
           const rect = resizeHandleRef.current.getBoundingClientRect()
           setSidebarHandleY(e.clientY - rect.top)
         }
-      } else if (isResizing === 'session-list') {
-        const offset = isSidebarVisible ? sidebarWidth : 0
-        const newWidth = Math.min(Math.max(e.clientX - offset, 240), 480)
-        setSessionListWidth(newWidth)
-        if (sessionListHandleRef.current) {
-          const rect = sessionListHandleRef.current.getBoundingClientRect()
-          setSessionListHandleY(e.clientY - rect.top)
-        }
       }
     }
 
@@ -794,9 +782,6 @@ function AppShellContent({
       if (isResizing === 'sidebar') {
         storage.set(storage.KEYS.sidebarWidth, sidebarWidth)
         setSidebarHandleY(null)
-      } else if (isResizing === 'session-list') {
-        storage.set(storage.KEYS.sessionListWidth, sessionListWidth)
-        setSessionListHandleY(null)
       }
       setIsResizing(null)
     }
@@ -811,8 +796,6 @@ function AppShellContent({
   }, [
     isResizing,
     sidebarWidth,
-    sessionListWidth,
-    isSidebarVisible,
   ])
 
   // Use session metadata from Jotai atom (lightweight, no messages)
@@ -1150,13 +1133,13 @@ function AppShellContent({
 
   // Persist focus mode state to localStorage
   React.useEffect(() => {
-    storage.set(storage.KEYS.focusModeEnabled, isSidebarAndNavigatorHidden)
-  }, [isSidebarAndNavigatorHidden])
+    storage.set(storage.KEYS.focusModeEnabled, isFocusMode)
+  }, [isFocusMode])
 
   // Listen for focus mode toggle from menu (View → Focus Mode)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onMenuToggleFocusMode?.(() => {
-      setIsSidebarAndNavigatorHidden(v => !v)
+      setIsFocusMode(v => !v)
     })
     return cleanup
   }, [])
@@ -1659,8 +1642,6 @@ function AppShellContent({
 
     return t("sidebar.allSessions")
   }, [navState, t, automationFilter])
-  const navigatorWidth = resolveNavigatorWidth(navState, isAutoCompact, sessionListWidth)
-
   return (
     <AppShellProvider value={appShellContextValue}>
         {/* === TOP BAR === */}
@@ -1678,13 +1659,25 @@ function AppShellContent({
           canGoBack={canGoBack}
           canGoForward={canGoForward}
           onToggleSidebar={handleToggleSidebar}
-          onToggleFocusMode={() => setIsSidebarAndNavigatorHidden(prev => !prev)}
+          onToggleFocusMode={() => setIsFocusMode(prev => !prev)}
           onAddSessionPanel={() => handleNewChat(true)}
           onAddBrowserPanel={() => { void handleNewBrowserWindow() }}
           onTogglePanelLayout={togglePanelLayout}
           isCanvasLayoutFocused={isCanvasLayoutFocused}
-          leftExtensionSlot={effectiveSessionId ? <ExtensionContributionZone sessionId={effectiveSessionId} surface="window.topLeft" /> : undefined}
-          rightExtensionSlot={effectiveSessionId ? <ExtensionContributionZone sessionId={effectiveSessionId} surface="window.topRight" /> : undefined}
+          isWorkspaceCanvasActive={isSessionsNavigation(navState)}
+          leftExtensionSlot={activeWorkspace ? (
+            <WorkspaceElectronApiProvider
+              route={{ serverId: activeWorkspace.remoteServer?.url ?? 'local', workspaceId: activeWorkspace.id }}
+            >
+              <div className="flex min-w-0 items-center gap-1">
+                <WorkspaceCoordinationStatusPopover />
+                {isSessionsNavigation(navState) && effectiveSessionId && (
+                  <ExtensionContributionZone sessionId={effectiveSessionId} surface="window.topLeft" />
+                )}
+              </div>
+            </WorkspaceElectronApiProvider>
+          ) : undefined}
+          rightExtensionSlot={isSessionsNavigation(navState) && effectiveSessionId ? <ExtensionContributionZone sessionId={effectiveSessionId} surface="window.topRight" /> : undefined}
           isCompact={isAutoCompact}
         />
 
@@ -1700,7 +1693,7 @@ function AppShellContent({
           gap: PANEL_GAP,
         }}
       >
-        <PanelStackContainer
+        <RootSurfaceContainer
           sidebarSlot={
             <div
               ref={sidebarRef}
@@ -1752,7 +1745,7 @@ function AppShellContent({
                     <TooltipTrigger asChild>
                       <button
                         type="button"
-                        data-craft-semantic-id="workspace.add"
+                        data-mortise-semantic-id="workspace.add"
                         aria-label={t('workspace.addWorkspace')}
                         onClick={workspaceNavigation.openCreation}
                         className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground outline-none hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
@@ -1785,15 +1778,18 @@ function AppShellContent({
             </div>
           </div>
           }
-          sidebarWidth={effectiveSidebarAndNavigatorHidden ? 0 : (isSidebarVisible ? sidebarWidth : 0)}
-          navigatorSlot={
+          sidebarWidth={isPrimarySidebarHidden ? 0 : (isSidebarVisible ? sidebarWidth : 0)}
+          contentSlot={(
+            <PageNavigationSurface
+              navigationLabel={listTitle}
+              navigation={
             <div
-              style={{ width: isAutoCompact ? '100%' : sessionListWidth }}
+              style={{ width: isAutoCompact ? '100%' : PAGE_NAVIGATION_WIDTH }}
               className="h-full flex flex-col min-w-0 relative z-panel"
             >
             <PanelHeader
-              title={isSidebarVisible ? listTitle : undefined}
-              compensateForStoplight={!isSidebarVisible}
+              title={listTitle}
+              compensateForStoplight={isPrimarySidebarHidden || !isSidebarVisible}
               badge={automationFilter?.automationType === 'scheduled' ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1901,7 +1897,7 @@ function AppShellContent({
             {isSettingsNavigation(navState) && (
               /* Settings Navigator */
               <SettingsNavigator
-                selectedSubpage={navState.subpage}
+                selectedSubpage={navState.subpage ?? (isAutoCompact ? null : 'app')}
                 onSelectSubpage={(subpage) => handleSettingsClick(subpage)}
               />
             )}
@@ -1952,27 +1948,37 @@ function AppShellContent({
               <FabNewChat onClick={() => handleNewChat()} />
             )}
             </div>
-          }
-          navigatorWidth={navigatorWidth}
-          isSidebarAndNavigatorHidden={effectiveSidebarAndNavigatorHidden}
-          isCompact={isAutoCompact}
-          isResizing={!!isResizing}
-          unifiedDockSlot={(
-            <UnifiedDockWorkspace
-              key={activeWorkspaceId ?? 'no-workspace'}
-              activeWorkspaceId={activeWorkspaceId}
-              workspaceTransition={workspaceTransition}
-              serverId={activeWorkspace?.remoteServer?.url ?? 'local'}
-              sessionId={effectiveSessionId}
-              isSidebarAndNavigatorHidden={effectiveSidebarAndNavigatorHidden}
-              canvasLayoutToggleRequest={canvasLayoutToggleRequest}
-              onCanvasLayoutFocusChange={setIsCanvasLayoutFocused}
+              }
+              content={isSessionsNavigation(navState) ? (
+                <UnifiedDockWorkspace
+                  key={activeWorkspaceId ?? 'no-workspace'}
+                  activeWorkspaceId={activeWorkspaceId}
+                  workspaceTransition={workspaceTransition}
+                  serverId={activeWorkspace?.remoteServer?.url ?? 'local'}
+                  sessionId={effectiveSessionId}
+                  isLeadingChromeHidden={isPrimarySidebarHidden}
+                  canvasLayoutToggleRequest={canvasLayoutToggleRequest}
+                  onCanvasLayoutFocusChange={setIsCanvasLayoutFocused}
+                />
+              ) : (
+                <MainContentPanel
+                  navStateOverride={navState}
+                  isLeadingChromeHidden={isPrimarySidebarHidden}
+                />
+              )}
+              isCompact={isAutoCompact}
+              routeHasDetail={isDetailNavState(navState)}
+              routeKey={JSON.stringify(navState)}
+              navigationWidth={PAGE_NAVIGATION_WIDTH}
+              showNavigationOnDesktop={!isSessionsNavigation(navState)}
             />
           )}
+          isCompact={isAutoCompact}
+          isResizing={!!isResizing}
         />
 
         {/* Sidebar Resize Handle (absolute, hidden in focused mode) */}
-        {!effectiveSidebarAndNavigatorHidden && (
+        {!isPrimarySidebarHidden && (
         <div
           ref={resizeHandleRef}
           onMouseDown={(e) => { e.preventDefault(); setIsResizing('sidebar') }}
@@ -1998,42 +2004,6 @@ function AppShellContent({
             className="h-full"
             style={{
               ...getResizeGradientStyle(sidebarHandleY, resizeHandleRef.current?.clientHeight ?? null),
-              width: PANEL_SASH_LINE_WIDTH,
-            }}
-          />
-        </div>
-        )}
-
-        {/* Navigator resize handle. Desktop conversations no longer own a
-            second sidebar, so only management-module navigators expose it. */}
-        {!effectiveSidebarAndNavigatorHidden && navigatorWidth > 0 && (
-        <div
-          ref={sessionListHandleRef}
-          onMouseDown={(e) => { e.preventDefault(); setIsResizing('session-list') }}
-          onMouseMove={(e) => {
-            if (sessionListHandleRef.current) {
-              const rect = sessionListHandleRef.current.getBoundingClientRect()
-              setSessionListHandleY(e.clientY - rect.top)
-            }
-          }}
-          onMouseLeave={() => { if (isResizing !== 'session-list') setSessionListHandleY(null) }}
-          className="absolute cursor-col-resize z-panel flex justify-center"
-          style={{
-            width: PANEL_SASH_HIT_WIDTH,
-            top: PANEL_STACK_VERTICAL_OVERFLOW,
-            bottom: PANEL_STACK_VERTICAL_OVERFLOW,
-            left:
-              (isSidebarVisible ? sidebarWidth + PANEL_GAP : PANEL_EDGE_INSET) +
-              sessionListWidth +
-              (PANEL_GAP / 2) -
-              PANEL_SASH_HALF_HIT_WIDTH,
-            transition: isResizing === 'session-list' ? undefined : 'left 0.15s ease-out',
-          }}
-        >
-          <div
-            className="h-full"
-            style={{
-              ...getResizeGradientStyle(sessionListHandleY, sessionListHandleRef.current?.clientHeight ?? null),
               width: PANEL_SASH_LINE_WIDTH,
             }}
           />

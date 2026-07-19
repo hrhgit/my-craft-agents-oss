@@ -1,4 +1,4 @@
-.craft-unified-dock {
+.mortise-unified-dock {
   position: relative;
   min-height: 0;
   --color-tabset-background: var(--foreground-2);
@@ -17,13 +17,13 @@
   letter-spacing: 0;
 }
 
-.craft-unified-dock .flexlayout__layout {
+.mortise-unified-dock .flexlayout__layout {
   inset: 0;
   background: transparent;
 }
 
-.craft-unified-dock .flexlayout__tabset,
-.craft-unified-dock .flexlayout__border_inner {
+.mortise-unified-dock .flexlayout__tabset,
+.mortise-unified-dock .flexlayout__border_inner {
   overflow: hidden;
   border: 0;
   border-radius: 0;
@@ -31,42 +31,42 @@
   box-shadow: none;
 }
 
-.craft-unified-dock .flexlayout__tabset_tabbar_outer {
+.mortise-unified-dock .flexlayout__tabset_tabbar_outer {
   min-height: 36px;
   padding: 5px 8px 0;
   border-bottom: 0;
   background: var(--foreground-2);
 }
 
-.craft-unified-dock .flexlayout__tabset_tabbar_inner,
-.craft-unified-dock .flexlayout__tabset_header_content {
+.mortise-unified-dock .flexlayout__tabset_tabbar_inner,
+.mortise-unified-dock .flexlayout__tabset_header_content {
   gap: 3px;
 }
 
-.craft-unified-dock .flexlayout__mini_scrollbar_container {
+.mortise-unified-dock .flexlayout__mini_scrollbar_container {
   max-width: calc(100% - 72px);
   min-width: 0;
   flex: 0 1 auto;
 }
 
-.craft-unified-dock .flexlayout__tabset_tabbar_inner {
+.mortise-unified-dock .flexlayout__tabset_tabbar_inner {
   width: fit-content;
   max-width: 100%;
   min-width: 0;
   flex: 0 1 auto;
 }
 
-.craft-unified-dock .flexlayout__tabset_tab_spacer {
+.mortise-unified-dock .flexlayout__tabset_tab_spacer {
   /* Alpha-light adds 12px curved spacers around the selected tab. */
   display: none;
 }
 
-.craft-unified-dock .flexlayout__tabset_tabbar_inner_tab_container {
+.mortise-unified-dock .flexlayout__tabset_tabbar_inner_tab_container {
   padding-inline: 0;
   border-top: 0;
 }
 
-.craft-unified-dock .flexlayout__tab_button {
+.mortise-unified-dock .flexlayout__tab_button {
   height: 31px;
   max-width: 210px;
   min-width: 72px;
@@ -81,12 +81,12 @@
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.craft-unified-dock .flexlayout__tab_button:hover {
+.mortise-unified-dock .flexlayout__tab_button:hover {
   background: color-mix(in srgb, var(--foreground) 4%, transparent);
   color: var(--foreground);
 }
 
-.craft-unified-dock .flexlayout__tab_button--selected {
+.mortise-unified-dock .flexlayout__tab_button--selected {
   border-color: color-mix(in srgb, var(--border) 78%, transparent);
   border-bottom-color: var(--background);
   background: var(--background);
@@ -94,7 +94,7 @@
   box-shadow: none;
 }
 
-.craft-unified-dock .flexlayout__tab_button_leading {
+.mortise-unified-dock .flexlayout__tab_button_leading {
   display: inline-flex;
   width: 14px;
   height: 14px;
@@ -104,11 +104,11 @@
   color: var(--muted-foreground);
 }
 
-.craft-unified-dock .flexlayout__tab_button--selected .flexlayout__tab_button_leading {
+.mortise-unified-dock .flexlayout__tab_button--selected .flexlayout__tab_button_leading {
   color: var(--foreground);
 }
 
-.craft-unified-dock .flexlayout__tab_button_content {
+.mortise-unified-dock .flexlayout__tab_button_content {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -116,8 +116,8 @@
   letter-spacing: 0;
 }
 
-.craft-unified-dock .flexlayout__tab_button_trailing,
-.craft-unified-dock .flexlayout__tab_toolbar_button {
+.mortise-unified-dock .flexlayout__tab_button_trailing,
+.mortise-unified-dock .flexlayout__tab_toolbar_button {
   display: inline-flex;
   width: 24px;
   height: 24px;
@@ -128,7 +128,7 @@
   transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 
-.craft-unified-dock .craft-dock-tab-label {
+.mortise-unified-dock .mortise-dock-tab-label {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -136,30 +136,30 @@
   white-space: nowrap;
 }
 
-.craft-unified-dock .flexlayout__tab_button_trailing {
+.mortise-unified-dock .flexlayout__tab_button_trailing {
   opacity: 0;
 }
 
-.craft-unified-dock .flexlayout__tab_button:hover .flexlayout__tab_button_trailing,
-.craft-unified-dock .flexlayout__tab_button--selected .flexlayout__tab_button_trailing,
-.craft-unified-dock .flexlayout__tab_button_trailing:focus-visible {
+.mortise-unified-dock .flexlayout__tab_button:hover .flexlayout__tab_button_trailing,
+.mortise-unified-dock .flexlayout__tab_button--selected .flexlayout__tab_button_trailing,
+.mortise-unified-dock .flexlayout__tab_button_trailing:focus-visible {
   opacity: 0.72;
 }
 
-.craft-unified-dock .flexlayout__tab_button_trailing:hover,
-.craft-unified-dock .flexlayout__tab_toolbar_button:hover {
+.mortise-unified-dock .flexlayout__tab_button_trailing:hover,
+.mortise-unified-dock .flexlayout__tab_toolbar_button:hover {
   background: color-mix(in srgb, var(--foreground) 7%, transparent);
   color: var(--foreground);
   opacity: 1;
 }
 
-.craft-unified-dock .flexlayout__tab_toolbar {
+.mortise-unified-dock .flexlayout__tab_toolbar {
   flex: 0 0 auto;
   gap: 2px;
   padding: 0 0 0 5px;
 }
 
-.craft-unified-dock .flexlayout__tab {
+.mortise-unified-dock .flexlayout__tab {
   /* The alpha theme adds a 5px frame around every content pane. */
   border: 0;
   border-radius: 0;
@@ -167,32 +167,32 @@
   background: var(--background);
 }
 
-.craft-unified-dock .flexlayout__splitter {
+.mortise-unified-dock .flexlayout__splitter {
   background: transparent;
 }
 
-.craft-unified-dock .flexlayout__splitter:hover,
-.craft-unified-dock .flexlayout__splitter_drag {
+.mortise-unified-dock .flexlayout__splitter:hover,
+.mortise-unified-dock .flexlayout__splitter_drag {
   background: color-mix(in srgb, var(--ring) 78%, transparent);
 }
 
-.craft-unified-dock .flexlayout__outline_rect {
+.mortise-unified-dock .flexlayout__outline_rect {
   border: 1px solid color-mix(in srgb, var(--ring) 85%, transparent);
   border-radius: 5px;
   background: color-mix(in srgb, var(--ring) 10%, transparent);
 }
 
-.craft-unified-dock .flexlayout__border_button {
+.mortise-unified-dock .flexlayout__border_button {
   gap: 6px;
   color: var(--muted-foreground);
 }
 
-.craft-unified-dock .flexlayout__border_button--selected {
+.mortise-unified-dock .flexlayout__border_button--selected {
   color: var(--foreground);
 }
 
-.dark .craft-unified-dock,
-[data-theme='dark'] .craft-unified-dock {
+.dark .mortise-unified-dock,
+[data-theme='dark'] .mortise-unified-dock {
   --color-tab-selected: var(--background);
   --color-tab-selected-text: var(--foreground);
   --color-tab-unselected-text: var(--muted-foreground);

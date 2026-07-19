@@ -13,7 +13,7 @@ import {
   type ApiKeyStatus,
   type ApiKeySubmitData,
 } from "../apisetup"
-import type { PiCustomApi as CustomEndpointApi } from '@craft-agent/shared/config/pi-provider-models'
+import type { PiCustomApi as CustomEndpointApi } from '@mortise/shared/config/pi-provider-models'
 
 export type CredentialStatus = ApiKeyStatus
 

@@ -25,6 +25,24 @@ function fixture() {
 }
 
 describe('SessionShareTransferService', () => {
+  it('does not publish when no viewer service is configured', async () => {
+    const f = fixture()
+    const previous = process.env.MORTISE_VIEWER_URL
+    delete process.env.MORTISE_VIEWER_URL
+    try {
+      const service = new SessionShareTransferService({ store: f.store, logger: f.logger })
+      expect(service.isConfigured()).toBe(false)
+      await expect(service.publish('session-1')).resolves.toEqual({
+        success: false,
+        error: 'Session sharing is not configured',
+      })
+      expect(f.asyncStates).toEqual([])
+    } finally {
+      if (previous === undefined) delete process.env.MORTISE_VIEWER_URL
+      else process.env.MORTISE_VIEWER_URL = previous
+    }
+  })
+
   it('publishes, refreshes, and revokes through one host-owned implementation', async () => {
     const f = fixture()
     const requests: Array<{ method?: string }> = []

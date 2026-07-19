@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { resolveScriptRuntime } from './resolve-script-runtime.ts';
 
 describe('resolveScriptRuntime', () => {
-  it('prefers CRAFT_UV for python3', () => {
-    const prev = process.env.CRAFT_UV;
-    process.env.CRAFT_UV = '/tmp/custom-uv';
+  it('prefers MORTISE_UV for python3', () => {
+    const prev = process.env.MORTISE_UV;
+    process.env.MORTISE_UV = '/tmp/custom-uv';
 
     try {
       const resolved = resolveScriptRuntime('python3', { isPackaged: false });
@@ -15,14 +15,14 @@ describe('resolveScriptRuntime', () => {
       expect(resolved.argsPrefix).toEqual(['run', '--python', '3.12']);
       expect(resolved.source).toBe('env');
     } finally {
-      if (prev === undefined) delete process.env.CRAFT_UV;
-      else process.env.CRAFT_UV = prev;
+      if (prev === undefined) delete process.env.MORTISE_UV;
+      else process.env.MORTISE_UV = prev;
     }
   });
 
   it('prefers bundled uv when env is missing', () => {
-    const prevUv = process.env.CRAFT_UV;
-    delete process.env.CRAFT_UV;
+    const prevUv = process.env.MORTISE_UV;
+    delete process.env.MORTISE_UV;
 
     const base = mkdtempSync(join(tmpdir(), 'runtime-resolver-'));
     const uvPath = join(base, 'resources', 'bin', `${process.platform}-${process.arch}`, process.platform === 'win32' ? 'uv.exe' : 'uv');
@@ -34,50 +34,68 @@ describe('resolveScriptRuntime', () => {
       expect(resolved.command).toBe(uvPath);
       expect(resolved.source).toBe('bundled');
     } finally {
-      if (prevUv === undefined) delete process.env.CRAFT_UV;
-      else process.env.CRAFT_UV = prevUv;
+      if (prevUv === undefined) delete process.env.MORTISE_UV;
+      else process.env.MORTISE_UV = prevUv;
     }
   });
 
   it('blocks PATH fallback in packaged mode', () => {
-    const prevUv = process.env.CRAFT_UV;
-    const prevBase = process.env.CRAFT_RESOURCES_BASE;
-    const prevRoot = process.env.CRAFT_APP_ROOT;
-    delete process.env.CRAFT_UV;
-    delete process.env.CRAFT_RESOURCES_BASE;
-    delete process.env.CRAFT_APP_ROOT;
+    const prevUv = process.env.MORTISE_UV;
+    const prevBase = process.env.MORTISE_RESOURCES_BASE;
+    const prevRoot = process.env.MORTISE_APP_ROOT;
+    delete process.env.MORTISE_UV;
+    delete process.env.MORTISE_RESOURCES_BASE;
+    delete process.env.MORTISE_APP_ROOT;
 
     try {
       expect(() => resolveScriptRuntime('python3', { isPackaged: true })).toThrow(
         'packaged app'
       );
     } finally {
-      if (prevUv === undefined) delete process.env.CRAFT_UV;
-      else process.env.CRAFT_UV = prevUv;
-      if (prevBase === undefined) delete process.env.CRAFT_RESOURCES_BASE;
-      else process.env.CRAFT_RESOURCES_BASE = prevBase;
-      if (prevRoot === undefined) delete process.env.CRAFT_APP_ROOT;
-      else process.env.CRAFT_APP_ROOT = prevRoot;
+      if (prevUv === undefined) delete process.env.MORTISE_UV;
+      else process.env.MORTISE_UV = prevUv;
+      if (prevBase === undefined) delete process.env.MORTISE_RESOURCES_BASE;
+      else process.env.MORTISE_RESOURCES_BASE = prevBase;
+      if (prevRoot === undefined) delete process.env.MORTISE_APP_ROOT;
+      else process.env.MORTISE_APP_ROOT = prevRoot;
     }
   });
 
-  it('rejects bare CRAFT_NODE command in packaged mode', () => {
-    const prev = process.env.CRAFT_NODE;
-    process.env.CRAFT_NODE = 'node';
+  it('rejects bare MORTISE_NODE command in packaged mode', () => {
+    const prev = process.env.MORTISE_NODE;
+    process.env.MORTISE_NODE = 'node';
 
     try {
       expect(() => resolveScriptRuntime('node', { isPackaged: true })).toThrow(
         'do not allow PATH-based runtime resolution'
       );
     } finally {
-      if (prev === undefined) delete process.env.CRAFT_NODE;
-      else process.env.CRAFT_NODE = prev;
+      if (prev === undefined) delete process.env.MORTISE_NODE;
+      else process.env.MORTISE_NODE = prev;
     }
   });
 
-  it('prefers CRAFT_BUN for bun in dev', () => {
-    const prev = process.env.CRAFT_BUN;
-    process.env.CRAFT_BUN = '/tmp/custom-bun';
+  it('treats MORTISE_IS_PACKAGED=true as packaged mode', () => {
+    const prevPackaged = process.env.MORTISE_IS_PACKAGED;
+    const prevNode = process.env.MORTISE_NODE;
+    process.env.MORTISE_IS_PACKAGED = 'true';
+    process.env.MORTISE_NODE = 'node';
+
+    try {
+      expect(() => resolveScriptRuntime('node')).toThrow(
+        'do not allow PATH-based runtime resolution'
+      );
+    } finally {
+      if (prevPackaged === undefined) delete process.env.MORTISE_IS_PACKAGED;
+      else process.env.MORTISE_IS_PACKAGED = prevPackaged;
+      if (prevNode === undefined) delete process.env.MORTISE_NODE;
+      else process.env.MORTISE_NODE = prevNode;
+    }
+  });
+
+  it('prefers MORTISE_BUN for bun in dev', () => {
+    const prev = process.env.MORTISE_BUN;
+    process.env.MORTISE_BUN = '/tmp/custom-bun';
 
     try {
       const resolved = resolveScriptRuntime('bun', { isPackaged: false });
@@ -85,8 +103,8 @@ describe('resolveScriptRuntime', () => {
       expect(resolved.argsPrefix).toEqual([]);
       expect(resolved.source).toBe('env');
     } finally {
-      if (prev === undefined) delete process.env.CRAFT_BUN;
-      else process.env.CRAFT_BUN = prev;
+      if (prev === undefined) delete process.env.MORTISE_BUN;
+      else process.env.MORTISE_BUN = prev;
     }
   });
 });

@@ -6,7 +6,7 @@
  */
 
 export const BLOCKED_ENV_VARS = [
-  // Craft Agent auth (set by the app itself)
+  // Mortise Agent auth (set by the app itself)
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
 

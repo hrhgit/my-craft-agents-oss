@@ -1,7 +1,7 @@
 /**
  * Tests for send_developer_feedback tool permission handling across permission modes.
  *
- * send_developer_feedback is a session-scoped MCP tool that, *when its feature
+ * send_developer_feedback is a Mortise host tool that, *when its feature
  * flag is enabled*, should be allowed in ALL permission modes — including
  * safe/Explore — so product issues can be reported without requiring mode
  * switches. The flag (FEATURE_FLAGS.developerFeedback) defaults off in
@@ -11,10 +11,10 @@
 import { afterAll, beforeAll, describe, it, expect } from 'bun:test';
 import { shouldAllowToolInMode } from '../../agent/mode-manager.ts';
 
-const FLAG_ENV = 'CRAFT_FEATURE_DEVELOPER_FEEDBACK';
+const FLAG_ENV = 'MORTISE_FEATURE_DEVELOPER_FEEDBACK';
 
 describe('send_developer_feedback permission mode handling', () => {
-  const toolName = 'mcp__session__send_developer_feedback';
+  const toolName = 'send_developer_feedback';
   const input = { message: 'Feedback content' };
 
   let originalFlag: string | undefined;

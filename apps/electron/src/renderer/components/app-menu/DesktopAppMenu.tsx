@@ -14,7 +14,7 @@ import {
   StyledDropdownMenuSubTrigger,
   StyledDropdownMenuSubContent,
 } from "@/components/ui/styled-dropdown"
-import { CraftAgentsSymbol } from "../icons/CraftAgentsSymbol"
+import { MortiseSymbol } from "../icons/MortiseSymbol"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
 import { SETTINGS_ICONS } from "../icons/SettingsIcons"
 import { TopBarButton } from "../ui/TopBarButton"
@@ -131,7 +131,7 @@ function renderMenuSection(
 }
 
 /**
- * Desktop AppMenu — Craft logo dropdown with Edit/View/Window/Settings/Help/Debug submenus.
+ * Desktop AppMenu — Mortise logo dropdown with Edit/View/Window/Settings/Help/Debug submenus.
  *
  * Behavior matches the pre-refactor version that lived inline in `TopBar.tsx`.
  * Labels, hotkey strings, and update-actions are pulled from `menu-schema.ts`
@@ -167,8 +167,8 @@ export function DesktopAppMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <TopBarButton aria-label={t("menu.craftMenu")}>
-          <CraftAgentsSymbol className="h-4 text-accent" />
+        <TopBarButton aria-label={t("menu.mortiseMenu")}>
+          <MortiseSymbol className="h-4 text-accent" />
         </TopBarButton>
       </DropdownMenuTrigger>
       <StyledDropdownMenuContent align="start" minWidth="min-w-48">

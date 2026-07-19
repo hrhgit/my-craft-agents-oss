@@ -2,9 +2,9 @@
  * Model registry - manages built-in and custom models, provides API key resolution.
  */
 
-import { registerApiProvider } from "@earendil-works/pi-ai/api-registry";
-import { type OAuthProviderInterface, registerOAuthProvider, resetOAuthProviders } from "@earendil-works/pi-ai/oauth";
-import { resetDefaultApiProviders } from "@earendil-works/pi-ai/stream";
+import { registerApiProvider } from "@mortise/pi-ai/api-registry";
+import { type OAuthProviderInterface, registerOAuthProvider, resetOAuthProviders } from "@mortise/pi-ai/oauth";
+import { resetDefaultApiProviders } from "@mortise/pi-ai/stream";
 import type {
 	AnthropicMessagesCompat,
 	Api,
@@ -14,7 +14,7 @@ import type {
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
 	SimpleStreamOptions,
-} from "@earendil-works/pi-ai/types";
+} from "@mortise/pi-ai/types";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { type Static, Type } from "typebox";

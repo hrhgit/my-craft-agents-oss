@@ -11,12 +11,12 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createWebApi } from './adapter/web-api'
-import type { WsRpcClient } from '@craft-agent/server-core/transport/client'
-import { errorMessage } from '@craft-agent/shared/utils/text'
+import type { WsRpcClient } from '@mortise/server-core/transport/client'
+import { errorMessage } from '@mortise/shared/utils/text'
 import { waitForInitialConnection } from './connection'
 
-if (__CRAFT_UI_VALIDATION_BUILD__) {
-  Object.defineProperty(window, '__CRAFT_EXTENSION_UI_VALIDATION__', {
+if (__MORTISE_UI_VALIDATION_BUILD__) {
+  Object.defineProperty(window, '__MORTISE_EXTENSION_UI_VALIDATION__', {
     value: Object.freeze({ schemaVersion: 1, available: true }),
     configurable: false,
     enumerable: false,
@@ -27,7 +27,7 @@ if (__CRAFT_UI_VALIDATION_BUILD__) {
 // This prevents any Electron component from accessing window.electronAPI
 // before the web adapter is ready.
 const ElectronApp = lazy(() => import('@/App'))
-const ScenarioAppShellHost = __CRAFT_UI_VALIDATION_BUILD__
+const ScenarioAppShellHost = __MORTISE_UI_VALIDATION_BUILD__
   ? lazy(() => import('@/ui-validation/app-shell-scenario-service').then(module => ({ default: module.ScenarioAppShellHost })))
   : null
 
@@ -127,8 +127,8 @@ export default function App() {
 
       // 4. Set window.electronAPI — must happen before any Electron component mounts
       ;(window as any).electronAPI = api
-      if (__CRAFT_UI_VALIDATION_BUILD__) {
-        const validationHost = window.__craftUiValidation as typeof window.__craftUiValidation & {
+      if (__MORTISE_UI_VALIDATION_BUILD__) {
+        const validationHost = window.__mortiseUiValidation as typeof window.__mortiseUiValidation & {
           publishState?: (batch: import('@/../shared/ui-validation-state-bridge').UiValidationRendererStateBatch) => void
           dispose?: () => void
         }
@@ -140,7 +140,7 @@ export default function App() {
         }
         const semanticBridge = await import('@/ui-validation/bridge')
         semanticBridge.installUiSemanticBridge()
-        if (new URLSearchParams(window.location.search).get('__craftUiScenarioHost') === '1') {
+        if (new URLSearchParams(window.location.search).get('__mortiseUiScenarioHost') === '1') {
           const scenarioBridge = await import('@/ui-validation/app-shell-scenario-service')
           scenarioBridge.installAppShellScenarioBridge()
         }
@@ -173,8 +173,8 @@ export default function App() {
   if (phase === 'loading') return <LoadingScreen />
   if (phase === 'error') return <ErrorScreen message={error} onRetry={initialize} />
 
-  const validationScenarioHost = __CRAFT_UI_VALIDATION_BUILD__
-    && new URLSearchParams(window.location.search).get('__craftUiScenarioHost') === '1'
+  const validationScenarioHost = __MORTISE_UI_VALIDATION_BUILD__
+    && new URLSearchParams(window.location.search).get('__mortiseUiScenarioHost') === '1'
 
   return (
     <Suspense fallback={<LoadingScreen />}>

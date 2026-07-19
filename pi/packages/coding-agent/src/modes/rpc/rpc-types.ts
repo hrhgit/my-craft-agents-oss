@@ -5,8 +5,8 @@
  * Responses and events are emitted as JSON lines on stdout.
  */
 
-import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model, StopReason, Usage, UserAttachmentMetadata } from "@earendil-works/pi-ai/types";
+import type { AgentMessage, ThinkingLevel } from "@mortise/pi-agent-core";
+import type { ImageContent, Model, StopReason, Usage, UserAttachmentMetadata } from "@mortise/pi-ai/types";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
@@ -49,6 +49,8 @@ export const PI_RPC_COMMANDS = [
 	"get_runtime_state",
 	"list_runtimes",
 	"get_state",
+	"set_active_tools",
+	"set_compaction_prompt",
 	"set_model",
 	"cycle_model",
 	"get_available_models",
@@ -73,6 +75,7 @@ export const PI_RPC_COMMANDS = [
 	"list_child_sessions",
 	"get_messages",
 	"enable_tool_permissions",
+	"enable_tool_results",
 	"register_tools",
 	"get_commands",
 	"invoke_extension_command",
@@ -81,9 +84,9 @@ export const PI_RPC_COMMANDS = [
 	"save_global_provider",
 	"delete_global_provider",
 	"set_global_default",
-	"set_craft_credential",
+	"set_mortise_credential",
 	"get_session_projection",
-	"set_craft_session_metadata",
+	"set_mortise_session_metadata",
 	"fork_session",
 	"list_skills",
 	"resolve_skill",
@@ -105,7 +108,7 @@ export interface RpcEnvelope {
 
 /** Host-renderable UI features explicitly offered to one RPC runtime. */
 export interface RpcHostUICapabilities {
-	kind: "craft" | "none";
+	kind: "mortise" | "none";
 	dialogs: boolean;
 	widgets: boolean;
 	editorControl: boolean;
@@ -134,7 +137,7 @@ export interface RpcExtensionUIValidationEvent extends RpcEnvelope {
 export interface RpcRuntimeOpenOptions {
 	runtimeId?: string;
 	cwd: string;
-	extensionTarget: "pi" | "craft";
+	extensionTarget: "pi" | "mortise";
 	extensionPaths?: string[];
 	agentDir?: string;
 	sessionPath?: string;
@@ -187,6 +190,8 @@ export type RpcCommand = RpcEnvelope &
 		| { id?: string; type: "get_runtime_state" }
 		| { id?: string; type: "list_runtimes" }
 		| { id?: string; type: "get_state" }
+		| { id?: string; type: "set_active_tools"; toolNames: string[] }
+		| { id?: string; type: "set_compaction_prompt"; prompt?: string }
 
 		// Model
 		| { id?: string; type: "set_model"; provider: string; modelId: string }
@@ -229,6 +234,8 @@ export type RpcCommand = RpcEnvelope &
 
 		// Tool permissions (host-side gate; see RpcToolPermissionRequest)
 		| { id?: string; type: "enable_tool_permissions"; enabled: boolean }
+		// Finalized tool results (host-side observer; see RpcToolResultRequest)
+		| { id?: string; type: "enable_tool_results"; enabled: boolean }
 
 		// Host proxy tools (executed in the host process; see RpcToolExecuteRequest)
 		| { id?: string; type: "register_tools"; tools: RpcHostToolDefinition[] }
@@ -250,11 +257,11 @@ export type RpcCommand = RpcEnvelope &
 				thinkingLevel?: string;
 				cwd?: string;
 		  }
-		| { id?: string; type: "set_craft_credential"; slug: string; credential: unknown }
+		| { id?: string; type: "set_mortise_credential"; slug: string; credential: unknown }
 		| { id?: string; type: "get_session_projection"; sessionPath: string; sessionDir?: string; cwdOverride?: string }
 		| {
 				id?: string;
-				type: "set_craft_session_metadata";
+				type: "set_mortise_session_metadata";
 				sessionPath: string;
 				sessionDir?: string;
 				cwdOverride?: string;
@@ -407,6 +414,10 @@ export interface RpcSessionState {
 	autoCompactionEnabled: boolean;
 	messageCount: number;
 	pendingMessageCount: number;
+	systemPrompt: string;
+	compactionPrompt: string;
+	activeTools: string[];
+	tools: Array<{ name: string; description: string; source: "builtin" | "extension" | "host" }>;
 }
 
 // ============================================================================
@@ -444,6 +455,8 @@ export type RpcResponse = RpcEnvelope &
 				data: { runtimes: RpcRuntimeSummary[] };
 		  }
 		| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
+		| { id?: string; type: "response"; command: "set_active_tools"; success: true }
+		| { id?: string; type: "response"; command: "set_compaction_prompt"; success: true }
 
 		// Model
 		| {
@@ -528,6 +541,8 @@ export type RpcResponse = RpcEnvelope &
 
 		// Tool permissions
 		| { id?: string; type: "response"; command: "enable_tool_permissions"; success: true }
+		// Finalized tool results
+		| { id?: string; type: "response"; command: "enable_tool_results"; success: true }
 
 		// Host proxy tools
 		| { id?: string; type: "response"; command: "register_tools"; success: true; data: { registered: string[] } }
@@ -560,7 +575,7 @@ export type RpcResponse = RpcEnvelope &
 		| { id?: string; type: "response"; command: "save_global_provider"; success: true }
 		| { id?: string; type: "response"; command: "delete_global_provider"; success: true }
 		| { id?: string; type: "response"; command: "set_global_default"; success: true }
-		| { id?: string; type: "response"; command: "set_craft_credential"; success: true }
+		| { id?: string; type: "response"; command: "set_mortise_credential"; success: true }
 		| {
 				id?: string;
 				type: "response";
@@ -571,7 +586,7 @@ export type RpcResponse = RpcEnvelope &
 		| {
 				id?: string;
 				type: "response";
-				command: "set_craft_session_metadata";
+				command: "set_mortise_session_metadata";
 				success: true;
 				data: HostSessionProjection;
 		  }
@@ -783,6 +798,8 @@ export interface RpcToolPermissionRequest {
 	toolCallId: string;
 	/** Tool input after extension tool_call handlers have run. */
 	input: Record<string, unknown>;
+	assistantResponseId?: string;
+	assistantTimestamp: number;
 }
 
 /** Host reply to a `tool_permission_request`. */
@@ -791,6 +808,31 @@ export type RpcToolPermissionResponse = RpcEnvelope &
 		| { type: "tool_permission_response"; id: string; action: "allow" }
 		| { type: "tool_permission_response"; id: string; action: "block"; reason?: string }
 		| { type: "tool_permission_response"; id: string; action: "modify"; input: Record<string, unknown> }
+	);
+
+// ============================================================================
+// Finalized Tool Result Events (stdout) / Responses (stdin)
+// ============================================================================
+
+/** Emitted after extension tool-result handlers have produced the final result. */
+export interface RpcToolResultRequest extends RpcEnvelope {
+	type: "tool_result_request";
+	id: string;
+	toolName: string;
+	toolCallId: string;
+	input: Record<string, unknown>;
+	content: RpcToolResultContent[];
+	details?: unknown;
+	isError: boolean;
+	assistantResponseId?: string;
+	assistantTimestamp: number;
+}
+
+/** Host acknowledgement for a finalized tool result. */
+export type RpcToolResultResponse = RpcEnvelope &
+	(
+		| { type: "tool_result_response"; id: string; status: "acknowledged" }
+		| { type: "tool_result_response"; id: string; status: "failed"; error: string }
 	);
 
 // ============================================================================

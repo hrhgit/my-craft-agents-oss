@@ -13,7 +13,7 @@
 
 import { describe, expect, it, beforeEach } from 'bun:test'
 import { Renderer, type SessionEvent } from '../renderer'
-import type { PiProjectionEventV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 import {
   normalizeBindingConfig,
   type AdapterCapabilities,

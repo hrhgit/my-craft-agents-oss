@@ -1,8 +1,8 @@
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getCredentialManager } from '@craft-agent/shared/credentials'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { getCredentialManager } from '@mortise/shared/credentials'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
-import { requestClientConfirmDialog } from '@craft-agent/server-core/transport'
+import { requestClientConfirmDialog } from '@mortise/server-core/transport'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.auth.SHOW_DELETE_SESSION_CONFIRMATION,

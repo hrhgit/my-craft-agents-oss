@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, OpenDialogOptions, SaveDialogOptions } from 'electron'
-import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@craft-agent/shared/ui-validation'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
 import { ElectronUiDriverError } from './electron-surface-driver'
 
 export type NativeDialogKind = 'open-file' | 'open-directory' | 'save-file'

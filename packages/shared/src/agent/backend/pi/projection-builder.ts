@@ -1,11 +1,11 @@
-import type { AgentEvent } from '@craft-agent/core/types'
+import type { AgentEvent } from '@mortise/core/types'
 import {
   PLAN_ARTIFACT_CUSTOM_TYPE,
   PLAN_ARTIFACT_UPDATE_CUSTOM_TYPE,
   PLAN_MODE_STATE_CUSTOM_TYPE,
   parsePlanArtifactMessageDetails,
   parsePlanModeStateMessageDetails,
-} from '@craft-agent/core/types'
+} from '@mortise/core/types'
 import type {
   PiProjectionEntityType,
   PiProjectionEventV1,
@@ -29,7 +29,7 @@ interface EntityState {
   payload?: Record<string, unknown>
 }
 
-/** Builds Pi-semantic renderer entities without constructing Craft Message objects. */
+/** Builds Pi-semantic renderer entities without constructing Mortise Message objects. */
 export class PiProjectionBuilder {
   private seq = 0
   private turnIndex = 0
@@ -262,7 +262,7 @@ export class PiProjectionBuilder {
     return events
   }
 
-  /** Projects Pi events that intentionally never enter Craft's AgentEvent model. */
+  /** Projects Pi events that intentionally never enter Mortise's AgentEvent model. */
   acceptRuntimeEvent(event: Record<string, unknown>): PiProjectionEventV1[] {
     if (event.type === 'agent_start') {
       return [this.lifecycleEvent('agent_start', { status: 'running' }, this.projectionTimestamp(event))]
@@ -344,7 +344,7 @@ export class PiProjectionBuilder {
     if (value.role === 'custom') return this.acceptCustomMessage(value)
     if (value.role === 'assistant') return this.acceptAssistantMessageEnd(value)
     if (value.role !== 'user') return []
-    // Pi stores the full model input, including Craft's volatile date, session
+    // Pi stores the full model input, including Mortise's volatile date, session
     // state, and source blocks. Projection payloads are user-visible, so only
     // retain the original user-authored tail.
     const text = stripLeadingCraftInjectedUserContext(this.extractText(value.content))

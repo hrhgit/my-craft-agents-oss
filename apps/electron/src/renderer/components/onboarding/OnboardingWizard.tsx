@@ -7,7 +7,7 @@ import { LocalModelStep, type LocalModelSubmitData } from "./LocalModelStep"
 import { CompletionStep } from "./CompletionStep"
 import { GitBashWarning, type GitBashStatus } from "./GitBashWarning"
 import type { ApiKeySubmitData } from "../apisetup"
-import type { PiCustomApi as CustomEndpointApi } from '@craft-agent/shared/config/pi-provider-models'
+import type { PiCustomApi as CustomEndpointApi } from '@mortise/shared/config/pi-provider-models'
 
 export type OnboardingStep =
   | 'welcome'
@@ -73,7 +73,7 @@ interface OnboardingWizardProps {
 /**
  * OnboardingWizard - Full-screen onboarding flow container
  *
- * Manages the step-by-step flow for setting up Craft Agent:
+ * Manages the step-by-step flow for setting up Mortise Agent:
  * 1. Welcome
  * 2. Provider Select (API Key / Local)
  * 3. Credentials (API Key) or Local Model

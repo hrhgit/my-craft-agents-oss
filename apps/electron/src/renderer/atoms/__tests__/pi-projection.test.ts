@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { createStore } from 'jotai'
-import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '@mortise/shared/protocol'
 import {
   applyPiProjectionEvent,
   applyPiProjectionEventAtom,

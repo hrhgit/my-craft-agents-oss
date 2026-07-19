@@ -11,7 +11,7 @@ $releaseDir = Join-Path $repoRoot "apps\electron\release"
 
 function Write-Step {
   param([string]$Message)
-  Write-Host "[Craft Agents] $Message" -ForegroundColor Cyan
+  Write-Host "[Mortise] $Message" -ForegroundColor Cyan
 }
 
 function Ensure-Command {

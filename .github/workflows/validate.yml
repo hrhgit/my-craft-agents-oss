@@ -79,21 +79,21 @@ jobs:
       - name: Install Chromium
         run: |
           bunx playwright-core install --with-deps chromium
-          node -e "require('node:fs').appendFileSync(process.env.GITHUB_ENV, 'CRAFT_UI_BROWSER_EXECUTABLE=' + require('playwright-core').chromium.executablePath() + '\n')"
+          node -e "require('node:fs').appendFileSync(process.env.GITHUB_ENV, 'MORTISE_UI_BROWSER_EXECUTABLE=' + require('playwright-core').chromium.executablePath() + '\n')"
 
       - name: Run WebUI validation smoke
         run: bun run test:ui-validation:stability
         env:
-          CRAFT_UI_BROWSER_NO_SANDBOX: "1"
-          CRAFT_UI_STABILITY_SURFACES: webui
-          CRAFT_UI_STABILITY_ITERATIONS: "1"
+          MORTISE_UI_BROWSER_NO_SANDBOX: "1"
+          MORTISE_UI_STABILITY_SURFACES: webui
+          MORTISE_UI_STABILITY_ITERATIONS: "1"
 
       - name: Upload WebUI evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: craft-ui-webui-evidence
-          path: output/craft-ui
+          name: mortise-ui-webui-evidence
+          path: output/mortise-ui
           if-no-files-found: warn
 
   ui-validation-windows:
@@ -130,14 +130,14 @@ jobs:
       - name: Run renderer recovery validation
         run: bun run test:ui-validation:recovery
         env:
-          CRAFT_UI_SKIP_BUILD: "1"
+          MORTISE_UI_SKIP_BUILD: "1"
 
       - name: Upload Electron evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: craft-ui-windows-evidence
-          path: output/craft-ui
+          name: mortise-ui-windows-evidence
+          path: output/mortise-ui
           if-no-files-found: warn
 
   pi-build-check-test:

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { resolveBackendContext } from '@craft-agent/shared/agent/backend'
+import { resolveBackendContext } from '@mortise/shared/agent/backend'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 import { buildRestartRequiredSignature } from './runtime-config.ts'
 
@@ -58,7 +58,7 @@ function injectSession(
     createdAt: Date.now(),
   }
   const managed = createManagedSession(
-    { craftId: id, name: id, provider },
+    { mortiseId: id, name: id, provider },
     workspace as never,
     { messagesLoaded: true },
   ) as unknown as { agent: AgentStub | null; backendRuntimeSignature?: string; backendRestartSignature?: string; isProcessing: boolean; provider?: string }

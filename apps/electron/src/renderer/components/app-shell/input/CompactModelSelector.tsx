@@ -7,7 +7,7 @@ import {
   ChevronRight,
   Image as ImageIcon,
 } from 'lucide-react'
-import { Spinner } from '@craft-agent/ui'
+import { Spinner } from '@mortise/ui'
 import {
   Drawer,
   DrawerTrigger,
@@ -25,11 +25,11 @@ import {
   getModelDisplayName,
   getModelShortName,
 } from '@config/models'
-import { piProviderModelSupportsImages } from '@craft-agent/shared/config/pi-provider-models'
+import { piProviderModelSupportsImages } from '@mortise/shared/config/pi-provider-models'
 import {
   THINKING_LEVELS,
   type ThinkingLevel,
-} from '@craft-agent/shared/agent/thinking-levels'
+} from '@mortise/shared/agent/thinking-levels'
 import { ProviderIcon } from '@/components/icons/ProviderIcon'
 import { derivePickerMode } from './picker-mode'
 import {

@@ -4,8 +4,8 @@ import { getHeaderMetadataSignature } from '../persistence-queue'
 
 function makeHeader(overrides: Partial<SessionHeader> = {}): SessionHeader {
   return {
-    craftId: 's1',
-    workspaceRootPath: '~/.craft-agent/workspaces/ws',
+    mortiseId: 's1',
+    workspaceRootPath: '~/.mortise/workspaces/ws',
     createdAt: 1,
     lastUsedAt: 2,
     messageCount: 0,

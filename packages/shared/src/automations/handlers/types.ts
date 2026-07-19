@@ -45,7 +45,7 @@ export interface PromptHandlerOptions {
   onError?: (event: AutomationEvent, error: Error) => void;
   /**
    * 是否将 prompt automation 委托给 pi prompt-automation 扩展执行。
-   * 对应配置项 `piExtensions.delegatePromptAutomation`，默认 false（由 craft 自行处理）。
+   * 对应配置项 `piExtensions.delegatePromptAutomation`，默认 false（由 mortise 自行处理）。
    * 启用后优先调用 {@link onDelegatePrompts} 而非 {@link onPromptsReady}。
    */
   delegatePromptAutomation?: boolean;

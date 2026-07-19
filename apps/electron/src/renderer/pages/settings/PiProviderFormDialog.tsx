@@ -52,7 +52,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import type { PiGlobalProvider, PiGlobalModel, PiCustomApi, FetchedEndpointModel } from '../../../shared/types'
-import { parseContextWindowInput } from '@craft-agent/shared/config/pi-provider-models'
+import { parseContextWindowInput } from '@mortise/shared/config/pi-provider-models'
 
 const FLOATING_MENU_CLASS = 'z-floating-menu'
 
@@ -108,7 +108,7 @@ const PI_API_OPTIONS: ApiOption[] = [
   },
 ]
 
-interface FormState {
+export interface FormState {
   key: string
   baseUrl: string
   apiKey: string
@@ -162,18 +162,29 @@ function fetchedToGlobalModel(model: FetchedEndpointModel): PiGlobalModel {
   }
 }
 
-function mergeFetchedModels(
-  current: PiGlobalModel[],
-  fetched: FetchedEndpointModel[],
-): PiGlobalModel[] {
-  const seen = new Set(current.map(model => model.id.trim()).filter(Boolean))
-  const next = [...current]
-  for (const model of fetched) {
-    if (!model.id.trim() || seen.has(model.id)) continue
-    next.push(fetchedToGlobalModel(model))
-    seen.add(model.id)
+export function applyFetchedEndpointResolution(
+  state: FormState,
+  resolvedBaseUrl?: string,
+): FormState {
+  if (!resolvedBaseUrl || resolvedBaseUrl === state.baseUrl) return state
+  return { ...state, baseUrl: resolvedBaseUrl }
+}
+
+export function addSelectedFetchedModel(
+  state: FormState,
+  fetchedModels: FetchedEndpointModel[],
+  modelId: string,
+): FormState {
+  if (state.models.some(model => model.id === modelId)) return state
+  const fetched = fetchedModels.find(model => model.id === modelId)
+  return {
+    ...state,
+    defaultModel: state.defaultModel || modelId,
+    models: [
+      ...state.models,
+      fetched ? fetchedToGlobalModel(fetched) : { id: modelId, name: modelId },
+    ],
   }
-  return next
 }
 
 function normalizeModelForSave(model: PiGlobalModel): PiGlobalModel | null {
@@ -382,12 +393,7 @@ export function PiProviderFormDialog({
       if (result.models.length === 0) {
         toast.info(t('settings.piProviders.fetchEmpty'))
       } else {
-        setState(prev => ({
-          ...prev,
-          baseUrl: result.resolvedBaseUrl ?? prev.baseUrl,
-          models: mergeFetchedModels(prev.models, result.models),
-          defaultModel: prev.defaultModel || result.models[0]?.id || prev.defaultModel,
-        }))
+        setState(prev => applyFetchedEndpointResolution(prev, result.resolvedBaseUrl))
         toast.success(t('settings.piProviders.fetchSuccess', { count: result.models.length }))
       }
     } catch (error) {
@@ -404,12 +410,8 @@ export function PiProviderFormDialog({
   }, [state.models, update])
 
   const handleAddFetchedModel = React.useCallback((modelId: string) => {
-    if (state.models.some(m => m.id === modelId)) return
-    const fetched = fetchedModels.find(model => model.id === modelId)
-    const next = [...state.models, fetched ? fetchedToGlobalModel(fetched) : { id: modelId, name: modelId }]
-    update('models', next)
-    if (!state.defaultModel) update('defaultModel', modelId)
-  }, [fetchedModels, state.models, state.defaultModel, update])
+    setState(prev => addSelectedFetchedModel(prev, fetchedModels, modelId))
+  }, [fetchedModels])
 
   const handleModelChange = React.useCallback((index: number, field: keyof PiGlobalModel, value: unknown) => {
     const next = [...state.models]
@@ -723,7 +725,7 @@ export function PiProviderFormDialog({
                   <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm" className="h-7 gap-1">
-                        <Download className="h-3.5 w-3.5" />
+                        <ChevronDown className="h-3.5 w-3.5" />
                         {t('settings.piProviders.pickFetched')}
                       </Button>
                     </DropdownMenuTrigger>

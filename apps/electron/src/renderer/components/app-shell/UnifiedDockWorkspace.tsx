@@ -75,6 +75,7 @@ import {
 import { sessionMetaMapAtom } from '@/atoms/sessions'
 import { parseRouteToNavigationState } from '../../../shared/route-parser'
 import { routes } from '../../../shared/routes'
+import { isWorkspacePanelRoute } from '@/contexts/navigation-surface'
 import { AppShellProvider, useAppShellContext } from '@/context/AppShellContext'
 import { WorkspaceElectronApiProvider } from '@/context/WorkspaceElectronApiContext'
 import { MainContentPanel } from './MainContentPanel'
@@ -85,7 +86,6 @@ import {
   useWorkbenchTools,
   type WorkbenchTool,
 } from '@/components/right-workbench/RightWorkbench'
-import { parseSideTasksContentId } from '@/components/right-workbench/right-workbench-state'
 import { createDockGeometryStorage } from '@/lib/dock-geometry-storage'
 import {
   isWorkspaceLayoutTransitioning,
@@ -105,7 +105,7 @@ import {
 } from '../../../shared/app-layout'
 
 const MAIN_TABSET_ID = 'dock:main'
-const CONTENT_COMPONENT = 'craft-content'
+const CONTENT_COMPONENT = 'mortise-content'
 
 interface DockTabConfig {
   route?: string
@@ -135,7 +135,7 @@ interface UnifiedDockWorkspaceProps {
   workspaceTransition: WorkspaceTransitionState | null
   serverId: string
   sessionId?: string | null
-  isSidebarAndNavigatorHidden: boolean
+  isLeadingChromeHidden: boolean
   canvasLayoutToggleRequest: number
   onCanvasLayoutFocusChange: (focused: boolean) => void
 }
@@ -145,7 +145,7 @@ export function UnifiedDockWorkspace({
   workspaceTransition,
   serverId,
   sessionId,
-  isSidebarAndNavigatorHidden,
+  isLeadingChromeHidden,
   canvasLayoutToggleRequest,
   onCanvasLayoutFocusChange,
 }: UnifiedDockWorkspaceProps) {
@@ -381,32 +381,6 @@ export function UnifiedDockWorkspace({
     ))
     setActiveDockTabId(entry.id)
     return true
-  }, [activeWorkspaceId, enterCompactDockDetail, model, serverId, sessionMetaMap, setActiveDockTabId, t])
-
-  const openSessionTab = React.useCallback((targetSessionId: string, title?: string, targetTabsetId?: string) => {
-    enterCompactDockDetail()
-    const route = routes.view.allSessions(targetSessionId) as PanelStackEntry['route']
-    const existing = getPanelContentNodes(model).find(node =>
-      (node.getConfig() as DockTabConfig).route === route)
-    if (existing) {
-      model.doAction(Actions.selectTab(existing.getId()))
-      setActiveDockTabId(existing.getId())
-      return
-    }
-
-    const entry = createPanelStackEntry(route, 1)
-    const targetId = targetTabsetId
-      ?? model.getActiveTabset()?.getId()
-      ?? model.getFirstTabSet()?.getId()
-      ?? MAIN_TABSET_ID
-    model.doAction(Actions.addTab(
-      toJsonTab(entry, title?.trim() || resolvePanelTitle(entry, sessionMetaMap, t), serverId, activeWorkspaceId),
-      targetId,
-      DockLocation.CENTER,
-      -1,
-      true,
-    ))
-    setActiveDockTabId(entry.id)
   }, [activeWorkspaceId, enterCompactDockDetail, model, serverId, sessionMetaMap, setActiveDockTabId, t])
 
   React.useEffect(() => {
@@ -894,7 +868,6 @@ export function UnifiedDockWorkspace({
           workspaceId={config.workspaceId || activeWorkspaceId || ''}
           onProtectionChange={handleProtectionChange}
           onOpenTool={tool => openToolTab(tool, targetTabsetId)}
-          onOpenSession={(childSessionId, title) => openSessionTab(childSessionId, title, targetTabsetId)}
         />
       )
     }
@@ -904,17 +877,17 @@ export function UnifiedDockWorkspace({
         serverId={config.serverId || serverId}
         workspaceId={config.workspaceId}
         activeWorkspaceId={activeWorkspaceId}
-        isSidebarAndNavigatorHidden={isSidebarAndNavigatorHidden}
+        isLeadingChromeHidden={isLeadingChromeHidden}
         focused={node.getId() === focusedPanelId}
       />
     )
-  }, [activeWorkspaceId, focusedPanelId, handleProtectionChange, isSidebarAndNavigatorHidden, openSessionTab, openToolTab, replaceEmptyPageWithSession, serverId, sessionId, workbenchTools])
+  }, [activeWorkspaceId, focusedPanelId, handleProtectionChange, isLeadingChromeHidden, openToolTab, replaceEmptyPageWithSession, serverId, sessionId, workbenchTools])
 
   return (
     <div
       ref={dockRootRef}
-      data-craft-semantic-id="workspace.unified-dock"
-      className="craft-unified-dock flexlayout__theme_alpha_light h-full min-w-0 overflow-hidden"
+      data-mortise-semantic-id="workspace.unified-dock"
+      className="mortise-unified-dock flexlayout__theme_alpha_light h-full min-w-0 overflow-hidden"
       onDragStartCapture={handleTabDragStartCapture}
       onDragCapture={handleTabDragCapture}
       onDragEndCapture={handleTabDragEndCapture}
@@ -957,7 +930,7 @@ export function UnifiedDockWorkspace({
               key="new-session-tab"
               type="button"
               className="flexlayout__tab_toolbar_button"
-              data-craft-semantic-id={`workspace.new-tab.${node.getId()}`}
+              data-mortise-semantic-id={`workspace.new-tab.${node.getId()}`}
               title={t('workbench.emptyPage')}
               aria-label={t('workbench.emptyPage')}
               onClick={event => {
@@ -978,7 +951,7 @@ export function UnifiedDockWorkspace({
               key="detach"
               type="button"
               className="flexlayout__tab_toolbar_button"
-              data-craft-semantic-id={`workspace.detach-group.${node.getId()}`}
+              data-mortise-semantic-id={`workspace.detach-group.${node.getId()}`}
               title={t('workbench.detachPanelGroup')}
               aria-label={t('workbench.detachPanelGroup')}
               onClick={event => {
@@ -1035,7 +1008,6 @@ function DockedToolPanel({
   workspaceId,
   onProtectionChange,
   onOpenTool,
-  onOpenSession,
 }: {
   tabId: string
   resourceId?: string
@@ -1045,20 +1017,18 @@ function DockedToolPanel({
   workspaceId: string
   onProtectionChange: (tabId: string, protection: { dirty: boolean }) => void
   onOpenTool: (tool: WorkbenchTool) => void
-  onOpenSession: (sessionId: string, title: string) => void
 }) {
   const tool = usePersistedWorkbenchTool({ resourceId, sessionId, workspaceId })
   if (tool) {
     return (
       <WorkspaceElectronApiProvider route={{ serverId, workspaceId }}>
-        <div data-craft-semantic-id={`workspace.content.${tool.id}`} className="h-full min-h-0 bg-background">
+        <div data-mortise-semantic-id={`workspace.content.${tool.id}`} className="h-full min-h-0 bg-background">
           <WorkbenchToolContent
             tool={tool}
             sessionId={sessionId}
             workspaceId={workspaceId}
             onProtectionChange={protection => onProtectionChange(tabId, protection)}
             onOpenTool={onOpenTool}
-            onOpenSession={onOpenSession}
           />
         </div>
       </WorkspaceElectronApiProvider>
@@ -1076,14 +1046,14 @@ function DockedContentPanel({
   serverId,
   workspaceId,
   activeWorkspaceId,
-  isSidebarAndNavigatorHidden,
+  isLeadingChromeHidden,
   focused,
 }: {
   route?: string
   serverId: string
   workspaceId?: string
   activeWorkspaceId: string | null
-  isSidebarAndNavigatorHidden: boolean
+  isLeadingChromeHidden: boolean
   focused: boolean
 }) {
   const navState = route ? parseRouteToNavigationState(route) : null
@@ -1094,7 +1064,7 @@ function DockedContentPanel({
         navState={navState}
         workspaceId={tabWorkspaceId}
         activeWorkspaceId={activeWorkspaceId}
-        isSidebarAndNavigatorHidden={isSidebarAndNavigatorHidden}
+        isLeadingChromeHidden={isLeadingChromeHidden}
         focused={focused}
       />
     </WorkspaceElectronApiProvider>
@@ -1105,13 +1075,13 @@ function DockedContentRuntime({
   navState,
   workspaceId,
   activeWorkspaceId,
-  isSidebarAndNavigatorHidden,
+  isLeadingChromeHidden,
   focused,
 }: {
   navState: ReturnType<typeof parseRouteToNavigationState>
   workspaceId: string
   activeWorkspaceId: string | null
-  isSidebarAndNavigatorHidden: boolean
+  isLeadingChromeHidden: boolean
   focused: boolean
 }) {
   const parentContext = useAppShellContext()
@@ -1140,7 +1110,7 @@ function DockedContentRuntime({
     <AppShellProvider value={context}>
       <MainContentPanel
         navStateOverride={navState}
-        isSidebarAndNavigatorHidden={isSidebarAndNavigatorHidden}
+        isLeadingChromeHidden={isLeadingChromeHidden}
         className="rounded-none shadow-none"
       />
     </AppShellProvider>
@@ -1282,7 +1252,7 @@ function panelEntriesForWindow(snapshot: AppLayout, windowId: string): PanelStac
     .filter((tab): tab is ContentTab => Boolean(
       tab
       && tab.ref.resourceId
-      && (tab.ref.kind === 'conversation' || tab.ref.kind === 'navigation' || tab.ref.kind === 'tool')
+      && isWorkspacePanelRoute(tab.ref.resourceId)
     ))
   const proportion = tabs.length > 0 ? 1 / tabs.length : 1
   return tabs.map(tab => ({
@@ -1431,9 +1401,7 @@ function toJsonToolTab(
     ? 'file'
     : tool.id === 'browser' || tool.browserInstanceId
       ? 'browser'
-      : parseSideTasksContentId(tool.id)
-        ? 'side-task'
-        : 'extension'
+      : 'extension'
   const instancePolicy = tool.browserInstanceId
     ? 'multiple'
     : tool.extension?.contribution.workspaceContent?.instancePolicy ?? 'singleton'
@@ -1513,8 +1481,8 @@ function isAuxiliaryContentNode(node: TabNode): boolean {
   return source === 'workspace-content' || source === 'content-picker'
 }
 
-function isWorkspaceContentKind(kind: ContentKind | undefined): kind is 'file' | 'browser' | 'side-task' | 'extension' {
-  return kind === 'file' || kind === 'browser' || kind === 'side-task' || kind === 'extension'
+function isWorkspaceContentKind(kind: ContentKind | undefined): kind is 'file' | 'browser' | 'extension' {
+  return kind === 'file' || kind === 'browser' || kind === 'extension'
 }
 
 function buildDockTabProtections(
@@ -1562,9 +1530,9 @@ function applyDockSemanticAttributes(root: HTMLElement | null, model: Model): vo
   root.querySelectorAll<HTMLElement>('[role="tab"]').forEach(element => {
     const tabId = resolveFlexLayoutTabId(element.id, contentIds)
     if (!tabId) return
-    element.dataset.craftSemanticId = `workspace.tab.${tabId}`
-    element.dataset.craftUiInteractions = 'select drag close'
-    element.dataset.craftTabId = tabId
+    element.dataset.mortiseSemanticId = `workspace.tab.${tabId}`
+    element.dataset.mortiseUiInteractions = 'select drag close'
+    element.dataset.mortiseTabId = tabId
   })
 }
 

@@ -6,13 +6,13 @@ describe('Pi messaging extension routing contract', () => {
   const source = readFileSync(join(__dirname, '..', 'pi-agent.ts'), 'utf8')
 
   it('discovers the bundled extension in legacy runtimes', () => {
-    expect(source).toContain('CRAFT_MESSAGING_EXTENSION_PATH')
+    expect(source).toContain('MORTISE_MESSAGING_EXTENSION_PATH')
     expect(source).toContain("args.push('--extension', messagingExtensionPath)")
   })
 
   it('passes bundled extensions to each GlobalHost runtime', () => {
     expect(source).toContain('extensionPaths: this.getCraftExtensionPaths()')
-    expect(source).toContain('process.env.CRAFT_BROWSER_EXTENSION_PATH, process.env.CRAFT_MESSAGING_EXTENSION_PATH')
+    expect(source).toContain('process.env.MORTISE_BROWSER_EXTENSION_PATH, process.env.MORTISE_MESSAGING_EXTENSION_PATH')
   })
 
   it('binds shared runtimes and host reuse to the configured Pi agent directory', () => {
@@ -22,8 +22,7 @@ describe('Pi messaging extension routing contract', () => {
     expect(source).not.toContain('process.env.PI_AGENT_DIR')
   })
 
-  it('does not dual-register the legacy Host proxy tools', () => {
-    expect(source).toContain("d.name !== 'mcp__session__list_messaging_channels'")
-    expect(source).toContain("d.name !== 'mcp__session__unbind_messaging_channel'")
+  it('does not dual-register extension-owned host tools', () => {
+    expect(source).toContain('!PI_EXTENSION_OWNED_SESSION_TOOL_NAMES.has(d.name)')
   })
 })

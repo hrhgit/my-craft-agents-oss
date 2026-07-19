@@ -67,7 +67,7 @@ describe('AppShellScenarioService', () => {
       'transport.state',
     ])
     expect(service.services.list()).toEqual(['extension.reload', 'session.stream', 'transport.connect'])
-    const clock = new (await import('@craft-agent/shared/ui-validation')).FrozenUiValidationClock(0)
+    const clock = new (await import('@mortise/shared/ui-validation')).FrozenUiValidationClock(0)
     await expect(service.primitives.apply('atom.write', service, {}, clock)).rejects.toMatchObject({ code: 'SCENARIO_INVALID' })
     await expect(service.services.invoke('renderer.evaluate', service, {}, clock)).rejects.toMatchObject({ code: 'SCENARIO_INVALID' })
   })

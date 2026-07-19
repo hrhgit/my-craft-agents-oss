@@ -310,6 +310,15 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.settings.GET_MID_STREAM_BEHAVIOR,
   RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR,
 
+  // agent settings — global Pi/Mortise agent configuration
+  RPC_CHANNELS.agentSettings.GET,
+  RPC_CHANNELS.agentSettings.UPDATE_MAIN,
+  RPC_CHANNELS.agentSettings.UPSERT_SUBAGENT,
+  RPC_CHANNELS.agentSettings.DELETE_SUBAGENT,
+
+  // workspace coordination — shared activity and provenance ledger
+  RPC_CHANNELS.workspaceCoordination.GET_STATUS,
+
   // data-source feature flag — enforced by the workspace-owning runtime
   RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED,
   RPC_CHANNELS.tools.SET_DATA_SOURCES_ENABLED,

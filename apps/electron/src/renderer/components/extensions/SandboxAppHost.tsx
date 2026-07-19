@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { AlertTriangle, RotateCw } from 'lucide-react'
-import type { ExtensionUINode } from '@craft-agent/shared/protocol'
+import type { ExtensionUINode } from '@mortise/shared/protocol'
 import { cn } from '@/lib/utils'
 import { extensionValidationStore } from './extension-validation-store'
 
@@ -27,7 +27,7 @@ type SandboxMessage = {
   state?: unknown
 }
 
-const STORAGE_PREFIX = 'craft.extensionSandbox.v1'
+const STORAGE_PREFIX = 'mortise.extensionSandbox.v1'
 const MAX_MESSAGE_BYTES = 32_768
 const MAX_STORAGE_BYTES = 65_536
 const RATE_WINDOW_MS = 10_000
@@ -39,8 +39,8 @@ type DevelopmentValidationHost = { schemaVersion: 1; available: true }
 
 export function isSandboxValidationBridgeEnabled(node: SandboxNode, host?: DevelopmentValidationHost | null): boolean {
   const advertised = host ?? (typeof window === 'undefined' ? null : (window as unknown as {
-    __CRAFT_EXTENSION_UI_VALIDATION__?: DevelopmentValidationHost
-  }).__CRAFT_EXTENSION_UI_VALIDATION__ ?? null)
+    __MORTISE_EXTENSION_UI_VALIDATION__?: DevelopmentValidationHost
+  }).__MORTISE_EXTENSION_UI_VALIDATION__ ?? null)
   return advertised?.schemaVersion === 1 && advertised.available === true && node.permissions?.includes('validation') === true
 }
 
@@ -75,12 +75,12 @@ function buildSandboxDocument(node: SandboxNode, nonce: string): string {
         setTimeout(() => {
           if (!pending.has(requestId)) return;
           pending.delete(requestId);
-          reject(new Error('Craft sandbox request timed out'));
+          reject(new Error('Mortise sandbox request timed out'));
         }, 15000);
       });
     };
     let validationCapabilities = Object.freeze({ available: false, protocolVersions: [], verificationLevels: [], scenarios: false, sandboxBridge: false });
-    Object.defineProperty(window, 'craft', { configurable: false, writable: false, value: Object.freeze({
+    Object.defineProperty(window, 'mortise', { configurable: false, writable: false, value: Object.freeze({
       ready,
       invokeCommand: (command, args) => request('command.invoke', { command, args }),
       getTheme: () => request('theme.get'),
@@ -100,11 +100,11 @@ function buildSandboxDocument(node: SandboxNode, nonce: string): string {
     }) });
     const acceptInit = event => {
       if (event.source !== parent || event.data?.nonce !== ${JSON.stringify(nonce)}) return;
-      if (event.data?.type === 'craft:sandbox-probe') {
-        parent.postMessage({ type: 'craft:sandbox-bootstrap-ready', nonce: ${JSON.stringify(nonce)} }, '*');
+      if (event.data?.type === 'mortise:sandbox-probe') {
+        parent.postMessage({ type: 'mortise:sandbox-bootstrap-ready', nonce: ${JSON.stringify(nonce)} }, '*');
         return;
       }
-      if (event.data?.type !== 'craft:sandbox-init' || !event.ports[0]) return;
+      if (event.data?.type !== 'mortise:sandbox-init' || !event.ports[0]) return;
       window.removeEventListener('message', acceptInit);
       port = event.ports[0];
       validationCapabilities = Object.freeze(event.data.validationCapabilities || validationCapabilities);
@@ -115,18 +115,18 @@ function buildSandboxDocument(node: SandboxNode, nonce: string): string {
           pending.delete(response.requestId);
           if (response.ok) item.resolve(response.value); else item.reject(new Error(response.error || 'Sandbox request failed'));
         }
-        if (response?.type === 'host-state') window.dispatchEvent(new CustomEvent('craftstate', { detail: response.value }));
+        if (response?.type === 'host-state') window.dispatchEvent(new CustomEvent('mortisestate', { detail: response.value }));
       };
       port.start();
       resolveReady(event.data);
       port.postMessage({ type: 'ready' });
-      window.dispatchEvent(new CustomEvent('craftready', { detail: event.data }));
+      window.dispatchEvent(new CustomEvent('mortiseready', { detail: event.data }));
     };
     window.addEventListener('message', acceptInit);
-    parent.postMessage({ type: 'craft:sandbox-bootstrap-ready', nonce: ${JSON.stringify(nonce)} }, '*');
+    parent.postMessage({ type: 'mortise:sandbox-bootstrap-ready', nonce: ${JSON.stringify(nonce)} }, '*');
   })();`
   const csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; worker-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; navigate-to 'none'"
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="craft-initial-state-revision" content="${initialStateRevision}"><style>${escapeClosingTag(node.css ?? '', 'style')}</style><script>${escapeClosingTag(bootstrap, 'script')}</script></head><body>${node.html}<script>${escapeClosingTag(node.script ?? '', 'script')}</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="mortise-initial-state-revision" content="${initialStateRevision}"><style>${escapeClosingTag(node.css ?? '', 'style')}</style><script>${escapeClosingTag(bootstrap, 'script')}</script></head><body>${node.html}<script>${escapeClosingTag(node.script ?? '', 'script')}</script></body></html>`
 }
 
 function readTheme(): Record<string, string> {
@@ -340,7 +340,7 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStat
     }
     channel.port1.start()
     frame.contentWindow.postMessage({
-      type: 'craft:sandbox-init',
+      type: 'mortise:sandbox-init',
       nonce,
       protocolVersion: 1,
       appId: node.appId,
@@ -363,16 +363,16 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStat
   React.useEffect(() => {
     const handleBootstrapReady = (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow) return
-      if (event.data?.type !== 'craft:sandbox-bootstrap-ready' || event.data?.nonce !== nonce) return
+      if (event.data?.type !== 'mortise:sandbox-bootstrap-ready' || event.data?.nonce !== nonce) return
       initializeChannel()
     }
     window.addEventListener('message', handleBootstrapReady)
-    iframeRef.current?.contentWindow?.postMessage({ type: 'craft:sandbox-probe', nonce }, '*')
+    iframeRef.current?.contentWindow?.postMessage({ type: 'mortise:sandbox-probe', nonce }, '*')
     return () => window.removeEventListener('message', handleBootstrapReady)
   }, [initializeChannel, nonce])
 
   const handleLoad = React.useCallback(() => {
-    iframeRef.current?.contentWindow?.postMessage({ type: 'craft:sandbox-probe', nonce }, '*')
+    iframeRef.current?.contentWindow?.postMessage({ type: 'mortise:sandbox-probe', nonce }, '*')
   }, [nonce])
 
   React.useEffect(() => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { PiProjectionEntityV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEntityV1 } from '@mortise/shared/protocol'
 import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, selectPendingPiCredential, selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from '../pi-timeline-model'
 
 function entity(overrides: Partial<PiProjectionEntityV1>): PiProjectionEntityV1 {
@@ -34,7 +34,7 @@ describe('buildPiTimelineItems', () => {
     })])[0]).toMatchObject({ type: 'tool', status: 'failed', result: 'exit 1', isError: true })
   })
 
-  it('projects validated plan artifacts without rebuilding Craft messages', () => {
+  it('projects validated plan artifacts without rebuilding Mortise messages', () => {
     const artifact = {
       schemaVersion: 1 as const,
       kind: 'plan' as const,
@@ -121,7 +121,7 @@ describe('buildPiTimelineItems', () => {
     })], 'session-1')).toBeUndefined()
   })
 
-  it('renders OAuth prompt lifecycle without constructing a Craft message', () => {
+  it('renders OAuth prompt lifecycle without constructing a Mortise message', () => {
     const pending = buildPiTimelineItems([entity({
       entityId: 'prompt:oauth-one', entityType: 'prompt_request', kind: 'auth_request', lastSeq: 4,
       payload: {
@@ -174,7 +174,7 @@ describe('projection-native search and pagination', () => {
     entity({ entityId: 'answer-1', payload: { role: 'assistant', text: 'Found auth twice: auth' } }),
   ])
 
-  it('searches normalized content and tool entities without Craft messages', () => {
+  it('searches normalized content and tool entities without Mortise messages', () => {
     expect(findPiTimelineMatches(items, 'auth').map(match => match.itemId)).toEqual([
       'user-1', 'tool-1', 'tool-1', 'answer-1', 'answer-1',
     ])

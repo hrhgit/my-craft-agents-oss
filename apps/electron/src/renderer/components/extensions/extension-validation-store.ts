@@ -1,5 +1,5 @@
-import type { ExtensionUIValidationDefinitionV1, ExtensionUIValidationDeltaV1, ExtensionUIValidationStateV1 } from '@craft-agent/shared/protocol'
-import { validateExtensionUIValidationDeltaV1 } from '@craft-agent/shared/protocol'
+import type { ExtensionUIValidationDefinitionV1, ExtensionUIValidationDeltaV1, ExtensionUIValidationStateV1 } from '@mortise/shared/protocol'
+import { validateExtensionUIValidationDeltaV1 } from '@mortise/shared/protocol'
 
 export interface RegisteredExtensionValidation {
   extensionId: string

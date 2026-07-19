@@ -13,7 +13,6 @@ import {
   ExternalLink,
   FileText,
   Globe2,
-  GitBranch,
   Info,
   Loader2,
   List,
@@ -25,7 +24,7 @@ import {
   RotateCw,
   X,
 } from 'lucide-react'
-import { Spinner, Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
+import { Spinner, Tooltip, TooltipContent, TooltipTrigger } from '@mortise/ui'
 import { cn } from '@/lib/utils'
 import { HeaderIconButton } from '@/components/ui/HeaderIconButton'
 import { useAppShellContext } from '@/context/AppShellContext'
@@ -42,16 +41,13 @@ import { useExtensionContributions } from '@/components/extensions/useExtensionC
 import { ExtensionContributionContent } from '@/components/extensions/ExtensionContributionZone'
 import { selectMountableOverflow, type RegisteredExtensionContribution } from '@/components/extensions/extension-contribution-store'
 import type { BrowserInstanceInfo } from '../../../shared/types'
-import type { ExtensionUIIconName } from '@craft-agent/shared/protocol'
+import type { ExtensionUIIconName } from '@mortise/shared/protocol'
 import {
   browserInstanceContentId,
   browserRegistryWorkspaceSyncKey,
   extensionWorkspaceContentId,
   parseBrowserInstanceContentId,
-  parseSideTasksContentId,
-  sideTasksContentId,
 } from './right-workbench-state'
-import { SideTasksWorkbench } from './SideTasksWorkbench'
 import { createBrowserEmbedLifecycle, getVisibleBrowserEmbedBounds } from './browser-embed-lifecycle'
 import {
   BROWSER_CREATE_SEMANTIC_ID,
@@ -123,14 +119,14 @@ export function WorkbenchToolPicker({
     <div
       role="group"
       aria-label={label ?? t('workbench.tools')}
-      data-craft-semantic-id={scopedSemanticId(semanticId ?? 'workspace.content.picker')}
+      data-mortise-semantic-id={scopedSemanticId(semanticId ?? 'workspace.content.picker')}
       className="flex h-full min-h-0 items-center justify-center bg-background px-6"
     >
       <div className="w-full max-w-md space-y-1">
         {onCreateSession && (
           <button
             type="button"
-            data-craft-semantic-id={scopedSemanticId('workspace.empty-page.new-session')}
+            data-mortise-semantic-id={scopedSemanticId('workspace.empty-page.new-session')}
             onClick={onCreateSession}
             className="flex h-11 w-full items-center gap-3 rounded-[6px] px-3 text-left text-sm text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
@@ -145,7 +141,7 @@ export function WorkbenchToolPicker({
             <button
               key={tool.id}
               type="button"
-              data-craft-semantic-id={scopedSemanticId(`workspace.content.choose.${tool.id}`)}
+              data-mortise-semantic-id={scopedSemanticId(`workspace.content.choose.${tool.id}`)}
               onClick={() => onSelect(tool)}
               className="flex h-11 w-full items-center gap-3 rounded-[6px] px-3 text-left text-sm text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
@@ -221,13 +217,6 @@ export function useWorkbenchTools(
     if (resolvedWorkspaceId) builtIn.push({ id: 'files', label: t('workbench.files'), icon: FileText })
     builtIn.push({ id: 'browser', label: t('workbench.browsers'), icon: Globe2 })
     builtIn.push(...browserInstances.map(instance => browserInstanceContentTool(instance, t('workbench.untitledBrowser'))))
-    if (sessionId) {
-      builtIn.push({
-        id: sideTasksContentId(sessionId),
-        label: t('workbench.sideTasks'),
-        icon: GitBranch,
-      })
-    }
     return [
       ...builtIn,
       ...extensionItems.map(item => ({
@@ -239,7 +228,7 @@ export function useWorkbenchTools(
         extension: item,
       })),
     ]
-  }, [browserInstances, extensionItems, resolvedWorkspaceId, sessionId, t])
+  }, [browserInstances, extensionItems, resolvedWorkspaceId, t])
 }
 
 export function usePersistedWorkbenchTool(ref: {
@@ -264,14 +253,6 @@ export function usePersistedWorkbenchTool(ref: {
         }
       }
 
-    const parentSessionId = parseSideTasksContentId(ref.resourceId)
-      if (parentSessionId && ref.resourceId) {
-        return {
-          id: ref.resourceId,
-          label: t('workbench.sideTasks'),
-          icon: GitBranch,
-        }
-      }
       return undefined
     },
     [ref.resourceId, t, tools],
@@ -284,14 +265,12 @@ export function WorkbenchToolContent({
   workspaceId,
   onProtectionChange,
   onOpenTool,
-  onOpenSession,
 }: {
   tool?: WorkbenchTool
   sessionId?: string | null
   workspaceId?: string | null
   onProtectionChange?: (protection: { dirty: boolean }) => void
   onOpenTool?: (tool: WorkbenchTool) => void
-  onOpenSession?: (sessionId: string, title: string) => void
 }) {
   if (tool?.id === 'files' && workspaceId) {
     return (
@@ -306,10 +285,6 @@ export function WorkbenchToolContent({
   }
   if (tool?.id === 'browser' || tool?.browserInstanceId) {
     return <BrowserWorkbench instanceId={tool.browserInstanceId} workspaceId={workspaceId} onOpenTool={onOpenTool} />
-  }
-  const sideTasksParentId = parseSideTasksContentId(tool?.id)
-  if (sideTasksParentId) {
-    return <SideTasksWorkbench parentSessionId={sideTasksParentId} onOpenSession={onOpenSession} />
   }
   if (tool?.extension) {
     return (
@@ -507,7 +482,7 @@ function BrowserInstancePicker({
           icon={creating ? <Spinner className="text-[10px]" /> : <Plus className="size-4" />}
           tooltip={t('workbench.newBrowser')}
           aria-label={t('workbench.newBrowser')}
-          data-craft-semantic-id={BROWSER_CREATE_SEMANTIC_ID}
+          data-mortise-semantic-id={BROWSER_CREATE_SEMANTIC_ID}
           disabled={creating}
           onClick={onCreate}
         />
@@ -610,14 +585,14 @@ function EmbeddedBrowser({
           icon={<List className="size-3.5" />}
           tooltip={t('workbench.browserList')}
           aria-label={t('workbench.browserList')}
-          data-craft-semantic-id={browserWorkbenchSemanticId('list', instance.id)}
+          data-mortise-semantic-id={browserWorkbenchSemanticId('list', instance.id)}
           onClick={onShowPicker}
         />
         <HeaderIconButton
           icon={<ArrowLeft className="size-3.5" />}
           tooltip={t('common.back')}
           aria-label={t('common.back')}
-          data-craft-semantic-id={browserWorkbenchSemanticId('back', instance.id)}
+          data-mortise-semantic-id={browserWorkbenchSemanticId('back', instance.id)}
           disabled={!instance.canGoBack}
           onClick={() => void window.electronAPI.browserPane.goBack(instance.id)}
         />
@@ -625,7 +600,7 @@ function EmbeddedBrowser({
           icon={<ArrowRight className="size-3.5" />}
           tooltip={t('common.forward')}
           aria-label={t('common.forward')}
-          data-craft-semantic-id={browserWorkbenchSemanticId('forward', instance.id)}
+          data-mortise-semantic-id={browserWorkbenchSemanticId('forward', instance.id)}
           disabled={!instance.canGoForward}
           onClick={() => void window.electronAPI.browserPane.goForward(instance.id)}
         />
@@ -633,7 +608,7 @@ function EmbeddedBrowser({
           icon={instance.isLoading ? <Square className="size-3" /> : <RotateCw className="size-3.5" />}
           tooltip={instance.isLoading ? t('workbench.stopLoading') : t('common.reload')}
           aria-label={instance.isLoading ? t('workbench.stopLoading') : t('common.reload')}
-          data-craft-semantic-id={browserWorkbenchSemanticId('reload', instance.id)}
+          data-mortise-semantic-id={browserWorkbenchSemanticId('reload', instance.id)}
           onClick={() => void (instance.isLoading ? window.electronAPI.browserPane.stop(instance.id) : window.electronAPI.browserPane.reload(instance.id))}
         />
         <form className="min-w-0 flex-1" onSubmit={event => { event.preventDefault(); void navigate() }}>
@@ -641,7 +616,7 @@ function EmbeddedBrowser({
             value={address}
             onChange={event => setAddress(event.target.value)}
             aria-label={t('workbench.browserAddress')}
-            data-craft-semantic-id={browserWorkbenchSemanticId('address', instance.id)}
+            data-mortise-semantic-id={browserWorkbenchSemanticId('address', instance.id)}
             placeholder={t('workbench.browserAddress')}
             className="h-7 w-full rounded-[5px] border border-border/60 bg-background px-2 text-[11px] outline-none focus:border-ring"
           />
@@ -650,13 +625,13 @@ function EmbeddedBrowser({
           icon={<ExternalLink className="size-3.5" />}
           tooltip={t('workbench.showBrowser')}
           aria-label={t('workbench.showBrowser')}
-          data-craft-semantic-id={browserWorkbenchSemanticId('show-window', instance.id)}
+          data-mortise-semantic-id={browserWorkbenchSemanticId('show-window', instance.id)}
           onClick={onShowWindow}
         />
       </div>
       <div
         ref={viewportRef}
-        data-craft-semantic-id={browserWorkbenchSemanticId('viewport', instance.id)}
+        data-mortise-semantic-id={browserWorkbenchSemanticId('viewport', instance.id)}
         className="min-h-0 flex-1 bg-background"
       />
     </div>
@@ -697,7 +672,7 @@ function BrowserInstanceRow({
       </div>
       <button
         type="button"
-        data-craft-semantic-id={browserWorkbenchSemanticId('select', instance.id)}
+        data-mortise-semantic-id={browserWorkbenchSemanticId('select', instance.id)}
         onClick={onSelect}
         className="min-w-0 flex-1 text-left"
       >
@@ -708,7 +683,7 @@ function BrowserInstanceRow({
         icon={<ExternalLink className="size-3.5" />}
         tooltip={t('workbench.showBrowser')}
         aria-label={t('workbench.showBrowser')}
-        data-craft-semantic-id={browserWorkbenchSemanticId('show-window', instance.id)}
+        data-mortise-semantic-id={browserWorkbenchSemanticId('show-window', instance.id)}
         onClick={onShowWindow}
         className="opacity-70 group-hover:opacity-100"
       />
@@ -716,7 +691,7 @@ function BrowserInstanceRow({
         icon={<X className="size-3.5" />}
         tooltip={t('workbench.terminateBrowser')}
         aria-label={t('workbench.terminateBrowser')}
-        data-craft-semantic-id={browserWorkbenchSemanticId('destroy', instance.id)}
+        data-mortise-semantic-id={browserWorkbenchSemanticId('destroy', instance.id)}
         onClick={onDestroy}
         className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
       />

@@ -264,9 +264,8 @@ export function prepareSlackOAuth(options: PrepareSlackOAuthOptions): PreparedOA
   const userScopes = getSlackScopes(options);
   const state = generateState();
 
-  // Slack requires HTTPS → use Cloudflare relay when using callbackPort
-  const redirectUri = options.callbackUrl
-    ?? `https://agents.craft.do/auth/slack/callback?port=${options.callbackPort}`;
+  // Slack requires HTTPS, so local callback flows need an explicitly configured relay.
+  const redirectUri = options.callbackUrl ?? getSlackOAuthCallbackUrl(options.callbackPort);
 
   const authUrl = new URL(SLACK_AUTH_URL);
   authUrl.searchParams.set('client_id', SLACK_CLIENT_ID);
@@ -355,9 +354,8 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
     const localUrl = new URL(callbackServer.url);
     const port = localUrl.port;
 
-    // Use Cloudflare Worker relay for Slack OAuth (Slack requires HTTPS)
-    // The relay redirects: https://agents.craft.do/auth/slack/callback → http://localhost:{port}/callback
-    const redirectUri = `https://agents.craft.do/auth/slack/callback?port=${port}`;
+    // Slack requires HTTPS, so the deployment must provide a relay callback.
+    const redirectUri = getSlackOAuthCallbackUrl(Number(port));
 
     // Build authorization URL
     // Use user_scope (not scope) to get a user token instead of bot token
@@ -417,4 +415,25 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
       error: error instanceof Error ? error.message : 'Unknown error during Slack OAuth',
     };
   }
+}
+
+function getSlackOAuthCallbackUrl(callbackPort: number | undefined): string {
+  const configured = process.env.MORTISE_SLACK_OAUTH_CALLBACK_URL?.trim();
+  if (!configured) {
+    throw new Error(
+      'Slack OAuth callback is not configured. Set MORTISE_SLACK_OAUTH_CALLBACK_URL to enable local Slack OAuth.',
+    );
+  }
+
+  let url: URL;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw new Error('MORTISE_SLACK_OAUTH_CALLBACK_URL must be an absolute HTTPS URL');
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error('MORTISE_SLACK_OAUTH_CALLBACK_URL must use HTTPS');
+  }
+  if (callbackPort !== undefined) url.searchParams.set('port', String(callbackPort));
+  return url.toString();
 }

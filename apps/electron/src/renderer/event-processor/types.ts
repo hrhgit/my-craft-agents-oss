@@ -6,7 +6,7 @@
  */
 
 import type { Session, Message, PermissionRequest, CredentialRequest, TypedError, PermissionMode, AuthRequest, ToolDisplayMeta } from '../../shared/types'
-import type { PlanModeStateV1 } from '@craft-agent/core/types'
+import type { PlanModeStateV1 } from '@mortise/core/types'
 
 /**
  * Streaming state for a session - replaces streamingTextRef

@@ -34,7 +34,7 @@ function createTestWorkspace(): Workspace {
 
 function createTestSession(): Session {
   return {
-    craftId: 'test-session',
+    mortiseId: 'test-session',
     name: 'Test Session',
     workspaceRootPath: '/test/workspace',
     createdAt: Date.now(),

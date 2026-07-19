@@ -64,7 +64,7 @@ export interface SessionMeta {
   messageCount?: number
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean
-  /** Display-only sessions projected from Pi runtime cannot be mutated by Craft. */
+  /** Display-only sessions projected from Pi runtime cannot be mutated by Mortise. */
   readOnly?: boolean
 }
 

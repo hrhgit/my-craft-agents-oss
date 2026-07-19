@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@mortise/pi-ai";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ToolPermissionRequest } from "../src/core/agent-session.ts";
+import type { ToolPermissionRequest, ToolResultRequest } from "../src/core/agent-session.ts";
+import type { ExtensionFactory } from "../src/core/extensions/types.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -26,13 +27,17 @@ describe("AgentSession tool permission handler", () => {
 		}
 	});
 
-	async function createSessionWithEchoTool() {
+	async function createSessionWithEchoTool(options?: {
+		extensionFactories?: ExtensionFactory[];
+		onRuntimeDiagnostics?: (diagnostics: Array<{ type: "info" | "warning" | "error"; message: string }>) => void;
+	}) {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const sessionManager = SessionManager.inMemory();
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: tempDir,
 			agentDir,
 			settingsManager,
+			extensionFactories: options?.extensionFactories,
 		});
 		await resourceLoader.reload();
 
@@ -44,6 +49,7 @@ describe("AgentSession tool permission handler", () => {
 			settingsManager,
 			sessionManager,
 			resourceLoader,
+			onRuntimeDiagnostics: options?.onRuntimeDiagnostics,
 			customTools: [
 				{
 					name: "echo_tool",
@@ -71,9 +77,41 @@ describe("AgentSession tool permission handler", () => {
 	) {
 		return session.agent.beforeToolCall!(
 			{
-				assistantMessage: { role: "assistant", content: [] } as never,
+				assistantMessage: {
+					role: "assistant",
+					content: [],
+					responseId: "response-1",
+					timestamp: 1234,
+				} as never,
 				toolCall: { type: "toolCall", id: "call-1", name: "echo_tool", arguments: args } as never,
 				args,
+				context: { messages: [] } as never,
+			},
+			undefined,
+		);
+	}
+
+	/** Drive the agent's afterToolCall hook directly (no LLM round-trip). */
+	async function invokeAfterToolCall(
+		session: Awaited<ReturnType<typeof createSessionWithEchoTool>>["session"],
+		args: Record<string, unknown>,
+		isError: boolean,
+	) {
+		return session.agent.afterToolCall!(
+			{
+				assistantMessage: {
+					role: "assistant",
+					content: [],
+					responseId: "response-1",
+					timestamp: 1234,
+				} as never,
+				toolCall: { type: "toolCall", id: "call-1", name: "echo_tool", arguments: args } as never,
+				args,
+				result: {
+					content: [{ type: "text", text: isError ? "failed" : "ok" }],
+					details: { original: true },
+				},
+				isError,
 				context: { messages: [] } as never,
 			},
 			undefined,
@@ -94,7 +132,13 @@ describe("AgentSession tool permission handler", () => {
 		const result = await invokeBeforeToolCall(session, { text: "hi" });
 		expect(result?.block).toBeFalsy();
 		expect(seen).toHaveLength(1);
-		expect(seen[0]).toMatchObject({ toolName: "echo_tool", toolCallId: "call-1", input: { text: "hi" } });
+		expect(seen[0]).toMatchObject({
+			toolName: "echo_tool",
+			toolCallId: "call-1",
+			input: { text: "hi" },
+			assistantResponseId: "response-1",
+			assistantTimestamp: 1234,
+		});
 
 		session.dispose();
 	});
@@ -254,6 +298,95 @@ describe("AgentSession tool permission handler", () => {
 		expect(result?.block).toBe(true);
 		expect(result?.reason).toBe("extension says no");
 		expect(handlerCalled).toBe(false);
+
+		session.dispose();
+	});
+
+	it("awaits the host result handler for successful and failed tool results", async () => {
+		const { session } = await createSessionWithEchoTool();
+		const seen: ToolResultRequest[] = [];
+		let releaseHandler!: () => void;
+		let notifyStarted!: () => void;
+		const started = new Promise<void>((resolve) => {
+			notifyStarted = resolve;
+		});
+		let completed = false;
+
+		await session.bindExtensions({
+			toolResultHandler: async (request) => {
+				seen.push(request);
+				if (seen.length === 1) {
+					notifyStarted();
+					await new Promise<void>((resolve) => {
+						releaseHandler = resolve;
+					});
+				}
+			},
+		});
+
+		const successCall = invokeAfterToolCall(session, { text: "hi" }, false).then((result) => {
+			completed = true;
+			return result;
+		});
+		await started;
+		expect(completed).toBe(false);
+		releaseHandler();
+		await successCall;
+
+		await invokeAfterToolCall(session, { text: "bad" }, true);
+		expect(seen).toHaveLength(2);
+		expect(seen[0]).toMatchObject({
+			toolName: "echo_tool",
+			toolCallId: "call-1",
+			input: { text: "hi" },
+			content: [{ type: "text", text: "ok" }],
+			details: { original: true },
+			isError: false,
+			assistantResponseId: "response-1",
+			assistantTimestamp: 1234,
+		});
+		expect(seen[1]).toMatchObject({ isError: true, content: [{ type: "text", text: "failed" }] });
+
+		session.dispose();
+	});
+
+	it("sends extension-finalized results to the host and keeps host failures non-fatal", async () => {
+		const diagnostics: Array<{ type: "info" | "warning" | "error"; message: string }> = [];
+		const seen: ToolResultRequest[] = [];
+		const { session } = await createSessionWithEchoTool({
+			extensionFactories: [
+				(pi) => {
+					pi.on("tool_result", async () => ({
+						content: [{ type: "text", text: "extension-final" }],
+						details: { extension: true },
+						isError: false,
+					}));
+				},
+			],
+			onRuntimeDiagnostics: (next) => diagnostics.push(...next),
+		});
+
+		await session.bindExtensions({
+			toolResultHandler: async (request) => {
+				seen.push(request);
+				throw new Error("ledger unavailable");
+			},
+		});
+
+		const result = await invokeAfterToolCall(session, { text: "bad" }, true);
+		expect(seen[0]).toMatchObject({
+			content: [{ type: "text", text: "extension-final" }],
+			details: { extension: true },
+			isError: false,
+		});
+		expect(result).toMatchObject({
+			content: [{ type: "text", text: "extension-final" }],
+			details: { extension: true },
+			isError: false,
+		});
+		expect(diagnostics).toEqual([
+			expect.objectContaining({ type: "warning", message: expect.stringContaining("ledger unavailable") }),
+		]);
 
 		session.dispose();
 	});

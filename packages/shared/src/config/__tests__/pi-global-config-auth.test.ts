@@ -5,10 +5,11 @@ import { join } from 'path'
 import { pathToFileURL } from 'url'
 
 const PI_GLOBAL_CONFIG_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'pi-global-config.ts')).href
+const CONFIG_WATCHER_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'watcher.ts')).href
 const MASKED_SHORT_KEY = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'
 
 function setupPiAgentDir() {
-  const piAgentDir = mkdtempSync(join(tmpdir(), 'craft-pi-agent-'))
+  const piAgentDir = mkdtempSync(join(tmpdir(), 'mortise-pi-agent-'))
   mkdirSync(piAgentDir, { recursive: true })
   return {
     piAgentDir,
@@ -30,14 +31,19 @@ function runIsolatedPiConfigScript<T>(piAgentDir: string, body: string): T {
       getPiGlobalProviderKeyForConnection,
       hasPiGlobalAuthForConnection,
       maskApiKey,
+      watchPiGlobalModelsFile,
     } from ${JSON.stringify(PI_GLOBAL_CONFIG_MODULE_PATH)};
-    import { readFileSync } from 'fs';
+    import { mkdirSync, readFileSync, writeFileSync } from 'fs';
     import { join } from 'path';
     const piAgentDir = process.env.PI_CODING_AGENT_DIR;
     ${body}
   `
   const run = Bun.spawnSync([process.execPath, '--eval', code], {
-    env: { ...process.env, PI_CODING_AGENT_DIR: piAgentDir },
+    env: {
+      ...process.env,
+      PI_CODING_AGENT_DIR: piAgentDir,
+      MORTISE_CONFIG_DIR: join(piAgentDir, 'mortise-config'),
+    },
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -52,6 +58,65 @@ function runIsolatedPiConfigScript<T>(piAgentDir: string, body: string): T {
 }
 
 describe('pi-global-config auth storage', () => {
+  it('notifies global config watchers when auth.json changes', () => {
+    const { piAgentDir, authPath } = setupPiAgentDir()
+    writeJson(authPath, {})
+
+    const output = runIsolatedPiConfigScript<{ changed: boolean; filename: string }>(piAgentDir, `
+      const result = await new Promise((resolve, reject) => {
+        let watcher;
+        const timeout = setTimeout(() => {
+          watcher?.close();
+          reject(new Error('auth.json watcher timed out'));
+        }, 5000);
+        watcher = watchPiGlobalModelsFile(() => {
+          clearTimeout(timeout);
+          watcher.close();
+          resolve({ changed: true, filename: 'auth.json' });
+        });
+        setTimeout(() => {
+          writeFileSync(join(piAgentDir, 'auth.json'), JSON.stringify({ test: { type: 'api_key', key: 'changed' } }));
+        }, 50);
+      });
+      console.log(JSON.stringify(result));
+    `)
+
+    expect(output).toEqual({ changed: true, filename: 'auth.json' })
+  })
+
+  it('propagates an auth-only change through ConfigWatcher provider deduplication', () => {
+    const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
+    writeJson(modelsPath, { providers: {} })
+    writeJson(authPath, { test: { type: 'api_key', key: 'before' } })
+
+    const output = runIsolatedPiConfigScript<{ changed: boolean }>(piAgentDir, `
+      const { ConfigWatcher } = await import(${JSON.stringify(CONFIG_WATCHER_MODULE_PATH)});
+      const workspacePath = join(piAgentDir, 'workspace');
+      mkdirSync(workspacePath, { recursive: true });
+      const result = await new Promise((resolve, reject) => {
+        let watcher;
+        const timeout = setTimeout(() => {
+          watcher?.stop();
+          reject(new Error('ConfigWatcher auth propagation timed out'));
+        }, 5000);
+        watcher = new ConfigWatcher(workspacePath, {
+          onProvidersChange() {
+            clearTimeout(timeout);
+            watcher.stop();
+            resolve({ changed: true });
+          },
+        });
+        watcher.start();
+        setTimeout(() => {
+          writeFileSync(join(piAgentDir, 'auth.json'), JSON.stringify({ test: { type: 'api_key', key: 'after' } }));
+        }, 100);
+      });
+      console.log(JSON.stringify(result));
+    `)
+
+    expect(output).toEqual({ changed: true })
+  })
+
   it('migrates legacy provider apiKey fields into auth.json without overwriting existing auth', () => {
     const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
 

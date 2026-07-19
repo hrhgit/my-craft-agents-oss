@@ -35,7 +35,7 @@ export default [
     plugins: {
       '@typescript-eslint': tsPlugin,
       // Custom plugin for shared package rules
-      'craft-shared': {
+      'mortise-shared': {
         rules: {
           'no-direct-open-import': noDirectOpenImport,
           'no-inline-source-auth-check': noInlineSourceAuthCheck,
@@ -45,19 +45,19 @@ export default [
     },
     rules: {
       // Prevent direct imports of 'open' package — use openUrl() from utils instead
-      'craft-shared/no-direct-open-import': 'error',
+      'mortise-shared/no-direct-open-import': 'error',
       // Prevent inline source.config.isAuthenticated checks — use isSourceUsable() instead
-      'craft-shared/no-inline-source-auth-check': 'error',
+      'mortise-shared/no-inline-source-auth-check': 'error',
       // Prevent new raw ~/.pi/agent file access outside documented seams
-      'craft-shared/no-raw-pi-file-io': 'error',
+      'mortise-shared/no-raw-pi-file-io': 'error',
 
-      // Red line: Pi SDK (@earendil-works/pi-*) is bottom-layer. Shared/host code must
+      // Red line: Pi SDK (@mortise/pi-*) is bottom-layer. Shared/host code must
       // talk to Pi via RpcClient through the sanctioned backend area only. See
       // docs/architecture/red-line.md.
       'no-restricted-syntax': ['error',
         {
-          selector: 'ImportDeclaration[source.value=/^@earendil-works\\/pi-/]',
-          message: 'Pi SDK (@earendil-works/pi-*) is bottom-layer. Talk to Pi via RpcClient through packages/shared/src/agent/backend only. See docs/architecture/red-line.md.',
+          selector: 'ImportDeclaration[source.value=/^@mortise\\/pi-/]',
+          message: 'Pi SDK (@mortise/pi-*) is bottom-layer. Talk to Pi via RpcClient through packages/shared/src/agent/backend only. See docs/architecture/red-line.md.',
         },
       ],
     },
@@ -75,9 +75,9 @@ export default [
 
   // Sanctioned seam extensions — files that consume Pi's typed PUBLIC API and are
   // the single place for their domain. These are the goal state, not violations:
-  //   - secure-storage.ts: thin wrapper over Pi AuthStorage's craft.<slug> credential
+  //   - secure-storage.ts: thin wrapper over Pi AuthStorage's mortise.<slug> credential
   //     namespace (setCraftCredential/getCraftCredential — purpose-built public API).
-  //     Reimplementing auth.json I/O + locking in craft would violate the red line's
+  //     Reimplementing auth.json I/O + locking in mortise would violate the red line's
   //     deeper principle (Pi owns credential storage).
   //   - models-pi.ts: static model/provider catalog (getModels/getProviders) used for
   //     PRE-AUTH provider listing in connection setup. RpcClient.getAvailableModels()
@@ -85,7 +85,7 @@ export default [
   //   - pi-skill-resolver.ts / skills/storage.ts: synchronous UI/server seams over
   //     Pi host facade skill listing.
   //   - sessions/storage.ts: session projection creation/lookup via Pi host facade.
-  //   - pi-agent.ts: the Craft backend adapter over Pi's PUBLIC RpcClient.
+  //   - pi-agent.ts: the Mortise backend adapter over Pi's PUBLIC RpcClient.
   {
     files: [
       'src/credentials/backends/secure-storage.ts',

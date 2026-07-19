@@ -13,7 +13,7 @@
  * - Turn lifecycle (reset on new turn)
  */
 
-import type { AgentEvent } from '@craft-agent/core/types';
+import type { AgentEvent } from '@mortise/core/types';
 import { parseReadCommand, type ReadCommandInfo } from './read-patterns.ts';
 import { createLogger } from '../../utils/debug.ts';
 /** MCP server name used by the pool server */
@@ -158,9 +158,9 @@ export abstract class BaseEventAdapter {
    * Build the canonical proxy tool name for an MCP tool call.
    *
    * Pool server tools already include the source slug in their name
-   * (e.g., "craft__search_spaces") because the pool strips the `mcp__` prefix.
-   * We just need to re-add `mcp__` to produce "mcp__craft__search_spaces".
-   * Without this, we'd get "mcp__sources__craft__search_spaces" which breaks
+   * (e.g., "mortise__search_spaces") because the pool strips the `mcp__` prefix.
+   * We just need to re-add `mcp__` to produce "mcp__mortise__search_spaces".
+   * Without this, we'd get "mcp__sources__mortise__search_spaces" which breaks
    * source lookup in resolveToolDisplayMeta().
    */
   protected buildMcpToolName(serverName: string, toolName: string): string {

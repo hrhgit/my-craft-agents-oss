@@ -1,4 +1,5 @@
 export * from './types.ts';
+export * from './agent-settings.ts';
 export * from './auth-env.ts';
 export * from './midstream-behavior.ts';
 export * from './llm-validation.ts';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { ExtensionUIValidationDeltaV1 } from '@craft-agent/shared/protocol'
+import type { ExtensionUIValidationDeltaV1 } from '@mortise/shared/protocol'
 import { ExtensionValidationStore } from '../extension-validation-store'
 
 const upsert = (revision: number, id = 'panel'): ExtensionUIValidationDeltaV1 => ({

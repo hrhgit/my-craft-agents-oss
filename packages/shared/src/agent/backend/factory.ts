@@ -2,7 +2,7 @@
  * Agent Factory
  *
  * Creates the appropriate AI agent based on configuration.
- * Supports PiAgent (Pi) using @earendil-works/pi-ai SDK.
+ * Supports PiAgent (Pi) using @mortise/pi-ai SDK.
  *
  * All agents implement AgentBackend directly.
  *
@@ -523,7 +523,7 @@ export async function testBackendConnection(args: {
       context,
       coreConfig: {
         workspace: { id: '__test', name: 'Connection Test', slug: '__test', rootPath: cwd, createdAt: 0 },
-        session: { craftId: `test-${now}`, workspaceRootPath: cwd, createdAt: 0, lastUsedAt: 0 },
+        session: { mortiseId: `test-${now}`, workspaceRootPath: cwd, createdAt: 0, lastUsedAt: 0 },
         isHeadless: true,
         miniModel: testModel,
         envOverrides: undefined,

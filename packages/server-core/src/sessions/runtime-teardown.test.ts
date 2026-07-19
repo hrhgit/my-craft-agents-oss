@@ -25,7 +25,7 @@ describe('SessionManager runtime teardown', () => {
       createdAt: Date.now(),
     }
     const managed = createManagedSession(
-      { craftId: sessionId, name: sessionId },
+      { mortiseId: sessionId, name: sessionId },
       workspace as never,
       { messagesLoaded: true },
     ) as any

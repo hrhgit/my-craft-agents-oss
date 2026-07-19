@@ -13,12 +13,12 @@
 import { existsSync, readFileSync, mkdirSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { atomicWriteFileSync } from '@craft-agent/shared/utils'
+import { atomicWriteFileSync } from '@mortise/shared/utils'
 import {
   createJsonPatch,
   MultiWriterStore,
   type JsonValue,
-} from '@craft-agent/shared/storage'
+} from '@mortise/shared/storage'
 import type { MessagingLogger } from './types'
 
 /**

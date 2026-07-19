@@ -2,10 +2,10 @@ import type {
   ExtensionUIValidationActionV1,
   ExtensionUIValidationDefinitionV1,
   ExtensionUIValidationScenarioV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 import { extensionValidationStore, type RegisteredExtensionValidation } from './extension-validation-store'
 
-export const EXTENSION_VALIDATION_TEST_BRIDGE_KEY = '__CRAFT_UI_VALIDATION_EXTENSION_BRIDGE_V1__'
+export const EXTENSION_VALIDATION_TEST_BRIDGE_KEY = '__MORTISE_UI_VALIDATION_EXTENSION_BRIDGE_V1__'
 
 export type ExtensionValidationBridgeErrorCode =
   | 'NOT_READY'

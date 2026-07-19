@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test'
-import type { CapabilityRequestV1 } from '@craft-agent/shared/protocol'
+import type { CapabilityRequestV1 } from '@mortise/shared/protocol'
 import { createCapabilityAuthorizationPolicy } from '../policy.ts'
 
 const request = (overrides: Partial<CapabilityRequestV1> = {}): CapabilityRequestV1 => ({

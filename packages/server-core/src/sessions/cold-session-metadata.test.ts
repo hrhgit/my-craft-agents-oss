@@ -9,8 +9,8 @@ import {
   setSharedPiSessionsDirForTests,
   appendStoredMessagesViaPiSessionManager,
   type StoredSession,
-} from '@craft-agent/shared/sessions'
-import type { StoredMessage } from '@craft-agent/core/types'
+} from '@mortise/shared/sessions'
+import type { StoredMessage } from '@mortise/core/types'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 
 describe('cold-session metadata persistence', () => {
@@ -30,7 +30,7 @@ describe('cold-session metadata persistence', () => {
 
   async function seedColdSession(sessionId: string, messages: StoredMessage[] = []) {
     const stored: StoredSession = {
-      craftId: sessionId,
+      mortiseId: sessionId,
       workspaceRootPath: tmpRoot,
       name: 'cold session',
       createdAt: Date.now(),
@@ -47,7 +47,7 @@ describe('cold-session metadata persistence', () => {
       messages,
     )
     const managed = createManagedSession(
-      { craftId: sessionId, name: stored.name, createdAt: stored.createdAt },
+      { mortiseId: sessionId, name: stored.name, createdAt: stored.createdAt },
       { id: 'ws_test', name: 'Test Workspace', rootPath: tmpRoot, createdAt: Date.now() } as never,
     )
     ;(manager as unknown as { sessions: Map<string, unknown> }).sessions.set(sessionId, managed)
@@ -57,7 +57,7 @@ describe('cold-session metadata persistence', () => {
   function readDiskHeader(sessionId: string): Record<string, unknown> {
     const firstLine = readFileSync(getSessionFilePath(tmpRoot, sessionId), 'utf-8').split('\n')[0]
     const header = JSON.parse(firstLine)
-    return { ...header, ...(header.craft ?? {}) }
+    return { ...header, ...(header.mortise ?? {}) }
   }
 
   function readDiskMessageIds(sessionId: string): string[] {

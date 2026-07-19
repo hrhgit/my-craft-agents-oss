@@ -3,8 +3,8 @@ import type { UiSemanticBridge } from './types'
 
 export function installUiSemanticBridge(): boolean {
   if (typeof window === 'undefined' || !isUiValidationHostEnabled()) return false
-  const hadBootstrap = window.__craftUiValidation !== undefined
-  const existing = window.__craftUiValidation ?? {}
+  const hadBootstrap = window.__mortiseUiValidation !== undefined
+  const existing = window.__mortiseUiValidation ?? {}
   if (existing.semanticBridgeInstalled === true) return true
   const bridge: UiSemanticBridge = {
     schemaVersion: 1,
@@ -14,7 +14,7 @@ export function installUiSemanticBridge(): boolean {
   Object.assign(existing, bridge)
   existing.semanticBridgeInstalled = true
   if (!hadBootstrap) {
-    Object.defineProperty(window, '__craftUiValidation', { value: existing, configurable: false, enumerable: false })
+    Object.defineProperty(window, '__mortiseUiValidation', { value: existing, configurable: false, enumerable: false })
   }
   uiSemanticRegistry.subscribe(() => {
     existing.semanticRevision = uiSemanticRegistry.revision
@@ -35,8 +35,8 @@ function mergeAutomaticSemantics(snapshot: ReturnType<typeof uiSemanticRegistry.
 
 function collectAutomaticSemantics(): ReturnType<typeof uiSemanticRegistry.snapshot>['nodes'] {
   const selector = [
-    '[data-craft-semantic-id]',
-    '[data-craft-ui-interactions]',
+    '[data-mortise-semantic-id]',
+    '[data-mortise-ui-interactions]',
     '[data-testid]',
     '[data-slot="button"]',
     '[data-slot="input"]',
@@ -82,20 +82,20 @@ export function disambiguateAutomaticNodes(nodes: AutomaticSemanticNode[]): Auto
   for (const node of nodes) groups.set(node.id, [...(groups.get(node.id) ?? []), node])
   return nodes.map((node) => {
     const duplicates = groups.get(node.id) ?? []
-    if (duplicates.length < 2 || node.domSelector.startsWith('[data-craft-semantic-id=')) return node
+    if (duplicates.length < 2 || node.domSelector.startsWith('[data-mortise-semantic-id=')) return node
     return { ...node, id: `${node.id}.${stableHash(node.domSelector)}` }
   })
 }
 
 function automaticNode(element: HTMLElement): ReturnType<typeof uiSemanticRegistry.snapshot>['nodes'][number] | null {
-  const explicitId = element.dataset.craftSemanticId
+  const explicitId = element.dataset.mortiseSemanticId
   const testId = element.getAttribute('data-testid') ?? undefined
   const role = implicitRole(element)
   const name = accessibleName(element)
   let id = explicitId
   let domSelector: string
   if (id) {
-    domSelector = `[data-craft-semantic-id="${CSS.escape(id)}"]`
+    domSelector = `[data-mortise-semantic-id="${CSS.escape(id)}"]`
   } else if (role === 'navigation') {
     id = `navigation.${slug(name || 'main')}`
     domSelector = `[role="navigation"][aria-label="${CSS.escape(element.getAttribute('aria-label') ?? '')}"]`
@@ -240,7 +240,7 @@ function basicActionsForRole(role: string): DriverAction[] {
 const DECLARABLE_PHYSICAL_ACTIONS = new Set<DriverAction>(['drag', 'shortcut', 'clipboard', 'ime', 'rich-text'])
 
 function declaredPhysicalActions(element: HTMLElement): DriverAction[] {
-  const raw = element.dataset.craftUiInteractions
+  const raw = element.dataset.mortiseUiInteractions
   if (!raw) return []
   return [...new Set(raw.split(/\s+/).filter((action): action is DriverAction => DECLARABLE_PHYSICAL_ACTIONS.has(action as DriverAction)))]
 }
@@ -260,9 +260,9 @@ function structuralSelector(element: HTMLElement): string {
   const parts: string[] = []
   let current: HTMLElement | null = element
   while (current && current !== document.documentElement && parts.length < 16) {
-    const semanticId = current.dataset.craftSemanticId
+    const semanticId = current.dataset.mortiseSemanticId
     if (semanticId) {
-      parts.unshift(`[data-craft-semantic-id="${CSS.escape(semanticId)}"]`)
+      parts.unshift(`[data-mortise-semantic-id="${CSS.escape(semanticId)}"]`)
       break
     }
     let part = current.tagName.toLocaleLowerCase()
@@ -286,7 +286,7 @@ function stableHash(value: string): string {
 
 function isUiValidationHostEnabled(): boolean {
   // Web validation installs a non-configurable bootstrap object before app code.
-  if (window.__craftUiValidation) return true
+  if (window.__mortiseUiValidation) return true
   // Electron preload derives this bit from the explicit source Test Host env.
   // Packaged/production processes are rejected by main before a window exists.
   return window.electronAPI?.uiValidationTestHost?.enabled === true

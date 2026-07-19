@@ -1,0 +1,27 @@
+extends: ./electron-builder.yml
+
+appId: io.github.hrhgit.mortise.devhost
+productName: Mortise Developer Host
+copyright: Copyright © 2026 Mortise Contributors
+
+# Isolated source builds share only immutable third-party dependency packages.
+# Do not let electron-builder rewrite that dependency store.
+npmRebuild: false
+
+directories:
+  output: release-devhost
+  buildResources: resources
+
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "Mortise-Developer-Host-${arch}.${ext}"
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  deleteAppDataOnUninstall: true

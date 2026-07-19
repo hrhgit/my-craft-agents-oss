@@ -4,7 +4,7 @@
 
 import { describe, it, expect, mock } from 'bun:test'
 import { RoutedClient } from '../routed-client'
-import type { WsRpcClient, TransportConnectionState } from '@craft-agent/server-core/transport'
+import type { WsRpcClient, TransportConnectionState } from '@mortise/server-core/transport'
 
 // ---------------------------------------------------------------------------
 // Minimal WsRpcClient stub
@@ -57,7 +57,7 @@ function stubClient(overrides?: Partial<WsRpcClient>): WsRpcClient {
 }
 
 // Use real channel constants — RoutedClient routes based on isLocalOnly()
-import { isLocalOnly, RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { isLocalOnly, RPC_CHANNELS } from '@mortise/shared/protocol'
 
 const LOCAL_CHANNEL = RPC_CHANNELS.window.GET_WORKSPACE   // LOCAL_ONLY
 const REMOTE_CHANNEL = RPC_CHANNELS.sessions.GET           // REMOTE_ELIGIBLE

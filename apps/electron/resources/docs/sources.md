@@ -1,10 +1,10 @@
 # Sources Configuration Guide
 
-This guide explains how to configure sources (MCP servers, APIs, local filesystems) in Craft Agent.
+This guide explains how to configure sources (MCP servers, APIs, local filesystems) in Mortise Agent.
 
-> **CLI-first workflow (recommended):** Use `craft-agent source ...` commands instead of editing source config files directly.
-> - `craft-agent source --help`
-> - Canonical command reference: [craft-cli.md](./craft-cli.md)
+> **CLI-first workflow (recommended):** Use `mortise source ...` commands instead of editing source config files directly.
+> - `mortise source --help`
+> - Canonical command reference: [mortise-cli.md](./mortise-cli.md)
 
 ## Source Setup Process
 
@@ -12,13 +12,13 @@ When a user wants to add a new source, follow this conversational setup process 
 
 ### 0. Search for Specialized Source Guide (REQUIRED FIRST STEP)
 
-**Before doing anything else**, search for a specialized guide using the craft-agents-docs MCP:
+**Before doing anything else**, search for a specialized guide using the mortise-docs MCP:
 
 ```
-mcp__craft-agents-docs__SearchCraftAgents({ query: "{service} source setup" })
+mcp__mortise-docs__SearchMortise({ query: "{service} source setup" })
 ```
 
-**Available guides:** GitHub, Linear, Slack, Gmail, Google Calendar, Google Drive, Google Docs, Google Sheets, Outlook, Microsoft Calendar, Teams, SharePoint, Craft, Filesystem, Brave Search, Memory
+**Available guides:** GitHub, Linear, Slack, Gmail, Google Calendar, Google Drive, Google Docs, Google Sheets, Outlook, Microsoft Calendar, Teams, SharePoint, Mortise, Filesystem, Brave Search, Memory
 
 **If a guide exists for the service:**
 1. **Read the guide content** carefully
@@ -144,7 +144,7 @@ Create a guide.md tailored to the user's context:
 **You MUST use the `source_test` tool after creating any source.** This applies to ALL source types - MCP, API, and local filesystem sources. This is not optional.
 
 ```
-mcp__session__source_test({ sourceSlug: "{slug}" })
+source_test({ sourceSlug: "{slug}" })
 ```
 
 The `source_test` tool:
@@ -191,7 +191,7 @@ What data/functionality this provides. Include:
 ## Examples
 
 Concrete examples tailored to the user's workflow:
-- "To find issues in the Craft iOS project: ..."
+- "To find issues in the Mortise iOS project: ..."
 - "To search for recent commits by the mobile team: ..."
 ```
 
@@ -209,30 +209,30 @@ Concrete examples tailored to the user's workflow:
 User: I want to add Linear
 
 Agent: [FIRST: Searches for Linear guide]
-       mcp__craft-agents-docs__SearchCraftAgents({ query: "linear source setup" })
+       mcp__mortise-docs__SearchMortise({ query: "linear source setup" })
 
 Agent: I found the Linear setup guide! A few questions:
 1. What will you primarily use Linear for? (issue tracking, sprint planning, reporting?)
 2. Are there specific teams or projects you want to focus on?
 3. Should I set it up for read-only exploration or full access?
 
-User: Issue tracking for my iOS team, project called "Craft iOS"
+User: Issue tracking for my iOS team, project called "Mortise iOS"
 
 Agent: [Uses WebSearch to verify current Linear MCP URL]
 Agent: [Creates config.json with:
         - icon: (searches web for app icon or uses favicon)
-        - tagline: "Issue tracking for the Craft iOS team"
+        - tagline: "Issue tracking for the Mortise iOS team"
         - OAuth authentication]
-Agent: [Writes guide.md mentioning "Craft iOS" project and iOS team context]
+Agent: [Writes guide.md mentioning "Mortise iOS" project and iOS team context]
 Agent: [Sets up permissions.json for read-only listing in Explore mode]
 Agent: [MANDATORY: Runs source_test to validate]
-       mcp__session__source_test({ sourceSlug: "linear" })
+       source_test({ sourceSlug: "linear" })
 Agent: [Triggers source_oauth_trigger for authentication]
-       mcp__session__source_oauth_trigger({ sourceSlug: "linear" })
+       source_oauth_trigger({ sourceSlug: "linear" })
 
-Agent: Linear is now set up! I've configured it to focus on the "Craft iOS" project.
+Agent: Linear is now set up! I've configured it to focus on the "Mortise iOS" project.
 You can use it to:
-- Search and view issues in Craft iOS
+- Search and view issues in Mortise iOS
 - Track sprint progress for the iOS team
 - Create and update issues
 
@@ -242,7 +242,7 @@ Would you like me to show you what issues are currently open?
 ## Overview
 
 Sources are stored as folders under:
-- `~/.craft-agent/workspaces/{workspaceId}/sources/{sourceSlug}/`
+- `~/.mortise/workspaces/{workspaceId}/sources/{sourceSlug}/`
 
 Each source folder contains:
 - `config.json` - Source configuration (required)
@@ -532,11 +532,11 @@ For API sources that use OAuth 2.0 but aren't Google, Slack, or Microsoft. Two m
 
 ```json
 {
-  "name": "Craft Connect",
+  "name": "Mortise Connect",
   "type": "api",
-  "provider": "craft",
+  "provider": "mortise",
   "api": {
-    "baseUrl": "https://connect.craft.do/my/api/v1/",
+    "baseUrl": "https://api.example.com/v1/",
     "authType": "oauth"
   }
 }
@@ -805,7 +805,7 @@ The `config.icon` field controls the source icon. Resolution follows this priori
 ## Provider Domain Cache
 
 For favicon resolution, a cache maps provider names to their canonical domains at:
-`~/.craft-agent/provider-domains.json`
+`~/.mortise/provider-domains.json`
 
 **Format:**
 ```json
@@ -874,7 +874,7 @@ Technical steps:
 
 1. Create the source folder:
    ```bash
-   mkdir -p ~/.craft-agent/workspaces/{ws}/sources/my-source
+   mkdir -p ~/.mortise/workspaces/{ws}/sources/my-source
    ```
 
 2. Write `config.json` with appropriate settings (see schemas above)

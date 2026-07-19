@@ -1,5 +1,5 @@
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
 import { shouldRejectUnauthorizedTls, type RemoteTlsPolicy } from '../../shared/remote-tls'
 
@@ -25,7 +25,7 @@ export interface RemoteConnectionOptions extends RemoteTlsPolicy {
 }
 
 export async function connectToRemote(url: string, token: string, options: RemoteConnectionOptions = {}) {
-  const { WsRpcClient } = await import('@craft-agent/server-core/transport')
+  const { WsRpcClient } = await import('@mortise/server-core/transport')
   const client = new WsRpcClient(url, {
     token,
     workspaceId: options.workspaceId,
@@ -61,7 +61,7 @@ export async function connectToRemote(url: string, token: string, options: Remot
 export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDeps): void {
   const windowManager = deps.windowManager
 
-  // Test connection to a remote Craft Agent Server.
+  // Test connection to a remote Mortise Agent Server.
   // Pure discovery — returns list of existing workspaces or needsWorkspace flag.
   // Workspace creation is handled separately via invokeOnServer → server:createWorkspace.
   server.handle(RPC_CHANNELS.remote.TEST_CONNECTION, async (_ctx, url: string, token: string, allowInsecureTls = false) => {
@@ -112,7 +112,7 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
     if (!session || session.workspaceId !== workspaceId) {
       throw new Error(`Session is not available in the Pi-first UI: ${sessionId}`)
     }
-    const deepLink = `craftagents://allSessions/session/${sessionId}`
+    const deepLink = `mortise://allSessions/session/${sessionId}`
     windowManager.createWindow({
       workspaceId,
       focused: true,

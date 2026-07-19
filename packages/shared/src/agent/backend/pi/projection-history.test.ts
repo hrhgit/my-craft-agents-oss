@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   PLAN_ARTIFACT_CUSTOM_TYPE,
   PLAN_MODE_STATE_CUSTOM_TYPE,
-} from '@craft-agent/core/types'
+} from '@mortise/core/types'
 import {
   buildPiProjectionSnapshotFromHostProjection,
   type PiHostSessionProjectionLike,

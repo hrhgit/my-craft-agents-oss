@@ -1,15 +1,6 @@
-import { modelsAreEqual } from "@earendil-works/pi-ai/model-utils";
-import type { Model } from "@earendil-works/pi-ai/types";
-import {
-	Container,
-	type Focusable,
-	fuzzyFilter,
-	getKeybindings,
-	Input,
-	Spacer,
-	Text,
-	type TUI,
-} from "@earendil-works/pi-tui";
+import { modelsAreEqual } from "@mortise/pi-ai/model-utils";
+import type { Model } from "@mortise/pi-ai/types";
+import { Container, type Focusable, fuzzyFilter, getKeybindings, Input, Spacer, Text, type TUI } from "@mortise/pi-tui";
 import type { ModelRegistry } from "../../../core/model-registry.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
 import { theme } from "../theme/theme.ts";

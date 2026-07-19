@@ -14,24 +14,24 @@ import {
   type WorkspaceEntryMutationResult,
   type WorkspaceEntryRenameResult,
   type FileTextWriteResult,
-} from '@craft-agent/shared/protocol'
-import type { StoredAttachment } from '@craft-agent/core/types'
+} from '@mortise/shared/protocol'
+import type { StoredAttachment } from '@mortise/core/types'
 import {
   ATTACHMENT_SINGLE_FILE_LIMIT_BYTES,
   ATTACHMENT_TEXT_INLINE_LIMIT_BYTES,
   readFileAttachment,
   validateImageForClaudeAPI,
   IMAGE_LIMITS,
-} from '@craft-agent/shared/utils'
-import { getSessionAttachmentsPath, validateSessionId } from '@craft-agent/shared/sessions'
+} from '@mortise/shared/utils'
+import { getSessionAttachmentsPath, validateSessionId } from '@mortise/shared/sessions'
 import { getWorkspaceOrThrow } from '../utils'
-import { resizeImageForAPI, inspectImageBuffer } from '@craft-agent/server-core/services'
+import { resizeImageForAPI, inspectImageBuffer } from '@mortise/server-core/services'
 import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs, isSensitivePath } from '../utils'
 import { MarkItDown } from 'markitdown-js'
 import chokidar, { type FSWatcher as ChokidarWatcher } from 'chokidar'
-import { pushTyped, type HandlerFn, type RpcServer } from '@craft-agent/server-core/transport'
+import { pushTyped, type HandlerFn, type RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
-import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
+import { requestClientOpenFileDialog } from '@mortise/server-core/transport'
 import { setTransferableHandler } from './transfer'
 
 export const HANDLED_CHANNELS = [
@@ -451,7 +451,7 @@ function workspaceDraftIdentity(
     .update(`${workspaceId}\0${rootPath}`)
     .digest('hex')
   const resourceId = createHash('sha256').update(relativePath).digest('hex')
-  const serverConfigDir = process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent')
+  const serverConfigDir = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise')
   const directoryPath = join(serverConfigDir, 'workspaces', workspaceScope, 'file-drafts.v1')
   return {
     relativePath,
@@ -681,7 +681,7 @@ async function renameWorkspaceEntryCaseOnly(
 ): Promise<void> {
   const temporaryPath = join(
     dirname(sourcePath),
-    `.${parsePath(sourcePath).base}.craft-case-rename-${process.pid}-${randomUUID()}`,
+    `.${parsePath(sourcePath).base}.mortise-case-rename-${process.pid}-${randomUUID()}`,
   )
   await assertWorkspaceEntryMissing(temporaryPath)
   await rename(sourcePath, temporaryPath)
@@ -782,7 +782,7 @@ async function writeWorkspaceTextFileAtomically(
   expectedContent: string,
 ): Promise<FileTextWriteResult> {
   const fileStats = await stat(path)
-  const temporary = join(dirname(path), `.${parsePath(path).base}.craft-save-${process.pid}-${randomUUID()}`)
+  const temporary = join(dirname(path), `.${parsePath(path).base}.mortise-save-${process.pid}-${randomUUID()}`)
   let committed = false
   try {
     await writeFile(temporary, content, {
@@ -792,7 +792,7 @@ async function writeWorkspaceTextFileAtomically(
     })
 
     // Re-check after the temporary file is fully prepared, immediately before
-    // replacement. Craft writes are serialized above this helper. A separate,
+    // replacement. Mortise writes are serialized above this helper. A separate,
     // uncooperative process can still write between this read and rename because
     // portable filesystems do not expose an atomic compare-and-rename primitive.
     const currentBuffer = await readFile(path)

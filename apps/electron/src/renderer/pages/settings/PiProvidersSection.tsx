@@ -9,7 +9,7 @@
  *   - Add / edit / delete providers (writes models.json; credentials go to auth.json)
  *
  * Reads ~/.pi/agent/ directly via the pi:* RPC channel; does NOT touch
- * ~/.craft-agent/config.json. Live updates arrive via the GLOBAL_CHANGED
+ * ~/.mortise/config.json. Live updates arrive via the GLOBAL_CHANGED
  * broadcast (usePiGlobalConfig subscribes automatically).
  */
 
@@ -40,7 +40,7 @@ import {
   DEFAULT_THINKING_LEVEL,
   THINKING_LEVELS,
   type ThinkingLevel,
-} from '@craft-agent/shared/agent/thinking-levels'
+} from '@mortise/shared/agent/thinking-levels'
 
 const PI_API_LABELS: Record<PiCustomApi, string> = {
   'openai-completions': 'OpenAI Chat',

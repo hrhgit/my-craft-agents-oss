@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
-import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@craft-agent/shared/ui-validation'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
 import { ElectronUiDriverError, type UiVerificationLevel } from './electron-surface-driver'
+import { resolveWindowsUiAutomationDriverPath } from './windows-native-driver-path'
 
 export interface WindowsNativeNode {
   ref: string
@@ -225,32 +225,115 @@ function validNativeWindowHandle(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
-async function runPowerShellUiAutomation(request: Record<string, unknown>): Promise<unknown> {
-  const executable = process.env.CRAFT_UI_POWERSHELL || 'powershell.exe'
-  const script = resolve(process.cwd(), 'scripts', 'craft-ui', 'windows-uia-driver.ps1')
-  const child = spawn(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], {
+interface PowerShellRunnerOptions {
+  timeoutMs?: number
+  terminationGraceMs?: number
+  spawnProcess?: typeof spawn
+}
+
+export async function runPowerShellUiAutomation(
+  request: Record<string, unknown>,
+  options: PowerShellRunnerOptions = {},
+): Promise<unknown> {
+  const executable = process.env.MORTISE_UI_POWERSHELL || 'powershell.exe'
+  const script = resolveWindowsUiAutomationDriverPath()
+  const spawnProcess = options.spawnProcess ?? spawn
+  const timeoutMs = options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
+  const child = spawnProcess(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-  })
+  }) as ChildProcessWithoutNullStreams
+  child.stdin.on('error', () => {})
+  const exit = waitForPowerShellExit(child, timeoutMs, spawnProcess, options.terminationGraceMs)
+  const stdout = streamText(child.stdout)
+  const stderr = streamText(child.stderr)
   child.stdin.end(JSON.stringify(request))
-  const timeout = setTimeout(() => child.kill(), UI_VALIDATION_DEFAULT_TIMEOUT_MS)
-  const [exitCode, stdout, stderr] = await Promise.all([
-    new Promise<number | null>(resolveExit => child.once('exit', resolveExit)),
-    streamText(child.stdout),
-    streamText(child.stderr),
-  ]).finally(() => clearTimeout(timeout))
-  if (exitCode !== 0) throw new ElectronUiDriverError('DRIVER_DISCONNECTED', `Windows UI Automation failed: ${stderr.slice(0, 2_000)}`)
-  try { return JSON.parse(stdout) } catch (error) {
-    const normalized = stdout.trim().replace(/[\r\n]+/g, ' ')
+  const [exitCode, stdoutText, stderrText] = await Promise.all([exit, stdout, stderr])
+  if (exitCode !== 0) throw new ElectronUiDriverError('DRIVER_DISCONNECTED', `Windows UI Automation failed: ${stderrText.slice(0, 2_000)}`)
+  try { return JSON.parse(stdoutText) } catch (error) {
+    const normalized = stdoutText.trim().replace(/[\r\n]+/g, ' ')
     const head = normalized.slice(0, 250)
     const tail = normalized.length > 250 ? normalized.slice(-250) : ''
     const summary = [head, tail].filter(Boolean).join(' ... ')
     const reason = error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300)
     throw new ElectronUiDriverError(
       'DRIVER_DISCONNECTED',
-      `Windows UI Automation returned invalid JSON (${stdout.length} chars, ${reason})${summary ? `: ${summary}` : ' (empty output)'}.`,
+      `Windows UI Automation returned invalid JSON (${stdoutText.length} chars, ${reason})${summary ? `: ${summary}` : ' (empty output)'}.`,
     )
   }
+}
+
+async function waitForPowerShellExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+  spawnProcess: typeof spawn,
+  terminationGraceMs = 1_000,
+): Promise<number | null> {
+  return await new Promise<number | null>((resolveExit, reject) => {
+    let settled = false
+    const cleanup = () => {
+      clearTimeout(timeout)
+      child.removeListener('error', onError)
+      child.removeListener('exit', onExit)
+    }
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback()
+    }
+    const onError = (error: Error) => finish(() => {
+      reject(new ElectronUiDriverError('DRIVER_DISCONNECTED', `Windows UI Automation failed to start: ${error.message}`))
+    })
+    const onExit = (code: number | null) => finish(() => resolveExit(code))
+    const timeout = setTimeout(() => finish(() => {
+      terminateWindowsProcessTree(child, spawnProcess, terminationGraceMs)
+      reject(new ElectronUiDriverError('TIMEOUT', `Windows UI Automation timed out after ${timeoutMs}ms.`))
+    }), timeoutMs)
+    child.once('error', onError)
+    child.once('exit', onExit)
+  })
+}
+
+function terminateWindowsProcessTree(
+  child: ChildProcessWithoutNullStreams,
+  spawnProcess: typeof spawn,
+  terminationGraceMs: number,
+): void {
+  const forceKill = () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+  }
+  if (!child.pid) {
+    forceKill()
+    return
+  }
+  let taskkill: ReturnType<typeof spawn>
+  try {
+    taskkill = spawnProcess('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+  } catch {
+    forceKill()
+    return
+  }
+  let completed = false
+  const escalation = setTimeout(() => {
+    if (completed) return
+    completed = true
+    taskkill.kill('SIGKILL')
+    forceKill()
+  }, Math.max(1, terminationGraceMs))
+  escalation.unref()
+  const complete = (failed: boolean) => {
+    if (completed) return
+    completed = true
+    clearTimeout(escalation)
+    if (failed) forceKill()
+  }
+  taskkill.once('error', () => complete(true))
+  taskkill.once('exit', code => complete(code !== 0))
+  taskkill.unref()
 }
 
 async function streamText(stream: NodeJS.ReadableStream): Promise<string> {

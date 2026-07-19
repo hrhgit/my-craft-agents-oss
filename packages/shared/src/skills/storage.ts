@@ -1,7 +1,7 @@
 /**
  * Skills storage facade.
  *
- * Pi owns skill discovery and parsing. Craft keeps these synchronous helpers as
+ * Pi owns skill discovery and parsing. Mortise keeps these synchronous helpers as
  * stable UI/server seams and delegates catalog reads to Pi's host facade.
  */
 
@@ -10,7 +10,7 @@ import { basename } from 'path';
 import {
   listSkillsSync as listPiSkillsSync,
   type HostSkillSummary,
-} from '@earendil-works/pi-coding-agent/host-facade';
+} from '@mortise/pi-coding-agent/host-facade';
 import type { LoadedSkill, SkillMetadata, SkillSource } from './types.ts';
 import { validateSlug } from '../config/validators.ts';
 import { isPathWithinDirectory } from '../utils/paths.ts';

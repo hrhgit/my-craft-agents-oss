@@ -14,7 +14,7 @@ import { configureSharedBackend } from "./shared-backend-discovery";
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
 const DIST_DIR = join(ELECTRON_DIR, "dist");
-const DEFAULT_CONFIG_DIR = join(homedir(), ".craft-agent");
+const DEFAULT_CONFIG_DIR = join(homedir(), ".mortise");
 
 // Replace grammY's bundled polyfills (node-fetch@2 + abort-controller@3) with
 // native Node globals. esbuild otherwise renames the polyfill's `class
@@ -28,12 +28,12 @@ const MAIN_PROCESS_ALIAS: Record<string, string> = {
 };
 
 const MAIN_PROCESS_IMPORT_META_DEFINES: Record<string, string> = {
-  "import.meta.url": "__craft_import_meta_url",
-  "import.meta.resolve": "__craft_import_meta_resolve",
+  "import.meta.url": "__mortise_import_meta_url",
+  "import.meta.resolve": "__mortise_import_meta_resolve",
 };
 
 const MAIN_PROCESS_IMPORT_META_BANNER =
-  "const __craft_import_meta_url = require('url').pathToFileURL(__filename).href; const __craft_import_meta_resolve = (specifier) => require('url').pathToFileURL(require.resolve(specifier)).href;";
+  "const __mortise_import_meta_url = require('url').pathToFileURL(__filename).href; const __mortise_import_meta_resolve = (specifier) => require('url').pathToFileURL(require.resolve(specifier)).href;";
 
 // MCP server paths
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
@@ -85,21 +85,21 @@ async function ensureBundledUvForCurrentPlatform(): Promise<void> {
 }
 
 function getRequestedVitePort(): number | null {
-  const rawPort = process.env.CRAFT_VITE_PORT ?? process.env.PORT;
+  const rawPort = process.env.MORTISE_VITE_PORT ?? process.env.PORT;
   const port = Number.parseInt(rawPort ?? "", 10);
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
 }
 
 // Multi-instance detection (matches detect-instance.sh logic)
-// Detects instance number from folder name suffix (e.g., craft-agents-1 → instance 1)
+// Detects instance number from folder name suffix (e.g., mortise-1 → instance 1)
 function detectInstance(): void {
   const requestedVitePort = getRequestedVitePort();
   if (requestedVitePort !== null) {
-    process.env.CRAFT_VITE_PORT = `${requestedVitePort}`;
-    if (!process.env.CRAFT_CONFIG_DIR) {
-      process.env.CRAFT_CONFIG_DIR = DEFAULT_CONFIG_DIR;
+    process.env.MORTISE_VITE_PORT = `${requestedVitePort}`;
+    if (!process.env.MORTISE_CONFIG_DIR) {
+      process.env.MORTISE_CONFIG_DIR = DEFAULT_CONFIG_DIR;
     }
-    console.log(`🔌 Assigned Vite port=${process.env.CRAFT_VITE_PORT}, config=${process.env.CRAFT_CONFIG_DIR}`);
+    console.log(`🔌 Assigned Vite port=${process.env.MORTISE_VITE_PORT}, config=${process.env.MORTISE_CONFIG_DIR}`);
     return;
   }
 
@@ -108,19 +108,19 @@ function detectInstance(): void {
 
   if (match) {
     const instanceNum = match[1];
-    process.env.CRAFT_INSTANCE_NUMBER = instanceNum;
-    process.env.CRAFT_VITE_PORT = `${instanceNum}173`;
-    process.env.CRAFT_APP_NAME = `Craft Agents [${instanceNum}]`;
-    if (!process.env.CRAFT_CONFIG_DIR) {
-      process.env.CRAFT_CONFIG_DIR = DEFAULT_CONFIG_DIR;
+    process.env.MORTISE_INSTANCE_NUMBER = instanceNum;
+    process.env.MORTISE_VITE_PORT = `${instanceNum}173`;
+    process.env.MORTISE_APP_NAME = `Mortise [${instanceNum}]`;
+    if (!process.env.MORTISE_CONFIG_DIR) {
+      process.env.MORTISE_CONFIG_DIR = DEFAULT_CONFIG_DIR;
     }
-    process.env.CRAFT_DEEPLINK_SCHEME = `craftagents${instanceNum}`;
-    console.log(`🔢 Instance ${instanceNum} detected: port=${process.env.CRAFT_VITE_PORT}, config=${process.env.CRAFT_CONFIG_DIR}`);
+    process.env.MORTISE_DEEPLINK_SCHEME = `mortise${instanceNum}`;
+    console.log(`🔢 Instance ${instanceNum} detected: port=${process.env.MORTISE_VITE_PORT}, config=${process.env.MORTISE_CONFIG_DIR}`);
     return;
   }
 
-  if (!process.env.CRAFT_CONFIG_DIR) {
-    process.env.CRAFT_CONFIG_DIR = DEFAULT_CONFIG_DIR;
+  if (!process.env.MORTISE_CONFIG_DIR) {
+    process.env.MORTISE_CONFIG_DIR = DEFAULT_CONFIG_DIR;
   }
 }
 
@@ -197,7 +197,7 @@ function copyResources(): void {
   const destDir = join(ELECTRON_DIR, "dist/resources");
   if (!existsSync(srcDir)) return;
 
-  const forceCopy = process.env.CRAFT_DEV_FORCE_COPY_RESOURCES === "1";
+  const forceCopy = process.env.MORTISE_DEV_FORCE_COPY_RESOURCES === "1";
   if (!forceCopy && existsSync(destDir) && latestMtime(destDir) >= latestMtime(srcDir)) {
     console.log("📦 Resources unchanged, reusing dist/resources");
     return;
@@ -212,7 +212,7 @@ function copyResources(): void {
 // sync with the packaged/CI build. Rebuild only when its inputs changed.
 async function buildWaWorker(): Promise<void> {
   if (
-    process.env.CRAFT_DEV_FORCE_REBUILD_WORKER !== "1" &&
+    process.env.MORTISE_DEV_FORCE_REBUILD_WORKER !== "1" &&
     !needsBuild(WHATSAPP_WORKER_OUTPUT, [
       join(WHATSAPP_WORKER_DIR, "src"),
       join(WHATSAPP_WORKER_DIR, "package.json"),
@@ -240,7 +240,7 @@ async function buildWaWorker(): Promise<void> {
 // Build MCP servers for sessions (one-time, no watch needed)
 async function buildMcpServers(): Promise<void> {
   if (
-    process.env.CRAFT_DEV_FORCE_REBUILD_MCP !== "1" &&
+    process.env.MORTISE_DEV_FORCE_REBUILD_MCP !== "1" &&
     !needsBuild(SESSION_SERVER_OUTPUT, [
       join(SESSION_SERVER_DIR, "src"),
       join(SESSION_SERVER_DIR, "package.json"),
@@ -292,7 +292,7 @@ function getOAuthDefines(): Record<string, string> {
 
 // Get environment variables for electron process
 function getElectronEnv(): Record<string, string> {
-  const vitePort = process.env.CRAFT_VITE_PORT || "5173";
+  const vitePort = process.env.MORTISE_VITE_PORT || "5173";
 
   // Codex binary path is resolved at runtime by the binary-resolver module.
   // It checks: CODEX_PATH env var > bundled binary > local dev fork > system PATH.
@@ -301,10 +301,10 @@ function getElectronEnv(): Record<string, string> {
   return {
     ...process.env as Record<string, string>,
     VITE_DEV_SERVER_URL: `http://localhost:${vitePort}`,
-    CRAFT_CONFIG_DIR: process.env.CRAFT_CONFIG_DIR || "",
-    CRAFT_APP_NAME: process.env.CRAFT_APP_NAME || "Craft Agents",
-    CRAFT_DEEPLINK_SCHEME: process.env.CRAFT_DEEPLINK_SCHEME || "craftagents",
-    CRAFT_INSTANCE_NUMBER: process.env.CRAFT_INSTANCE_NUMBER || "",
+    MORTISE_CONFIG_DIR: process.env.MORTISE_CONFIG_DIR || "",
+    MORTISE_APP_NAME: process.env.MORTISE_APP_NAME || "Mortise",
+    MORTISE_DEEPLINK_SCHEME: process.env.MORTISE_DEEPLINK_SCHEME || "mortise",
+    MORTISE_INSTANCE_NUMBER: process.env.MORTISE_INSTANCE_NUMBER || "",
   };
 }
 
@@ -382,9 +382,9 @@ async function main(): Promise<void> {
   detectInstance();
   const sharedBackend = await configureSharedBackend(process.env, DEFAULT_CONFIG_DIR);
   if (sharedBackend) {
-    console.log(`🔗 Reusing shared Craft backend PID ${sharedBackend.pid} at ${sharedBackend.url}`);
+    console.log(`🔗 Reusing shared Mortise backend PID ${sharedBackend.pid} at ${sharedBackend.url}`);
   }
-  if (process.env.CRAFT_DEV_CLEAN_VITE_CACHE === "1") {
+  if (process.env.MORTISE_DEV_CLEAN_VITE_CACHE === "1") {
     cleanViteCache();
   }
 
@@ -400,7 +400,7 @@ async function main(): Promise<void> {
   // These independent artifacts can be checked/built concurrently.
   await Promise.all([buildMcpServers(), buildWaWorker()]);
 
-  const vitePort = process.env.CRAFT_VITE_PORT || "5173";
+  const vitePort = process.env.MORTISE_VITE_PORT || "5173";
   const oauthDefines = getOAuthDefines();
 
   const mainCjsPath = join(DIST_DIR, "main.cjs");
@@ -433,7 +433,8 @@ async function main(): Promise<void> {
     alias: MAIN_PROCESS_ALIAS,
     define: {
       ...MAIN_PROCESS_IMPORT_META_DEFINES,
-      __CRAFT_UI_VALIDATION_BUILD__: "true",
+      __MORTISE_UI_VALIDATION_BUILD__: "true",
+      __MORTISE_DEV_HOST_BUILD__: "false",
       ...oauthDefines,
     },
     banner: { js: MAIN_PROCESS_IMPORT_META_BANNER },
@@ -449,7 +450,7 @@ async function main(): Promise<void> {
     format: "cjs",
     outfile: join(ROOT_DIR, "apps/electron/dist/bootstrap-preload.cjs"),
     external: ["electron"],
-    define: { __CRAFT_UI_VALIDATION_BUILD__: "true" },
+    define: { __MORTISE_UI_VALIDATION_BUILD__: "true", __MORTISE_DEV_HOST_BUILD__: "false" },
     logLevel: "info",
   });
   esbuildContexts.push(preloadContext);
@@ -481,7 +482,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  if (process.env.CRAFT_DEV_VERIFY_BUILDS === "1") {
+  if (process.env.MORTISE_DEV_VERIFY_BUILDS === "1") {
     console.log("🔍 Verifying build output...");
     const [mainValid, preloadValid, toolbarPreloadValid] = await Promise.all([
       verifyJsFile(mainCjsPath),

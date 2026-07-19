@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { requestCraftUiHost } from '../../craft-ui/client.ts'
-import { startCraftUiRun, stopCraftUiRun } from '../../craft-ui/controller.ts'
+import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
+import { startMortiseUiRun, stopMortiseUiRun } from '../../mortise-ui/controller.ts'
 
 interface WindowInfo { webContentsId: number; workspaceId: string | null; role: 'main' | 'child-session'; sessionId?: string; parentWebContentsId?: number }
 interface Snapshot {
@@ -10,14 +10,14 @@ interface Snapshot {
   regions: Record<string, Array<{ ref: string; semanticId?: string; role: string; name: string }>>
 }
 
-const sourceRoot = mkdtempSync(join(tmpdir(), 'craft-ui-recovery-source-'))
-const sourceCraft = join(sourceRoot, 'craft')
+const sourceRoot = mkdtempSync(join(tmpdir(), 'mortise-ui-recovery-source-'))
+const sourceMortise = join(sourceRoot, 'mortise')
 const sourcePi = join(sourceRoot, 'pi')
 const sourceWorkspace = join(sourceRoot, 'workspace')
-mkdirSync(sourceCraft, { recursive: true })
+mkdirSync(sourceMortise, { recursive: true })
 mkdirSync(sourcePi, { recursive: true })
 mkdirSync(sourceWorkspace, { recursive: true })
-writeFileSync(join(sourceCraft, 'config.json'), JSON.stringify({
+writeFileSync(join(sourceMortise, 'config.json'), JSON.stringify({
   setupDeferred: true,
   activeWorkspaceId: 'recovery-workspace',
   activeSessionId: null,
@@ -38,14 +38,14 @@ writeFileSync(join(sourcePi, 'models.json'), JSON.stringify({
   },
 }, null, 2))
 
-let manifest: Awaited<ReturnType<typeof startCraftUiRun>> | undefined
+let manifest: Awaited<ReturnType<typeof startMortiseUiRun>> | undefined
 let crashEvidence: { bundleDir?: string; artifacts?: Array<{ path: string }> } | undefined
 
 try {
-  manifest = await startCraftUiRun({
+  manifest = await startMortiseUiRun({
     surface: 'electron',
     profileMode: 'clone',
-    sourceCraftConfigDir: sourceCraft,
+    sourceMortiseConfigDir: sourceMortise,
     sourcePiAgentDir: sourcePi,
     waitMs: 180_000,
   })
@@ -215,13 +215,13 @@ try {
   }
   throw error
 } finally {
-  if (manifest) await stopCraftUiRun(manifest.runDir)
+  if (manifest) await stopMortiseUiRun(manifest.runDir)
   rmSync(sourceRoot, { recursive: true, force: true })
 }
 
 async function raw<T = Record<string, unknown>>(command: string, params: Record<string, unknown> = {}) {
   if (!manifest) throw new Error('UI validation run has not started.')
-  return await requestCraftUiHost<T>({ ...manifest, command, params, timeoutMs: 120_000 })
+  return await requestMortiseUiHost<T>({ ...manifest, command, params, timeoutMs: 120_000 })
 }
 
 async function command<T = Record<string, unknown>>(name: string, params: Record<string, unknown> = {}): Promise<T> {

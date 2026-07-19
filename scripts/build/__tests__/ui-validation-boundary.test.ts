@@ -30,7 +30,7 @@ describe('UI validation production bundle boundary', () => {
 
   test('rejects validation runtime left inside a shared production module', () => {
     expect(() => assertNoUiValidationProductionRuntime(
-      "addEventListener('craft:ui-validation:semantic-change', handler)",
+      "addEventListener('mortise:ui-validation:semantic-change', handler)",
       'main.cjs',
     )).toThrow(/main\.cjs contains source-only UI validation runtime marker/)
     expect(() => assertNoUiValidationProductionRuntime('ordinary production code', 'main.cjs')).not.toThrow()
@@ -40,5 +40,28 @@ describe('UI validation production bundle boundary', () => {
     const config = readFileSync(resolve(import.meta.dir, '../../../apps/webui/vite.config.ts'), 'utf8')
     expect(config).toContain('sourcemap: uiValidationBuild')
     expect(config).not.toMatch(/sourcemap:\s*true/)
+  })
+
+  test('keeps the packaged Developer Host in a separate application identity and build entry', () => {
+    const config = readFileSync(resolve(import.meta.dir, '../../../apps/electron/electron-builder.devhost.yml'), 'utf8')
+    const buildScript = readFileSync(resolve(import.meta.dir, '../../build-developer-kit.ps1'), 'utf8')
+    const orchestrator = readFileSync(resolve(import.meta.dir, '../../build-developer-kit.ts'), 'utf8')
+    const rootPackage = readFileSync(resolve(import.meta.dir, '../../../package.json'), 'utf8')
+    expect(config).toContain('appId: io.github.hrhgit.mortise.devhost')
+    expect(config).toContain('productName: Mortise Developer Host')
+    expect(config).toContain('npmRebuild: false')
+    expect(buildScript).toContain('$env:MORTISE_UI_VALIDATION_BUILD = "1"')
+    expect(buildScript).toContain('$env:MORTISE_DEV_HOST_BUILD = "1"')
+    expect(buildScript).toContain('Invoke-Checked { bun run pi:build } "Pi workspace build"')
+    expect(buildScript).toContain('Invoke-Checked { bun run pi:build:binary } "Pi binary build"')
+    expect(buildScript.indexOf('bun run pi:build')).toBeLessThan(buildScript.indexOf('bun run electron:build'))
+    expect(buildScript.indexOf('bun run pi:build:binary')).toBeLessThan(buildScript.indexOf('bun run electron:build'))
+    expect(buildScript).toContain('dev-host\\resources\\ui-validation')
+    expect(buildScript).toContain('scripts\\mortise-ui\\windows-uia-driver.ps1')
+    expect(buildScript).toContain('Packaged Windows UI Automation driver not found')
+    expect(buildScript).toContain('-OutputRoot is required in Developer Kit worker mode')
+    expect(orchestrator).toContain('captureBuildSource')
+    expect(orchestrator).toContain("withFileLock(join(buildRoot, 'locks', buildId)")
+    expect(rootPackage).toContain('"developer-kit:dist:win": "bun run scripts/build-developer-kit.ts"')
   })
 })

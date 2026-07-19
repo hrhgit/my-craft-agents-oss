@@ -168,7 +168,7 @@ export function APISetupStep({
   const [activeSegment, setActiveSegment] = useState<ProviderSegment>(initialSegment)
 
   const SEGMENT_LABELS: Record<ProviderSegment, string> = {
-    pi: t("onboarding.apiSetup.craftAgentsBackend"),
+    pi: t("onboarding.apiSetup.mortiseBackend"),
   }
 
   const SEGMENT_DESCRIPTIONS: Record<ProviderSegment, React.ReactNode> = {

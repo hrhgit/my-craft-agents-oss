@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 import { isUiValidationBuildEnabled, uiValidationProductionBoundaryPlugin } from '../../scripts/build/ui-validation-boundary'
 
-const requestedPort = Number.parseInt(process.env.CRAFT_WEBUI_PORT ?? process.env.PORT ?? '5175', 10)
+const requestedPort = Number.parseInt(process.env.MORTISE_WEBUI_PORT ?? process.env.PORT ?? '5175', 10)
 const webuiPort = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
   ? requestedPort
   : 5175
@@ -50,7 +50,7 @@ export default defineConfig(({ command }) => {
   resolve: {
     alias: {
       ...(!uiValidationBuild ? {
-        '@craft-agent/shared/protocol': resolve(__dirname, '../../packages/shared/src/protocol/production.ts'),
+        '@mortise/shared/protocol': resolve(__dirname, '../../packages/shared/src/protocol/production.ts'),
         '@/ui-validation/bridge': resolve(disabledValidationDir, 'bridge.ts'),
         '@/ui-validation/state-bridge': resolve(disabledValidationDir, 'state-bridge.ts'),
         '@/ui-validation/react': resolve(disabledValidationDir, 'react.ts'),
@@ -95,11 +95,11 @@ export default defineConfig(({ command }) => {
   define: {
     // Flag to detect web UI context in shared code
     'import.meta.env.IS_WEBUI': 'true',
-    __CRAFT_UI_VALIDATION_BUILD__: JSON.stringify(uiValidationBuild),
+    __MORTISE_UI_VALIDATION_BUILD__: JSON.stringify(uiValidationBuild),
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'jotai'],
-    exclude: ['@craft-agent/ui'],
+    exclude: ['@mortise/ui'],
     esbuildOptions: {
       supported: { 'top-level-await': true },
       target: 'esnext',
@@ -109,14 +109,14 @@ export default defineConfig(({ command }) => {
     port: webuiPort,
     strictPort: true,
     open: false,
-    host: process.env.CRAFT_WEBUI_HOST ?? true,
+    host: process.env.MORTISE_WEBUI_HOST ?? true,
     // Proxy API + WS to the headless server so the assigned dev URL works
-    // end-to-end with HMR. Target port follows CRAFT_RPC_PORT (default 9100).
-    // Auto-detects TLS: if the server has CRAFT_RPC_TLS_KEY/CERT set, we proxy
+    // end-to-end with HMR. Target port follows MORTISE_RPC_PORT (default 9100).
+    // Auto-detects TLS: if the server has MORTISE_RPC_TLS_KEY/CERT set, we proxy
     // over https/wss with secure:false to accept the self-signed dev cert.
     proxy: (() => {
-      const port = process.env.CRAFT_RPC_PORT ?? '9100'
-      const useTls = Boolean(process.env.CRAFT_RPC_TLS_KEY || process.env.CRAFT_RPC_TLS_CERT)
+      const port = process.env.MORTISE_RPC_PORT ?? '9100'
+      const useTls = Boolean(process.env.MORTISE_RPC_TLS_KEY || process.env.MORTISE_RPC_TLS_CERT)
       const httpProto = useTls ? 'https' : 'http'
       const wsProto = useTls ? 'wss' : 'ws'
       const httpTarget = `${httpProto}://127.0.0.1:${port}`

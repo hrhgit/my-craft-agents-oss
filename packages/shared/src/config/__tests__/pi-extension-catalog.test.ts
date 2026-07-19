@@ -11,8 +11,8 @@ afterEach(() => {
 })
 
 describe('Pi extension settings catalog', () => {
-  it('retains disabled Craft extensions and their manifest UI', async () => {
-    const root = join(tmpdir(), `craft-extension-catalog-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  it('retains disabled Mortise extensions and their manifest UI', async () => {
+    const root = join(tmpdir(), `mortise-extension-catalog-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     roots.push(root)
     const cwd = join(root, 'project')
     const agentDir = join(root, 'agent')
@@ -25,7 +25,7 @@ describe('Pi extension settings catalog', () => {
         extensions: [{
           id: 'disabled-extension',
           path: './disabled.js',
-          targets: ['craft'],
+          targets: ['mortise'],
           ui: {
             schemaVersion: 1,
             title: 'Disabled extension',

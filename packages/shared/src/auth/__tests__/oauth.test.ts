@@ -65,38 +65,38 @@ describe('discoverOAuthMetadata', () => {
   describe('RFC 9728 protected resource discovery', () => {
     it('discovers metadata via WWW-Authenticate resource_metadata hint', async () => {
       const protectedResourceMetadata = {
-        resource: 'https://mcp.craft.do/my',
-        authorization_servers: ['https://mcp.craft.do/my/auth'],
+        resource: 'https://mcp.mortise.do/my',
+        authorization_servers: ['https://mcp.mortise.do/my/auth'],
       };
 
       const authServerMetadata = {
-        authorization_endpoint: 'https://mcp.craft.do/my/auth/authorize',
-        token_endpoint: 'https://mcp.craft.do/my/auth/token',
-        registration_endpoint: 'https://mcp.craft.do/my/auth/register',
+        authorization_endpoint: 'https://mcp.mortise.do/my/auth/authorize',
+        token_endpoint: 'https://mcp.mortise.do/my/auth/token',
+        registration_endpoint: 'https://mcp.mortise.do/my/auth/register',
       };
 
       mockFetch.mockImplementation((url: string, options?: RequestInit) => {
         // HEAD request to MCP endpoint returns 401 with resource_metadata hint
-        if (url === 'https://mcp.craft.do/my/mcp' && options?.method === 'HEAD') {
+        if (url === 'https://mcp.mortise.do/my/mcp' && options?.method === 'HEAD') {
           return Promise.resolve(new Response(null, {
             status: 401,
             headers: {
-              'WWW-Authenticate': 'Bearer error="invalid_token", resource_metadata="https://mcp.craft.do/.well-known/oauth-protected-resource/my"',
+              'WWW-Authenticate': 'Bearer error="invalid_token", resource_metadata="https://mcp.mortise.do/.well-known/oauth-protected-resource/my"',
             },
           }));
         }
         // Protected resource metadata
-        if (url === 'https://mcp.craft.do/.well-known/oauth-protected-resource/my') {
+        if (url === 'https://mcp.mortise.do/.well-known/oauth-protected-resource/my') {
           return Promise.resolve(new Response(JSON.stringify(protectedResourceMetadata), { status: 200 }));
         }
         // Authorization server metadata
-        if (url === 'https://mcp.craft.do/my/auth/.well-known/oauth-authorization-server') {
+        if (url === 'https://mcp.mortise.do/my/auth/.well-known/oauth-authorization-server') {
           return Promise.resolve(new Response(JSON.stringify(authServerMetadata), { status: 200 }));
         }
         return Promise.resolve(new Response('Not Found', { status: 404 }));
       });
 
-      const result = await discoverOAuthMetadata('https://mcp.craft.do/my/mcp');
+      const result = await discoverOAuthMetadata('https://mcp.mortise.do/my/mcp');
       expect(result).toEqual(authServerMetadata);
     });
 
@@ -1170,9 +1170,9 @@ describe('prepareMcpOAuth', () => {
 
     const result = await prepareMcpOAuth('https://example.com/mcp', { callbackPort: 8914 });
 
-    expect(result.clientId).toBe('craft-agent');
+    expect(result.clientId).toBe('mortise');
     expect(result.clientSecret).toBeUndefined();
-    expect(result.authUrl).toContain('client_id=craft-agent');
+    expect(result.authUrl).toContain('client_id=mortise');
     expect(result.provider).toBe('mcp');
   });
 

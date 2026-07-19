@@ -60,7 +60,7 @@ describe("Pi RPC extension host capabilities", () => {
 			const result = await ctx.capabilities.invoke(
 				"system.notification",
 				"show",
-				{ title: "Capability integration", body: "Shown by the mocked Craft Host" },
+				{ title: "Capability integration", body: "Shown by the mocked Mortise Host" },
 				{ timeoutMs: 5000, onProgress: (value, sequence) => progress.push({ value, sequence }) },
 			);
 			if (result.status !== "success" || result.output?.shown !== true) {
@@ -123,7 +123,7 @@ describe("Pi RPC extension host capabilities", () => {
 			env: {
 				PI_CODING_AGENT_DIR: root,
 				PI_RPC_UI_CAPABILITIES: JSON.stringify({
-					kind: "craft",
+					kind: "mortise",
 					dialogs: true,
 					widgets: false,
 					editorControl: false,
@@ -193,7 +193,7 @@ describe("Pi RPC extension host capabilities", () => {
 			version: 1,
 			capability: "system.notification",
 			operation: "show",
-			input: { title: "Capability integration", body: "Shown by the mocked Craft Host" },
+			input: { title: "Capability integration", body: "Shown by the mocked Mortise Host" },
 			timeoutMs: 5000,
 		});
 		expect(receivedRequest?.extensionId).toBeTruthy();

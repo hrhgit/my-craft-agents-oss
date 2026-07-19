@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, mock, beforeEach } from 'bun:test'
 import {
   serializeEnvelope,
   deserializeEnvelope,
-} from '@craft-agent/server-core/transport'
+} from '@mortise/server-core/transport'
 import type { SpawnedServer } from './server-spawner.ts'
 
 // ---------------------------------------------------------------------------
@@ -183,12 +183,12 @@ describe('run command', () => {
   it('parseArgs: run with --source accumulates sources', () => {
     const args = parseArgs([
       'bun', 'index.ts',
-      '--source', 'craft-kb',
+      '--source', 'mortise-kb',
       '--source', 'github',
       'run', 'do', 'stuff',
     ])
     expect(args.command).toBe('run')
-    expect(args.sources).toEqual(['craft-kb', 'github'])
+    expect(args.sources).toEqual(['mortise-kb', 'github'])
     expect(args.rest).toEqual(['do', 'stuff'])
   })
 
@@ -230,14 +230,14 @@ describe('run command', () => {
 
     const session = await client.invoke('sessions:create', 'ws-1', {
       permissionMode: 'allow-all',
-      enabledSourceSlugs: ['craft-kb'],
+      enabledSourceSlugs: ['mortise-kb'],
     }) as { id: string }
     expect(session.id).toBe('run-session-1')
 
     // Verify the create args
     expect(mockWsServer!.createSessionArgs).toEqual([
       'ws-1',
-      { permissionMode: 'allow-all', enabledSourceSlugs: ['craft-kb'] },
+      { permissionMode: 'allow-all', enabledSourceSlugs: ['mortise-kb'] },
     ])
 
     // Verify channel order
@@ -347,7 +347,7 @@ describe('run command', () => {
     // Session is created with the bootstrapped workspace ID
     await client.invoke('sessions:create', ws.id, {
       permissionMode: 'allow-all',
-      enabledSourceSlugs: ['craft-public'],
+      enabledSourceSlugs: ['mortise-public'],
     })
 
     expect(mockWsServer!.invokedChannels).toEqual([

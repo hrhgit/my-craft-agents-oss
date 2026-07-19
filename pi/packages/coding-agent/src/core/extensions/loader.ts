@@ -7,11 +7,11 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
-import * as _bundledPiAi from "@earendil-works/pi-ai";
-import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
-import type { KeyId } from "@earendil-works/pi-tui";
-import * as _bundledPiTui from "@earendil-works/pi-tui";
+import * as _bundledPiAgentCore from "@mortise/pi-agent-core";
+import * as _bundledPiAi from "@mortise/pi-ai";
+import * as _bundledPiAiOauth from "@mortise/pi-ai/oauth";
+import type { KeyId } from "@mortise/pi-tui";
+import * as _bundledPiTui from "@mortise/pi-tui";
 import { createJiti } from "jiti/static";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
@@ -25,6 +25,11 @@ import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
+import type {
+	ExtensionManifestDiagnostic,
+	ExtensionManifestStatus,
+	ExtensionManifestV1,
+} from "../extension-manifest.ts";
 import { getProcessGlobalBackgroundTaskCoordinator } from "../global-background-tasks.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import type {
@@ -47,6 +52,10 @@ export interface ExtensionLoadMetadata {
 	id: string;
 	target: ExtensionTarget;
 	agentDir: string;
+	manifest?: ExtensionManifestV1;
+	manifestStatus?: ExtensionManifestStatus;
+	manifestDiagnostics?: ExtensionManifestDiagnostic[];
+	hostVersion?: string;
 	manifestUI?: ExtensionManifestUIV1;
 }
 
@@ -65,11 +74,11 @@ function getVirtualModules(): Record<string, unknown> {
 		"@sinclair/typebox": _bundledTypebox,
 		"@sinclair/typebox/compile": _bundledTypeboxCompile,
 		"@sinclair/typebox/value": _bundledTypeboxValue,
-		"@earendil-works/pi-agent-core": _bundledPiAgentCore,
-		"@earendil-works/pi-tui": _bundledPiTui,
-		"@earendil-works/pi-ai": _bundledPiAi,
-		"@earendil-works/pi-ai/oauth": _bundledPiAiOauth,
-		"@earendil-works/pi-coding-agent": _bundledPiCodingAgentExtensionApi,
+		"@mortise/pi-agent-core": _bundledPiAgentCore,
+		"@mortise/pi-tui": _bundledPiTui,
+		"@mortise/pi-ai": _bundledPiAi,
+		"@mortise/pi-ai/oauth": _bundledPiAiOauth,
+		"@mortise/pi-coding-agent": _bundledPiCodingAgentExtensionApi,
 		"@mariozechner/pi-agent-core": _bundledPiAgentCore,
 		"@mariozechner/pi-tui": _bundledPiTui,
 		"@mariozechner/pi-ai": _bundledPiAi,
@@ -105,17 +114,17 @@ function getAliases(): Record<string, string> {
 	};
 
 	const piCodingAgentEntry = packageIndex;
-	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@earendil-works/pi-agent-core");
-	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "@earendil-works/pi-tui");
-	const piAiEntry = resolveWorkspaceOrImport("ai/dist/index.js", "@earendil-works/pi-ai");
-	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@earendil-works/pi-ai/oauth");
+	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@mortise/pi-agent-core");
+	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "@mortise/pi-tui");
+	const piAiEntry = resolveWorkspaceOrImport("ai/dist/index.js", "@mortise/pi-ai");
+	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@mortise/pi-ai/oauth");
 
 	_aliases = {
-		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
-		"@earendil-works/pi-agent-core": piAgentCoreEntry,
-		"@earendil-works/pi-tui": piTuiEntry,
-		"@earendil-works/pi-ai": piAiEntry,
-		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
+		"@mortise/pi-coding-agent": piCodingAgentEntry,
+		"@mortise/pi-agent-core": piAgentCoreEntry,
+		"@mortise/pi-tui": piTuiEntry,
+		"@mortise/pi-ai": piAiEntry,
+		"@mortise/pi-ai/oauth": piAiOauthEntry,
 		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
 		"@mariozechner/pi-agent-core": piAgentCoreEntry,
 		"@mariozechner/pi-tui": piTuiEntry,
@@ -414,7 +423,10 @@ async function loadExtensionModule(extensionPath: string) {
 function createExtension(
 	extensionPath: string,
 	resolvedPath: string,
-	identity: Pick<ExtensionLoadMetadata, "id" | "target" | "manifestUI">,
+	identity: Pick<
+		ExtensionLoadMetadata,
+		"id" | "target" | "manifest" | "manifestStatus" | "manifestDiagnostics" | "hostVersion" | "manifestUI"
+	>,
 	activation: ExtensionActivation = "beforeFirstRequest",
 ): Extension {
 	const source =
@@ -430,6 +442,10 @@ function createExtension(
 		resolvedPath,
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
 		activation,
+		manifest: identity.manifest,
+		manifestStatus: identity.manifestStatus ?? "legacy",
+		manifestDiagnostics: [...(identity.manifestDiagnostics ?? [])],
+		hostVersion: identity.hostVersion ?? "0.0.0",
 		manifestUI: identity.manifestUI,
 		hostCapabilities: [],
 		handlers: new Map(),

@@ -91,11 +91,11 @@ mock.module('../../../config/paths.ts', () => ({
   PI_PROJECT_SKILLS_DIR: '.pi/skills',
 }));
 
-let mockCraftAgentsCliFlag = false;
+let mockMortiseCliFlag = false;
 mock.module('../../../feature-flags.ts', () => ({
   FEATURE_FLAGS: {
-    get craftAgentsCli() {
-      return mockCraftAgentsCliFlag;
+    get mortiseCli() {
+      return mockMortiseCliFlag;
     },
     get developerFeedback() {
       return false;
@@ -177,7 +177,7 @@ describe('runPreToolUseChecks', () => {
     mockExistsSync.mockReset();
     mockExistsSync.mockImplementation(() => false);
     mockReadOnlyBashPatterns = [];
-    mockCraftAgentsCliFlag = false;
+    mockMortiseCliFlag = false;
   });
 
   // ============================================================
@@ -273,13 +273,13 @@ describe('runPreToolUseChecks', () => {
 
       expect(result).toEqual({
         type: 'block',
-        reason: 'Data sources are disabled in Craft settings.',
+        reason: 'Data sources are disabled in Mortise settings.',
       });
     });
 
     it('blocks source-management session tools when the feature is disabled', () => {
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__source_test',
+        toolName: 'source_test',
         input: {},
         dataSourcesEnabled: false,
       }));
@@ -299,7 +299,7 @@ describe('runPreToolUseChecks', () => {
 
     it('keeps unrelated built-in session tools available when the feature is disabled', () => {
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__spawn_session',
+        toolName: 'spawn_session',
         input: {},
         dataSourcesEnabled: false,
       }));
@@ -350,7 +350,7 @@ describe('runPreToolUseChecks', () => {
 
     it('skips source check for built-in MCP servers (session)', () => {
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__spawn_session',
+        toolName: 'spawn_session',
         input: {},
         activeSourceSlugs: [],
       }));
@@ -359,9 +359,9 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('spawn_session_intercept');
     });
 
-    it('skips source check for built-in MCP servers (craft-agents-docs)', () => {
+    it('skips source check for built-in MCP servers (mortise-docs)', () => {
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__craft-agents-docs__search',
+        toolName: 'mcp__mortise-docs__search',
         input: {},
         activeSourceSlugs: [],
       }));
@@ -441,10 +441,10 @@ describe('runPreToolUseChecks', () => {
   // ============================================================
 
   describe('step 4: spawn_session interception', () => {
-    it('intercepts mcp__session__spawn_session', () => {
+    it('intercepts canonical spawn_session', () => {
       const input = { prompt: 'do something' };
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__spawn_session',
+        toolName: 'spawn_session',
         input,
       }));
 
@@ -456,12 +456,20 @@ describe('runPreToolUseChecks', () => {
 
     it('does not intercept other session tools', () => {
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__config_validate',
+        toolName: 'config_validate',
         input: {},
       }));
 
       expect(result.type).toBe('allow');
     });
+  });
+
+  it('accepts persisted legacy spawn_session names', () => {
+    const result = runPreToolUseChecks(createInput({
+      toolName: 'mcp__session__spawn_session',
+      input: { prompt: 'legacy history' },
+    }));
+    expect(result.type).toBe('spawn_session_intercept');
   });
 
   // ============================================================
@@ -470,7 +478,7 @@ describe('runPreToolUseChecks', () => {
 
   describe('step 5: input transforms', () => {
     beforeEach(() => {
-      mockCraftAgentsCliFlag = true;
+      mockMortiseCliFlag = true;
     });
 
     it('expands tilde paths and returns modify', () => {
@@ -535,7 +543,7 @@ describe('runPreToolUseChecks', () => {
     });
 
     it('does not block bash commands touching automations files when feature is disabled', () => {
-      mockCraftAgentsCliFlag = false;
+      mockMortiseCliFlag = false;
 
       const result = runPreToolUseChecks(createInput({
         toolName: 'Bash',
@@ -546,8 +554,8 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('allow');
     });
 
-    it('blocks direct automations config edits and suggests craft-agent automation commands when feature is enabled', () => {
-      mockCraftAgentsCliFlag = true;
+    it('blocks direct automations config edits and suggests mortise automation commands when feature is enabled', () => {
+      mockMortiseCliFlag = true;
       mockDetectConfigFileType.mockImplementation(() => ({ type: 'automations', displayFile: 'automations.json' }));
 
       const result = runPreToolUseChecks(createInput({
@@ -561,13 +569,13 @@ describe('runPreToolUseChecks', () => {
 
       expect(result.type).toBe('block');
       if (result.type === 'block') {
-        expect(result.reason).toContain('craft-agent automation');
+        expect(result.reason).toContain('mortise automation');
         expect(result.reason).toContain('automations.json');
       }
     });
 
-    it('blocks direct source config edits and suggests craft-agent source commands when feature is enabled', () => {
-      mockCraftAgentsCliFlag = true;
+    it('blocks direct source config edits and suggests mortise source commands when feature is enabled', () => {
+      mockMortiseCliFlag = true;
       mockDetectConfigFileType.mockImplementation(() => ({
         type: 'source',
         slug: 'linear',
@@ -585,13 +593,13 @@ describe('runPreToolUseChecks', () => {
 
       expect(result.type).toBe('block');
       if (result.type === 'block') {
-        expect(result.reason).toContain('craft-agent source');
+        expect(result.reason).toContain('mortise source');
         expect(result.reason).toContain('sources/linear/config.json');
       }
     });
 
-    it('blocks direct skill file edits and suggests craft-agent skill commands when feature is enabled', () => {
-      mockCraftAgentsCliFlag = true;
+    it('blocks direct skill file edits and suggests mortise skill commands when feature is enabled', () => {
+      mockMortiseCliFlag = true;
       mockDetectConfigFileType.mockImplementation(() => ({
         type: 'skill',
         slug: 'commit-helper',
@@ -609,13 +617,13 @@ describe('runPreToolUseChecks', () => {
 
       expect(result.type).toBe('block');
       if (result.type === 'block') {
-        expect(result.reason).toContain('craft-agent skill');
+        expect(result.reason).toContain('mortise skill');
         expect(result.reason).toContain('.pi/skills/commit-helper/SKILL.md');
       }
     });
 
-    it('blocks bash commands touching automations files and points to craft-agent automation --help when feature is enabled', () => {
-      mockCraftAgentsCliFlag = true;
+    it('blocks bash commands touching automations files and points to mortise automation --help when feature is enabled', () => {
+      mockMortiseCliFlag = true;
 
       const result = runPreToolUseChecks(createInput({
         toolName: 'Bash',
@@ -625,15 +633,15 @@ describe('runPreToolUseChecks', () => {
 
       expect(result.type).toBe('block');
       if (result.type === 'block') {
-        expect(result.reason).toContain('craft-agent automation --help');
-        expect(result.reason).toContain('craft-agent automation');
+        expect(result.reason).toContain('mortise automation --help');
+        expect(result.reason).toContain('mortise automation');
       }
     });
 
-    it('allows bash craft-agent automation commands through config-domain bash guard', () => {
+    it('allows bash mortise automation commands through config-domain bash guard', () => {
       const result = runPreToolUseChecks(createInput({
         toolName: 'Bash',
-        input: { command: 'craft-agent automation list' },
+        input: { command: 'mortise automation list' },
         permissionMode: 'allow-all',
       }));
 
@@ -641,7 +649,7 @@ describe('runPreToolUseChecks', () => {
     });
 
     it('does not apply config-domain bash guard when feature is disabled', () => {
-      mockCraftAgentsCliFlag = false;
+      mockMortiseCliFlag = false;
 
       const result = runPreToolUseChecks(createInput({
         toolName: 'Bash',
@@ -833,7 +841,7 @@ describe('runPreToolUseChecks', () => {
     it('spawn_session interception runs before transforms', () => {
       // spawn_session should be intercepted even if input has metadata
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__session__spawn_session',
+        toolName: 'spawn_session',
         input: { prompt: 'do something', _intent: 'summarize' },
       }));
 
@@ -906,7 +914,7 @@ describe('shouldPromptInAskMode', () => {
     mockValidateConfigFileContent.mockReset();
     mockValidateConfigFileContent.mockImplementation(() => null);
     mockReadOnlyBashPatterns = [];
-    mockCraftAgentsCliFlag = false;
+    mockMortiseCliFlag = false;
   });
 
   // --- File writes ---
@@ -1067,6 +1075,30 @@ describe('shouldPromptInAskMode', () => {
 
       expect(result).not.toBeNull();
       expect(result!.promptType).toBe('bash');
+    });
+  });
+
+  // --- Mortise host-tool mutations ---
+
+  describe('Mortise host-tool mutations', () => {
+    it('prompts for canonical mutating session tools', () => {
+      const result = shouldPromptInAskMode('source_oauth_trigger', { sourceSlug: 'linear' }, pm, {
+        workspaceRootPath: '/test',
+        activeSourceSlugs: ['linear'],
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.promptType).toBe('tool_mutation');
+      expect(result!.description).toContain('Source OAuth Trigger');
+    });
+
+    it('auto-allows canonical read-only session tools', () => {
+      const result = shouldPromptInAskMode('config_validate', {}, pm, {
+        workspaceRootPath: '/test',
+        activeSourceSlugs: [],
+      });
+
+      expect(result).toBeNull();
     });
   });
 

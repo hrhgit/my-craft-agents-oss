@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { AgentEvent as PiAgentEvent } from '@craft-agent/core/types'
+import type { AgentEvent as PiAgentEvent } from '@mortise/core/types'
 import { PiProjectionBuilder } from '../../../../../../packages/shared/src/agent/backend/pi/projection-builder'
 import { applyPiProjectionEvent, createPiProjectionState } from '../../atoms/pi-projection'
 import { selectPiRuntimeState } from '../../components/app-shell/pi-timeline-model'

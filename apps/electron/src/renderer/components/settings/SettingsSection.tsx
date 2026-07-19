@@ -44,7 +44,7 @@ export function SettingsSection({
 }: SettingsSectionProps) {
   return (
     <section className={cn('space-y-3', className)}>
-      <div className="flex items-start justify-between gap-4 pl-1">
+      <div className="flex flex-col items-stretch gap-2 pl-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="space-y-0.5">
           <h3
             className={cn(
@@ -58,7 +58,7 @@ export function SettingsSection({
             <p className="text-sm text-muted-foreground">{description}</p>
           )}
         </div>
-        {action && <div className="shrink-0">{action}</div>}
+        {action && <div className="self-end shrink-0">{action}</div>}
       </div>
       {children}
     </section>

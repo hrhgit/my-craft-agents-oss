@@ -11,8 +11,8 @@ import { uiValidationAttributes } from '../ui-validation'
 describe('UI primitive validation contract', () => {
   it('serializes only registered complex physical interactions', () => {
     expect(uiValidationAttributes('composer.input', ['ime', 'rich-text', 'ime'])).toEqual({
-      'data-craft-semantic-id': 'composer.input',
-      'data-craft-ui-interactions': 'ime rich-text',
+      'data-mortise-semantic-id': 'composer.input',
+      'data-mortise-ui-interactions': 'ime rich-text',
     })
     expect(uiValidationAttributes(undefined, undefined)).toEqual({})
   })
@@ -20,7 +20,7 @@ describe('UI primitive validation contract', () => {
   it('exposes stable switch identity and native checked state', () => {
     const markup = renderToStaticMarkup(<Switch semanticId="settings.enabled" aria-label="Enabled" defaultChecked />)
     expect(markup).toContain('data-slot="switch"')
-    expect(markup).toContain('data-craft-semantic-id="settings.enabled"')
+    expect(markup).toContain('data-mortise-semantic-id="settings.enabled"')
     expect(markup).toContain('aria-checked="true"')
   })
 
@@ -29,8 +29,8 @@ describe('UI primitive validation contract', () => {
       <RichTextInput semanticId="composer.input" value="" onChange={() => {}} placeholder="Message" />,
     )
     expect(markup).toContain('data-slot="rich-text-input"')
-    expect(markup).toContain('data-craft-semantic-id="composer.input"')
-    expect(markup).toContain('data-craft-ui-interactions="shortcut clipboard ime rich-text"')
+    expect(markup).toContain('data-mortise-semantic-id="composer.input"')
+    expect(markup).toContain('data-mortise-ui-interactions="shortcut clipboard ime rich-text"')
     expect(markup).toContain('role="textbox"')
   })
 
@@ -41,8 +41,8 @@ describe('UI primitive validation contract', () => {
     const contextMenu = renderToStaticMarkup(
       <ContextMenu><ContextMenuTrigger semanticId="session.row">Session</ContextMenuTrigger></ContextMenu>,
     )
-    expect(popover).toContain('data-craft-semantic-id="toolbar.filters"')
-    expect(contextMenu).toContain('data-craft-semantic-id="session.row"')
+    expect(popover).toContain('data-mortise-semantic-id="toolbar.filters"')
+    expect(contextMenu).toContain('data-mortise-semantic-id="session.row"')
   })
 
   it('derives stable draggable item identities from domain item IDs', () => {
@@ -54,7 +54,7 @@ describe('UI primitive validation contract', () => {
         renderItem={item => <span>{item.id}</span>}
       />,
     )
-    expect(markup).toMatch(/data-craft-semantic-id="planner\.tasks\.item\.task_one\.[a-z0-9]+"/)
-    expect(markup).toContain('data-craft-ui-interactions="drag"')
+    expect(markup).toMatch(/data-mortise-semantic-id="planner\.tasks\.item\.task_one\.[a-z0-9]+"/)
+    expect(markup).toContain('data-mortise-ui-interactions="drag"')
   })
 })

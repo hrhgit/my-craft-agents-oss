@@ -3,11 +3,11 @@ import { execFileSync } from 'node:child_process'
 import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { uptime as osUptime } from 'node:os'
 import { isAbsolute, join } from 'node:path'
-import { OAuthFlowStore } from '@craft-agent/shared/auth'
-import { ensureConfigDir, getWorkspaceByNameOrId, loadStoredConfig, saveConfig } from '@craft-agent/shared/config'
-import { CONFIG_DIR } from '@craft-agent/shared/config/paths'
-import { setBundledAssetsRoot } from '@craft-agent/shared/utils'
-import { withFileLockSync } from '@craft-agent/shared/storage'
+import { OAuthFlowStore } from '@mortise/shared/auth'
+import { ensureConfigDir, getWorkspaceByNameOrId, loadStoredConfig, saveConfig } from '@mortise/shared/config'
+import { CONFIG_DIR } from '@mortise/shared/config/paths'
+import { setBundledAssetsRoot } from '@mortise/shared/utils'
+import { withFileLockSync } from '@mortise/shared/storage'
 import { WsRpcServer, type WsRpcTlsOptions } from '../transport/server'
 import type { EventSink, RpcServer, WorkspaceAuthorizationRequest } from '../transport/types'
 import { createHeadlessPlatform } from '../runtime/platform-headless'
@@ -236,7 +236,7 @@ function isLockFromPreviousBoot(startedAt: number): boolean {
 }
 
 function resolveServerLockFile(lockName?: string): string {
-  const name = lockName || process.env.CRAFT_SERVER_LOCK_NAME || DEFAULT_LOCK_NAME
+  const name = lockName || process.env.MORTISE_SERVER_LOCK_NAME || DEFAULT_LOCK_NAME
   return isAbsolute(name) ? name : join(CONFIG_DIR, name)
 }
 
@@ -362,9 +362,9 @@ function ensureGlobalConfigExists(platform: PlatformServices): void {
 export async function bootstrapServer<TSessionManager, THandlerDeps>(
   options: ServerBootstrapOptions<TSessionManager, THandlerDeps>,
 ): Promise<ServerInstance<TSessionManager>> {
-  const serverToken = options.serverToken ?? process.env.CRAFT_SERVER_TOKEN
+  const serverToken = options.serverToken ?? process.env.MORTISE_SERVER_TOKEN
   if (!serverToken) {
-    throw new Error('Server token is required. Pass options.serverToken or set CRAFT_SERVER_TOKEN.')
+    throw new Error('Server token is required. Pass options.serverToken or set MORTISE_SERVER_TOKEN.')
   }
 
   const entropy = validateTokenEntropy(serverToken)
@@ -375,7 +375,7 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
   const platform = options.platformFactory?.() ?? createHeadlessPlatform({ appVersion: options.serverVersion })
 
   const bundledAssetsRoot = options.bundledAssetsRoot
-    ?? process.env.CRAFT_BUNDLED_ASSETS_ROOT
+    ?? process.env.MORTISE_BUNDLED_ASSETS_ROOT
     ?? process.cwd()
   setBundledAssetsRoot(bundledAssetsRoot)
 
@@ -393,8 +393,8 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
   const modelRefreshService = options.initModelRefreshService()
   const sessionManager = options.createSessionManager()
 
-  const rpcHost = options.rpcHost ?? process.env.CRAFT_RPC_HOST ?? '127.0.0.1'
-  const rpcPortRaw = options.rpcPort ?? parseInt(process.env.CRAFT_RPC_PORT ?? '9100', 10)
+  const rpcHost = options.rpcHost ?? process.env.MORTISE_RPC_HOST ?? '127.0.0.1'
+  const rpcPortRaw = options.rpcPort ?? parseInt(process.env.MORTISE_RPC_PORT ?? '9100', 10)
   if (!Number.isFinite(rpcPortRaw) || rpcPortRaw < 0 || rpcPortRaw > 65535) {
     throw new Error(`Invalid RPC port: ${rpcPortRaw}`)
   }
@@ -463,7 +463,7 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
 
   modelRefreshService.startAll()
 
-  platform.logger.info(`Craft Agent server listening on ${wsServer.protocol}://${rpcHost}:${wsServer.port}`)
+  platform.logger.info(`Mortise Agent server listening on ${wsServer.protocol}://${rpcHost}:${wsServer.port}`)
 
   let stopped = false
   const stop = async (): Promise<void> => {

@@ -1,5 +1,5 @@
-import type { RpcClient } from '@craft-agent/server-core/transport'
-import { isLocalOnly } from '@craft-agent/shared/protocol'
+import type { RpcClient } from '@mortise/server-core/transport'
+import { isLocalOnly } from '@mortise/shared/protocol'
 import type { WorkspaceRoute } from '../shared/app-layout'
 
 export interface WorkspaceRuntimeRegistration {

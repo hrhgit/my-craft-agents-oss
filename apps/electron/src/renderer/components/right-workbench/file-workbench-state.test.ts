@@ -24,7 +24,7 @@ describe('file workbench state', () => {
     expect(fileWorkbenchStorageScope('workspace-a')).not.toBe(fileWorkbenchStorageScope('workspace-b'))
     const policy = createFileWorkbenchPersistPolicy('workspace-a')
     expect(policy).toMatchObject({
-      key: 'craft-file-workbench.workspace:workspace_workspace-a.state.v2',
+      key: 'mortise-file-workbench.workspace:workspace_workspace-a.state.v2',
       kind: 'normal',
       scopeId: 'workspace_workspace-a',
     })

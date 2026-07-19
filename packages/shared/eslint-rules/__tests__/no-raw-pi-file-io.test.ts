@@ -7,7 +7,7 @@ const rule = require('../no-raw-pi-file-io.cjs')
 
 function runRule(code: string, filename = 'packages/shared/src/agent/unsafe.ts') {
   const linter = new Linter({ configType: 'eslintrc' })
-  linter.defineRule('craft-shared/no-raw-pi-file-io', rule)
+  linter.defineRule('mortise-shared/no-raw-pi-file-io', rule)
 
   return linter.verify(
     code,
@@ -17,7 +17,7 @@ function runRule(code: string, filename = 'packages/shared/src/agent/unsafe.ts')
         sourceType: 'module',
       },
       rules: {
-        'craft-shared/no-raw-pi-file-io': 'error',
+        'mortise-shared/no-raw-pi-file-io': 'error',
       },
     },
     { filename },
@@ -26,56 +26,56 @@ function runRule(code: string, filename = 'packages/shared/src/agent/unsafe.ts')
 
 describe('no-raw-pi-file-io', () => {
   it('flags static imports of sensitive Pi path constants', () => {
-    const messages = runRule("import { PI_SETTINGS_FILE } from '@craft-agent/shared/config/paths'")
+    const messages = runRule("import { PI_SETTINGS_FILE } from '@mortise/shared/config/paths'")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('PI_SETTINGS_FILE')
   })
 
   it('flags require() loading the path constants module', () => {
-    const messages = runRule("const { PI_SETTINGS_FILE } = require('@craft-agent/shared/config/paths')")
+    const messages = runRule("const { PI_SETTINGS_FILE } = require('@mortise/shared/config/paths')")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('require()')
   })
 
   it('flags namespace imports of the path constants module', () => {
-    const messages = runRule("import * as paths from '@craft-agent/shared/config/paths'\nconsole.log(paths.PI_AUTH_FILE)")
+    const messages = runRule("import * as paths from '@mortise/shared/config/paths'\nconsole.log(paths.PI_AUTH_FILE)")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('namespace import')
   })
 
   it('flags default imports of the path constants module', () => {
-    const messages = runRule("import paths from '@craft-agent/shared/config/paths'\nconsole.log(paths.PI_AUTH_FILE)")
+    const messages = runRule("import paths from '@mortise/shared/config/paths'\nconsole.log(paths.PI_AUTH_FILE)")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('default import')
   })
 
   it('flags re-exporting sensitive Pi path constants', () => {
-    const messages = runRule("export { PI_AUTH_FILE } from '@craft-agent/shared/config/paths'")
+    const messages = runRule("export { PI_AUTH_FILE } from '@mortise/shared/config/paths'")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('PI_AUTH_FILE')
   })
 
   it('flags export-all re-exports of the path constants module', () => {
-    const messages = runRule("export * from '@craft-agent/shared/config/paths'")
+    const messages = runRule("export * from '@mortise/shared/config/paths'")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('re-export')
   })
 
   it('flags dynamic import() loading the path constants module', () => {
-    const messages = runRule("async function load() { return import('@craft-agent/shared/config/paths') }")
+    const messages = runRule("async function load() { return import('@mortise/shared/config/paths') }")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('dynamic import()')
   })
 
   it('allows static imports of non-sensitive path constants', () => {
-    const messages = runRule("import { CONFIG_DIR } from '@craft-agent/shared/config/paths'")
+    const messages = runRule("import { CONFIG_DIR } from '@mortise/shared/config/paths'")
 
     expect(messages).toHaveLength(0)
   })
@@ -115,7 +115,7 @@ describe('no-raw-pi-file-io', () => {
   })
 
   it('flags raw global Pi skills paths outside the migration seam', () => {
-    const messages = runRule("import { PI_SKILLS_DIR } from '@craft-agent/shared/config/paths'")
+    const messages = runRule("import { PI_SKILLS_DIR } from '@mortise/shared/config/paths'")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('PI_SKILLS_DIR')

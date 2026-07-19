@@ -1,4 +1,4 @@
-import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { Markdown, type MarkdownTheme } from "@mortise/pi-tui";
 import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
 import {
@@ -11,7 +11,7 @@ import {
 	getSelfUpdateUnavailableInstruction,
 	PACKAGE_NAME,
 	type SelfUpdateCommand,
-	usesOfficialUpdateChannel,
+	usesPublishedUpdateChannel,
 	VERSION,
 } from "./config.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
@@ -121,18 +121,18 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update ${usesOfficialUpdateChannel() ? "pi and installed packages" : "installed packages"}.
+Update ${usesPublishedUpdateChannel() ? "pi and installed packages" : "installed packages"}.
 
 Options:
-  --self                  ${usesOfficialUpdateChannel() ? "Update pi only" : "Self-update is disabled for this fork"}
+  --self                  ${usesPublishedUpdateChannel() ? "Update pi only" : "Self-update is disabled for this distribution"}
   --extensions            Update installed packages only
   --extension <source>    Update one package only
-  --force                 ${usesOfficialUpdateChannel() ? "Reinstall pi even if the current version is latest" : "Reserved for self-update; ignored in fork mode"}
+  --force                 ${usesPublishedUpdateChannel() ? "Reinstall pi even if the current version is latest" : "Reserved for self-update; ignored when self-update is disabled"}
 
 Short forms:
-  ${APP_NAME} update                Update ${usesOfficialUpdateChannel() ? "pi and all extensions" : "extensions"}
+  ${APP_NAME} update                Update ${usesPublishedUpdateChannel() ? "pi and all extensions" : "extensions"}
   ${APP_NAME} update <source>       Update one package
-  ${APP_NAME} update pi             ${usesOfficialUpdateChannel() ? "Update pi only (self works as alias to pi)" : "Self-update is disabled for this fork"}
+  ${APP_NAME} update pi             ${usesPublishedUpdateChannel() ? "Update pi only (self works as alias to pi)" : "Self-update is disabled for this distribution"}
 `);
 			return;
 
@@ -341,7 +341,7 @@ interface SelfUpdatePlan {
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
-	if (!usesOfficialUpdateChannel()) {
+	if (!usesPublishedUpdateChannel()) {
 		return { packageName: PACKAGE_NAME, shouldRun: false, disabled: true };
 	}
 

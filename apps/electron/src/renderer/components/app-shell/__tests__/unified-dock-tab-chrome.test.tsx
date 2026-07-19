@@ -18,8 +18,8 @@ function createTabset(): TabSetNode {
         id: 'main',
         selected: 0,
         children: [
-          { type: 'tab', id: 'selected', name: 'Selected', component: 'craft-content' },
-          { type: 'tab', id: 'unselected', name: 'Unselected', component: 'craft-content' },
+          { type: 'tab', id: 'selected', name: 'Selected', component: 'mortise-content' },
+          { type: 'tab', id: 'unselected', name: 'Unselected', component: 'mortise-content' },
         ],
       }],
     },

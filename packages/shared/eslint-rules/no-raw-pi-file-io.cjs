@@ -1,14 +1,14 @@
 /**
  * ESLint Rule: no-raw-pi-file-io
  *
- * Craft is a GUI shell over Pi. Pi owns ~/.pi/agent storage. Host/shared code
+ * Mortise is a GUI shell over Pi. Pi owns ~/.pi/agent storage. Host/shared code
  * must not casually read/write Pi's raw files by importing path constants like
  * PI_SETTINGS_FILE or PI_SESSIONS_DIR. Use Pi's public APIs (SettingsManager,
  * AuthStorage, SessionManager, RpcClient) or one of the documented seam helpers.
  *
  * This rule intentionally focuses on imports of the sensitive path constants:
  * those constants are the common footgun that lets code bypass Pi's typed APIs
- * without importing @earendil-works/pi-* (which the red-line import rule would
+ * without importing @mortise/pi-* (which the red-line import rule would
  * catch). Approved seam files are allowlisted below and documented in
  * docs/architecture/red-line.md.
  */
@@ -74,7 +74,7 @@ module.exports = {
       noRawPiPathModule:
         'Do not load Pi storage path constants via {{kind}} outside the sanctioned Pi storage seams. Pi owns ~/.pi/agent storage; use Pi public APIs or documented helpers.',
       noPrivatePiEnv:
-        'Do not reference Pi private env/hook string "{{name}}" from Craft shared code. Expose a typed Pi API/RPC capability instead.',
+        'Do not reference Pi private env/hook string "{{name}}" from Mortise shared code. Expose a typed Pi API/RPC capability instead.',
     },
     schema: [],
   },

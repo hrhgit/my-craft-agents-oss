@@ -244,7 +244,7 @@ describe('PromptHandler', () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
         PermissionModeChange: [{
-          actions: [{ type: 'prompt', prompt: 'Mode $CRAFT_NEW_MODE was selected' }],
+          actions: [{ type: 'prompt', prompt: 'Mode $MORTISE_NEW_MODE was selected' }],
         }],
       });
 
@@ -268,7 +268,7 @@ describe('PromptHandler', () => {
       const onPromptsReady = jest.fn();
       const configProvider = createMockConfigProvider({
         PermissionModeChange: [{
-          actions: [{ type: 'prompt', prompt: 'Mode ${CRAFT_NEW_MODE} was selected in ${CRAFT_WORKSPACE_ID}' }],
+          actions: [{ type: 'prompt', prompt: 'Mode ${MORTISE_NEW_MODE} was selected in ${MORTISE_WORKSPACE_ID}' }],
         }],
       });
 

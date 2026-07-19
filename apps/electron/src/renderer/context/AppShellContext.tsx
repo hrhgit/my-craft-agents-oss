@@ -26,7 +26,7 @@ import type {
   TestAutomationResult,
 } from '../../shared/types'
 import type { SessionOptions, SessionOptionUpdates } from '../hooks/useSessionOptions'
-import type { MidStreamSendIntent } from '@craft-agent/shared/protocol'
+import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import { defaultSessionOptions } from '../hooks/useSessionOptions'
 import { sessionAtomFamily } from '../atoms/sessions'
 import type {
@@ -58,7 +58,7 @@ export interface AppShellContextType {
   /** Get draft input text for a session - reads from ref without triggering re-renders */
   getDraft: (sessionId: string) => string
   /** Get persisted attachment refs (path + name) for a session's draft - no file IO */
-  getDraftAttachmentRefs: (sessionId: string) => import('@craft-agent/shared/config').DraftAttachmentRef[]
+  getDraftAttachmentRefs: (sessionId: string) => import('@mortise/shared/config').DraftAttachmentRef[]
   /** Hydrate persisted attachment refs into full FileAttachment objects (async, reads files) */
   hydrateDraftAttachments: (sessionId: string) => Promise<FileAttachment[]>
   /** All enabled sources for this workspace - provided by AppShell component */
@@ -80,7 +80,7 @@ export interface AppShellContextType {
 
   // Session callbacks
   onCreateSession: (workspaceId: string, options?: import('../../shared/types').CreateSessionOptions) => Promise<Session>
-  onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@craft-agent/core').ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => void
+  onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@mortise/core').ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => void
   onRenameSession: (sessionId: string, name: string) => void
   onMarkSessionRead: (sessionId: string) => void
   onMarkSessionUnread: (sessionId: string) => void

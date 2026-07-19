@@ -7,7 +7,7 @@
  *   the active workspace (local or remote). Workspace switches swap the
  *   workspace client transparently.
  *
- * Thin-client mode (CRAFT_SERVER_URL):
+ * Thin-client mode (MORTISE_SERVER_URL):
  *   Creates a single WsRpcClient connected to the remote server.
  *   All channels go to the remote server.
  *
@@ -18,14 +18,14 @@
 
 import '@sentry/electron/preload'
 import { contextBridge, ipcRenderer, shell, webUtils } from 'electron'
-import { WsRpcClient, type TransportConnectionState } from '@craft-agent/server-core/transport'
+import { WsRpcClient, type TransportConnectionState } from '@mortise/server-core/transport'
 import { RoutedClient } from '../transport/routed-client'
 import { buildClientApi, type ChannelMapEntry } from '../transport/build-api'
 import { CHANNEL_MAP } from '../transport/channel-map'
 import { buildWorkspaceClientApi, evictWorkspaceApiCache, resolveWorkspaceApiMethod } from '../transport/workspace-api'
 import { workspaceRouteKey } from '../transport/workspace-runtime-registry'
 import { WorkspaceRuntimeGenerationTracker, WorkspaceRuntimeUpdateQueue } from '../transport/workspace-runtime-generation'
-import { createCallbackServer } from '@craft-agent/shared/auth/callback-server'
+import { createCallbackServer } from '@mortise/shared/auth/callback-server'
 import {
   CLIENT_OPEN_EXTERNAL,
   CLIENT_OPEN_PATH,
@@ -34,11 +34,11 @@ import {
   CLIENT_OPEN_FILE_DIALOG,
   CLIENT_BROWSER_INVOKE,
   LOCAL_CLIENT_CAPABILITIES,
-} from '@craft-agent/server-core/transport'
-import type { ConfirmDialogSpec, FileDialogSpec, BrowserCapabilityRequest } from '@craft-agent/server-core/transport'
-import type { RpcClient } from '@craft-agent/server-core/transport'
-import type { RemoteServerConfig, Workspace } from '@craft-agent/core/types'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+} from '@mortise/server-core/transport'
+import type { ConfirmDialogSpec, FileDialogSpec, BrowserCapabilityRequest } from '@mortise/server-core/transport'
+import type { RpcClient } from '@mortise/server-core/transport'
+import type { RemoteServerConfig, Workspace } from '@mortise/core/types'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import type { ElectronAPI } from '../shared/types'
 import type { WorkspaceRoute } from '../shared/app-layout'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
@@ -61,7 +61,7 @@ interface TransportClient extends RpcClient {
 // ---------------------------------------------------------------------------
 
 const webContentsId: number = ipcRenderer.sendSync('__get-web-contents-id')
-const isClientOnly = !!process.env.CRAFT_SERVER_URL
+const isClientOnly = !!process.env.MORTISE_SERVER_URL
 
 let client: TransportClient
 let workspaceApiTransport: import('../transport/workspace-api').WorkspaceApiTransport
@@ -72,8 +72,8 @@ if (isClientOnly) {
   // Single WsRpcClient connected directly to the remote server.
   // No local server, no routing — all channels go to remote.
 
-  const wsUrl = process.env.CRAFT_SERVER_URL!
-  const wsToken = process.env.CRAFT_SERVER_TOKEN ?? ''
+  const wsUrl = process.env.MORTISE_SERVER_URL!
+  const wsToken = process.env.MORTISE_SERVER_TOKEN ?? ''
   const allowInsecureTls = allowsInsecureTlsFromEnvironment()
 
   // Block unencrypted ws:// to non-localhost servers — tokens would be sent in cleartext
@@ -83,12 +83,12 @@ if (isClientOnly) {
     throw new Error(
       `Refusing to connect to remote server over unencrypted ws://. ` +
       `Use wss:// (TLS) for non-localhost connections. ` +
-      `Set CRAFT_RPC_TLS_CERT/KEY on the server to enable TLS.`
+      `Set MORTISE_RPC_TLS_CERT/KEY on the server to enable TLS.`
     )
   }
 
   // Workspace ID is optional — if missing, renderer shows a workspace picker
-  const workspaceId = process.env.CRAFT_WORKSPACE_ID || ipcRenderer.sendSync('__get-workspace-id') || undefined
+  const workspaceId = process.env.MORTISE_WORKSPACE_ID || ipcRenderer.sendSync('__get-workspace-id') || undefined
 
   const wsClient = new WsRpcClient(wsUrl, {
     token: wsToken,
@@ -128,8 +128,8 @@ if (isClientOnly) {
   const wsPort: number = ipcRenderer.sendSync(PRELOAD_LOCAL_CHANNELS.GET_WS_PORT)
   const wsToken: string = ipcRenderer.sendSync('__get-ws-token')
   const workspaceId: string = ipcRenderer.sendSync('__get-workspace-id')
-  const localWorkspaceServerUrl = process.env.CRAFT_LOCAL_WORKSPACE_SERVER_URL
-  const localWorkspaceServerToken = process.env.CRAFT_LOCAL_WORKSPACE_SERVER_TOKEN ?? ''
+  const localWorkspaceServerUrl = process.env.MORTISE_LOCAL_WORKSPACE_SERVER_URL
+  const localWorkspaceServerToken = process.env.MORTISE_LOCAL_WORKSPACE_SERVER_TOKEN ?? ''
 
   const localClient = new WsRpcClient(`ws://127.0.0.1:${wsPort}`, {
     token: wsToken,
@@ -460,7 +460,7 @@ function getWorkspaceMethod(route: WorkspaceRoute, method: string, expectedType:
 
 ;(api as any).getRuntimeEnvironment = (): 'electron' | 'web' => 'electron'
 
-if (__CRAFT_UI_VALIDATION_BUILD__ && process.env.CRAFT_UI_TEST_HOST === '1' && process.env.NODE_ENV !== 'production') {
+if (__MORTISE_UI_VALIDATION_BUILD__ && process.env.MORTISE_UI_TEST_HOST === '1' && process.env.NODE_ENV !== 'production') {
   ;(api as ElectronAPI).uiValidation = {
     publishState: (batch: UiValidationRendererStateBatch) => {
       ipcRenderer.send(PRELOAD_LOCAL_CHANNELS.UI_VALIDATION_STATE_PUBLISH, batch)
@@ -629,15 +629,15 @@ client.onConnectionStateChanged((state) => {
 // System warnings — expose env-based flags set during main process startup
 // (preload-only: reads env var directly, no IPC round-trip needed)
 ;(api as ElectronAPI).getSystemWarnings = async () => ({
-  vcredistMissing: process.env.CRAFT_VCREDIST_MISSING === '1',
-  downloadUrl: process.env.CRAFT_VCREDIST_URL,
-  workspaceRuntimeDegraded: process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED === '1',
-  workspaceRuntimeDegradedReason: process.env.CRAFT_WORKSPACE_RUNTIME_DEGRADED_REASON,
+  vcredistMissing: process.env.MORTISE_VCREDIST_MISSING === '1',
+  downloadUrl: process.env.MORTISE_VCREDIST_URL,
+  workspaceRuntimeDegraded: process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED === '1',
+  workspaceRuntimeDegradedReason: process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED_REASON,
 })
 
 // This flag is the only renderer-side source of Test Host authority. The main
 // process rejects this environment combination in packaged/production builds.
-if (__CRAFT_UI_VALIDATION_BUILD__ && process.env.CRAFT_UI_TEST_HOST === '1' && process.env.NODE_ENV !== 'production') {
+if (__MORTISE_UI_VALIDATION_BUILD__ && process.env.MORTISE_UI_TEST_HOST === '1' && process.env.NODE_ENV !== 'production') {
   ;(api as ElectronAPI).uiValidationTestHost = Object.freeze({ schemaVersion: 1, enabled: true })
 }
 

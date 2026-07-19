@@ -52,7 +52,7 @@ export function createFileWorkbenchPersistPolicy(
   const scopeId = fileWorkbenchStorageScope(workspaceId)
   const storageSuffix = `${scopeId}.state.v2`
   return {
-    key: `craft-file-workbench.workspace:${storageSuffix}`,
+    key: `mortise-file-workbench.workspace:${storageSuffix}`,
     kind: 'normal',
     scopeId,
     storageSuffix,

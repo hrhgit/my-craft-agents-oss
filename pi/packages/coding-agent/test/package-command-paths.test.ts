@@ -142,12 +142,12 @@ describe("package commands", () => {
 	});
 
 	it("uses global npmCommand and current package name for forced self updates without checking the api", async () => {
-		process.env.PI_UPDATE_CHANNEL = "official";
+		process.env.PI_UPDATE_CHANNEL = "published";
 		delete process.env.PI_SKIP_VERSION_CHECK;
 		delete process.env.PI_OFFLINE;
 		const globalPrefix = join(tempDir, "global-prefix");
 		const projectPrefix = join(tempDir, "project-prefix");
-		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mortise", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
 		const recordPath = join(tempDir, "self-update.json");
 		mkdirSync(selfPackageDir, { recursive: true });
@@ -195,7 +195,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 	});
 
 	it("uses the current package name when the update check omits packageName", async () => {
-		process.env.PI_UPDATE_CHANNEL = "official";
+		process.env.PI_UPDATE_CHANNEL = "published";
 		delete process.env.PI_SKIP_VERSION_CHECK;
 		delete process.env.PI_OFFLINE;
 		const globalPrefix = join(tempDir, "global-prefix");
@@ -240,7 +240,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 	});
 
 	it("installs the active package name from the update check during self-update", async () => {
-		process.env.PI_UPDATE_CHANNEL = "official";
+		process.env.PI_UPDATE_CHANNEL = "published";
 		delete process.env.PI_SKIP_VERSION_CHECK;
 		delete process.env.PI_OFFLINE;
 		const globalPrefix = join(tempDir, "global-prefix");
@@ -294,7 +294,7 @@ else {
 	});
 
 	it("fails self-update when renamed npm package installation fails", async () => {
-		process.env.PI_UPDATE_CHANNEL = "official";
+		process.env.PI_UPDATE_CHANNEL = "published";
 		delete process.env.PI_SKIP_VERSION_CHECK;
 		delete process.env.PI_OFFLINE;
 		const globalPrefix = join(tempDir, "global-prefix");
@@ -376,7 +376,7 @@ if(args.includes("install")) process.exit(23);
 		}
 	});
 
-	it("disables self-update when running on the fork update channel", async () => {
+	it("disables self-update when running with self-update disabled", async () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -388,7 +388,7 @@ if(args.includes("install")) process.exit(23);
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(process.exitCode).toBe(1);
 			expect(fetchMock).not.toHaveBeenCalled();
-			expect(stderr).toContain("Self-update is disabled for this fork");
+			expect(stderr).toContain("Self-update is disabled for this distribution");
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();

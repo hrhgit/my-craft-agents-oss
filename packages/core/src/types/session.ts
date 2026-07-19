@@ -2,7 +2,7 @@
  * Session types for conversation management
  *
  * Sessions are the primary isolation boundary. Each session maps 1:1
- * with a CraftAgent instance and SDK conversation.
+ * with a MortiseAgent instance and SDK conversation.
  */
 
 import type { StoredMessage, TokenUsage } from './message.ts';
@@ -32,9 +32,9 @@ export interface StoredSession extends Session {
 /**
  * Session metadata for listing (without loading full messages)
  * NOTE: 此接口为 IPC 契约层（ElectronAPI）的运行时 DTO，使用 `id` 字段。
- * 持久化层使用 `@craft-agent/shared/sessions` 的 `SessionHeader` 接口，其对应字段
- * 名为 `craftId`。二者在运行时通过 managedToSession 等 mapper 显式映射
- * (ManagedSession.id → SessionHeader.craftId ↔ SessionMetadata.id)。
+ * 持久化层使用 `@mortise/shared/sessions` 的 `SessionHeader` 接口，其对应字段
+ * 名为 `mortiseId`。二者在运行时通过 managedToSession 等 mapper 显式映射
+ * (ManagedSession.id → SessionHeader.mortiseId ↔ SessionMetadata.id)。
  * 添加新字段时，需同时考虑此接口与 SessionHeader 的同步。
  */
 export interface SessionMetadata {

@@ -29,7 +29,7 @@ function createTestSession(
   sdkSessionId?: string
 ): StoredSession {
   return {
-    craftId: id,
+    mortiseId: id,
     workspaceRootPath,
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
@@ -47,7 +47,7 @@ function createSessionWithoutCraftId(
 ): StoredSession {
   return {
     ...createTestSession(id, workspaceRootPath, sdkSessionId),
-    craftId: undefined,
+    mortiseId: undefined,
     id,
   } as unknown as StoredSession;
 }
@@ -111,7 +111,7 @@ describe('SessionPersistenceQueue', () => {
 
     const header = readWrittenHeader(testDir, 'test-session');
     expect(header.id).toBe('sdk-123');
-    expect(header.craft.sdkSessionId).toBe('sdk-123');
+    expect(header.mortise.sdkSessionId).toBe('sdk-123');
   });
 
   it('serializes concurrent flushes for the same session', async () => {
@@ -137,7 +137,7 @@ describe('SessionPersistenceQueue', () => {
     const header = readWrittenHeader(testDir, 'test-session');
 
     // Before the fix, this could randomly be undefined due to race condition
-    expect(header.craft.sdkSessionId).toBe('new-thread-id');
+    expect(header.mortise.sdkSessionId).toBe('new-thread-id');
   });
 
   it('allows parallel writes to different sessions', async () => {
@@ -158,8 +158,8 @@ describe('SessionPersistenceQueue', () => {
     const headerA = readWrittenHeader(testDir, 'session-a');
     const headerB = readWrittenHeader(testDir, 'session-b');
 
-    expect(headerA.craft.sdkSessionId).toBe('id-a');
-    expect(headerB.craft.sdkSessionId).toBe('id-b');
+    expect(headerA.mortise.sdkSessionId).toBe('id-a');
+    expect(headerB.mortise.sdkSessionId).toBe('id-b');
   });
 
   it('rejects legacy id-only sessions without accepting id as the persistence key', async () => {
@@ -180,7 +180,7 @@ describe('SessionPersistenceQueue', () => {
     await blocker.started;
 
     let cancelResolved = false;
-    const cancelPromise = queue.cancel(session.craftId).then(() => {
+    const cancelPromise = queue.cancel(session.mortiseId).then(() => {
       cancelResolved = true;
     });
 
@@ -196,12 +196,12 @@ describe('SessionPersistenceQueue', () => {
   it('drops enqueue calls that arrive while delete cancellation waits on an in-progress write', async () => {
     const session = createTestSession('delete-race-session', testDir, 'sdk-blocked');
     const blocker = blockNextWrite(queue);
-    const filePath = getSessionFilePath(testDir, session.craftId, undefined, session.createdAt);
+    const filePath = getSessionFilePath(testDir, session.mortiseId, undefined, session.createdAt);
 
     queue.enqueue(session);
     await blocker.started;
 
-    const cancelPromise = queue.cancel(session.craftId, { preventFutureEnqueue: true });
+    const cancelPromise = queue.cancel(session.mortiseId, { preventFutureEnqueue: true });
     await sleep(40);
 
     queue.enqueue({
@@ -215,7 +215,7 @@ describe('SessionPersistenceQueue', () => {
 
     await sleep(40);
 
-    expect(queue.hasPending(session.craftId)).toBe(false);
+    expect(queue.hasPending(session.mortiseId)).toBe(false);
     expect(existsSync(filePath)).toBe(false);
   });
 
@@ -226,45 +226,45 @@ describe('SessionPersistenceQueue', () => {
     };
 
     queue.enqueue(session);
-    await queue.flush(session.craftId);
+    await queue.flush(session.mortiseId);
 
-    const filePath = getSessionFilePath(testDir, session.craftId, undefined, session.createdAt);
+    const filePath = getSessionFilePath(testDir, session.mortiseId, undefined, session.createdAt);
     const lines = readFileSync(filePath, 'utf-8').trim().split('\n');
     const header = JSON.parse(lines[0]);
-    header.craft.name = 'external name';
-    header.craft.sessionStatus = 'done';
-    header.craft.labels = ['external'];
-    header.craft.isFlagged = true;
-    header.craft.isArchived = true;
-    header.craft.archivedAt = 12345;
+    header.mortise.name = 'external name';
+    header.mortise.sessionStatus = 'done';
+    header.mortise.labels = ['external'];
+    header.mortise.isFlagged = true;
+    header.mortise.isArchived = true;
+    header.mortise.archivedAt = 12345;
     writeFileSync(filePath, [JSON.stringify(header), ...lines.slice(1)].join('\n') + '\n', 'utf-8');
 
     queue.enqueue({
       ...session,
       lastUsedAt: Date.now() + 1,
     });
-    await queue.flush(session.craftId);
+    await queue.flush(session.mortiseId);
 
-    const updated = readWrittenHeader(testDir, session.craftId);
-    expect(updated.craft.name).toBe('external name');
-    expect(updated.craft.sessionStatus).toBeUndefined();
-    expect(updated.craft.labels).toBeUndefined();
-    expect(updated.craft.isFlagged).toBeUndefined();
-    expect(updated.craft.isArchived).toBeUndefined();
-    expect(updated.craft.archivedAt).toBeUndefined();
+    const updated = readWrittenHeader(testDir, session.mortiseId);
+    expect(updated.mortise.name).toBe('external name');
+    expect(updated.mortise.sessionStatus).toBeUndefined();
+    expect(updated.mortise.labels).toBeUndefined();
+    expect(updated.mortise.isFlagged).toBeUndefined();
+    expect(updated.mortise.isArchived).toBeUndefined();
+    expect(updated.mortise.archivedAt).toBeUndefined();
 
     queue.enqueue({
       ...session,
       lastUsedAt: Date.now() + 2,
     });
-    await queue.flush(session.craftId);
+    await queue.flush(session.mortiseId);
 
-    const updatedAgain = readWrittenHeader(testDir, session.craftId);
-    expect(updatedAgain.craft.name).toBe('external name');
-    expect(updatedAgain.craft.sessionStatus).toBeUndefined();
-    expect(updatedAgain.craft.labels).toBeUndefined();
-    expect(updatedAgain.craft.isFlagged).toBeUndefined();
-    expect(updatedAgain.craft.isArchived).toBeUndefined();
-    expect(updatedAgain.craft.archivedAt).toBeUndefined();
+    const updatedAgain = readWrittenHeader(testDir, session.mortiseId);
+    expect(updatedAgain.mortise.name).toBe('external name');
+    expect(updatedAgain.mortise.sessionStatus).toBeUndefined();
+    expect(updatedAgain.mortise.labels).toBeUndefined();
+    expect(updatedAgain.mortise.isFlagged).toBeUndefined();
+    expect(updatedAgain.mortise.isArchived).toBeUndefined();
+    expect(updatedAgain.mortise.archivedAt).toBeUndefined();
   });
 });

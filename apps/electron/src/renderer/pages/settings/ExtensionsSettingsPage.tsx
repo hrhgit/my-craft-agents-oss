@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { SettingsCard, SettingsCardContent, SettingsSection } from '@/components/settings'
 import { routes } from '@/lib/navigate'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
-import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionReloadActiveSession, PiExtensionSettingScalar } from '@craft-agent/shared/config'
+import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionReloadActiveSession, PiExtensionSettingScalar } from '@mortise/shared/config'
 import { ExtensionListPanel } from './PiExtensionsSettingsPanel'
 import { ExtensionDetailPanel } from './ExtensionDetailPanel'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'

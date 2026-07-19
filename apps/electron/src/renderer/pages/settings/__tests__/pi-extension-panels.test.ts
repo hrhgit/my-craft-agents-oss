@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'bun:test'
-import type { PiExtensionCatalogEntry } from '@craft-agent/shared/config/pi-extension-settings'
+import type { PiExtensionCatalogEntry } from '@mortise/shared/config/pi-extension-settings'
 import { isExtensionConfigurable } from '../PiExtensionsSettingsPanel'
 import { buildExtensionSettingSections, parseExtensionNumberDraft } from '../ExtensionDetailPanel'
 import { patchCatalogField } from '../extension-settings-utils'
 
 function catalogEntry(configurable: boolean, withSchema: boolean): PiExtensionCatalogEntry {
   return {
-    id: 'extension', target: 'craft', loaded: true, title: 'Extension', description: '', category: 'other',
+    id: 'extension', target: 'mortise', loaded: true, title: 'Extension', description: '', category: 'other',
     configurable, enabled: true, path: 'extension.ts', resolvedPath: 'C:\\extensions\\extension.ts',
+    manifestStatus: 'legacy', manifestDiagnostics: [], hostVersion: '0.1.0', loadable: true,
     commands: [], tools: [], flags: [], shortcuts: [],
     ui: withSchema ? {
       schemaVersion: 1,
@@ -16,7 +17,7 @@ function catalogEntry(configurable: boolean, withSchema: boolean): PiExtensionCa
   }
 }
 
-describe('Craft extension settings panels', () => {
+describe('Mortise extension settings panels', () => {
   it('derives configurability from the extension manifest schema', () => {
     expect(isExtensionConfigurable(catalogEntry(true, true))).toBe(true)
     expect(isExtensionConfigurable(catalogEntry(true, false))).toBe(false)

@@ -1,5 +1,5 @@
-import type { RpcClient } from '@craft-agent/server-core/transport'
-import { isLocalOnly } from '@craft-agent/shared/protocol'
+import type { RpcClient } from '@mortise/server-core/transport'
+import { isLocalOnly } from '@mortise/shared/protocol'
 import type { WorkspaceRoute } from '../shared/app-layout'
 import type { ElectronAPI } from '../shared/types'
 import { buildClientApi, type ChannelMap } from './build-api'

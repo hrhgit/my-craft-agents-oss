@@ -23,8 +23,8 @@
  */
 
 import * as React from 'react'
-import type { ExtensionBridgeEvent, PiExtensionCommand } from '@craft-agent/shared/agent/backend/types'
-import type { ExtensionCommandResult } from '@craft-agent/core/types'
+import type { ExtensionBridgeEvent, PiExtensionCommand } from '@mortise/shared/agent/backend/types'
+import type { ExtensionCommandResult } from '@mortise/core/types'
 
 // ============================================================================
 // 类型定义

@@ -5,9 +5,9 @@
  * renderer, and binding store together. One instance per workspace.
  */
 
-import type { ISessionManager } from '@craft-agent/server-core/handlers'
-import type { PiProjectionEventV1, PushTarget } from '@craft-agent/shared/protocol'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import type { ISessionManager } from '@mortise/server-core/handlers'
+import type { PiProjectionEventV1, PushTarget } from '@mortise/shared/protocol'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import {
   evaluateBindingAccess,
   evaluatePreBindingAccess,

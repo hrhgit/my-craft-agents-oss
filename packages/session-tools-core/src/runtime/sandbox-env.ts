@@ -4,7 +4,7 @@
 
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { BLOCKED_ENV_VARS, createSanitizedEnv } from '@craft-agent/shared/utils/env';
+import { BLOCKED_ENV_VARS, createSanitizedEnv } from '@mortise/shared/utils/env';
 import type { ScriptRuntimeLanguage } from './resolve-script-runtime.ts';
 
 export { BLOCKED_ENV_VARS, createSanitizedEnv };

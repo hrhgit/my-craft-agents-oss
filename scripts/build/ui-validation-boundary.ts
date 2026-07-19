@@ -12,7 +12,7 @@ const NORMALIZED_FORBIDDEN_PRODUCTION_INPUTS = [
 ] as const
 
 export function isUiValidationBuildEnabled(command?: 'build' | 'serve'): boolean {
-  return process.env.CRAFT_UI_VALIDATION_BUILD === '1' || command === 'serve'
+  return process.env.MORTISE_UI_VALIDATION_BUILD === '1' || command === 'serve'
 }
 
 export function isForbiddenUiValidationProductionInput(path: string): boolean {
@@ -23,7 +23,7 @@ export function isForbiddenUiValidationProductionInput(path: string): boolean {
 /** Fail closed if a production renderer dependency graph reaches real validation code. */
 export function uiValidationProductionBoundaryPlugin(enabled: boolean): Plugin {
   return {
-    name: 'craft-ui-validation-production-boundary',
+    name: 'mortise-ui-validation-production-boundary',
     apply: 'build',
     generateBundle(_options, bundle) {
       if (enabled) return
@@ -49,14 +49,14 @@ export function assertNoUiValidationProductionInputs(inputs: Iterable<string>, a
 }
 
 const FORBIDDEN_PRODUCTION_RUNTIME_MARKERS = [
-  '__craftUiValidation',
-  'craft:ui-validation:semantic-change',
-  '__CRAFT_UI_VALIDATION_EXTENSION_BRIDGE_V1__',
-  '__CRAFT_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__',
+  '__mortiseUiValidation',
+  'mortise:ui-validation:semantic-change',
+  '__MORTISE_UI_VALIDATION_EXTENSION_BRIDGE_V1__',
+  '__MORTISE_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__',
   'startUiTestHost',
   'ElectronEvidenceCollector',
   'ui-validation-scenario-session',
-  'CRAFT_UI_TEST_HOST',
+  'MORTISE_UI_TEST_HOST',
   'app-shell-scenario-host',
 ] as const
 

@@ -428,7 +428,7 @@ describe('app layout domain', () => {
     expect(restarted.tabs['aux-one'].groupId).toBe('group:right')
   })
 
-  it('drops full browser URLs and invalid references during persistence recovery', () => {
+  it('drops full browser URLs and retired side-task tabs during persistence recovery', () => {
     const layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
     const unsafe = {
       ...layout,
@@ -464,11 +464,8 @@ describe('app layout domain', () => {
     }
     const recovered = sanitizeAppLayout(unsafe)
     expect(recovered.tabs.browser.ref.resourceId).toBeUndefined()
-    expect(recovered.tabs.sideTasks.ref).toMatchObject({
-      kind: 'side-task',
-      sessionId: 'parent-session',
-      resourceId: 'side-tasks:parent-session',
-    })
+    expect(recovered.tabs.sideTasks).toBeUndefined()
+    expect(recovered.groups['group:main'].tabIds).not.toContain('sideTasks')
   })
 
   it('preserves non-detachable content through persisted layout sanitization', () => {

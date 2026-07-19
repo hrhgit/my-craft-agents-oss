@@ -231,7 +231,7 @@ Paths in `~/.pi/agent/settings.json` resolve relative to `~/.pi/agent`. Paths in
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `packages` | array | `[]` | npm/git packages to load resources from |
-| `extensions` | array | `[]` | Local extension file paths, directories, or objects with `path`, `activation`, and `targets` |
+| `extensions` | array | `[]` | Local extension objects with stable `id`, `path`, explicit `targets`, and optional activation/Manifest V1 metadata |
 | `skills` | string[] | `[]` | Local skill file paths or directories |
 | `prompts` | string[] | `[]` | Local prompt template paths or directories |
 | `themes` | string[] | `[]` | Local theme file paths or directories |
@@ -244,17 +244,17 @@ Extension entries may use object form to control activation and host targets:
 ```json
 {
   "extensions": [
-    { "path": "./extensions/editor-ui.ts", "activation": "startup" },
-    { "path": "./extensions/model-tools.ts", "activation": "beforeFirstRequest" },
-    { "path": "./extensions/craft-ui.ts", "targets": ["craft"] },
-    { "path": "./extensions/shared.ts", "targets": ["pi", "craft"] }
+    { "id": "editor-ui", "path": "./extensions/editor-ui.ts", "activation": "startup", "targets": ["pi"] },
+    { "id": "model-tools", "path": "./extensions/model-tools.ts", "activation": "beforeFirstRequest", "targets": ["pi"] },
+    { "id": "mortise-ui", "path": "./extensions/mortise-ui.ts", "targets": ["mortise"] },
+    { "id": "shared", "path": "./extensions/shared.ts", "targets": ["pi", "mortise"] }
   ]
 }
 ```
 
 `activation` can be `startup`, `beforeFirstRequest`, or `lazy`. Unspecified extension entries default to `beforeFirstRequest`, so they do not delay the first screen. `beforeFirstRequest` extensions still finish loading before Pi sends the first model request.
 
-`targets` can contain `pi`, `craft`, or both. Entries without `targets` default to `["pi"]`; Craft hosts pass `extensionTarget: "craft"` to load only Craft-compatible entries.
+`targets` can contain `pi`, `mortise`, or both and must be explicit on declared entries. Mortise hosts pass `extensionTarget: "mortise"` to load only Mortise-compatible entries. Published extensions should also declare Manifest V1 metadata with version, author, and matching engine ranges.
 
 #### packages
 
@@ -309,7 +309,7 @@ Per-extension namespace configuration keyed by extension name. Allows overriding
 
 Extensions with `enabled: false` are filtered out during resource loading — their tools, commands, and flags are not registered. When `enabled` is absent, the extension defaults to enabled.
 
-**Compatibility note:** Craft Agent historically writes these values under the `extensions` field as a namespace object (e.g., `extensions.repo-memory.model`). The Pi SDK reads from both `extensionConfig.<name>` (preferred) and `extensions.<name>` (legacy/craft) for the `model`, `enabled`, and `concurrency` keys. The `extensions` field as a path array (for loading local extension files) remains unchanged.
+**Compatibility note:** Mortise Agent historically writes these values under the `extensions` field as a namespace object (e.g., `extensions.repo-memory.model`). The Pi SDK reads from both `extensionConfig.<name>` (preferred) and `extensions.<name>` (legacy/mortise) for the `model`, `enabled`, and `concurrency` keys. The `extensions` field as a path array (for loading local extension files) remains unchanged.
 
 ## Example
 

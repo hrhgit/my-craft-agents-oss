@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test'
-import type { PiProjectionSnapshotV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionSnapshotV1 } from '@mortise/shared/protocol'
 import {
   SessionManager,
   createManagedSession,
@@ -36,14 +36,14 @@ describe('Pi projection transcript boundary', () => {
     ).processEvent(managed, {
       type: 'custom_message',
       id: 'custom-plan',
-      customType: 'craft-plan-artifact',
+      customType: 'mortise-plan-artifact',
       content: '# Plan',
       details: { schemaVersion: 1, artifact },
       timestamp: 3,
     })
 
     const managed = createManagedSession(
-      { craftId: 'plan' },
+      { mortiseId: 'plan' },
       workspace as never,
       { messagesLoaded: true },
     )
@@ -62,7 +62,7 @@ describe('Pi projection transcript boundary', () => {
       manager as unknown as { processEvent: (session: unknown, value: unknown) => Promise<void> }
     ).processEvent(managed, event)
     const native = createManagedSession(
-      { craftId: 'native-slices' },
+      { mortiseId: 'native-slices' },
       workspace as never,
       { messagesLoaded: true, isProcessing: true },
     )
@@ -86,7 +86,7 @@ describe('Pi projection transcript boundary', () => {
     ;(manager as unknown as { flushSession: () => Promise<void> }).flushSession = async () => {}
     ;(manager as unknown as { sendEvent: (event: { type: string }) => void }).sendEvent = event => emitted.push(event)
     const native = createManagedSession(
-      { craftId: 'queue', name: 'Queue' },
+      { mortiseId: 'queue', name: 'Queue' },
       workspace as never,
       { messagesLoaded: true, isProcessing: true },
     )

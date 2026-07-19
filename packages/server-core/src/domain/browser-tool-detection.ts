@@ -2,11 +2,11 @@
  * Browser tool detection helpers.
  *
  * Browser overlay activation is now driven by the unified `browser_tool` only.
- * Tool names can be direct (`browser_tool`) or namespaced
- * (`mcp__session__browser_tool`).
+ * Runtime calls use `browser_tool`; legacy namespaced calls remain readable
+ * when replaying stored sessions.
  */
 
-import { normalizeCanonicalBrowserToolName } from '@craft-agent/shared/agent'
+import { normalizeCanonicalBrowserToolName } from '@mortise/shared/agent'
 
 const BROWSER_TOOL_OVERLAY_EXCLUDED_COMMANDS = new Set([
   '--help',

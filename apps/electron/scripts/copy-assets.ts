@@ -11,7 +11,7 @@
  * Run: bun scripts/copy-assets.ts
  */
 
-import { cpSync, copyFileSync, mkdirSync } from 'fs';
+import { cpSync, copyFileSync, mkdirSync, rmSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import {
   copyPiRuntime,
@@ -49,6 +49,7 @@ function getCurrentBuildConfig(): BuildConfig {
 const resourcesSrc = join(ELECTRON_DIR, 'resources');
 const resourcesDest = join(ELECTRON_DIR, 'dist', 'resources');
 mkdirSync(dirname(resourcesDest), { recursive: true });
+rmSync(resourcesDest, { recursive: true, force: true });
 cpSync(resourcesSrc, resourcesDest, { recursive: true, force: true });
 
 console.log('✓ Copied resources/ → dist/resources/');

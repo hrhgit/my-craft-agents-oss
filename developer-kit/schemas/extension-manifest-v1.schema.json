@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hrhgit/mortise/blob/main/developer-kit/schemas/extension-manifest-v1.schema.json",
+  "title": "Mortise Extension Manifest V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "name", "version", "author", "engines"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "url": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048 }
+      }
+    },
+    "publisher": { "$ref": "#/$defs/stableId" },
+    "description": { "type": "string", "maxLength": 2000 },
+    "homepage": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048 },
+    "repository": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048 },
+    "license": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "engines": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "pi": { "$ref": "#/$defs/semverRange" },
+        "mortise": { "$ref": "#/$defs/semverRange" }
+      }
+    },
+    "dependencies": { "$ref": "#/$defs/dependencyMap" },
+    "optionalDependencies": { "$ref": "#/$defs/dependencyMap" },
+    "conflicts": { "$ref": "#/$defs/dependencyMap" },
+    "capabilities": { "$ref": "#/$defs/declarationList" },
+    "permissions": { "$ref": "#/$defs/declarationList" },
+    "loadOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "priority": { "type": "integer", "minimum": -100000, "maximum": 100000 },
+        "after": { "$ref": "#/$defs/extensionIdList" },
+        "before": { "$ref": "#/$defs/extensionIdList" }
+      }
+    }
+  },
+  "$defs": {
+    "stableId": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,126}[a-z0-9])?$"
+    },
+    "declarationId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+    },
+    "semverRange": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "dependencyMap": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": { "$ref": "#/$defs/stableId" },
+      "additionalProperties": { "$ref": "#/$defs/semverRange" }
+    },
+    "declarationList": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/declarationId" }
+    },
+    "extensionIdList": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/stableId" }
+    }
+  }
+}

@@ -23,6 +23,8 @@ export interface BuildSystemPromptOptions {
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
 	skills?: Skill[];
+	/** Include project context, skills, date, and cwd. Default: true. */
+	includeRuntimeContext?: boolean;
 }
 
 const TOOL_USE_DISCIPLINE = `Tool use discipline:
@@ -47,6 +49,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		cwd,
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
+		includeRuntimeContext = true,
 	} = options;
 	const resolvedCwd = cwd;
 	const promptCwd = resolvedCwd.replace(/\\/g, "/");
@@ -68,6 +71,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		if (appendSection) {
 			prompt += appendSection;
 		}
+		if (!includeRuntimeContext) return prompt;
 
 		// Append project context files
 		if (contextFiles.length > 0) {
@@ -173,6 +177,7 @@ ${TOOL_USE_DISCIPLINE}`;
 	if (appendSection) {
 		prompt += appendSection;
 	}
+	if (!includeRuntimeContext) return prompt;
 
 	// Append project context files
 	if (contextFiles.length > 0) {

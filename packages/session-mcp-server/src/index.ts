@@ -3,7 +3,7 @@
  * Session MCP Server
  *
  * This MCP server provides session-scoped tools to Codex via stdio transport.
- * It uses the shared handlers from @craft-agent/session-tools-core to ensure
+ * It uses the shared handlers from @mortise/session-tools-core to ensure
  * feature parity with Claude's session-scoped tools.
  *
  * Callback Communication:
@@ -17,7 +17,7 @@
  *
  * Arguments:
  *   --session-id: Unique session identifier
- *   --workspace-root: Path to workspace folder (~/.craft-agent/workspaces/{id})
+ *   --workspace-root: Path to workspace folder (~/.mortise/workspaces/{id})
  *   --plans-folder: Path to session's plans folder
  */
 
@@ -32,11 +32,11 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
-import type { ToolResult } from '@craft-agent/shared/agent';
-import { isDeveloperFeedbackEnabled } from '@craft-agent/shared/feature-flags';
-import { CONFIG_DIR } from '@craft-agent/shared/config/paths';
-import { getSessionPath } from '@craft-agent/shared/sessions';
-import { createPiSkillResolver } from '@craft-agent/shared/pi/skill-resolver';
+import type { ToolResult } from '@mortise/shared/agent';
+import { isDeveloperFeedbackEnabled } from '@mortise/shared/feature-flags';
+import { CONFIG_DIR } from '@mortise/shared/config/paths';
+import { getSessionPath } from '@mortise/shared/sessions';
+import { createPiSkillResolver } from '@mortise/shared/pi/skill-resolver';
 // Import from session-tools-core
 import {
   type SessionToolContext,
@@ -51,7 +51,7 @@ import {
   // Helpers
   loadSourceConfig as loadSourceConfigFromHelpers,
   errorResponse,
-} from '@craft-agent/session-tools-core';
+} from '@mortise/session-tools-core';
 
 // ============================================================
 // Types
@@ -280,36 +280,40 @@ function createSessionTools(includeDeveloperFeedback: boolean): Tool[] {
 }
 
 // ============================================================
-// Craft Agents Docs Upstream Proxy
+// Optional Mortise documentation MCP proxy
 // ============================================================
 
-const DOCS_MCP_URL = 'https://agents.craft.do/docs/mcp';
-
-/** Cached upstream client + tool list */
+/** Cached remote client + tool list */
 let docsClient: Client | null = null;
 let docsTools: Tool[] = [];
 
 /**
- * Connect to the craft-agents-docs MCP server and fetch its tool definitions.
+ * Connect to the mortise-docs MCP server and fetch its tool definitions.
  * Falls back gracefully if the server is unreachable (tools will just be empty).
  */
 async function connectDocsUpstream(): Promise<void> {
+  const docsMcpUrl = process.env.MORTISE_DOCS_MCP_URL?.trim();
+  if (!docsMcpUrl) {
+    console.error('Mortise documentation MCP proxy disabled (MORTISE_DOCS_MCP_URL is not configured)');
+    return;
+  }
+
   try {
     const client = new Client(
-      { name: 'craft-agent-session-proxy', version: '1.0.0' },
+      { name: 'mortise-session-proxy', version: '1.0.0' },
       { capabilities: {} }
     );
 
-    const transport = new StreamableHTTPClientTransport(new URL(DOCS_MCP_URL));
+    const transport = new StreamableHTTPClientTransport(new URL(docsMcpUrl));
     await client.connect(transport);
 
     const result = await client.listTools();
     docsTools = (result.tools || []) as Tool[];
     docsClient = client;
 
-    console.error(`Craft Agents Docs proxy connected: ${docsTools.length} tools`);
+    console.error(`Mortise Docs proxy connected: ${docsTools.length} tools`);
   } catch (err) {
-    console.error(`Craft Agents Docs proxy connection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`Mortise Docs proxy connection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
     docsClient = null;
     docsTools = [];
   }
@@ -323,7 +327,7 @@ async function callDocsUpstream(
   args: Record<string, unknown>
 ): Promise<ToolResult> {
   if (!docsClient) {
-    return errorResponse(`Craft Agents Docs server is not connected. Tool '${name}' unavailable.`);
+    return errorResponse(`Mortise Docs server is not connected. Tool '${name}' unavailable.`);
   }
 
   try {
@@ -396,7 +400,7 @@ async function handleSpawnSession(
 
   return errorResponse(
     'spawn_session requires either PreToolUse intercept (_precomputedResult) or ' +
-    'HTTP callback (CRAFT_LLM_CALLBACK_PORT). Neither is available.'
+    'HTTP callback (MORTISE_LLM_CALLBACK_PORT). Neither is available.'
   );
 }
 
@@ -454,7 +458,7 @@ async function main() {
     workspaceRootPath,
     plansFolderPath,
     // CLI arg takes priority, env var as fallback (Copilot CLI may not forward env to subprocesses)
-    callbackPort: callbackPort || process.env.CRAFT_LLM_CALLBACK_PORT,
+    callbackPort: callbackPort || process.env.MORTISE_LLM_CALLBACK_PORT,
   };
 
   // Create the Codex context
@@ -466,7 +470,7 @@ async function main() {
   // Create MCP server
   const server = new Server(
     {
-      name: 'craft-agent-session',
+      name: 'mortise-session',
       version: '0.3.1',
     },
     {

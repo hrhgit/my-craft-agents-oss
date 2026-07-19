@@ -4,16 +4,16 @@
  * Handles workspace resource export/import (sources, skills, automations).
  */
 
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import { getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
-import { getCredentialManager, SOURCE_CREDENTIAL_TYPES } from '@craft-agent/shared/credentials'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { getCredentialManager, SOURCE_CREDENTIAL_TYPES } from '@mortise/shared/credentials'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import type {
   ResourceBundle,
   ResourceImportMode,
   ExportResourcesOptions,
-} from '@craft-agent/shared/resources'
+} from '@mortise/shared/resources'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.resources.EXPORT,
@@ -28,7 +28,7 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       const resolvedWorkspaceId = resolveWorkspaceId(ctx.workspaceId, workspaceId) ?? workspaceId
       const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
-      const { exportResources } = await import('@craft-agent/shared/resources')
+      const { exportResources } = await import('@mortise/shared/resources')
       const result = exportResources(workspace.rootPath, options)
 
       deps.platform.logger?.info(
@@ -50,7 +50,7 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       const resolvedWorkspaceId = resolveWorkspaceId(ctx.workspaceId, workspaceId) ?? workspaceId
       const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
-      const { importResources } = await import('@craft-agent/shared/resources')
+      const { importResources } = await import('@mortise/shared/resources')
       const credManager = getCredentialManager()
 
       const result = await importResources(workspace.rootPath, bundle, mode, {

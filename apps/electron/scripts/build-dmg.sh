@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+export MORTISE_UI_VALIDATION_BUILD=0
+export MORTISE_DEV_HOST_BUILD=0
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ELECTRON_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname "$(dirname "$ELECTRON_DIR")")"
@@ -80,7 +83,7 @@ done
 # Configuration
 BUN_VERSION="bun-v1.3.9"  # Pinned version for reproducible builds
 
-echo "=== Building Craft Agents DMG (${ARCH}) using electron-builder ==="
+echo "=== Building Mortise DMG (${ARCH}) using electron-builder ==="
 if [ "$UPLOAD" = true ]; then
     echo "Will upload to S3 after build"
 fi
@@ -169,8 +172,8 @@ fi
 npx electron-builder $BUILDER_ARGS
 
 # 8. Verify the DMG was built
-# electron-builder.yml uses artifactName to output: Craft-Agents-${arch}.dmg
-DMG_NAME="Craft-Agents-${ARCH}.dmg"
+# electron-builder.yml uses artifactName to output: Mortise-${arch}.dmg
+DMG_NAME="Mortise-${ARCH}.dmg"
 DMG_PATH="$ELECTRON_DIR/release/$DMG_NAME"
 
 if [ ! -f "$DMG_PATH" ]; then

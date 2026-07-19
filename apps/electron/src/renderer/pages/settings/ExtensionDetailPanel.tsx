@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SettingsCard, SettingsInputRow, SettingsSection, SettingsSelectRow, SettingsTextarea, SettingsToggle } from '@/components/settings'
-import type { PiExtensionCatalogEntry, PiExtensionSettingField, PiExtensionSettingScalar, PiGlobalProviderForDisplay } from '@craft-agent/shared/config'
+import type { PiExtensionCatalogEntry, PiExtensionSettingField, PiExtensionSettingScalar, PiGlobalProviderForDisplay } from '@mortise/shared/config'
 
 interface ExtensionDetailPanelProps {
   extension: PiExtensionCatalogEntry

@@ -26,9 +26,9 @@ import {
 import { buildAuthorizationHeader } from './api-tools.ts';
 import type { CredentialId, StoredCredential } from '../credentials/types.ts';
 import { getCredentialManager } from '../credentials/index.ts';
-import { CraftOAuth, getMcpBaseUrl, prepareMcpOAuth, exchangeMcpOAuth, type OAuthCallbacks, type OAuthTokens } from '../auth/oauth.ts';
+import { MortiseOAuth, getMcpBaseUrl, prepareMcpOAuth, exchangeMcpOAuth, type OAuthCallbacks, type OAuthTokens } from '../auth/oauth.ts';
 import { type OAuthSessionContext } from '../auth/types.ts';
-import { OAUTH_RELAY_CALLBACK_URL, wrapPreparedOAuthFlowForRelay } from '../auth/oauth-relay.ts';
+import { getOAuthRelayCallbackUrl, wrapPreparedOAuthFlowForRelay } from '../auth/oauth-relay.ts';
 import type { PreparedOAuthFlow, OAuthExchangeParams, OAuthExchangeResult, OAuthProvider } from '../auth/oauth-flow-types.ts';
 import {
   startGoogleOAuth,
@@ -428,7 +428,7 @@ export class SourceCredentialManager {
     // stable so providers like Google only need a single registered callback.
     // The relay unwraps the real server callback target from the outer state.
     const providerCallbackUrl = relayReturnTo
-      ? OAUTH_RELAY_CALLBACK_URL
+      ? getOAuthRelayCallbackUrl()
       : undefined;
     const provider = this.detectProvider(source);
 
@@ -655,7 +655,7 @@ export class SourceCredentialManager {
     }
 
     try {
-      const oauth = new CraftOAuth(
+      const oauth = new MortiseOAuth(
         { mcpUrl: source.config.mcp.url },
         callbacks,
         sessionContext
@@ -1240,7 +1240,7 @@ export class SourceCredentialManager {
         return null;
       }
 
-      const oauth = new CraftOAuth(
+      const oauth = new MortiseOAuth(
         { mcpUrl: source.config.mcp.url },
         {
           onStatus: () => {},

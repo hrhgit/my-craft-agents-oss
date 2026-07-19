@@ -1,6 +1,6 @@
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { ATTACHMENT_INLINE_RPC_LIMIT_BYTES } from '@craft-agent/shared/utils/attachment-limits'
-import type { RpcClient } from '@craft-agent/server-core/transport'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { ATTACHMENT_INLINE_RPC_LIMIT_BYTES } from '@mortise/shared/utils/attachment-limits'
+import type { RpcClient } from '@mortise/server-core/transport'
 
 type ChunkedRpcClient = Pick<RpcClient, 'invoke'> & Partial<Pick<RpcClient, 'invokeWithOptions'>>
 

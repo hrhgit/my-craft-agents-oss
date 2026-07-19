@@ -15,8 +15,8 @@ import * as crypto from "node:crypto";
 import { closeSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
-import { completeSimple, streamSimple } from "@earendil-works/pi-ai/stream";
-import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions } from "@earendil-works/pi-ai/types";
+import { completeSimple, streamSimple } from "@mortise/pi-ai/stream";
+import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions } from "@mortise/pi-ai/types";
 import { getAgentDir, VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import {
@@ -41,7 +41,11 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { getProcessGlobalBackgroundTaskCoordinator } from "../../core/global-background-tasks.ts";
-import { getPiGlobalHostStatePath, readPiGlobalHostState } from "../../core/global-host-state.ts";
+import {
+	getPiGlobalHostStatePath,
+	PI_GLOBAL_HOST_INSTANCE_ID_ENV,
+	readPiGlobalHostState,
+} from "../../core/global-host-state.ts";
 import {
 	deleteGlobalProvider,
 	forkSession,
@@ -95,6 +99,8 @@ import type {
 	RpcToolPermissionRequest,
 	RpcToolPermissionResponse,
 	RpcToolResultContent,
+	RpcToolResultRequest,
+	RpcToolResultResponse,
 } from "./rpc-types.ts";
 import {
 	PI_HOST_HOOKS_MODULE_ENV,
@@ -124,6 +130,8 @@ export type {
 	RpcToolPermissionRequest,
 	RpcToolPermissionResponse,
 	RpcToolResultContent,
+	RpcToolResultRequest,
+	RpcToolResultResponse,
 } from "./rpc-types.ts";
 
 type RpcExtensionUIValidationEmission = RpcExtensionUIValidationDeltaV1 extends infer T
@@ -322,7 +330,7 @@ export interface RpcGlobalHostRuntimeFactory {
 	defaultRuntime: {
 		cwd: string;
 		sessionManager: SessionManager;
-		extensionTarget: "pi" | "craft";
+		extensionTarget: "pi" | "mortise";
 		deferResourceLoad?: boolean;
 		persistInitialState?: boolean;
 		uiCapabilities?: RpcHostUICapabilities;
@@ -359,7 +367,7 @@ function normalizeRpcHostUICapabilities(value: unknown): RpcHostUICapabilities {
 					"interactionSchemas",
 				].includes(key),
 		) ||
-		(candidate.kind !== "craft" && candidate.kind !== "none") ||
+		(candidate.kind !== "mortise" && candidate.kind !== "none") ||
 		typeof candidate.dialogs !== "boolean" ||
 		typeof candidate.widgets !== "boolean" ||
 		typeof candidate.editorControl !== "boolean" ||
@@ -429,9 +437,10 @@ export async function runRpcMode(
 		clientId?: string;
 		runtime: AgentSessionRuntime;
 		session: AgentSession;
-		extensionTarget: "pi" | "craft";
+		extensionTarget: "pi" | "mortise";
 		uiCapabilities: RpcHostUICapabilities;
 		toolPermissionsEnabled: boolean;
+		toolResultsEnabled: boolean;
 		pendingExtensionReload: boolean;
 		unsubscribe?: () => void;
 		unsubscribeBackpressure?: () => void;
@@ -453,6 +462,7 @@ export async function runRpcMode(
 				extensionTarget: runtimeHost.extensionTarget,
 				uiCapabilities: normalizeRpcHostUICapabilities(options.uiCapabilities),
 				toolPermissionsEnabled: false,
+				toolResultsEnabled: false,
 				pendingExtensionReload: false,
 			}
 		: undefined;
@@ -708,6 +718,8 @@ export async function runRpcMode(
 			toolName: string;
 			toolCallId: string;
 			input: Record<string, unknown>;
+			assistantResponseId?: string;
+			assistantTimestamp: number;
 		},
 	): Promise<RpcToolPermissionResponse> => {
 		const id = crypto.randomUUID();
@@ -720,8 +732,69 @@ export async function runRpcMode(
 					toolName: request.toolName,
 					toolCallId: request.toolCallId,
 					input: request.input,
+					assistantResponseId: request.assistantResponseId,
+					assistantTimestamp: request.assistantTimestamp,
 				} satisfies RpcToolPermissionRequest,
 				binding,
+			);
+		});
+	};
+
+	type PendingToolResultRequest = {
+		resolve: (value: RpcToolResultResponse) => void;
+		reject: (error: Error) => void;
+		clientId?: string;
+		runtimeId: string;
+		sessionId: string;
+	};
+	const pendingToolResultRequests = new Map<string, PendingToolResultRequest>();
+	const cancelToolResultRequests = (
+		predicate: (pending: PendingToolResultRequest) => boolean,
+		error: string,
+	): void => {
+		for (const [id, pending] of pendingToolResultRequests) {
+			if (!predicate(pending)) continue;
+			pendingToolResultRequests.delete(id);
+			pending.resolve({ type: "tool_result_response", id, status: "failed", error });
+		}
+	};
+	const requestToolResult = (
+		binding: RuntimeBinding,
+		request: {
+			toolName: string;
+			toolCallId: string;
+			input: Record<string, unknown>;
+			content: RpcToolResultContent[];
+			details?: unknown;
+			isError: boolean;
+			assistantResponseId?: string;
+			assistantTimestamp: number;
+		},
+	): Promise<RpcToolResultResponse> => {
+		const id = crypto.randomUUID();
+		const sessionId = binding.session.sessionId;
+		return new Promise<RpcToolResultResponse>((resolve, reject) => {
+			pendingToolResultRequests.set(id, {
+				resolve,
+				reject,
+				clientId: binding.clientId,
+				runtimeId: binding.runtimeId,
+				sessionId,
+			});
+			output(
+				{
+					type: "tool_result_request",
+					id,
+					toolName: request.toolName,
+					toolCallId: request.toolCallId,
+					input: request.input,
+					content: request.content,
+					details: request.details,
+					isError: request.isError,
+					assistantResponseId: request.assistantResponseId,
+					assistantTimestamp: request.assistantTimestamp,
+				} satisfies RpcToolResultRequest,
+				{ ...binding, sessionId },
 			);
 		});
 	};
@@ -1603,6 +1676,13 @@ export async function runRpcMode(
 				}
 				return { action: "allow" };
 			},
+			toolResultHandler: async (request) => {
+				if (!binding.toolResultsEnabled) return;
+				const response = await requestToolResult(binding, request);
+				if (response.status === "failed") {
+					throw new Error(response.error);
+				}
+			},
 			commandContextActions: {
 				waitForIdle: () => session.agent.waitForIdle(),
 				newSession: async (options) => binding.runtime.newSession(options),
@@ -1686,6 +1766,10 @@ export async function runRpcMode(
 	const registerRuntime = async (binding: RuntimeBinding): Promise<void> => {
 		binding.runtime.setRebindSession(async () => {
 			const previousSessionId = binding.session.sessionId;
+			cancelToolResultRequests(
+				(pending) => pending.runtimeId === binding.runtimeId && pending.sessionId === previousSessionId,
+				"Session changed before the host recorded the tool result",
+			);
 			cancelExtensionRequests((pending) => pending.runtimeId === binding.runtimeId, "runtime-disposed");
 			cancelHostCapabilityRequests(
 				(pending) => pending.runtimeId === binding.runtimeId && pending.sessionId === previousSessionId,
@@ -1735,6 +1819,7 @@ export async function runRpcMode(
 				extensionTarget: globalHostFactory.defaultRuntime.extensionTarget,
 				uiCapabilities: normalizeRpcHostUICapabilities(globalHostFactory.defaultRuntime.uiCapabilities),
 				toolPermissionsEnabled: false,
+				toolResultsEnabled: false,
 				pendingExtensionReload: false,
 			};
 			runtimeBindings.set(defaultRuntimeId, binding);
@@ -1774,6 +1859,15 @@ export async function runRpcMode(
 		autoCompactionEnabled: session.autoCompactionEnabled,
 		messageCount: session.messages.length,
 		pendingMessageCount: session.pendingMessageCount,
+		systemPrompt: session.systemPrompt,
+		compactionPrompt: session.compactionPrompt,
+		activeTools: session.getActiveToolNames(),
+		tools: session.getAllTools().map((tool) => ({
+			name: tool.name,
+			description: tool.description,
+			source:
+				tool.sourceInfo.source === "builtin" ? "builtin" : tool.sourceInfo.source === "sdk" ? "host" : "extension",
+		})),
 	});
 	const isRuntimeOwner = (binding: RuntimeBinding, clientId: string | undefined): boolean =>
 		(binding.runtimeId === defaultRuntimeId && binding.clientId === undefined) || binding.clientId === clientId;
@@ -1858,6 +1952,7 @@ export async function runRpcMode(
 				extensionTarget: command.extensionTarget,
 				uiCapabilities: normalizeRpcHostUICapabilities(command.uiCapabilities),
 				toolPermissionsEnabled: false,
+				toolResultsEnabled: false,
 				pendingExtensionReload: false,
 			};
 			runtimeBindings.set(runtimeId, binding);
@@ -1896,6 +1991,10 @@ export async function runRpcMode(
 			}
 			resetRuntimeContributions(binding);
 			runtimeBindings.delete(runtimeId);
+			cancelToolResultRequests(
+				(pending) => pending.runtimeId === runtimeId && pending.clientId === binding.clientId,
+				"Runtime closed before the host recorded the tool result",
+			);
 			cancelExtensionRequests((pending) => pending.runtimeId === runtimeId, "runtime-disposed");
 			cancelRuntimeHostCapabilityRequests(runtimeId);
 			binding.unsubscribe?.();
@@ -1988,6 +2087,16 @@ export async function runRpcMode(
 
 			case "get_state": {
 				return success(id, "get_state", sessionState(session));
+			}
+
+			case "set_active_tools": {
+				session.setActiveToolsByName(command.toolNames);
+				return success(id, "set_active_tools");
+			}
+
+			case "set_compaction_prompt": {
+				session.setCompactionPrompt(command.prompt);
+				return success(id, "set_compaction_prompt");
 			}
 
 			// =================================================================
@@ -2269,9 +2378,9 @@ export async function runRpcMode(
 				return success(id, "set_global_default");
 			}
 
-			case "set_craft_credential": {
+			case "set_mortise_credential": {
 				setCraftCredential(command.slug, command.credential);
-				return success(id, "set_craft_credential");
+				return success(id, "set_mortise_credential");
 			}
 
 			case "get_session_projection": {
@@ -2286,10 +2395,10 @@ export async function runRpcMode(
 				);
 			}
 
-			case "set_craft_session_metadata": {
+			case "set_mortise_session_metadata": {
 				return success(
 					id,
-					"set_craft_session_metadata",
+					"set_mortise_session_metadata",
 					setCraftSessionMetadata({
 						sessionPath: command.sessionPath,
 						sessionDir: command.sessionDir,
@@ -2369,6 +2478,17 @@ export async function runRpcMode(
 				return success(id, "enable_tool_permissions");
 			}
 
+			case "enable_tool_results": {
+				binding.toolResultsEnabled = command.enabled;
+				if (!command.enabled) {
+					cancelToolResultRequests(
+						(pending) => pending.runtimeId === binding.runtimeId && pending.clientId === binding.clientId,
+						"Host tool result handler was disabled before completion",
+					);
+				}
+				return success(id, "enable_tool_results");
+			}
+
 			case "register_tools": {
 				session.registerHostTools(buildHostProxyTools(binding, command.tools) as never);
 				return success(id, "register_tools", { registered: command.tools.map((t) => t.name) });
@@ -2402,6 +2522,7 @@ export async function runRpcMode(
 			pending.resolve({ type: "tool_permission_response", id: "", action: "block", reason: "Server shutting down" });
 		}
 		pendingToolPermissionRequests.clear();
+		cancelToolResultRequests(() => true, "RPC host shut down before the host recorded the tool result");
 		// Fail in-flight host tool executions so dispose doesn't hang on them.
 		for (const [, pending] of pendingToolExecuteRequests) {
 			pending.resolve({ type: "tool_execute_response", id: "", content: "Server shutting down", isError: true });
@@ -2596,6 +2717,24 @@ export async function runRpcMode(
 			return;
 		}
 
+		// Handle finalized tool-result acknowledgements
+		if (typeof parsed === "object" && parsed !== null && "type" in parsed && parsed.type === "tool_result_response") {
+			const response = parsed as RpcToolResultResponse;
+			const pending = pendingToolResultRequests.get(response.id);
+			const actualClientId = forcedClientId ?? response.clientId;
+			if (
+				pending &&
+				response.runtimeId === pending.runtimeId &&
+				response.sessionId === pending.sessionId &&
+				actualClientId === pending.clientId &&
+				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId)
+			) {
+				pendingToolResultRequests.delete(response.id);
+				pending.resolve(response);
+			}
+			return;
+		}
+
 		// Handle host proxy-tool execution responses
 		if (
 			typeof parsed === "object" &&
@@ -2635,7 +2774,8 @@ export async function runRpcMode(
 	};
 
 	if (process.env.PI_GLOBAL_HOST_PROCESS === "1") {
-		const statePath = getPiGlobalHostStatePath(hostAgentDir);
+		const hostInstanceId = process.env[PI_GLOBAL_HOST_INSTANCE_ID_ENV];
+		const statePath = getPiGlobalHostStatePath(hostAgentDir, hostInstanceId);
 		const hostDir = dirname(statePath);
 		const lockPath = join(hostDir, "host.lock");
 		mkdirSync(hostDir, { recursive: true });
@@ -2643,7 +2783,7 @@ export async function runRpcMode(
 		try {
 			lockFd = openSync(lockPath, "wx");
 		} catch {
-			const existing = readPiGlobalHostState(hostAgentDir);
+			const existing = readPiGlobalHostState(hostAgentDir, hostInstanceId);
 			let existingAlive = false;
 			if (existing) {
 				try {
@@ -2710,6 +2850,7 @@ export async function runRpcMode(
 						startedAt: new Date().toISOString(),
 						protocolVersion: PI_RPC_PROTOCOL_VERSION,
 						packageVersion: VERSION,
+						instanceId: hostInstanceId,
 					},
 					null,
 					2,

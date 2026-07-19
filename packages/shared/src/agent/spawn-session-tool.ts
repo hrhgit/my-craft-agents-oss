@@ -7,10 +7,10 @@
  * Task 11: spawn_session is now a thin wrapper. When the backend implements
  * spawnChildSession (PiAgent), the onSpawnSession callback delegates to pi's
  * session tree — pi creates the child session file (header + spawnedFrom +
- * spawnConfig + optional initial prompt/name) and craft no longer instantiates
+ * spawnConfig + optional initial prompt/name) and mortise no longer instantiates
  * its own SessionManager or writes session files. The SubagentPanel lists these
  * children via listChildSessions(spawnedFrom filter). Backends without
- * spawnChildSession fall back to independent craft session creation (deprecated).
+ * spawnChildSession fall back to independent mortise session creation (deprecated).
  *
  * Two modes:
  * - help=true: Returns available providers, models, and sources

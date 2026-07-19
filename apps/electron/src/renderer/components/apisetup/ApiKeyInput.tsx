@@ -31,7 +31,7 @@ import {
   type PresetKey,
 } from "./submit-helpers"
 
-import type { PiCustomApi } from '@craft-agent/shared/config/pi-provider-models'
+import type { PiCustomApi } from '@mortise/shared/config/pi-provider-models'
 import type { CustomEndpointConfig } from './submit-helpers'
 
 type CustomEndpointApi = PiCustomApi
@@ -123,7 +123,7 @@ const OPENAI_PRESETS: Preset[] = [
 
 // Pi provider presets - unified API for 20+ LLM providers
 const PI_PRESETS: Preset[] = [
-  { key: 'pi', label: 'Craft Agents Backend (Direct)', url: '' },
+  { key: 'pi', label: 'Mortise Backend (Direct)', url: '' },
   { key: 'openrouter', label: 'OpenRouter', url: 'https://openrouter.ai/api' },
   { key: 'custom', label: 'Custom', url: '' },
 ]

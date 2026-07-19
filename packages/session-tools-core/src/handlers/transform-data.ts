@@ -85,7 +85,7 @@ export async function handleTransformData(
 
   // Write script to temp file
   const ext = args.language === 'python3' ? '.py' : '.js';
-  const tempScript = join(tmpdir(), `craft-transform-${ctx.sessionId}-${Date.now()}${ext}`);
+  const tempScript = join(tmpdir(), `mortise-transform-${ctx.sessionId}-${Date.now()}${ext}`);
   writeFileSync(tempScript, args.script, 'utf-8');
 
   try {

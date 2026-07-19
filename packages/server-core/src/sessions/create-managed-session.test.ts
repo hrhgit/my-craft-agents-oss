@@ -11,7 +11,7 @@ describe('createManagedSession', () => {
 
   it('normalizes legacy thinkingLevel=think on restore', () => {
     const managed = createManagedSession({
-      craftId: 'session_legacy',
+      mortiseId: 'session_legacy',
       thinkingLevel: 'think' as any,
     }, workspace as any)
 
@@ -20,7 +20,7 @@ describe('createManagedSession', () => {
 
   it('drops invalid thinking levels instead of leaking them into runtime state', () => {
     const managed = createManagedSession({
-      craftId: 'session_invalid',
+      mortiseId: 'session_invalid',
       thinkingLevel: 'ultra' as any,
     }, workspace as any)
 

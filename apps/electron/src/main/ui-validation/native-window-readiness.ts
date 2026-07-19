@@ -18,7 +18,7 @@ export interface NativeWindowStatus {
   available: boolean
   ready: boolean
   verified: boolean
-  reason: 'ready' | 'background-ready' | 'unsupported-platform' | 'window-not-selected' | 'window-gone' | 'window-hidden' | 'window-minimized' | 'window-not-minimized' | 'uia-not-verified'
+  reason: 'ready' | 'background-ready' | 'user-foreground-ready' | 'unsupported-platform' | 'window-not-selected' | 'window-gone' | 'window-hidden' | 'window-minimized' | 'window-not-minimized' | 'uia-not-verified'
   windowMode: ElectronUiWindowMode
   webContentsId?: number
   visible?: boolean
@@ -38,6 +38,7 @@ export class ElectronNativeWindowController {
     private readonly driver: WindowsNativeUiDriver,
     private readonly publishState: NativeDriverStatePublisher = () => undefined,
     private readonly windowMode: ElectronUiWindowMode = 'foreground',
+    private readonly hasUserForegroundControl: (window: BrowserWindow) => boolean = () => false,
   ) {}
 
   available(): boolean {
@@ -62,9 +63,11 @@ export class ElectronNativeWindowController {
     const verified = this.verifiedWindows.has(webContentsId)
     const shared = { ...mode, available: true, webContentsId, visible, focused, minimized, rendererLoading, verified }
     if (this.windowMode === 'background') {
-      if (!minimized) return { ...shared, ready: false, reason: visible ? 'window-not-minimized' : 'window-hidden' }
+      const userForeground = this.hasUserForegroundControl(window)
+      if (!minimized && !userForeground) return { ...shared, ready: false, reason: visible ? 'window-not-minimized' : 'window-hidden' }
+      if (!minimized && !visible) return { ...shared, ready: false, reason: 'window-hidden' }
       if (!verified) return { ...shared, ready: false, reason: 'uia-not-verified' }
-      return { ...shared, ready: true, reason: 'background-ready' }
+      return { ...shared, ready: true, reason: minimized ? 'background-ready' : 'user-foreground-ready' }
     }
     if (minimized) return { ...shared, ready: false, reason: 'window-minimized' }
     if (!visible) return { ...shared, ready: false, reason: 'window-hidden' }
@@ -125,7 +128,11 @@ export class ElectronNativeWindowController {
     const webContentsId = window.webContents.id
     this.publishState(webContentsId, 'loading', this.stateDetail(window, false))
     try {
-      const ready = await ensureNativeWindowReady(window, this.driver, { ...options, windowMode: this.windowMode })
+      const ready = await ensureNativeWindowReady(window, this.driver, {
+        ...options,
+        windowMode: this.windowMode,
+        allowVisibleBackground: this.windowMode === 'background' && this.hasUserForegroundControl(window),
+      })
       this.verifiedWindows.set(webContentsId, ready.node.runtimeId)
       this.publishState(webContentsId, 'ready', this.stateDetail(window, true, ready.node.runtimeId))
       return ready
@@ -161,6 +168,7 @@ export class ElectronNativeWindowController {
       focused: !window.isDestroyed() && window.isFocused(),
       minimized: !window.isDestroyed() && window.isMinimized(),
       rendererLoading: !window.isDestroyed() && window.webContents.isLoading(),
+      userForeground: !window.isDestroyed() && this.windowMode === 'background' && this.hasUserForegroundControl(window),
       ...(runtimeId ? { runtimeId } : {}),
     }
   }
@@ -180,15 +188,19 @@ export function revealNativeWindow(window: BrowserWindow, options: { focus?: boo
 export async function ensureNativeWindowReady(
   window: BrowserWindow,
   driver: WindowsNativeUiDriver,
-  options: { timeoutMs?: number; signal?: AbortSignal; windowMode?: ElectronUiWindowMode } = {},
+  options: { timeoutMs?: number; signal?: AbortSignal; windowMode?: ElectronUiWindowMode; allowVisibleBackground?: boolean } = {},
 ): Promise<NativeWindowReadyResult> {
   const windowMode = options.windowMode ?? 'foreground'
+  let visibleBackground = false
   if (windowMode === 'foreground') {
     revealNativeWindow(window)
   } else {
     if (window.isDestroyed()) throw new ElectronUiDriverError('WINDOW_GONE', 'Renderer window no longer exists.')
-    if (!window.isMinimized()) {
-      throw new ElectronUiDriverError('NOT_READY', 'Background native validation requires the selected window to remain minimized.', { windowMode })
+    visibleBackground = options.allowVisibleBackground === true
+      && window.isVisible()
+      && !window.isMinimized()
+    if (!window.isMinimized() && !visibleBackground) {
+      throw new ElectronUiDriverError('NOT_READY', 'Background native validation requires the selected window to remain minimized unless the user restored it.', { windowMode })
     }
   }
 
@@ -200,6 +212,7 @@ export async function ensureNativeWindowReady(
     expectedBounds,
     expectedNativeWindowHandle,
     windowMode,
+    visibleBackground,
   }), options)
   const snapshot = snapshotForWindowMode(ready.snapshot, windowMode)
   const node = snapshot.windows.flatMap(entry => entry.nodes).find(candidate => candidate.runtimeId === ready.node.runtimeId)
@@ -214,15 +227,15 @@ function matchesSelectedWindow(
     expectedBounds: { x: number; y: number; width: number; height: number }
     expectedNativeWindowHandle?: number
     windowMode: ElectronUiWindowMode
+    visibleBackground: boolean
   },
 ): boolean {
   if (node.role !== 'Window') return false
   if (expected.expectedTitle.length > 0 && node.name !== expected.expectedTitle) return false
-  if (expected.windowMode === 'foreground' && !node.focused) return false
   if (expected.expectedNativeWindowHandle !== undefined && node.nativeWindowHandle !== undefined) {
     return node.nativeWindowHandle === expected.expectedNativeWindowHandle
   }
-  return expected.windowMode === 'background' || matchesWindowBounds(expected.expectedBounds, node.bounds)
+  return (expected.windowMode === 'background' && !expected.visibleBackground) || matchesWindowBounds(expected.expectedBounds, node.bounds)
 }
 
 function snapshotForWindowMode(snapshot: WindowsNativeSnapshot, windowMode: ElectronUiWindowMode): WindowsNativeSnapshot {

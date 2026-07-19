@@ -1,5 +1,5 @@
-import { type AgentMessage, type ThinkingLevel, uuidv7 } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Message, TextContent, Usage } from "@earendil-works/pi-ai/types";
+import { type AgentMessage, type ThinkingLevel, uuidv7 } from "@mortise/pi-agent-core";
+import type { ImageContent, Message, TextContent, Usage } from "@mortise/pi-ai/types";
 import { createHash, randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -43,11 +43,11 @@ export interface SessionHeader {
 	/**
 	 * Parent session ID for child sessions created via spawnChildSession().
 	 * Unlike parentSession (which stores a file path), this stores the parent's
-	 * session ID so the craft shell can read back the spawn lineage.
+	 * session ID so the mortise shell can read back the spawn lineage.
 	 */
 	spawnedFrom?: string;
 	/**
-	 * Override config recorded at spawn time, for craft shell to read back when
+	 * Override config recorded at spawn time, for mortise shell to read back when
 	 * loading the spawned child session. Only present on spawnChildSession-created
 	 * children.
 	 */
@@ -63,7 +63,7 @@ export interface SessionHeader {
 	 * it; host facades update it through SessionManager so shells do not rewrite
 	 * JSONL headers directly.
 	 */
-	craft?: Record<string, unknown>;
+	mortise?: Record<string, unknown>;
 }
 
 export interface NewSessionOptions {
@@ -1558,13 +1558,13 @@ export class SessionManager {
 		return h ? (h as SessionHeader) : null;
 	}
 
-	/** Replace the opaque Craft host metadata on the session header. */
+	/** Replace the opaque Mortise host metadata on the session header. */
 	setCraftMetadata(metadata: Record<string, unknown>): void {
 		const header = this.getHeader();
 		if (!header) {
-			throw new Error("Cannot update Craft metadata: session header is missing");
+			throw new Error("Cannot update Mortise metadata: session header is missing");
 		}
-		header.craft = { ...metadata };
+		header.mortise = { ...metadata };
 		this._rewriteFile();
 	}
 
@@ -1774,7 +1774,7 @@ export class SessionManager {
 	/**
 	 * Spawn a child session with custom configuration.
 	 *
-	 * This method is intended for craft shell's spawn_session tool to delegate
+	 * This method is intended for mortise shell's spawn_session tool to delegate
 	 * child session creation to pi's session tree mechanism, rather than
 	 * implementing session creation independently.
 	 *
@@ -1808,7 +1808,7 @@ export class SessionManager {
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 		const newSessionFile = join(childSessionDir, `${fileTimestamp}_${newSessionId}.jsonl`);
 
-		// Build spawn config (records overrides for craft shell to read back)
+		// Build spawn config (records overrides for mortise shell to read back)
 		const spawnConfig: NonNullable<SessionHeader["spawnConfig"]> = {};
 		if (options.connection !== undefined) spawnConfig.connection = options.connection;
 		if (options.model !== undefined) spawnConfig.model = options.model;
@@ -1818,7 +1818,7 @@ export class SessionManager {
 
 		// Build new header.
 		// parentSession stores the parent session FILE PATH (consistent with forkFrom/createBranchedSession).
-		// spawnedFrom stores the parent session ID (for craft shell to read back).
+		// spawnedFrom stores the parent session ID (for mortise shell to read back).
 		const header: SessionHeader = {
 			type: "session",
 			version: CURRENT_SESSION_VERSION,

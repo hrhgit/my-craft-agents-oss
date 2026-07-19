@@ -7,8 +7,8 @@ import { createRequire } from 'node:module'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { chromium, type Browser, type Page } from 'playwright-core'
 import WebSocket from 'ws'
-import { readEndpointManifest } from '../../craft-ui/client.ts'
-import { prepareProfile } from '../../craft-ui/profile.ts'
+import { readEndpointManifest } from '../../mortise-ui/client.ts'
+import { prepareProfile } from '../../mortise-ui/profile.ts'
 
 interface RawResponse<T = unknown> {
   v: number
@@ -35,8 +35,8 @@ interface SnapshotResult {
   regions: Record<string, SnapshotNode[]>
 }
 
-const runRoot = await mkdtemp(join(tmpdir(), 'craft-ui-raw-host-'))
-const resultPath = resolve(process.env.CRAFT_UI_RAW_SMOKE_RESULT ?? join(process.cwd(), 'output', 'craft-ui', 'raw-host-smoke-last.json'))
+const runRoot = await mkdtemp(join(tmpdir(), 'mortise-ui-raw-host-'))
+const resultPath = resolve(process.env.MORTISE_UI_RAW_SMOKE_RESULT ?? join(process.cwd(), 'output', 'mortise-ui', 'raw-host-smoke-last.json'))
 const debugPort = await reserveLoopbackPort()
 const electronExecutable = String(createRequire(import.meta.url)('electron'))
 const electronApp = resolve(process.cwd(), 'apps', 'electron')
@@ -70,18 +70,18 @@ try {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      CRAFT_CONFIG_DIR: profile.craftConfigDir,
+      MORTISE_CONFIG_DIR: profile.mortiseConfigDir,
       PI_CODING_AGENT_DIR: profile.piAgentDir,
-      CRAFT_UI_RUN_ID: runId,
-      CRAFT_UI_SURFACE: 'electron',
-      CRAFT_UI_RUN_DIR: runDir,
-      CRAFT_UI_PROFILE_DIR: profileDir,
-      CRAFT_UI_ARTIFACTS_DIR: artifactsDir,
-      CRAFT_UI_ENDPOINT_MANIFEST: endpointManifestPath,
-      CRAFT_UI_TOKEN: token,
-      CRAFT_UI_PROTOCOL_VERSION: '1',
-      CRAFT_UI_ELECTRON_USER_DATA_DIR: profile.electronUserDataDir,
-      CRAFT_UI_TEST_HOST: '1',
+      MORTISE_UI_RUN_ID: runId,
+      MORTISE_UI_SURFACE: 'electron',
+      MORTISE_UI_RUN_DIR: runDir,
+      MORTISE_UI_PROFILE_DIR: profileDir,
+      MORTISE_UI_ARTIFACTS_DIR: artifactsDir,
+      MORTISE_UI_ENDPOINT_MANIFEST: endpointManifestPath,
+      MORTISE_UI_TOKEN: token,
+      MORTISE_UI_PROTOCOL_VERSION: '1',
+      MORTISE_UI_ELECTRON_USER_DATA_DIR: profile.electronUserDataDir,
+      MORTISE_UI_TEST_HOST: '1',
     },
   })
   host.stderr?.on('data', chunk => { hostStderr = boundedLog(hostStderr, String(chunk)) })

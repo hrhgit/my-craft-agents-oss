@@ -1,12 +1,12 @@
 import { describe, expect, it, jest } from 'bun:test'
-import { PLAN_MODE_STATE_CUSTOM_TYPE } from '@craft-agent/core/types'
+import { PLAN_MODE_STATE_CUSTOM_TYPE } from '@mortise/core/types'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 
 describe('SessionManager pre-message runtime preparation', () => {
   it('creates an agent before invoking an extension command', async () => {
     const manager = new SessionManager()
     const managed = createManagedSession(
-      { craftId: 'pre-message-session', name: 'Pre-message session' },
+      { mortiseId: 'pre-message-session', name: 'Pre-message session' },
       {
         id: 'pre-message-workspace',
         name: 'Pre-message workspace',

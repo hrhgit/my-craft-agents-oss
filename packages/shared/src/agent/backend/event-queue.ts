@@ -11,7 +11,7 @@
  *   handler calls complete()    → signals no more events
  */
 
-import type { AgentEvent } from '@craft-agent/core/types';
+import type { AgentEvent } from '@mortise/core/types';
 
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 

@@ -38,7 +38,7 @@ describe("Pi RPC GlobalHost process", () => {
 		}
 	});
 
-	it("connects a second client to the first host and shares its runtime registry", async () => {
+	it("connects a second client to the first host while isolating runtime ownership", async () => {
 		const root = join(tmpdir(), `pi-global-host-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		const cwd = process.cwd();
 		mkdirSync(root, { recursive: true });
@@ -95,7 +95,8 @@ describe("Pi RPC GlobalHost process", () => {
 		});
 
 		const runtimes = await second.listRuntimes();
-		expect(runtimes.map((runtime) => runtime.runtimeId).sort()).toEqual(["runtime-a", "runtime-b"]);
+		expect(runtimes.map((runtime) => runtime.runtimeId)).toEqual(["runtime-b"]);
+		expect((await first.listRuntimes()).map((runtime) => runtime.runtimeId)).toEqual(["runtime-a"]);
 		expect(readPiGlobalHostState(root)?.pid).toBe(hostState?.pid);
 		expect((second as unknown as { process: unknown }).process).toBeNull();
 
@@ -137,6 +138,74 @@ describe("Pi RPC GlobalHost process", () => {
 		expect(restartedState?.pid).toBeDefined();
 		expect(restartedState?.pid).not.toBe(hostState.pid);
 		if (restartedState) hostPids.push(restartedState.pid);
+	});
+
+	it("isolates host generations that share one agent directory", async () => {
+		const root = join(tmpdir(), `pi-global-host-generation-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const cwd = process.cwd();
+		mkdirSync(root, { recursive: true });
+		writeFileSync(
+			join(root, "models.json"),
+			JSON.stringify({
+				providers: {
+					test: {
+						baseUrl: "http://127.0.0.1:1/v1",
+						api: "openai-completions",
+						apiKey: "test-key",
+						models: [{ id: "model-a" }],
+					},
+				},
+			}),
+			"utf8",
+		);
+		roots.push(root);
+
+		const commonOptions = {
+			command: process.execPath,
+			cliPath: join(process.cwd(), "dist", "cli.js"),
+			cwd,
+			provider: "test",
+			model: "model-a",
+			args: ["--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files"],
+			env: { PI_CODING_AGENT_DIR: root },
+			pipeStderr: false,
+		};
+		const firstInstanceId = "config-generation-a";
+		const secondInstanceId = "config-generation-b";
+		const first = new RpcClient({
+			...commonOptions,
+			globalHost: { enabled: true, agentDir: root, instanceId: firstInstanceId },
+		});
+		clients.push(first);
+		await first.start();
+		await expect(first.getCapabilities()).resolves.toMatchObject({ protocolVersion: 3 });
+		const firstState = readPiGlobalHostState(root, firstInstanceId);
+		expect(firstState?.instanceId).toBe(firstInstanceId);
+		if (firstState) hostPids.push(firstState.pid);
+		const firstRuntime = await first.openRuntime({
+			runtimeId: "runtime-a",
+			cwd,
+			sessionId: "session-a",
+			extensionTarget: "pi",
+		});
+
+		const second = new RpcClient({
+			...commonOptions,
+			globalHost: { enabled: true, agentDir: root, instanceId: secondInstanceId },
+		});
+		clients.push(second);
+		await second.start();
+		await expect(second.getCapabilities()).resolves.toMatchObject({ protocolVersion: 3 });
+		const secondState = readPiGlobalHostState(root, secondInstanceId);
+		expect(secondState?.instanceId).toBe(secondInstanceId);
+		expect(secondState?.pid).not.toBe(firstState?.pid);
+		if (secondState) hostPids.push(secondState.pid);
+		expect(await first.listRuntimes()).toEqual([
+			expect.objectContaining({ runtimeId: "runtime-a", sessionId: "session-a" }),
+		]);
+		await expect(second.listRuntimes()).resolves.toEqual([]);
+
+		await firstRuntime.close();
 	});
 
 	it("loads runtime-scoped extensionPaths in the shared host", async () => {
@@ -185,7 +254,7 @@ describe("Pi RPC GlobalHost process", () => {
 			runtimeId: "extension-runtime",
 			cwd: root,
 			sessionId: "extension-session",
-			extensionTarget: "craft",
+			extensionTarget: "mortise",
 			extensionPaths: [extensionPath],
 		});
 		await expect(runtime.invokeExtensionCommandResult("runtime-extension-loaded")).resolves.toEqual({

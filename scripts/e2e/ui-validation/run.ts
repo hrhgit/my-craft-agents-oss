@@ -1,5 +1,5 @@
-import { requestCraftUiHost } from '../../craft-ui/client.ts'
-import { startCraftUiRun, stopCraftUiRun } from '../../craft-ui/controller.ts'
+import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
+import { startMortiseUiRun, stopMortiseUiRun } from '../../mortise-ui/controller.ts'
 
 interface SnapshotNode {
   ref: string
@@ -38,7 +38,7 @@ interface NativeMenuSnapshotResult {
   nodes: Array<{ ref: string; role: string; name: string; enabled: boolean; accelerator?: string; actions: string[] }>
 }
 
-const manifest = await startCraftUiRun({
+const manifest = await startMortiseUiRun({
   surface: 'electron',
   profileMode: 'fixture',
   windowMode: 'foreground',
@@ -48,7 +48,7 @@ const manifest = await startCraftUiRun({
 try {
   let nativeVerificationLevel: string | undefined
   if (process.platform === 'win32') {
-    const nativeSnapshot = await requestCraftUiHost<NativeSnapshotResult>({
+    const nativeSnapshot = await requestMortiseUiHost<NativeSnapshotResult>({
       ...manifest,
       command: 'ui.native',
       params: { operation: 'snapshot' },
@@ -57,8 +57,8 @@ try {
     if (!nativeSnapshot.ok) throw new Error(`Native snapshot failed: ${nativeSnapshot.error.message}`)
     const nativeWindow = nativeSnapshot.result.windows.flatMap(window => window.nodes)
       .find(node => node.role === 'Window' && node.actions.includes('focus'))
-    if (!nativeWindow) throw new Error('Windows UI Automation did not expose a focusable Craft window.')
-    const nativeAction = await requestCraftUiHost({
+    if (!nativeWindow) throw new Error('Windows UI Automation did not expose a focusable Mortise window.')
+    const nativeAction = await requestMortiseUiHost({
       ...manifest,
       command: 'ui.action',
       params: { mode: 'native', revision: nativeSnapshot.result.revision, target: { kind: 'native', ref: nativeWindow.ref }, action: 'focus' },
@@ -69,8 +69,8 @@ try {
     }
     nativeVerificationLevel = nativeAction.verificationLevel
 
-    const dialogTitle = `Craft UI Validation Folder ${manifest.runId.slice(-8)}`
-    const openedDialog = await requestCraftUiHost<NativeDialogOpenResult>({
+    const dialogTitle = `Mortise UI Validation Folder ${manifest.runId.slice(-8)}`
+    const openedDialog = await requestMortiseUiHost<NativeDialogOpenResult>({
       ...manifest,
       command: 'ui.native',
       params: { operation: 'dialog.open', kind: 'open-directory', title: dialogTitle, timeoutMs: 30_000 },
@@ -79,7 +79,7 @@ try {
     if (!openedDialog.ok || openedDialog.result.nativeTarget.name !== dialogTitle || !openedDialog.result.nativeTarget.actions.includes('close')) {
       throw new Error(openedDialog.ok ? 'Native folder dialog did not expose a closable UIA window.' : openedDialog.error.message)
     }
-    const closeDialog = await requestCraftUiHost({
+    const closeDialog = await requestMortiseUiHost({
       ...manifest,
       command: 'ui.action',
       params: {
@@ -91,7 +91,7 @@ try {
     if (!closeDialog.ok || closeDialog.verificationLevel !== 'native-verified') {
       throw new Error(closeDialog.ok ? 'Native dialog close did not produce native verification.' : closeDialog.error.message)
     }
-    const dialogStatus = await requestCraftUiHost<{ phase: string; canceled?: boolean }>({
+    const dialogStatus = await requestMortiseUiHost<{ phase: string; canceled?: boolean }>({
       ...manifest,
       command: 'ui.native',
       params: { operation: 'dialog.wait', dialogId: openedDialog.result.dialogId, timeoutMs: 30_000 },
@@ -101,7 +101,7 @@ try {
       throw new Error(dialogStatus.ok ? 'Native folder dialog did not report a canceled completion.' : dialogStatus.error.message)
     }
 
-    const menuSnapshot = await requestCraftUiHost<NativeMenuSnapshotResult>({
+    const menuSnapshot = await requestMortiseUiHost<NativeMenuSnapshotResult>({
       ...manifest,
       command: 'ui.native',
       params: { operation: 'menu.snapshot' },
@@ -114,7 +114,7 @@ try {
         node.accelerator === 'CmdOrCtrl+R' && node.enabled && node.actions.includes('click'),
       )
       if (!reloadItem) throw new Error('Electron application menu did not expose the development Reload command.')
-      const menuAction = await requestCraftUiHost({
+      const menuAction = await requestMortiseUiHost({
         ...manifest,
         command: 'ui.native',
         params: {
@@ -128,7 +128,7 @@ try {
       if (!menuAction.ok || menuAction.verificationLevel !== 'native-verified') {
         throw new Error(menuAction.ok ? 'Electron menu action did not produce native verification.' : menuAction.error.message)
       }
-      const reloaded = await requestCraftUiHost({
+      const reloaded = await requestMortiseUiHost({
         ...manifest,
         command: 'ui.wait',
         params: { predicate: { kind: 'semantic-ready' }, timeoutMs: 60_000, stableForMs: 100 },
@@ -138,20 +138,20 @@ try {
     }
   }
 
-  const scenario = await requestCraftUiHost({
+  const scenario = await requestMortiseUiHost({
     ...manifest,
     command: 'scenario.apply',
     params: { name: 'remote-ui-composer' },
   })
   if (!scenario.ok) throw new Error(`Scenario failed: ${scenario.error.message}`)
 
-  const snapshotResponse = await requestCraftUiHost<SnapshotResult>({
+  const snapshotResponse = await requestMortiseUiHost<SnapshotResult>({
     ...manifest,
     command: 'ui.snapshot',
   })
   if (!snapshotResponse.ok) throw new Error(`Snapshot failed: ${snapshotResponse.error.message}`)
   const snapshot = snapshotResponse.result
-  const unchangedResponse = await requestCraftUiHost<IncrementalSnapshotResult>({
+  const unchangedResponse = await requestMortiseUiHost<IncrementalSnapshotResult>({
     ...manifest,
     command: 'ui.snapshot',
     params: { sinceRevision: snapshot.revision },
@@ -163,7 +163,7 @@ try {
   const target = Object.values(snapshot.regions).flat().find((node) => node.role === 'radio' && node.name === 'Rapid prototype')
   if (!target) throw new Error('Physical smoke target was not present in the semantic snapshot.')
 
-  const action = await requestCraftUiHost({
+  const action = await requestMortiseUiHost({
     ...manifest,
     command: 'ui.action',
     params: { revision: snapshot.revision, ref: target.ref, action: 'click' },
@@ -172,69 +172,69 @@ try {
     throw new Error(action.ok ? 'Physical action did not produce renderer verification.' : action.error.message)
   }
 
-  const assertion = await requestCraftUiHost({
+  const assertion = await requestMortiseUiHost({
     ...manifest,
     command: 'ui.assert',
     params: { predicate: { kind: 'node', target: { role: 'radio', name: 'Rapid prototype' }, state: 'checked', equals: true } },
   })
   if (!assertion.ok) throw new Error(`Assertion failed: ${assertion.error.message}`)
 
-  const imeScenario = await requestCraftUiHost({
+  const imeScenario = await requestMortiseUiHost({
     ...manifest,
     command: 'scenario.apply',
     params: { name: 'remote-ui-composer', variant: 'Direct input' },
   })
   if (!imeScenario.ok) throw new Error(`IME scenario failed: ${imeScenario.error.message}`)
-  const imeSnapshotResponse = await requestCraftUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
+  const imeSnapshotResponse = await requestMortiseUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
   if (!imeSnapshotResponse.ok) throw new Error(`IME snapshot failed: ${imeSnapshotResponse.error.message}`)
   const imeSnapshot = imeSnapshotResponse.result
   const textbox = Object.values(imeSnapshot.regions).flat().find((node) => node.role === 'textbox')
   if (!textbox) throw new Error('IME scenario did not expose a textbox.')
-  const ime = await requestCraftUiHost({
+  const ime = await requestMortiseUiHost({
     ...manifest,
     command: 'ui.action',
     params: { revision: imeSnapshot.revision, target: { ref: textbox.ref }, action: 'ime', value: '中文输入' },
   })
   if (!ime.ok) throw new Error(`IME action failed: ${ime.error.message}`)
-  const imeResultResponse = await requestCraftUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
+  const imeResultResponse = await requestMortiseUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
   if (!imeResultResponse.ok) throw new Error(`IME result snapshot failed: ${imeResultResponse.error.message}`)
   const composed = Object.values(imeResultResponse.result.regions).flat().find((node) => node.role === 'textbox')
   if (!composed?.value?.includes('中文输入')) throw new Error(`IME composition was not reflected in the UI value: ${composed?.value ?? '(empty)'}`)
 
-  const shortcut = await requestCraftUiHost({
+  const shortcut = await requestMortiseUiHost({
     ...manifest,
     command: 'ui.action',
     params: { revision: imeResultResponse.result.revision, target: { ref: composed.ref }, action: 'shortcut', key: 'A', modifiers: ['control'], mode: 'physical' },
   })
   if (!shortcut.ok || shortcut.verificationLevel !== 'renderer-verified') throw new Error(shortcut.ok ? 'Shortcut was not renderer-verified.' : shortcut.error.message)
-  const clipboardSnapshot = await requestCraftUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
+  const clipboardSnapshot = await requestMortiseUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
   if (!clipboardSnapshot.ok) throw new Error(clipboardSnapshot.error.message)
   const clipboardTarget = Object.values(clipboardSnapshot.result.regions).flat().find(node => node.role === 'textbox')
   if (!clipboardTarget) throw new Error('Clipboard target disappeared.')
-  const clipboard = await requestCraftUiHost({
+  const clipboard = await requestMortiseUiHost({
     ...manifest,
     command: 'ui.action',
     params: { revision: clipboardSnapshot.result.revision, target: { ref: clipboardTarget.ref }, action: 'clipboard', value: 'clipboard validation', mode: 'physical' },
   })
   if (!clipboard.ok || clipboard.verificationLevel !== 'renderer-verified') throw new Error(clipboard.ok ? 'Clipboard was not renderer-verified.' : clipboard.error.message)
-  const richSnapshot = await requestCraftUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
+  const richSnapshot = await requestMortiseUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
   if (!richSnapshot.ok) throw new Error(richSnapshot.error.message)
   const richTarget = Object.values(richSnapshot.result.regions).flat().find(node => node.role === 'textbox')
   if (!richTarget) throw new Error('Rich-text target disappeared.')
-  const richText = await requestCraftUiHost({
+  const richText = await requestMortiseUiHost({
     ...manifest,
     command: 'ui.action',
     params: { revision: richSnapshot.result.revision, target: { ref: richTarget.ref }, action: 'rich-text', value: 'rich text validation', mode: 'physical' },
   })
   if (!richText.ok || richText.verificationLevel !== 'renderer-verified') throw new Error(richText.ok ? 'Rich-text was not renderer-verified.' : richText.error.message)
 
-  const semanticScenario = await requestCraftUiHost({
+  const semanticScenario = await requestMortiseUiHost({
     ...manifest,
     command: 'scenario.apply',
     params: { name: 'slash-command-demo' },
   })
   if (!semanticScenario.ok) throw new Error(`Business semantic scenario failed: ${semanticScenario.error.message}`)
-  const semanticSnapshotResponse = await requestCraftUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
+  const semanticSnapshotResponse = await requestMortiseUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
   if (!semanticSnapshotResponse.ok) throw new Error(`Business semantic snapshot failed: ${semanticSnapshotResponse.error.message}`)
   const semanticSnapshot = semanticSnapshotResponse.result
   const semanticNodes = Object.values(semanticSnapshot.regions).flat()
@@ -242,7 +242,7 @@ try {
   if (!semanticInput || !semanticInput.ref.includes('business.composer.playground-session.input')) {
     throw new Error('The composer input was not merged with its stable business semantic identity.')
   }
-  const semanticFill = await requestCraftUiHost({
+  const semanticFill = await requestMortiseUiHost({
     ...manifest,
     command: 'ui.action',
     params: { revision: semanticSnapshot.revision, target: { ref: semanticInput.ref }, action: 'fill', mode: 'semantic', value: 'private validation prompt' },
@@ -250,11 +250,11 @@ try {
   if (!semanticFill.ok || semanticFill.verificationLevel !== 'scenario-verified') {
     throw new Error(semanticFill.ok ? 'Semantic fill was assigned the wrong verification level.' : semanticFill.error.message)
   }
-  const redactedResponse = await requestCraftUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
+  const redactedResponse = await requestMortiseUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
   if (!redactedResponse.ok) throw new Error(`Redacted snapshot failed: ${redactedResponse.error.message}`)
   const redactedInput = Object.values(redactedResponse.result.regions).flat().find(node => node.semanticId === 'composer.playground-session.input')
   if (redactedInput?.value !== '[REDACTED]') throw new Error('Sensitive composer value leaked through the business semantic snapshot.')
-  const physicalFocus = await requestCraftUiHost<{ observed?: { hit?: boolean; focused?: boolean }; mode?: string }>({
+  const physicalFocus = await requestMortiseUiHost<{ observed?: { hit?: boolean; focused?: boolean }; mode?: string }>({
     ...manifest,
     command: 'ui.action',
     params: { revision: redactedResponse.result.revision, target: { ref: redactedInput.ref }, action: 'click', mode: 'physical' },
@@ -264,9 +264,9 @@ try {
     throw new Error(physicalFocus.ok ? 'Physical stable target did not return hit/focus renderer evidence.' : physicalFocus.error.message)
   }
 
-  const dragScenario = await requestCraftUiHost({ ...manifest, command: 'scenario.apply', params: { name: 'planner-things-board' } })
+  const dragScenario = await requestMortiseUiHost({ ...manifest, command: 'scenario.apply', params: { name: 'planner-things-board' } })
   if (!dragScenario.ok) throw new Error(`Drag scenario failed: ${dragScenario.error.message}`)
-  const dragSnapshot = await requestCraftUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
+  const dragSnapshot = await requestMortiseUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
   if (!dragSnapshot.ok) throw new Error(dragSnapshot.error.message)
   const draggable = Object.values(dragSnapshot.result.regions).flat()
     .filter(node => node.semanticId?.startsWith('planner.task.') && node.bounds && node.actions.includes('drag'))
@@ -276,7 +276,7 @@ try {
   const dragSource = draggable[0]
   const dragDestination = draggable[2]
   const destination = dragDestination!.bounds!
-  const dragged = await requestCraftUiHost({
+  const dragged = await requestMortiseUiHost({
     ...manifest,
     command: 'ui.action',
     params: {
@@ -287,14 +287,14 @@ try {
     },
   })
   if (!dragged.ok || dragged.verificationLevel !== 'renderer-verified') throw new Error(dragged.ok ? 'Drag was not renderer-verified.' : dragged.error.message)
-  const reordered = await requestCraftUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
+  const reordered = await requestMortiseUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })
   if (!reordered.ok) throw new Error(reordered.error.message)
   const reorderedIds = Object.values(reordered.result.regions).flat().filter(node => node.semanticId?.startsWith('planner.task.')).map(node => node.semanticId)
   if (reorderedIds.indexOf(dragSource!.semanticId) <= reorderedIds.indexOf(dragDestination!.semanticId)) {
     throw new Error('Physical drag completed without changing the real Planner row order.')
   }
 
-  const evidence = await requestCraftUiHost({
+  const evidence = await requestMortiseUiHost({
     ...manifest,
     command: 'evidence.capture',
     params: { label: 'electron-ui-validation-smoke' },
@@ -310,7 +310,7 @@ try {
   })}\n`)
 } catch (error) {
   try {
-    const failure = await requestCraftUiHost<{ bundleDir: string }>({
+    const failure = await requestMortiseUiHost<{ bundleDir: string }>({
       ...manifest,
       command: 'evidence.capture',
       params: { label: 'electron-e2e-client-failure' },
@@ -322,5 +322,5 @@ try {
   }
   throw error
 } finally {
-  await stopCraftUiRun(manifest.runDir)
+  await stopMortiseUiRun(manifest.runDir)
 }

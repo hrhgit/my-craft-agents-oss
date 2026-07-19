@@ -39,8 +39,8 @@ export async function packageDarwin(config: BuildConfig): Promise<string> {
   await $`cd ${electronDir} && npx electron-builder ${builderArgs}`;
 
   // Verify the DMG and ZIP were built (ZIP is used by electron-updater for auto-updates)
-  const dmgName = `Craft-Agents-${arch}.dmg`;
-  const zipName = `Craft-Agents-${arch}.zip`;
+  const dmgName = `Mortise-${arch}.dmg`;
+  const zipName = `Mortise-${arch}.zip`;
   const dmgPath = join(electronDir, 'release', dmgName);
   const zipPath = join(electronDir, 'release', zipName);
 

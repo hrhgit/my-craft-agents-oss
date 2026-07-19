@@ -17919,7 +17919,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 function getCredentialCachePath(workspaceId, sourceSlug) {
-  const configDir = process.env.CRAFT_CONFIG_DIR || join(homedir(), ".craft-agent");
+  const configDir = process.env.MORTISE_CONFIG_DIR || join(homedir(), ".mortise");
   return join(configDir, "workspaces", workspaceId, "sources", sourceSlug, ".credential-cache.json");
 }
 function readCredential(workspaceId, sourceSlug) {
@@ -18045,7 +18045,7 @@ async function executeApiTool(config2, args, sessionPath) {
     return {
       content: [{
         type: "text",
-        text: `Authentication required for ${config2.name}. Please authenticate the source in Craft Agent settings.`
+        text: `Authentication required for ${config2.name}. Please authenticate the source in Mortise Agent settings.`
       }],
       isError: true
     };
@@ -18237,7 +18237,7 @@ async function main() {
     process.exit(1);
   }
   const server = new Server({
-    name: "craft-agent-api-bridge",
+    name: "mortise-api-bridge",
     version: "0.3.1"
   }, {
     capabilities: {

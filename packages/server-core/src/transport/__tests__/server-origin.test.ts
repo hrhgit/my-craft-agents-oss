@@ -5,7 +5,7 @@ describe('WebSocket Origin validation', () => {
   it('keeps loopback binds permissive for local Electron origins', () => {
     expect(isLoopbackHost('127.0.0.1')).toBe(true)
     expect(isAllowedWsOrigin(undefined, '127.0.0.1')).toBe(true)
-    expect(isAllowedWsOrigin('app://craft', 'localhost')).toBe(true)
+    expect(isAllowedWsOrigin('app://mortise', 'localhost')).toBe(true)
   })
 
   it('allows explicit non-loopback same-host origins only', () => {

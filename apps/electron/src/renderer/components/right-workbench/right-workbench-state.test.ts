@@ -4,9 +4,7 @@ import {
   browserInstanceContentId,
   browserRegistryWorkspaceSyncKey,
   parseBrowserInstanceContentId,
-  parseSideTasksContentId,
   extensionWorkspaceContentId,
-  sideTasksContentId,
 } from './right-workbench-state'
 
 function extensionItem(
@@ -49,16 +47,11 @@ describe('right workbench state', () => {
       .not.toBe(extensionWorkspaceContentId(extensionItem('workspace', 'session-a', 'workspace-a', 'runtime-b', 'multiple')))
   })
 
-  it('round-trips browser instances and parent-scoped side task identities', () => {
+  it('round-trips browser instance identities', () => {
     const browserId = browserInstanceContentId('browser:/instance 1')
     expect(parseBrowserInstanceContentId(browserId)).toBe('browser:/instance 1')
     expect(parseBrowserInstanceContentId('browser')).toBeNull()
     expect(parseBrowserInstanceContentId('browser-instance:%')).toBeNull()
-
-    const sideTasksId = sideTasksContentId('parent/session 1')
-    expect(parseSideTasksContentId(sideTasksId)).toBe('parent/session 1')
-    expect(parseSideTasksContentId('side-tasks')).toBeNull()
-    expect(parseSideTasksContentId('side-tasks:%')).toBeNull()
   })
 
   it('changes the browser registry sync identity for local and remote workspace switches', () => {

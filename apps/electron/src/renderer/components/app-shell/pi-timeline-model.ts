@@ -1,5 +1,5 @@
-import type { CredentialRequest, PermissionRequest, PiProjectionEntityV1 } from '@craft-agent/shared/protocol'
-import { isPlanArtifactV1, type PlanArtifactV1 } from '@craft-agent/core'
+import type { CredentialRequest, PermissionRequest, PiProjectionEntityV1 } from '@mortise/shared/protocol'
+import { isPlanArtifactV1, type PlanArtifactV1 } from '@mortise/core'
 
 export type PiTimelineItem =
   | {
@@ -128,7 +128,7 @@ function record(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-/** Converts Pi-native projection entities without reconstructing Craft Message objects. */
+/** Converts Pi-native projection entities without reconstructing Mortise Message objects. */
 export function buildPiTimelineItems(entities: readonly PiProjectionEntityV1[]): PiTimelineItem[] {
   return entities
     .flatMap((entity): PiTimelineItem[] => {
@@ -266,7 +266,7 @@ export function selectPendingPiPermission(
     description: typeof payload.description === 'string' ? payload.description : payload.toolName,
     command: typeof payload.command === 'string' ? payload.command : undefined,
     type: payload.permissionType === 'bash' || payload.permissionType === 'file_write'
-      || payload.permissionType === 'mcp_mutation' || payload.permissionType === 'api_mutation'
+      || payload.permissionType === 'tool_mutation' || payload.permissionType === 'mcp_mutation' || payload.permissionType === 'api_mutation'
       || payload.permissionType === 'admin_approval' ? payload.permissionType : undefined,
     appName: typeof payload.appName === 'string' ? payload.appName : undefined,
     reason: typeof payload.reason === 'string' ? payload.reason : undefined,

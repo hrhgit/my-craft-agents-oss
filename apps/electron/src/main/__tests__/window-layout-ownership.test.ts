@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from 'bun:test'
 import { EventEmitter } from 'node:events'
 
 mock.module('electron', () => ({
-  app: { isPackaged: false, getName: () => 'Craft Agents' },
+  app: { isPackaged: false, getName: () => 'Mortise' },
   BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
   clipboard: { readText: () => '', writeText() {} },
   Menu: { buildFromTemplate: () => ({ popup() {} }) },
@@ -10,7 +10,7 @@ mock.module('electron', () => ({
   screen: { getCursorScreenPoint: () => ({ x: 0, y: 0 }) },
   shell: { openExternal: async () => {} },
 }))
-mock.module('@craft-agent/shared/config', () => ({
+mock.module('@mortise/shared/config', () => ({
   getWorkspaceByNameOrId: () => null,
 }))
 

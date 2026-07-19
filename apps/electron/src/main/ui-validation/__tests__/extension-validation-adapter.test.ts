@@ -16,7 +16,7 @@ describe('ElectronExtensionValidationAdapter', () => {
       input: { message: `'); globalThis.compromised = true; ('` },
     })).resolves.toEqual({ invoked: true })
     const expression = String(fake.execute.mock.calls[0]?.[0])
-    expect(expression).toContain('__CRAFT_UI_VALIDATION_EXTENSION_BRIDGE_V1__')
+    expect(expression).toContain('__MORTISE_UI_VALIDATION_EXTENSION_BRIDGE_V1__')
     expect(expression).toContain('bridge["execute"]')
     expect(expression).not.toContain('eval(')
   })

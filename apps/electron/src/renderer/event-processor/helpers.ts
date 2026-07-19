@@ -7,9 +7,9 @@
 
 import type { Message, Session } from '../../shared/types'
 
-// Re-export canonical generateMessageId from @craft-agent/shared/protocol
-// (originally defined in @craft-agent/core/types/message.ts)
-export { generateMessageId } from '@craft-agent/shared/protocol'
+// Re-export canonical generateMessageId from @mortise/shared/protocol
+// (originally defined in @mortise/core/types/message.ts)
+export { generateMessageId } from '@mortise/shared/protocol'
 
 /**
  * Find message index by turnId

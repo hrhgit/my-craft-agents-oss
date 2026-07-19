@@ -1,7 +1,7 @@
 import type { ComponentEntry } from './types'
 import { ScenarioAppShellHost } from '@/ui-validation/app-shell-scenario-service'
 
-export const appShellScenarioComponents: ComponentEntry[] = __CRAFT_UI_VALIDATION_BUILD__ ? [{
+export const appShellScenarioComponents: ComponentEntry[] = __MORTISE_UI_VALIDATION_BUILD__ ? [{
   id: 'app-shell-scenario-host',
   name: 'AppShell Scenario Host',
   category: 'Chat',

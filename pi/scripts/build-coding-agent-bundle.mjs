@@ -37,7 +37,7 @@ const commonBuildOptions = {
 	splitting: true,
 	external: [
 		"@mariozechner/clipboard",
-		"@earendil-works/pi-ai",
+		"@mortise/pi-ai",
 		"@silvia-odwyer/photon-node",
 		"canvas",
 		"cross-spawn",

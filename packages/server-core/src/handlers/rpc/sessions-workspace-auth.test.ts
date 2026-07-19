@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import { registerSessionsHandlers } from './sessions'
 import type { HandlerDeps } from '../handler-deps'
 import type { ISessionManager } from '../session-manager-interface'

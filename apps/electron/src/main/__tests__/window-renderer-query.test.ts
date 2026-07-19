@@ -28,7 +28,7 @@ describe('window renderer query', () => {
       focused: 'true',
       layoutWindowId: 'child-1',
     }, {
-      craftTestMode: true,
+      mortiseTestMode: true,
       layoutReadOnly: true,
     })
 
@@ -37,7 +37,7 @@ describe('window renderer query', () => {
       route: 'allSessions/session/release-readiness',
       focused: 'true',
       layoutWindowId: 'child-1',
-      craftTestMode: '1',
+      mortiseTestMode: '1',
       layoutReadOnly: '1',
     })
   })

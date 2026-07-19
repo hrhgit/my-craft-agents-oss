@@ -1,8 +1,8 @@
-# Craft WebUI
+# Mortise WebUI
 
-`apps/webui` is the browser shell for Craft's headless/server mode. The desktop
-Electron app is still the primary Craft UI; this package exists so the server can
-serve a browser UI when `CRAFT_WEBUI_DIR` points at a built `apps/webui/dist`.
+`apps/webui` is the browser shell for Mortise's headless/server mode. The desktop
+Electron app is still the primary Mortise UI; this package exists so the server can
+serve a browser UI when `MORTISE_WEBUI_DIR` points at a built `apps/webui/dist`.
 
 The WebUI deliberately reuses the Electron renderer for the main app surface.
 Its own code should stay thin: bootstrap i18n/theme state, create the browser
@@ -18,7 +18,7 @@ modules that are bundled but not executed in the browser.
 
 ## Boundary
 
-- WebUI talks to Craft through server RPC (`WsRpcClient`) and browser-safe shims.
+- WebUI talks to Mortise through server RPC (`WsRpcClient`) and browser-safe shims.
 - WebUI source must not import Electron, Node builtins, or Pi SDK packages directly.
 - Shared renderer code that needs different browser behavior should use existing
   WebUI platform checks or move reusable contracts into shared packages.

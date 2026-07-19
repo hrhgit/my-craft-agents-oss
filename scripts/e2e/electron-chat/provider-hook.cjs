@@ -2,8 +2,8 @@ const { appendFileSync, mkdirSync } = require("node:fs");
 const { dirname } = require("node:path");
 const { randomUUID } = require("node:crypto");
 
-const LOG_FILE = process.env.CRAFT_E2E_PROVIDER_LOG_FILE;
-const RUN_ID = process.env.CRAFT_E2E_RUN_ID;
+const LOG_FILE = process.env.MORTISE_E2E_PROVIDER_LOG_FILE;
+const RUN_ID = process.env.MORTISE_E2E_RUN_ID;
 
 function writeEvent(event) {
   if (!LOG_FILE) return;

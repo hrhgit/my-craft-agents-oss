@@ -1,4 +1,4 @@
-import type { TransportConnectionState, WsRpcClient } from '@craft-agent/server-core/transport/client'
+import type { TransportConnectionState, WsRpcClient } from '@mortise/server-core/transport/client'
 
 type ConnectionClient = Pick<WsRpcClient, 'getConnectionState' | 'onConnectionStateChanged'>
 

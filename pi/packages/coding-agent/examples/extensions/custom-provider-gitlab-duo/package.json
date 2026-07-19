@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-custom-provider-gitlab-duo",
   "private": true,
-  "version": "0.78.0-fork.1",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "clean": "echo 'nothing to clean'",
@@ -10,7 +10,20 @@
   },
   "pi": {
     "extensions": [
-      "./index.ts"
+      {
+        "id": "gitlab-duo-provider-example",
+        "path": "./index.ts",
+        "targets": ["pi"],
+        "manifest": {
+          "schemaVersion": 1,
+          "name": "GitLab Duo Provider Example",
+          "version": "0.1.0",
+          "author": { "name": "Mortise Contributors" },
+          "engines": { "pi": "^0.1.0" },
+          "capabilities": ["providers.gitlab-duo"],
+          "permissions": []
+        }
+      }
     ]
   }
 }

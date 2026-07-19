@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { PiGlobalProvider } from '@craft-agent/shared/config'
+import type { PiGlobalProvider } from '@mortise/shared/config'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 
 const provider: PiGlobalProvider = {

@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { requestCraftUiHost } from '../../craft-ui/client.ts'
-import { DEFAULT_CRAFT_UI_RUN_ROOT, startCraftUiRun, stopCraftUiRun } from '../../craft-ui/controller.ts'
-import type { CraftUiRunManifest, CraftUiSurface } from '../../craft-ui/protocol.ts'
+import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
+import { DEFAULT_MORTISE_UI_RUN_ROOT, startMortiseUiRun, stopMortiseUiRun } from '../../mortise-ui/controller.ts'
+import type { MortiseUiRunManifest, MortiseUiSurface } from '../../mortise-ui/protocol.ts'
 
 interface SnapshotNode { ref: string; role: string; name: string; semanticId?: string; testId?: string }
 interface Snapshot { revision: number; regions: Record<string, SnapshotNode[]> }
 
-const iterations = boundedInteger(process.env.CRAFT_UI_STABILITY_ITERATIONS, 20, 1, 1_000)
-const surfaces = parseSurfaces(process.env.CRAFT_UI_STABILITY_SURFACES ?? 'electron,webui')
+const iterations = boundedInteger(process.env.MORTISE_UI_STABILITY_ITERATIONS, 20, 1, 1_000)
+const surfaces = parseSurfaces(process.env.MORTISE_UI_STABILITY_SURFACES ?? 'electron,webui')
 const summary = {
   startedAt: new Date().toISOString(),
   iterations,
@@ -16,21 +16,21 @@ const summary = {
   cycles: [] as Array<Record<string, unknown>>,
   status: 'running',
 }
-const summaryPath = join(DEFAULT_CRAFT_UI_RUN_ROOT, `stability-${Date.now()}.json`)
-mkdirSync(DEFAULT_CRAFT_UI_RUN_ROOT, { recursive: true })
+const summaryPath = join(DEFAULT_MORTISE_UI_RUN_ROOT, `stability-${Date.now()}.json`)
+mkdirSync(DEFAULT_MORTISE_UI_RUN_ROOT, { recursive: true })
 
 for (const surface of surfaces) {
   for (let iteration = 1; iteration <= iterations; iteration += 1) {
-    let manifest: CraftUiRunManifest | undefined
+    let manifest: MortiseUiRunManifest | undefined
     const cycle: Record<string, unknown> = { surface, iteration, startedAt: new Date().toISOString(), status: 'running' }
     summary.cycles.push(cycle)
     persist()
     try {
-      manifest = await startCraftUiRun({
+      manifest = await startMortiseUiRun({
         surface,
         profileMode: 'fixture',
         waitMs: surface === 'electron' ? 180_000 : 90_000,
-        ...(surface === 'electron' && iteration > 1 ? { extraEnv: { CRAFT_UI_SKIP_BUILD: '1' } } : {}),
+        ...(surface === 'electron' && iteration > 1 ? { extraEnv: { MORTISE_UI_SKIP_BUILD: '1' } } : {}),
       })
       cycle.runId = manifest.runId
       if (surface === 'electron') {
@@ -112,7 +112,7 @@ for (const surface of surfaces) {
       throw error
     } finally {
       if (manifest) {
-        const stopped = await stopCraftUiRun(manifest.runDir)
+        const stopped = await stopMortiseUiRun(manifest.runDir)
         cycle.stopped = stopped.status === 'stopped'
         cycle.profileRemoved = !existsSync(manifest.profileDir)
         if (stopped.status !== 'stopped' || existsSync(manifest.profileDir)) {
@@ -131,8 +131,8 @@ summary.status = 'passed'
 persist()
 process.stdout.write(`${JSON.stringify({ ok: true, summaryPath, cycles: summary.cycles.length })}\n`)
 
-async function command<T = unknown>(manifest: CraftUiRunManifest, name: string, params: Record<string, unknown>, timeoutMs: number) {
-  return await requestCraftUiHost<T>({ ...manifest, command: name, params, timeoutMs })
+async function command<T = unknown>(manifest: MortiseUiRunManifest, name: string, params: Record<string, unknown>, timeoutMs: number) {
+  return await requestMortiseUiHost<T>({ ...manifest, command: name, params, timeoutMs })
 }
 
 function persist(): void {
@@ -146,10 +146,10 @@ function snapshotNodes(snapshot: Snapshot): SnapshotNode[] {
     : []
 }
 
-function parseSurfaces(value: string): CraftUiSurface[] {
+function parseSurfaces(value: string): MortiseUiSurface[] {
   const parsed = [...new Set(value.split(',').map(item => item.trim()).filter(Boolean))]
-  if (parsed.length === 0 || parsed.some(item => item !== 'electron' && item !== 'webui')) throw new Error('CRAFT_UI_STABILITY_SURFACES must contain electron and/or webui.')
-  return parsed as CraftUiSurface[]
+  if (parsed.length === 0 || parsed.some(item => item !== 'electron' && item !== 'webui')) throw new Error('MORTISE_UI_STABILITY_SURFACES must contain electron and/or webui.')
+  return parsed as MortiseUiSurface[]
 }
 
 function boundedInteger(value: string | undefined, fallback: number, min: number, max: number): number {

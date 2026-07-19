@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, FolderOpen, Plus } from 'lucide-react'
 import { toast } from 'sonner'
-import { Spinner } from '@craft-agent/ui'
+import { Spinner } from '@mortise/ui'
 import type { WorkspaceInfo } from '../../../shared/types'
 import {
   AddWorkspaceContainer,

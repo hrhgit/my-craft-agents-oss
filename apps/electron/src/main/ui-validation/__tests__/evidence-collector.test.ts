@@ -11,14 +11,14 @@ afterEach(async () => { await Promise.all(dirs.splice(0).map(path => rm(path, { 
 
 describe('ElectronEvidenceCollector', () => {
   it('writes redacted, hashed full evidence and incremental snapshots', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-evidence-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-evidence-'))
     dirs.push(root)
     const runtimeLogPath = join(root, 'runtime.log')
     await writeFile(runtimeLogPath, 'Bearer runtime-secret https://host.test/api?token=raw\n')
     let revision = 1
     const snapshot = (): UiDriverSnapshot => ({
       revision,
-      window: { webContentsId: 4, workspaceId: 'w1', role: 'main', title: 'Craft', url: 'https://host.test/?key=raw', bounds: { x: 0, y: 0, width: 800, height: 600 } },
+      window: { webContentsId: 4, workspaceId: 'w1', role: 'main', title: 'Mortise', url: 'https://host.test/?key=raw', bounds: { x: 0, y: 0, width: 800, height: 600 } },
       regions: { navigation: [], sidebar: [], dialog: [], notification: [], main: [{ ref: `r${revision}:node`, role: 'button', name: revision === 1 ? 'Send' : 'Sent', state: {}, actions: ['click'] }] },
       embeddedSurfaces: [{
         kind: 'browser-view', surfaceId: 'browser:browser-1', instanceId: 'browser-1',
@@ -74,7 +74,7 @@ describe('ElectronEvidenceCollector', () => {
   })
 
   it('still produces diagnostic evidence when renderer capture is unavailable', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'craft-evidence-failed-'))
+    const root = await mkdtemp(join(tmpdir(), 'mortise-evidence-failed-'))
     dirs.push(root)
     const collector = new ElectronEvidenceCollector({
       artifactsDir: root, runId: 'run-failed', runtimeLogPath: join(root, 'missing.log'),

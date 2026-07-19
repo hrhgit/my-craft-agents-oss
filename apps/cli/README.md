@@ -1,14 +1,14 @@
-# craft-cli
+# mortise-cli
 
-Terminal client for Craft Agent server. Connects over WebSocket to a running
-Craft Agent server (or spawns one locally for the `run` command) and provides
+Terminal client for Mortise Agent server. Connects over WebSocket to a running
+Mortise Agent server (or spawns one locally for the `run` command) and provides
 commands for listing resources, managing sessions, sending messages with
 real-time streaming, and validating server health.
 
-> **Not to be confused** with the `craft-agent` CLI documented in
-> [`apps/electron/resources/docs/craft-cli.md`](../../apps/electron/resources/docs/craft-cli.md),
+> **Not to be confused** with the `mortise` CLI documented in
+> [`apps/electron/resources/docs/mortise-cli.md`](../../apps/electron/resources/docs/mortise-cli.md),
 > which manages workspace config domains (labels / sources / skills / automations).
-> This `craft-cli` is the WebSocket client that drives a running server.
+> This `mortise-cli` is the WebSocket client that drives a running server.
 
 ## Quick start
 
@@ -23,7 +23,7 @@ bun run src/index.ts --validate-server
 Spawns a local server, creates a session, streams the response, then exits.
 
 ```bash
-craft-cli run <message> [options]
+mortise-cli run <message> [options]
 ```
 
 | Flag | Description |
@@ -97,7 +97,7 @@ mode.
 
 ### Independent child-session windows (desktop-only)
 
-The craft desktop app can open pi session tree child sessions (branches
+The mortise desktop app can open pi session tree child sessions (branches
 spawned via `spawn_session`) in independent UI windows — see the
 SubagentPanel's "在独立窗口打开" button. This is a **desktop-only** feature:
 
@@ -131,4 +131,4 @@ listen <channel>       Subscribe to push events (Ctrl+C to stop)
 --validate-server      Multi-step server integration test
 ```
 
-Run `craft-cli --help` for the full, up-to-date flag listing.
+Run `mortise-cli --help` for the full, up-to-date flag listing.

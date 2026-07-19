@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
-import { OAUTH_RELAY_CALLBACK_URL, decodeOAuthRelayState, isOAuthRelayState } from '../../auth/oauth-relay.ts';
+import { decodeOAuthRelayState, isOAuthRelayState } from '../../auth/oauth-relay.ts';
 import { SourceCredentialManager } from '../credential-manager.ts';
 import type { LoadedSource, FolderSourceConfig } from '../types.ts';
+
+const OAUTH_RELAY_CALLBACK_URL = 'https://auth.example.com/auth/callback';
 
 function createApiSource(overrides: Partial<FolderSourceConfig> = {}): LoadedSource {
   return {
@@ -54,6 +56,7 @@ describe('SourceCredentialManager.prepareOAuth relay wrapping', () => {
   const credManager = new SourceCredentialManager();
 
   beforeEach(() => {
+    process.env.MORTISE_OAUTH_RELAY_URL = OAUTH_RELAY_CALLBACK_URL;
     globalThis.fetch = mock((input: string | URL | Request) => {
       const url = typeof input === 'string'
         ? input
@@ -72,7 +75,7 @@ describe('SourceCredentialManager.prepareOAuth relay wrapping', () => {
 
   it('uses the stable relay redirect URI for WebUI Google flows', async () => {
     const result = await credManager.prepareOAuth(createApiSource(), {
-      callbackUrl: 'https://ghalmos.craftdocs-cf-t1.com/api/oauth/callback',
+      callbackUrl: 'https://server.example.com/api/oauth/callback',
     });
 
     expect(result.redirectUri).toBe(OAUTH_RELAY_CALLBACK_URL);
@@ -85,7 +88,7 @@ describe('SourceCredentialManager.prepareOAuth relay wrapping', () => {
     expect(outerState).toBeTruthy();
     expect(isOAuthRelayState(outerState!)).toBe(true);
     expect(decodeOAuthRelayState(outerState!)).toEqual({
-      returnTo: 'https://ghalmos.craftdocs-cf-t1.com/api/oauth/callback',
+      returnTo: 'https://server.example.com/api/oauth/callback',
       innerState: result.state,
     });
   });
@@ -112,7 +115,7 @@ describe('SourceCredentialManager.prepareOAuth relay wrapping', () => {
 
   it('passes the stable relay redirect URI into MCP prepare-time metadata flow', async () => {
     const result = await credManager.prepareOAuth(createMcpSource(), {
-      callbackUrl: 'https://ghalmos.craftdocs-cf-t1.com/api/oauth/callback',
+      callbackUrl: 'https://server.example.com/api/oauth/callback',
     });
 
     expect(result.redirectUri).toBe(OAUTH_RELAY_CALLBACK_URL);
@@ -125,7 +128,7 @@ describe('SourceCredentialManager.prepareOAuth relay wrapping', () => {
     expect(outerState).toBeTruthy();
     expect(isOAuthRelayState(outerState!)).toBe(true);
     expect(decodeOAuthRelayState(outerState!)).toEqual({
-      returnTo: 'https://ghalmos.craftdocs-cf-t1.com/api/oauth/callback',
+      returnTo: 'https://server.example.com/api/oauth/callback',
       innerState: result.state,
     });
   });

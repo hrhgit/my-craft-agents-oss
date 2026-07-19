@@ -1,4 +1,4 @@
 {
   "start": "bun --cwd=../.. run electron:dev:raw",
-  "port_env": ["CRAFT_VITE_PORT", "PORT"]
+  "port_env": ["MORTISE_VITE_PORT", "PORT"]
 }

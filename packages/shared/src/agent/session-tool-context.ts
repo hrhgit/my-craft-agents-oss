@@ -25,7 +25,7 @@ import type {
   ApiTestResult,
   SourceConfig,
   DeveloperFeedback,
-} from '@craft-agent/session-tools-core';
+} from '@mortise/session-tools-core';
 import {
   validateConfig,
   validateSource,
@@ -65,7 +65,7 @@ import { updatePreferences as updatePreferencesImpl } from '../config/preference
 import { createPiSkillResolver } from '../pi/pi-skill-resolver.ts';
 
 // Re-export types that may be needed by consumers
-export type { SessionToolContext, SessionToolCallbacks } from '@craft-agent/session-tools-core';
+export type { SessionToolContext, SessionToolCallbacks } from '@mortise/session-tools-core';
 
 /**
  * Options for creating a session tool context.

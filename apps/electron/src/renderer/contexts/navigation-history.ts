@@ -2,6 +2,7 @@ interface SemanticHistoryKeyInput {
   workspaceSlug: string | null
   panelRoutes: string[]
   focusedPanelIndex: number
+  pageSurfaceRoute?: string | null
 }
 
 interface InitialRestoreGateInput {
@@ -29,9 +30,11 @@ export function buildSemanticHistoryKey({
   workspaceSlug,
   panelRoutes,
   focusedPanelIndex,
+  pageSurfaceRoute = null,
 }: SemanticHistoryKeyInput): string {
   return [
     workspaceSlug ?? '',
+    pageSurfaceRoute ?? '',
     panelRoutes.join('|'),
     String(focusedPanelIndex),
   ].join('::')

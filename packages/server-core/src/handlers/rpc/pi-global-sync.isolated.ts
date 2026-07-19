@@ -9,7 +9,7 @@ const mockMigratePiGlobalProviderApiKeysToAuth = mock(() => ({
   changed: false,
 }))
 
-mock.module('@craft-agent/shared/config', () => ({
+mock.module('@mortise/shared/config', () => ({
   migratePiGlobalProviderApiKeysToAuth: () => mockMigratePiGlobalProviderApiKeysToAuth(),
   readPiGlobalProviders: () => mockReadPiGlobalProviders(),
   readPiGlobalSettings: () => mockReadPiGlobalSettings(),

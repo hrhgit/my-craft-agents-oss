@@ -4,7 +4,7 @@ import type {
   PiProjectionEntityV1,
   PiProjectionEventV1,
   PiProjectionSnapshotV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 
 export type PiProjectionSyncState = 'empty' | 'synced' | 'desynced'
 

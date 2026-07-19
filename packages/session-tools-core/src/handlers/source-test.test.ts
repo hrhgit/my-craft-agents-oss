@@ -132,7 +132,7 @@ describe('source_test auto-enable', () => {
   });
 
   it('flips enabled: false → true and calls activation callback on clean run', async () => {
-    writeSource(tempDir, 'craft-kb', { enabled: false });
+    writeSource(tempDir, 'mortise-kb', { enabled: false });
 
     let activated: string | null = null as string | null;
     const ctx = createCtx(tempDir, {
@@ -143,21 +143,21 @@ describe('source_test auto-enable', () => {
       },
     });
 
-    const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
+    const result = await handleSourceTest(ctx, { sourceSlug: 'mortise-kb' });
 
     const text = getResultText(result);
     expect(text).toContain('Source auto-enabled in config');
     expect(text).toContain('turn will auto-restart');
-    expect(activated).toBe('craft-kb');
+    expect(activated).toBe('mortise-kb');
 
     const persisted = JSON.parse(
-      readFileSync(join(tempDir, 'sources', 'craft-kb', 'config.json'), 'utf-8')
+      readFileSync(join(tempDir, 'sources', 'mortise-kb', 'config.json'), 'utf-8')
     ) as SourceConfig;
     expect(persisted.enabled).toBe(true);
   });
 
   it('already-enabled source still calls activation callback (session may be stale)', async () => {
-    writeSource(tempDir, 'craft-kb', { enabled: true });
+    writeSource(tempDir, 'mortise-kb', { enabled: true });
 
     let activated: string | null = null as string | null;
     const ctx = createCtx(tempDir, {
@@ -168,17 +168,17 @@ describe('source_test auto-enable', () => {
       },
     });
 
-    const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
+    const result = await handleSourceTest(ctx, { sourceSlug: 'mortise-kb' });
     const text = getResultText(result);
 
     // No "auto-enabled in config" line because enabled was already true.
     expect(text).not.toContain('auto-enabled in config');
-    expect(activated).toBe('craft-kb');
+    expect(activated).toBe('mortise-kb');
     expect(text).toContain('turn will auto-restart');
   });
 
   it('autoEnable: false skips both the flag flip and the activation callback', async () => {
-    writeSource(tempDir, 'craft-kb', { enabled: false });
+    writeSource(tempDir, 'mortise-kb', { enabled: false });
 
     let activated = false;
     const ctx = createCtx(tempDir, {
@@ -189,11 +189,11 @@ describe('source_test auto-enable', () => {
       },
     });
 
-    await handleSourceTest(ctx, { sourceSlug: 'craft-kb', autoEnable: false });
+    await handleSourceTest(ctx, { sourceSlug: 'mortise-kb', autoEnable: false });
 
     expect(activated).toBe(false);
     const persisted = JSON.parse(
-      readFileSync(join(tempDir, 'sources', 'craft-kb', 'config.json'), 'utf-8')
+      readFileSync(join(tempDir, 'sources', 'mortise-kb', 'config.json'), 'utf-8')
     ) as SourceConfig;
     // saveSourceConfig still runs (metadata update), but enabled flag must remain false.
     expect(persisted.enabled).toBe(false);
@@ -225,53 +225,53 @@ describe('source_test auto-enable', () => {
   });
 
   it('without activateSourceInSession, flag flip still happens with restart hint', async () => {
-    writeSource(tempDir, 'craft-kb', { enabled: false });
+    writeSource(tempDir, 'mortise-kb', { enabled: false });
 
     const ctx = createCtx(tempDir, {
       validateStdioMcpConnection: stubMcpOk(),
       // activateSourceInSession intentionally undefined
     });
 
-    const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
+    const result = await handleSourceTest(ctx, { sourceSlug: 'mortise-kb' });
     const text = getResultText(result);
 
     expect(text).toContain('auto-enabled in config');
     expect(text).toContain('Restart session to load tools');
 
     const persisted = JSON.parse(
-      readFileSync(join(tempDir, 'sources', 'craft-kb', 'config.json'), 'utf-8')
+      readFileSync(join(tempDir, 'sources', 'mortise-kb', 'config.json'), 'utf-8')
     ) as SourceConfig;
     expect(persisted.enabled).toBe(true);
   });
 
   it('activation failure shows warning but still persists enabled flag', async () => {
-    writeSource(tempDir, 'craft-kb', { enabled: false });
+    writeSource(tempDir, 'mortise-kb', { enabled: false });
 
     const ctx = createCtx(tempDir, {
       validateStdioMcpConnection: stubMcpOk(),
       activateSourceInSession: async () => ({ ok: false, reason: 'build failed' }),
     });
 
-    const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
+    const result = await handleSourceTest(ctx, { sourceSlug: 'mortise-kb' });
     const text = getResultText(result);
 
     expect(text).toContain('session activation failed: build failed');
 
     const persisted = JSON.parse(
-      readFileSync(join(tempDir, 'sources', 'craft-kb', 'config.json'), 'utf-8')
+      readFileSync(join(tempDir, 'sources', 'mortise-kb', 'config.json'), 'utf-8')
     ) as SourceConfig;
     expect(persisted.enabled).toBe(true);
   });
 
   it('successful activation reports a single auto-restart message (backend-agnostic)', async () => {
-    writeSource(tempDir, 'craft-kb', { enabled: true });
+    writeSource(tempDir, 'mortise-kb', { enabled: true });
 
     const ctx = createCtx(tempDir, {
       validateStdioMcpConnection: stubMcpOk(),
       activateSourceInSession: async () => ({ ok: true, availability: 'next-turn' }),
     });
 
-    const result = await handleSourceTest(ctx, { sourceSlug: 'craft-kb' });
+    const result = await handleSourceTest(ctx, { sourceSlug: 'mortise-kb' });
     const text = getResultText(result);
 
     // Both backends route through the same source_activated + auto_retry machinery

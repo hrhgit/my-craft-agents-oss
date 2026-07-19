@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test'
-import type { TransportConnectionState } from '@craft-agent/server-core/transport/client'
+import type { TransportConnectionState } from '@mortise/server-core/transport/client'
 import { waitForInitialConnection } from './connection'
 
 function state(status: TransportConnectionState['status'], message?: string): TransportConnectionState {

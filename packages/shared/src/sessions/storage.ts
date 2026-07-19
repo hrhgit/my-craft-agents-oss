@@ -4,7 +4,7 @@
  * Workspace-scoped session CRUD operations.
  * Sessions are stored at ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl
  * (Pi tree JSONL v3 format).
- * Craft sidecar directories next to those flat Pi JSONL files contain:
+ * Mortise sidecar directories next to those flat Pi JSONL files contain:
  * - attachments/ (file attachments)
  * - plans/ (plan files for Safe Mode)
  * - data/ (transform_data tool output: JSON files for datatable/spreadsheet blocks)
@@ -42,7 +42,7 @@ import { readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionM
 import {
   createSessionProjection as createPiSessionProjection,
   findSessionProjectionById as findPiHostSessionProjectionById,
-} from '@earendil-works/pi-coding-agent/host-facade';
+} from '@mortise/pi-coding-agent/host-facade';
 
 let sharedPiSessionsDirOverride: string | undefined;
 
@@ -73,7 +73,7 @@ export function getSharedPiSidecarPathForFile(sessionFile: string, sessionId: st
   if (!safeSessionId) {
     throw new Error('Security Error: Invalid session ID - empty sanitized value');
   }
-  return join(dirname(sessionFile), '.craft', safeSessionId);
+  return join(dirname(sessionFile), '.mortise', safeSessionId);
 }
 
 /**
@@ -102,7 +102,7 @@ function findSharedPiSessionFileInDir(cwdPath: string, sessionId: string): strin
     const entries = readdirSync(cwdPath, { withFileTypes: true })
       .filter(entry => entry.isFile() && entry.name.endsWith('.jsonl'));
 
-    // Native Pi/Craft filenames carry the session ID. Check every filename
+    // Native Pi/Mortise filenames carry the session ID. Check every filename
     // before opening any file so the common path remains directory-metadata only.
     const directMatch = entries.find(entry => (
       entry.name === `${safeSessionId}.jsonl`
@@ -110,12 +110,12 @@ function findSharedPiSessionFileInDir(cwdPath: string, sessionId: string): strin
     ));
     if (directMatch) return join(cwdPath, directMatch.name);
 
-    // Legacy/imported filenames may not carry the Craft ID. Preserve support by
+    // Legacy/imported filenames may not carry the Mortise ID. Preserve support by
     // reading first-line headers only after all cheap filename matches fail.
     for (const entry of entries) {
       const filePath = join(cwdPath, entry.name);
       const header = readTreeSessionHeader(filePath);
-      if (header?.id === sessionId || header?.craft?.id === sessionId) {
+      if (header?.id === sessionId || header?.mortise?.id === sessionId) {
         return filePath;
       }
     }
@@ -150,9 +150,9 @@ function findSharedPiSessionFile(sessionId: string, workspaceRootPath?: string, 
 }
 
 /**
- * List Craft session directories by scanning only the workspace root bucket.
+ * List Mortise session directories by scanning only the workspace root bucket.
  *
- * Complete-unification semantics require the Craft owner metadata to match the
+ * Complete-unification semantics require the Mortise owner metadata to match the
  * workspace root. Sessions in other cwd buckets belong to the workspace rooted
  * at that cwd.
  */
@@ -178,8 +178,8 @@ function listCraftSessionDirs(workspaceRootPath: string): Array<{ sessionId: str
     let sessionId: string | undefined;
     let headerWorkspaceRootPath: string | undefined;
     if (!treeHeader) return;
-    sessionId = treeHeader.craft?.id ?? treeHeader.id;
-    headerWorkspaceRootPath = treeHeader.craft?.workspaceRootPath;
+    sessionId = treeHeader.mortise?.id ?? treeHeader.id;
+    headerWorkspaceRootPath = treeHeader.mortise?.workspaceRootPath;
 
     if (!sessionId) {
       sessionId = basename(jsonlFile, '.jsonl');
@@ -230,7 +230,7 @@ export function ensureSessionsDir(workspaceRootPath: string, workingDirectory?: 
 }
 
 /**
- * Get path to a session's directory (the .craft/{sessionId}/ sidecar dir).
+ * Get path to a session's directory (the .mortise/{sessionId}/ sidecar dir).
  *
  * Always resolves to the sidecar directory next to the Pi
  * session JSONL file.
@@ -239,7 +239,7 @@ export function ensureSessionsDir(workspaceRootPath: string, workingDirectory?: 
  * Callers should still validate sessionId before calling this function.
  */
 export function getSessionPath(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string {
-  // The Craft sidecar is owned by the workspace/cwd bucket, not by a specific
+  // The Mortise sidecar is owned by the workspace/cwd bucket, not by a specific
   // timestamped transcript filename. Keep this path calculation pure: callers
   // use it on hot metadata paths where scanning the Pi directory once per
   // session would turn a list operation into synchronous O(n^2) filesystem I/O.
@@ -287,15 +287,15 @@ export function getPiNativeSessionDir(workspaceRootPath: string, _workingDirecto
 }
 
 /**
- * Ensure Pi has a tree JSONL session projection and attach latest Craft metadata.
+ * Ensure Pi has a tree JSONL session projection and attach latest Mortise metadata.
  *
- * Pi creates the projection/header; Craft only sends the UI metadata overlay
+ * Pi creates the projection/header; Mortise only sends the UI metadata overlay
  * through the Pi facade and returns the projection path.
  */
 export function ensureSharedPiTreeSessionFile(session: StoredSession): string {
   const sessionFile = getSessionFilePath(
     session.workspaceRootPath,
-    session.craftId,
+    session.mortiseId,
     session.workingDirectory,
     session.createdAt,
   );
@@ -308,7 +308,7 @@ export function ensureSharedPiTreeSessionFile(session: StoredSession): string {
   const projection = createPiSessionProjection({
     cwd,
     sessionDir: getPiNativeSessionDir(session.workspaceRootPath, session.workingDirectory),
-    id: session.sdkSessionId || session.craftId,
+    id: session.sdkSessionId || session.mortiseId,
   });
   const createdSessionFile = projection.path ?? sessionFile;
   writeTreeSessionCraftMetadata(createdSessionFile, session);
@@ -324,7 +324,7 @@ export async function ensureSharedPiTreeSessionFileAsync(
 ): Promise<string> {
   const sessionFile = getSessionFilePath(
     session.workspaceRootPath,
-    session.craftId,
+    session.mortiseId,
     session.workingDirectory,
     session.createdAt,
   );
@@ -339,7 +339,7 @@ export async function ensureSharedPiTreeSessionFileAsync(
   const projection = createPiSessionProjection({
     cwd,
     sessionDir: getPiNativeSessionDir(session.workspaceRootPath, session.workingDirectory),
-    id: session.sdkSessionId || session.craftId,
+    id: session.sdkSessionId || session.mortiseId,
   });
   const createdSessionFile = projection.path ?? sessionFile;
   await writeTreeSessionCraftMetadataAsync(createdSessionFile, session, {
@@ -463,7 +463,7 @@ export async function createSession(
   const sdkCwd = workspaceRootPath;
 
   const session: SessionHeader = {
-    craftId: sessionId,
+    mortiseId: sessionId,
     workspaceRootPath,
     name: options?.name,
     createdAt: now,
@@ -501,11 +501,11 @@ export async function createSession(
  * This unified approach ensures all session writes go through the same
  * async code path, which is more reliable on Windows.
  *
- * Writes Craft metadata through the Pi tree JSONL persistence path.
+ * Writes Mortise metadata through the Pi tree JSONL persistence path.
  */
 export async function saveSession(session: StoredSession): Promise<void> {
   sessionPersistenceQueue.enqueue(session);
-  await sessionPersistenceQueue.flush(session.craftId);
+  await sessionPersistenceQueue.flush(session.mortiseId);
 }
 
 /**
@@ -617,7 +617,7 @@ function headerToMetadata(
     // listCraftSessionDirs already resolved the sidecar directory. Reusing it
     // avoids rescanning the whole workspace bucket once per session.
     const planCount = listPlanFilesInDirectory(
-      sessionDir ? join(sessionDir, 'plans') : getSessionPlansPath(workspaceRootPath, header.craftId),
+      sessionDir ? join(sessionDir, 'plans') : getSessionPlansPath(workspaceRootPath, header.mortiseId),
     ).length;
 
     const workingDir = workspaceRootPath;
@@ -631,7 +631,7 @@ function headerToMetadata(
       sdkCwd,
     } as SessionHeader;
   } catch (error) {
-    debug(`[sessions] Failed to convert header to metadata for session "${header?.craftId}" in ${workspaceRootPath}:`, error);
+    debug(`[sessions] Failed to convert header to metadata for session "${header?.mortiseId}" in ${workspaceRootPath}:`, error);
     return null;
   }
 }
@@ -644,9 +644,9 @@ export async function deleteSession(workspaceRootPath: string, sessionId: string
   validateSessionId(sessionId);
 
   // Cancel any pending persistence write so it cannot resurrect the session
-  // file (or its craft metadata) after we delete it on disk below.
+  // file (or its mortise metadata) after we delete it on disk below.
   // Awaiting cancel() also waits for any in-progress write to finish, so the
-  // write cannot recreate the deleted files (or their craft metadata sidecar).
+  // write cannot recreate the deleted files (or their mortise metadata sidecar).
   await sessionPersistenceQueue.cancel(sessionId, { preventFutureEnqueue: true });
 
   try {
@@ -656,7 +656,7 @@ export async function deleteSession(workspaceRootPath: string, sessionId: string
       try { rmSync(sessionFile); } catch { /* ignore */ }
     }
 
-    // 2. Delete the sidecar directory (.craft/{sessionId}/ with attachments, plans, etc.)
+    // 2. Delete the sidecar directory (.mortise/{sessionId}/ with attachments, plans, etc.)
     const sessionDir = getSessionPath(workspaceRootPath, sessionId);
     if (existsSync(sessionDir)) {
       rmSync(sessionDir, { recursive: true });
@@ -676,7 +676,7 @@ export async function getOrCreateLatestSession(workspaceRootPath: string): Promi
   if (sessions.length > 0 && sessions[0]) {
     const latest = sessions[0];
     return {
-      craftId: latest.craftId,
+      mortiseId: latest.mortiseId,
       sdkSessionId: latest.sdkSessionId,
       workspaceRootPath: latest.workspaceRootPath,
       name: latest.name,

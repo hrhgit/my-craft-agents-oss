@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { createExtensionEventForwarder } from './pi-extension-bridge'
-import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
-import type { EventSink } from '@craft-agent/server-core/transport'
+import type { ExtensionBridgeEvent } from '@mortise/shared/agent/backend/types'
+import type { EventSink } from '@mortise/server-core/transport'
 
 const route = { extensionId: 'example', runtimeId: 'runtime', sessionId: 'session' }
 

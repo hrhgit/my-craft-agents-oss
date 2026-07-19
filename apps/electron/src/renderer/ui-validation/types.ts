@@ -61,6 +61,6 @@ export interface UiSemanticBridge {
 
 declare global {
   interface Window {
-    __craftUiValidation?: Partial<UiSemanticBridge> & { revision?: number; semanticRevision?: number; semanticBridgeInstalled?: true }
+    __mortiseUiValidation?: Partial<UiSemanticBridge> & { revision?: number; semanticRevision?: number; semanticBridgeInstalled?: true }
   }
 }

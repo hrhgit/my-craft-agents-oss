@@ -1,5 +1,5 @@
 import type { WebContents } from 'electron'
-import { UI_VALIDATION_DEFAULT_TIMEOUT_MS } from '@craft-agent/shared/ui-validation'
+import { UI_VALIDATION_DEFAULT_TIMEOUT_MS } from '@mortise/shared/ui-validation'
 import { mainLog } from '../logger'
 import {
   BrowserCDP,
@@ -386,7 +386,7 @@ export class UiValidationBrowserCDP extends BrowserCDP {
   private async installHtmlDragProbe(): Promise<void> {
     await this.send('Runtime.evaluate', {
       expression: `(() => {
-        const key = '__craftUiValidationDragProbe';
+        const key = '__mortiseUiValidationDragProbe';
         globalThis[key]?.cleanup?.();
         let dragEvent = null;
         let didStartDrag = Promise.resolve(false);
@@ -419,7 +419,7 @@ export class UiValidationBrowserCDP extends BrowserCDP {
   private async readHtmlDragProbe(): Promise<boolean> {
     const result = await this.send('Runtime.evaluate', {
       expression: `(() => {
-        const probe = globalThis.__craftUiValidationDragProbe;
+        const probe = globalThis.__mortiseUiValidationDragProbe;
         return probe ? probe.read() : false;
       })()`,
       awaitPromise: true,
@@ -431,7 +431,7 @@ export class UiValidationBrowserCDP extends BrowserCDP {
   private async cleanupHtmlDragProbe(): Promise<void> {
     await this.send('Runtime.evaluate', {
       expression: `(() => {
-        globalThis.__craftUiValidationDragProbe?.cleanup?.();
+        globalThis.__mortiseUiValidationDragProbe?.cleanup?.();
       })()`,
       returnByValue: true,
     })
@@ -491,7 +491,7 @@ export class UiValidationBrowserCDP extends BrowserCDP {
   async getUiBusinessSemanticSnapshot(): Promise<UiBusinessSemanticSnapshot | null> {
     const result = await this.send('Runtime.evaluate', {
       expression: `(() => {
-        const bridge = globalThis.__craftUiValidation;
+        const bridge = globalThis.__mortiseUiValidation;
         if (!bridge || typeof bridge.snapshot !== 'function') return null;
         const snapshot = bridge.snapshot({ maxNodes: 1000, maxStringLength: 2048 });
         snapshot.nodes = snapshot.nodes.map(node => {
@@ -522,13 +522,13 @@ export class UiValidationBrowserCDP extends BrowserCDP {
     const current = await this.getUiBusinessSemanticSnapshot()
     if (predicate(current)) return current
     const timeoutMs = Math.max(1, options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS)
-    await this.send('Runtime.addBinding', { name: '__craftUiSemanticChanged' }).catch(() => undefined)
+    await this.send('Runtime.addBinding', { name: '__mortiseUiSemanticChanged' }).catch(() => undefined)
     await this.send('Runtime.evaluate', {
       expression: `(() => {
-        if (globalThis.__craftUiSemanticBindingInstalled) return;
-        globalThis.__craftUiSemanticBindingInstalled = true;
-        addEventListener('craft:ui-validation:semantic-change', event => {
-          globalThis.__craftUiSemanticChanged(JSON.stringify(event.detail || {}));
+        if (globalThis.__mortiseUiSemanticBindingInstalled) return;
+        globalThis.__mortiseUiSemanticBindingInstalled = true;
+        addEventListener('mortise:ui-validation:semantic-change', event => {
+          globalThis.__mortiseUiSemanticChanged(JSON.stringify(event.detail || {}));
         });
       })()`,
     })
@@ -541,7 +541,7 @@ export class UiValidationBrowserCDP extends BrowserCDP {
       }
       const onAbort = () => { cleanup(); reject(new Error('Semantic snapshot wait aborted.')) }
       const onMessage = (_event: unknown, method: string, params: { name?: string }) => {
-        if (method !== 'Runtime.bindingCalled' || params.name !== '__craftUiSemanticChanged' || reading) return
+        if (method !== 'Runtime.bindingCalled' || params.name !== '__mortiseUiSemanticChanged' || reading) return
         reading = true
         void this.getUiBusinessSemanticSnapshot().then(snapshot => {
           if (predicate(snapshot)) { cleanup(); resolve(snapshot) }
@@ -558,7 +558,7 @@ export class UiValidationBrowserCDP extends BrowserCDP {
     const payload = JSON.stringify(request)
     const result = await this.send('Runtime.evaluate', {
       expression: `(() => {
-        const bridge = globalThis.__craftUiValidation;
+        const bridge = globalThis.__mortiseUiValidation;
         if (!bridge || typeof bridge.action !== 'function') throw new Error('UI semantic bridge is unavailable');
         return bridge.action(${payload});
       })()`,

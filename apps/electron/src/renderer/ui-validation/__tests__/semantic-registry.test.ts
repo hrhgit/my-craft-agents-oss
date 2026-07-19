@@ -10,7 +10,7 @@ describe('UiSemanticRegistry', () => {
     expect(snapshot.nodes.map(node => node.id)).toEqual(['composer.s1.input', 'composer.s1.send'])
     expect(snapshot.nodes[0]?.value).toBe('[REDACTED]')
     expect(snapshot.nodes[1]?.state.disabled).toBe(true)
-    expect(snapshot.nodes[0]?.domSelector).toContain('data-craft-semantic-id')
+    expect(snapshot.nodes[0]?.domSelector).toContain('data-mortise-semantic-id')
   })
 
   it('bounds snapshots and clips strings', () => {

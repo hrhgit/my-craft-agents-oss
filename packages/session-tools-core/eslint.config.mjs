@@ -18,14 +18,14 @@ export default [
       },
     },
     plugins: {
-      'craft-shared': {
+      'mortise-shared': {
         rules: {
           'no-raw-pi-file-io': noRawPiFileIo,
         },
       },
     },
     rules: {
-      'craft-shared/no-raw-pi-file-io': 'error',
+      'mortise-shared/no-raw-pi-file-io': 'error',
     },
   },
 ]

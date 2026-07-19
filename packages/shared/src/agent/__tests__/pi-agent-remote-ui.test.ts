@@ -5,8 +5,8 @@ import type { BackendConfig } from '../backend/types.ts'
 function createAgent(onExtensionEvent?: BackendConfig['onExtensionEvent']) {
   const agent = new PiAgent({
     provider: 'pi',
-    workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/craft-agent-test' } as any,
-    session: { craftId: 'session-test', workspaceRootPath: '/tmp/craft-agent-test', createdAt: 0, lastUsedAt: 0 } as any,
+    workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/mortise-test' } as any,
+    session: { mortiseId: 'session-test', workspaceRootPath: '/tmp/mortise-test', createdAt: 0, lastUsedAt: 0 } as any,
     isHeadless: true,
     onExtensionEvent,
   } satisfies BackendConfig)
@@ -174,7 +174,7 @@ describe('PiAgent RemoteUI bridge', () => {
     agent.destroy()
   })
 
-  it('settles interaction requests that Craft cannot safely render', () => {
+  it('settles interaction requests that Mortise cannot safely render', () => {
     const { agent, responses } = createAgent()
     const map = (agent as any).mapExtensionUiRequest.bind(agent)
 

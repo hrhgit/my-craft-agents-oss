@@ -1,7 +1,7 @@
 /**
- * @craft-agent/core
+ * @mortise/core
  *
- * Core types for Craft Agent.
+ * Core types for Mortise Agent.
  *
  * NOTE: This package currently only exports types.
  * Storage, credentials, agent, auth, mcp, and prompts are still

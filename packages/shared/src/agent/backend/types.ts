@@ -2,17 +2,17 @@
  * Backend Abstraction Types
  *
  * Defines the core interface that all AI backends (Claude, OpenAI, etc.) must implement.
- * The CraftAgent facade delegates to these backends, enabling provider switching while
+ * The MortiseAgent facade delegates to these backends, enabling provider switching while
  * maintaining a consistent API surface.
  *
  * Key design decisions:
  * - Provider-agnostic events: All backends emit the same AgentEvent types
  * - Capabilities-driven UI: Model/thinking selectors read from capabilities()
  * - Callback pattern: Facade sets callbacks after creating backend
- * - AsyncGenerator for streaming: Consistent with existing CraftAgent API
+ * - AsyncGenerator for streaming: Consistent with existing MortiseAgent API
  */
 
-import type { AgentEvent, ExtensionCommandResult } from '@craft-agent/core/types';
+import type { AgentEvent, ExtensionCommandResult } from '@mortise/core/types';
 import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '../../protocol/pi-projection.ts';
 import type { CapabilityRequestV1, CapabilityResultV1 } from '../../protocol/capabilities.ts';
 import type { ExtensionContributionDeltaV1 } from '../../protocol/extension-contributions.ts';
@@ -27,12 +27,13 @@ import type { McpClientPool } from '../../mcp/mcp-pool.ts';
 import type { Workspace } from '../../config/storage.ts';
 import type { SessionHeader as Session } from '../../sessions/types.ts';
 import type { SourceManager } from '../core/source-manager.ts';
+import type { AgentRuntimeProfile } from '../../config/agent-settings.ts';
 
 // Import AbortReason and RecoveryMessage from core module (single source of truth)
 import { AbortReason, type RecoveryMessage } from '../core/index.ts';
 export { AbortReason, type RecoveryMessage };
 
-/** Runtime backend provider. Craft shells Pi; provider brands live in Pi config. */
+/** Runtime backend provider. Mortise shells Pi; provider brands live in Pi config. */
 export type ModelProvider = 'pi';
 
 export interface AuthProjectionPromptRequest {
@@ -144,7 +145,7 @@ export interface PiExtensionCommand {
 /**
  * Permission prompt types for different tool categories.
  */
-export type PermissionRequestType = 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
+export type PermissionRequestType = 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
 
 /**
  * Permission request callback signature.
@@ -363,13 +364,13 @@ export interface CoreBackendConfig {
    */
   onExtensionEvent?: (event: ExtensionBridgeEvent) => void;
 
-  /** Pi-first conversation projection stream. Must not contain Craft Message DTOs. */
+  /** Pi-first conversation projection stream. Must not contain Mortise Message DTOs. */
   onPiProjectionEvent?: (event: PiProjectionEventV1) => void;
 
   /** Execute a Pi extension's request against the host-owned capability router. */
   onHostCapabilityRequest?: (
     request: CapabilityRequestV1,
-    onProgress: (event: import('@craft-agent/shared/protocol').CapabilityProgressV1) => void,
+    onProgress: (event: import('@mortise/shared/protocol').CapabilityProgressV1) => void,
   ) => Promise<CapabilityResultV1>;
 
   /** Cancel an in-flight host capability after an extension abort or timeout. */
@@ -438,7 +439,7 @@ export type SdkMcpServerConfig =
  *
  * The interface is designed to:
  * 1. Abstract provider runtime differences
- * 2. Enable the facade pattern in CraftAgent
+ * 2. Enable the facade pattern in MortiseAgent
  * 3. Support streaming via AsyncGenerator
  * 4. Allow capability-based UI adaptation
  */
@@ -607,8 +608,8 @@ export interface AgentBackend {
   /**
    * Spawn a child session in the backend's session tree (pi session tree for
    * PiAgent). When absent, the session manager falls back to creating an
-   * independent craft session. Present on PiAgent; the spawn_session tool path
-   * delegates here so craft no longer reimplements session creation.
+   * independent mortise session. Present on PiAgent; the spawn_session tool path
+   * delegates here so mortise no longer reimplements session creation.
    */
   spawnChildSession?(
     parentSessionId: string,
@@ -659,7 +660,7 @@ export interface AgentBackend {
    * event loop after the next tool_result, which yields `source_activated`
    * and `forceAbort`s the turn. SessionManager's `source_activated` handler
    * then schedules the server-side resend with a "[{slug} activated]" suffix
-   * (craft-agents-oss#804). Set by SessionManager after a successful mid-turn
+   * (mortise-oss#804). Set by SessionManager after a successful mid-turn
    * activation (source_test auto-enable).
    */
   setPendingSourceActivationRestart(pending: { sourceSlug: string; userMessage: string }): void;
@@ -739,6 +740,9 @@ export interface AgentBackend {
   /** Reload the current Pi runtime's extension set without replacing the session. */
   reloadExtensions?(): Promise<{ reloaded: boolean; deferred: boolean }>;
 
+  /** Inspect the effective prompt and tool registry for settings UI. */
+  getAgentProfile?(): Promise<AgentRuntimeProfile>;
+
   /**
    * 查询 Pi 当前会话已注册的扩展 slash commands。
    * 仅 Pi 后端实现；非 Pi 后端可不实现。
@@ -803,7 +807,7 @@ export interface BackendConfig extends CoreBackendConfig {
   /**
    * Provider route to use for this backend.
    * Determines which agent class is instantiated:
-   * - 'pi' → PiAgent (Pi via @earendil-works/pi-coding-agent)
+   * - 'pi' → PiAgent (Pi via @mortise/pi-coding-agent)
    */
   provider: ModelProvider;
 

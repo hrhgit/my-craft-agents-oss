@@ -37,13 +37,13 @@ import { resolveRequestContext } from './interceptor-request-utils.ts';
 type HeadersInitType = Headers | Record<string, string> | string[][];
 
 /**
- * When `CRAFT_DEBUG_SSE_RAW=1`, the OpenAI strip streams dump every raw SSE
+ * When `MORTISE_DEBUG_SSE_RAW=1`, the OpenAI strip streams dump every raw SSE
  * line they see (in) and emit (out) to interceptor.log. Used to diagnose
  * upstream SSE shape issues (e.g. DeepSeek's two-phase tool_call emission).
  * Independent of the broader DEBUG flag — opt-in only because raw chunks are
  * verbose and may contain user prompts/tool args.
  */
-const DEBUG_SSE_RAW = process.env.CRAFT_DEBUG_SSE_RAW === '1';
+const DEBUG_SSE_RAW = process.env.MORTISE_DEBUG_SSE_RAW === '1';
 
 // ============================================================================
 // PROXY CONFIGURATION (from env vars injected by parent process)
@@ -350,7 +350,7 @@ function stripPromptCacheTtl(body: Record<string, unknown>): number {
 
 /**
  * Upgrade all cache_control blocks from 5m (default) to 1h TTL.
- * Only active when craft.agent.extendedPromptCache is enabled in Pi settings.
+ * Only active when mortise.agent.extendedPromptCache is enabled in Pi settings.
  * When disabled, actively strips any SDK-injected TTL so blocks
  * fall back to the API default (5 min).
  *
@@ -1733,7 +1733,7 @@ const adapters: ApiAdapter[] = [anthropicAdapter, openAiResponsesAdapter, openAi
  * Example values: anthropic-messages, openai-completions, openai-responses.
  */
 function getPiApiHint(): string | undefined {
-  const hint = process.env.CRAFT_PI_MODEL_API?.trim();
+  const hint = process.env.MORTISE_PI_MODEL_API?.trim();
   return hint || undefined;
 }
 
@@ -2050,7 +2050,7 @@ function synthesizeMalformedBodyResponse(
     error: {
       type: 'invalid_request_error',
       code: err.code,
-      message: `Craft Agents blocked an outgoing request that the API would reject: ${err.detail}. ` +
+      message: `Mortise blocked an outgoing request that the API would reject: ${err.detail}. ` +
         `This typically indicates a streaming-reassembly bug in the upstream endpoint or a stale ` +
         `tool history. Try starting a new session or switching to a different model/endpoint.`,
       param: 'tool_calls',
@@ -2061,7 +2061,7 @@ function synthesizeMalformedBodyResponse(
 
   setStoredError({
     status: 400,
-    statusText: 'Bad Request (blocked by Craft Agents)',
+    statusText: 'Bad Request (blocked by Mortise)',
     message: err.detail,
     timestamp: Date.now(),
   });
@@ -2083,18 +2083,18 @@ function synthesizeMalformedBodyResponse(
 // ============================================================================
 
 /**
- * Cross-instance marker for craft-intercepted fetch functions.
+ * Cross-instance marker for mortise-intercepted fetch functions.
  *
  * `Symbol.for` (global registry) so the marker survives the module being
  * loaded twice in one process (e.g. the CJS bundle AND the TS source bundled
  * into Pi RpcClient). {@link createCraftFetchInterceptor} checks it to stay
- * idempotent — a fetch that already runs the craft pipeline is never wrapped
+ * idempotent — a fetch that already runs the mortise pipeline is never wrapped
  * again.
  */
-const CRAFT_FETCH_MARKER = Symbol.for('craft.interceptedFetch');
+const MORTISE_FETCH_MARKER = Symbol.for('mortise.interceptedFetch');
 
 function isCraftInterceptedFetch(fn: unknown): boolean {
-  return typeof fn === 'function' && (fn as unknown as Record<symbol, unknown>)[CRAFT_FETCH_MARKER] === true;
+  return typeof fn === 'function' && (fn as unknown as Record<symbol, unknown>)[MORTISE_FETCH_MARKER] === true;
 }
 
 function extractFetchUrl(input: unknown): string | undefined {
@@ -2112,14 +2112,14 @@ function extractFetchUrl(input: unknown): string | undefined {
 }
 
 /**
- * Create an intercepting fetch that wraps `baseFetch` with the full craft
+ * Create an intercepting fetch that wraps `baseFetch` with the full mortise
  * request/response pipeline (metadata injection, validation, SSE processing,
  * proxying). Hosts that need this behavior must opt in explicitly; Pi sessions
- * run without Craft network hooks.
+ * run without Mortise network hooks.
  *
  * Idempotent: returns `baseFetch` unchanged when it is already
- * craft-intercepted. This makes it safe to pass unconditionally — it never
- * double-wraps a fetch that already runs the craft pipeline.
+ * mortise-intercepted. This makes it safe to pass unconditionally — it never
+ * double-wraps a fetch that already runs the mortise pipeline.
  */
 export function createCraftFetchInterceptor(baseFetch: typeof fetch): typeof fetch {
   if (isCraftInterceptedFetch(baseFetch)) {
@@ -2127,7 +2127,7 @@ export function createCraftFetchInterceptor(baseFetch: typeof fetch): typeof fet
   }
   const intercepted = (input: string | URL | Request, init?: RequestInit) =>
     interceptedFetchWith(baseFetch, input, init);
-  (intercepted as unknown as Record<symbol, unknown>)[CRAFT_FETCH_MARKER] = true;
+  (intercepted as unknown as Record<symbol, unknown>)[MORTISE_FETCH_MARKER] = true;
   return intercepted as typeof fetch;
 }
 
@@ -2181,7 +2181,7 @@ async function interceptedFetchWith(
   const url = extractFetchUrl(input);
 
   if (!url) {
-    debugLog('[fetch] Skipping Craft interception for request without a URL');
+    debugLog('[fetch] Skipping Mortise interception for request without a URL');
     return baseFetch(input, init);
   }
 

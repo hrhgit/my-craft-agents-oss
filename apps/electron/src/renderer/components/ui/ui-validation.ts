@@ -12,7 +12,7 @@ export function uiValidationAttributes(
   interactions: readonly UiPhysicalInteraction[] | undefined,
 ): Record<string, string | undefined> {
   return {
-    ...(semanticId ? { 'data-craft-semantic-id': semanticId } : {}),
-    ...(interactions?.length ? { 'data-craft-ui-interactions': [...new Set(interactions)].join(' ') } : {}),
+    ...(semanticId ? { 'data-mortise-semantic-id': semanticId } : {}),
+    ...(interactions?.length ? { 'data-mortise-ui-interactions': [...new Set(interactions)].join(' ') } : {}),
   }
 }

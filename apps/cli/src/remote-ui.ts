@@ -23,7 +23,7 @@ import {
   type ExtensionInteractionBridgeRequestV1,
   type ExtensionInteractionFieldV1,
   type ExtensionInteractionResponseV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 
 // ---------------------------------------------------------------------------
 // 协议类型（与 RemoteUIModal.tsx / ExtensionBridgeEvent 对齐）
@@ -196,7 +196,7 @@ export async function handleRemoteUIInteractive(
     return
   }
 
-  // 对话框渲染输出走 stderr，避免 `craft-cli run --interactive | jq` 时污染 stdout 管道。
+  // 对话框渲染输出走 stderr，避免 `mortise-cli run --interactive | jq` 时污染 stdout 管道。
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stderr,

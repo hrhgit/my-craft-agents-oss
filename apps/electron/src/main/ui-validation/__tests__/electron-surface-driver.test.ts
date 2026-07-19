@@ -4,7 +4,7 @@ import type { BrowserWindow } from 'electron'
 import type { WindowManager } from '../../window-manager'
 
 mock.module('electron', () => ({
-  app: { isPackaged: false, getName: () => 'Craft Agents' },
+  app: { isPackaged: false, getName: () => 'Mortise' },
   BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
   clipboard: {
     readText: () => '',

@@ -38,7 +38,7 @@ describe('deriveSessionMessagesLoadState', () => {
     expect(state.messagesLoading).toBe(true)
   })
 
-  it('does not treat Craft overlay messages as canonical transcript readiness', () => {
+  it('does not treat Mortise overlay messages as canonical transcript readiness', () => {
     const state = deriveSessionMessagesLoadState({
       session: createSession({
         messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: Date.now() }],
@@ -67,7 +67,7 @@ describe('deriveSessionMessagesLoadState', () => {
     expect(state.messagesLoading).toBe(false)
   })
 
-  it('treats a synced projection as ready even when the Craft overlay is empty', () => {
+  it('treats a synced projection as ready even when the Mortise overlay is empty', () => {
     const state = deriveSessionMessagesLoadState({
       session: createSession({ messageCount: 2 }),
       sessionMeta: { messageCount: 2 },

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import type { Message, StoredMessage } from '@craft-agent/core/types';
+import type { Message, StoredMessage } from '@mortise/core/types';
 import {
   isPlanArtifactV1,
   isPlanModeStateV1,
   parsePlanArtifactMessageDetails,
   storedToMessage,
-} from '@craft-agent/core/types';
+} from '@mortise/core/types';
 import { applyPlanCustomMessageToRuntime } from '../../sessions/plan-artifact-projection.ts';
 
 const artifact = {
@@ -68,7 +68,7 @@ describe('plan artifact protocol', () => {
 
     const result = applyPlanCustomMessageToRuntime(messages, {
       id: 'custom-1',
-      customType: 'craft-plan-artifact',
+      customType: 'mortise-plan-artifact',
       content: '# New',
       details: { schemaVersion: 1, artifact: nextArtifact },
       timestamp: 3,
@@ -80,10 +80,10 @@ describe('plan artifact protocol', () => {
   });
 
   it('creates an assistant plan message when the original assistant is unavailable', () => {
-    const messages: import('@craft-agent/core/types').Message[] = [];
+    const messages: import('@mortise/core/types').Message[] = [];
     applyPlanCustomMessageToRuntime(messages, {
       id: 'custom-missing',
-      customType: 'craft-plan-artifact',
+      customType: 'mortise-plan-artifact',
       content: '# Recovered plan',
       details: { schemaVersion: 1, artifact },
       timestamp: 3,

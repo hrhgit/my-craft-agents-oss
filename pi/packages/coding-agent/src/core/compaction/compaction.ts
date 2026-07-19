@@ -5,16 +5,9 @@
  * and after compaction the session is reloaded.
  */
 
-import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { completeSimple } from "@earendil-works/pi-ai/stream";
-import type {
-	AssistantMessage,
-	Context,
-	Message,
-	Model,
-	SimpleStreamOptions,
-	Usage,
-} from "@earendil-works/pi-ai/types";
+import type { AgentMessage, StreamFn, ThinkingLevel } from "@mortise/pi-agent-core";
+import { completeSimple } from "@mortise/pi-ai/stream";
+import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions, Usage } from "@mortise/pi-ai/types";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
@@ -681,7 +674,7 @@ export async function generateSummary(
 	return extractAssistantText(response, "Summarization failed");
 }
 
-const APPEND_SUMMARIZATION_PROMPT = `Do NOT continue this conversation.
+export const DEFAULT_COMPACTION_PROMPT = `Do NOT continue this conversation.
 Do NOT answer the user's requests.
 Do NOT call tools.
 Only produce a structured summary of the conversation so far using the exact format below.
@@ -753,10 +746,18 @@ function buildSerializedSummaryPromptText(
 	return promptText;
 }
 
-function buildAppendSummaryPromptText(customInstructions?: string, previousSummary?: string): string {
-	let promptText = previousSummary
-		? APPEND_UPDATE_SUMMARIZATION_PROMPT.replace("{previousSummary}", previousSummary)
-		: APPEND_SUMMARIZATION_PROMPT;
+function buildAppendSummaryPromptText(
+	customInstructions?: string,
+	previousSummary?: string,
+	promptOverride?: string,
+): string {
+	let promptText = promptOverride
+		? previousSummary
+			? `${promptOverride}\n\n<previous-summary>\n${previousSummary}\n</previous-summary>`
+			: promptOverride
+		: previousSummary
+			? APPEND_UPDATE_SUMMARIZATION_PROMPT.replace("{previousSummary}", previousSummary)
+			: DEFAULT_COMPACTION_PROMPT;
 	if (customInstructions) {
 		promptText = `${promptText}\n\nAdditional focus: ${customInstructions}`;
 	}
@@ -774,14 +775,20 @@ export async function generateSummaryViaAppendPrompt(
 	previousSummary?: string,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
-	options?: { systemPrompt?: string; sessionId?: string; cacheRetention?: "short"; tools?: Context["tools"] },
+	options?: {
+		systemPrompt?: string;
+		compactionPrompt?: string;
+		sessionId?: string;
+		cacheRetention?: "short";
+		tools?: Context["tools"];
+	},
 ): Promise<{ summary: string; stats: CompactionSummaryStats }> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
 
-	const promptText = buildAppendSummaryPromptText(customInstructions, previousSummary);
+	const promptText = buildAppendSummaryPromptText(customInstructions, previousSummary, options?.compactionPrompt);
 
 	const summarizationMessages = [
 		...prefixMessages,
@@ -960,6 +967,7 @@ export async function compact(
 	streamFn?: StreamFn,
 	options?: {
 		systemPrompt?: string;
+		compactionPrompt?: string;
 		sessionId?: string;
 		cacheRetention?: "short";
 		tools?: Context["tools"];
@@ -1001,6 +1009,7 @@ export async function compact(
 			streamFn,
 			{
 				systemPrompt: options?.systemPrompt,
+				compactionPrompt: options?.compactionPrompt,
 				sessionId: options?.sessionId,
 				cacheRetention: options?.cacheRetention,
 				tools: options?.tools,

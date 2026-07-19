@@ -16,7 +16,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@craft-agent/ui'
+} from '@mortise/ui'
 import type { SourceConnectionStatus } from '../../../shared/types'
 export { deriveConnectionStatus } from './source-status'
 

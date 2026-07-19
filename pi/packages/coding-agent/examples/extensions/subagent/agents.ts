@@ -4,7 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, parseFrontmatter } from "@mortise/pi-coding-agent";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -55,15 +55,19 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			continue;
 		}
 
-		const tools = frontmatter.tools
-			?.split(",")
-			.map((t: string) => t.trim())
-			.filter(Boolean);
+		const toolsValue = frontmatter.tools?.trim();
+		const tools =
+			toolsValue === "none"
+				? []
+				: toolsValue
+						?.split(",")
+						.map((t: string) => t.trim())
+						.filter(Boolean);
 
 		agents.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
-			tools: tools && tools.length > 0 ? tools : undefined,
+			tools,
 			model: frontmatter.model,
 			systemPrompt: body,
 			source,

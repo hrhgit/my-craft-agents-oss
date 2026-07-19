@@ -84,6 +84,12 @@ describe('route-parser: automations routes', () => {
     expect(built).toBe('automations')
   })
 
+  it('roundtrips automations/automation/automation-1', () => {
+    const parsed = parseCompoundRoute('automations/automation/automation-1')!
+    const built = buildCompoundRoute(parsed)
+    expect(built).toBe('automations/automation/automation-1')
+  })
+})
   it('roundtrips automations with scheduled filter', () => {
     const parsed = parseCompoundRoute('automations/scheduled')!
     // buildCompoundRoute only outputs the details suffix when details are present
@@ -97,10 +103,3 @@ describe('route-parser: automations routes', () => {
     const built = buildCompoundRoute(parsed)
     expect(built).toBe('automations/scheduled/automation/automation-1')
   })
-
-  it('roundtrips automations/automation/automation-1', () => {
-    const parsed = parseCompoundRoute('automations/automation/automation-1')!
-    const built = buildCompoundRoute(parsed)
-    expect(built).toBe('automations/automation/automation-1')
-  })
-})

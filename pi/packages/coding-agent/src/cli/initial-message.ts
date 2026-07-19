@@ -1,4 +1,4 @@
-import type { ImageContent } from "@earendil-works/pi-ai/types";
+import type { ImageContent } from "@mortise/pi-ai/types";
 import type { Args } from "./args.ts";
 
 export interface InitialMessageInput {

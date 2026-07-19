@@ -11,7 +11,7 @@ afterEach(() => {
 })
 
 function pathForTest(): string {
-  const root = mkdtempSync(join(tmpdir(), 'craft-layout-'))
+  const root = mkdtempSync(join(tmpdir(), 'mortise-layout-'))
   roots.push(root)
   return join(root, 'layout.json')
 }

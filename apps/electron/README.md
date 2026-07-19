@@ -1,6 +1,6 @@
-# Craft Agents Electron App
+# Mortise Electron App
 
-The primary desktop interface for Craft Agents, built with Electron + React. Provides a multi-session inbox with chat interface for interacting with AI providers via Craft workspaces.
+The primary desktop interface for Mortise, built with Electron + React. Provides a multi-session inbox with chat interface for interacting with AI providers via Mortise workspaces.
 
 ## Quick Start
 
@@ -19,7 +19,7 @@ apps/electron/
 │   │   ├── index.ts       # Window creation, app lifecycle
 │   │   ├── ipc.ts         # IPC handler registration
 │   │   ├── menu.ts        # Application menu (File, Edit, View, Help)
-│   │   ├── sessions.ts    # Session management, CraftAgent integration
+│   │   ├── sessions.ts    # Session management, MortiseAgent integration
 │   │   ├── deep-link.ts   # Deep link URL parsing and handling
 │   │   ├── agent-service.ts # Agent listing, caching, auth checking
 │   │   └── sources-service.ts # Source and authentication service
@@ -56,7 +56,7 @@ Provider credentials are loaded through the shared configuration and credential 
 
 ### 2. AgentEvent Type Mismatches
 
-The `AgentEvent` types from `CraftAgent` use different property names than you might expect:
+The `AgentEvent` types from `MortiseAgent` use different property names than you might expect:
 
 | Event Type | Wrong | Correct |
 |------------|-------|---------|
@@ -79,16 +79,16 @@ const toolName = managed.pendingTools.get(event.toolUseId) || 'unknown'
 managed.pendingTools.delete(event.toolUseId)
 ```
 
-### 4. CraftAgent Constructor
+### 4. MortiseAgent Constructor
 
-`CraftAgent` expects the full `Workspace` object, not just the ID:
+`MortiseAgent` expects the full `Workspace` object, not just the ID:
 
 ```typescript
 // Wrong:
-new CraftAgent({ workspaceId: workspace.id, model })
+new MortiseAgent({ workspaceId: workspace.id, model })
 
 // Correct:
-new CraftAgent({ workspace, model })
+new MortiseAgent({ workspace, model })
 ```
 
 ### 5. esbuild Configuration
@@ -124,7 +124,7 @@ bun run sync-secrets
 **That's it!** Now `bun run electron:dev` and `bun run electron:start` work without prompts.
 
 **How it works:**
-- `.env.1password` contains `op://` references to the `Dev_Craft_Agents` vault
+- `.env.1password` contains `op://` references to the deployment's Mortise development vault
 - `bun run sync-secrets` resolves references → writes `.env` (gitignored)
 - Secrets are baked into the build at compile time via esbuild `--define` flags
 
@@ -147,7 +147,7 @@ bun run electron:build           # All of the above
 
 ## macOS Liquid Glass Icon
 
-The app includes a pre-compiled `Assets.car` for macOS 26+ Liquid Glass icons. This enables the layered glass effect on macOS Tahoe. On older macOS versions, the app falls back to `icon.icns`.
+The app uses `icon.icns` on every macOS version when `resources/Assets.car` is absent. A pre-compiled `Assets.car` can optionally enable the layered Liquid Glass icon on macOS 26+.
 
 **Regenerating after icon changes:**
 
@@ -160,7 +160,7 @@ xcrun actool "resources/icon.icon" --compile "resources" \
   --platform macosx --output-partial-info-plist /dev/null
 ```
 
-> **Note:** This requires macOS 26 with Xcode 26 (macOS 26 SDK). The pre-compiled Assets.car is committed to the repo so CI builds work without the SDK.
+> **Note:** This requires macOS 26 with Xcode 26 (macOS 26 SDK). Commit the generated `Assets.car` only when it matches the current `resources/icon.icon` source; otherwise packaging safely falls back to `icon.icns`.
 
 ## Debugging
 
@@ -179,7 +179,7 @@ DevTools opens automatically (configured in `index.ts`). Remove `mainWindow.webC
 - **Session persistence** - Sessions, messages, and names are saved to disk
 - **File attachments** - Attach images, PDFs, and code files to messages
 - **AI-generated titles** - Sessions get automatic titles after first exchange
-- **Subagent support** - Load and apply agent definitions from Craft documents
+- **Subagent support** - Load and apply agent definitions from Mortise documents
 - **Shell integration** - Open URLs in browser, open files in default apps
 - **Permission modes** - Three-level permission system (Explore, Ask to Edit, Auto)
 - **Background tasks** - Run long-running tasks in background with progress tracking
@@ -216,14 +216,14 @@ navigate(routes.sidebar.flagged())        // Show flagged
 
 ### Deep Links
 
-External apps can navigate using `craftagents://` URLs:
+External apps can navigate using `mortise://` URLs:
 
 ```
-craftagents://settings
-craftagents://allSessions/session/session123
-craftagents://sources/source/github
-craftagents://action/new-chat
-craftagents://workspace/{id}/allSessions/session/abc123
+mortise://settings
+mortise://allSessions/session/session123
+mortise://sources/source/github
+mortise://action/new-chat
+mortise://workspace/{id}/allSessions/session/abc123
 ```
 
 See `CLAUDE.md` for complete route reference.
@@ -233,7 +233,7 @@ See `CLAUDE.md` for complete route reference.
 | File | Purpose |
 |------|---------|
 | `main/index.ts` | App entry, window creation |
-| `main/sessions.ts` | CraftAgent wrapper, event processing, source integration |
+| `main/sessions.ts` | MortiseAgent wrapper, event processing, source integration |
 | `main/ipc.ts` | IPC channel handlers (sessions, files, shell) |
 | `main/menu.ts` | Application menu (File, Edit, View, Help) |
 | `main/deep-link.ts` | Deep link URL parsing and handling |

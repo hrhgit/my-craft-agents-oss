@@ -16,18 +16,18 @@ describe('ensureNativeWindowReady', () => {
       isVisible: () => visible,
       show: () => { calls.push('show'); visible = true },
       focus: () => calls.push('focus'),
-      getTitle: () => 'Craft Agents',
+      getTitle: () => 'Mortise',
       getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
     }
     const driver = new WindowsNativeUiDriver(42, async () => ({ windows: [{
-      runtimeId: '1', role: 'Window', name: 'Craft Agents', enabled: true, focused: true,
+      runtimeId: '1', role: 'Window', name: 'Mortise', enabled: true, focused: true,
       bounds: { x: 125, y: 62.5, width: 1_000, height: 750 }, patterns: ['Window'], children: [],
     }] }), 'win32')
 
     const ready = await ensureNativeWindowReady(window as never, driver, { timeoutMs: 500 })
 
     expect(calls).toEqual(['restore', 'show', 'focus'])
-    expect(ready.node.name).toBe('Craft Agents')
+    expect(ready.node.name).toBe('Mortise')
     expect(ready.node.actions).toContain('focus')
   })
 
@@ -37,7 +37,7 @@ describe('ensureNativeWindowReady', () => {
       isMinimized: () => false,
       isVisible: () => true,
       focus() {},
-      getTitle: () => 'Craft Agents',
+      getTitle: () => 'Mortise',
       getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
     }
     const driver = new WindowsNativeUiDriver(42, async () => ({ windows: [{
@@ -53,12 +53,12 @@ describe('ensureNativeWindowReady', () => {
       isMinimized: () => false,
       isVisible: () => true,
       focus() {},
-      getTitle: () => 'Craft Agents',
+      getTitle: () => 'Mortise',
       getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
     }
     const driver = new WindowsNativeUiDriver(42, async () => ({ windows: [
-      { runtimeId: 'wrong', role: 'Window', name: 'Craft Agents', enabled: true, focused: false, bounds: { x: 1_200, y: 60, width: 960, height: 720 }, children: [] },
-      { runtimeId: 'right', role: 'Window', name: 'Craft Agents', enabled: true, focused: true, bounds: { x: 120, y: 60, width: 960, height: 720 }, children: [] },
+      { runtimeId: 'wrong', role: 'Window', name: 'Mortise', enabled: true, focused: false, bounds: { x: 1_200, y: 60, width: 960, height: 720 }, children: [] },
+      { runtimeId: 'right', role: 'Window', name: 'Mortise', enabled: true, focused: true, bounds: { x: 120, y: 60, width: 960, height: 720 }, children: [] },
     ] }), 'win32')
 
     const ready = await ensureNativeWindowReady(window as never, driver, { timeoutMs: 500 })
@@ -81,11 +81,11 @@ describe('ensureNativeWindowReady', () => {
       show: () => { calls.push('show'); visible = true },
       showInactive: () => { calls.push('showInactive'); visible = true },
       focus: () => { calls.push('focus'); focused = true },
-      getTitle: () => 'Craft Agents',
+      getTitle: () => 'Mortise',
       getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
     }
     const driver = new WindowsNativeUiDriver(42, async () => ({ windows: visible ? [{
-      runtimeId: 'root', role: 'Window', name: 'Craft Agents', enabled: true, focused,
+      runtimeId: 'root', role: 'Window', name: 'Mortise', enabled: true, focused,
       bounds: { x: 120, y: 60, width: 960, height: 720 }, patterns: ['Window'], children: [],
     }] : [] }), 'win32')
     const controller = new ElectronNativeWindowController(driver, (_webContentsId, phase) => phases.push(phase))
@@ -114,7 +114,7 @@ describe('ensureNativeWindowReady', () => {
       isVisible: () => true,
       isFocused: () => true,
       focus() {},
-      getTitle: () => 'Craft Agents',
+      getTitle: () => 'Mortise',
       getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
     }
     const driver = new WindowsNativeUiDriver(42, async () => {
@@ -123,7 +123,7 @@ describe('ensureNativeWindowReady', () => {
       await new Promise(resolve => setTimeout(resolve, 5))
       active -= 1
       return { windows: [{
-        runtimeId: 'root', role: 'Window', name: 'Craft Agents', enabled: true, focused: true,
+        runtimeId: 'root', role: 'Window', name: 'Mortise', enabled: true, focused: true,
         bounds: { x: 120, y: 60, width: 960, height: 720 }, patterns: ['Window'], children: [],
       }] }
     }, 'win32')
@@ -138,7 +138,7 @@ describe('ensureNativeWindowReady', () => {
     expect(second.revision).toBe(first.revision)
   })
 
-  it('waits for foreground focus before returning revision-bound native refs', async () => {
+  it('accepts a selected foreground window when a descendant owns keyboard focus', async () => {
     let snapshotReads = 0
     const requests: Record<string, unknown>[] = []
     const window = {
@@ -148,7 +148,7 @@ describe('ensureNativeWindowReady', () => {
       isVisible: () => true,
       isFocused: () => true,
       focus() {},
-      getTitle: () => 'Craft Agents',
+      getTitle: () => 'Mortise',
       getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
     }
     const driver = new WindowsNativeUiDriver(42, async request => {
@@ -156,19 +156,21 @@ describe('ensureNativeWindowReady', () => {
       if (request.operation === 'action') return { ok: true }
       snapshotReads += 1
       return { windows: [{
-        runtimeId: 'root', role: 'Window', name: 'Craft Agents', enabled: true, focused: snapshotReads > 1,
-        bounds: { x: 120, y: 60, width: 960, height: 720 }, patterns: ['Window'], children: [],
+        runtimeId: 'root', role: 'Window', name: 'Mortise', enabled: true, focused: false,
+        bounds: { x: 120, y: 60, width: 960, height: 720 }, patterns: ['Window'], children: [{
+          runtimeId: 'focused-child', role: 'Edit', name: 'Composer', enabled: true, focused: true,
+        }],
       }] }
     }, 'win32')
     const controller = new ElectronNativeWindowController(driver)
 
     const snapshot = await controller.snapshot(window as never, { timeoutMs: 500 })
-    const root = snapshot.windows[0]!.nodes.find(node => node.name === 'Craft Agents')!
+    const root = snapshot.windows[0]!.nodes.find(node => node.name === 'Mortise')!
     const receipt = await controller.action(window as never, {
       revision: snapshot.revision, ref: root.ref, action: 'focus',
     }, { timeoutMs: 500 })
 
-    expect(snapshotReads).toBeGreaterThanOrEqual(3)
+    expect(snapshotReads).toBe(2)
     expect(receipt.verificationLevel).toBe('native-verified')
     expect(requests.some(request => request.operation === 'action' && request.action === 'focus')).toBeTrue()
   })
@@ -182,14 +184,14 @@ describe('ensureNativeWindowReady', () => {
       isVisible: () => true,
       isFocused: () => true,
       focus() {},
-      getTitle: () => 'Craft Agents',
+      getTitle: () => 'Mortise',
       getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
     }
     const driver = new WindowsNativeUiDriver(42, async request => {
       if (request.operation === 'action') return { ok: true }
       snapshotReads += 1
       return { windows: [{
-        runtimeId: 'root', role: 'Window', name: 'Craft Agents', enabled: true, focused: true,
+        runtimeId: 'root', role: 'Window', name: 'Mortise', enabled: true, focused: true,
         bounds: { x: 120, y: 60, width: 960, height: 720 }, patterns: ['Window'], children: [{
           runtimeId: 'dynamic', role: 'Text', name: `Dynamic ${snapshotReads}`, enabled: true, focused: false,
         }],
@@ -198,7 +200,7 @@ describe('ensureNativeWindowReady', () => {
     const controller = new ElectronNativeWindowController(driver)
 
     const snapshot = await controller.snapshot(window as never, { timeoutMs: 500 })
-    const root = snapshot.windows[0]!.nodes.find(node => node.name === 'Craft Agents')!
+    const root = snapshot.windows[0]!.nodes.find(node => node.name === 'Mortise')!
     const receipt = await controller.action(window as never, {
       revision: snapshot.revision, ref: root.ref, action: 'focus',
     }, { timeoutMs: 500 })
@@ -216,14 +218,14 @@ describe('ensureNativeWindowReady', () => {
       isMinimized: () => true,
       isVisible: () => false,
       isFocused: () => false,
-      getTitle: () => 'Craft Agents',
+      getTitle: () => 'Mortise',
       getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
     }
     const driver = new WindowsNativeUiDriver(42, async request => {
       requests.push(request)
       if (request.operation === 'action') return { ok: true }
       return { windows: [{
-        runtimeId: 'root', role: 'Window', name: 'Craft Agents', enabled: true, focused: false, patterns: ['Window'], children: [
+        runtimeId: 'root', role: 'Window', name: 'Mortise', enabled: true, focused: false, patterns: ['Window'], children: [
           { runtimeId: 'button', role: 'Button', name: 'Run', enabled: true, focused: false, patterns: ['Invoke'] },
           { runtimeId: 'coordinate', role: 'Button', name: 'Coordinates only', enabled: true, focused: false, bounds: { x: 10, y: 10, width: 20, height: 20 } },
         ],
@@ -233,7 +235,7 @@ describe('ensureNativeWindowReady', () => {
 
     expect(controller.status(window as never)).toMatchObject({ ready: false, reason: 'uia-not-verified', windowMode: 'background' })
     const snapshot = await controller.snapshot(window as never, { timeoutMs: 500 })
-    const root = snapshot.windows[0]!.nodes.find(node => node.name === 'Craft Agents')!
+    const root = snapshot.windows[0]!.nodes.find(node => node.name === 'Mortise')!
     const invoke = snapshot.windows[0]!.nodes.find(node => node.name === 'Run')!
     const coordinate = snapshot.windows[0]!.nodes.find(node => node.name === 'Coordinates only')!
 
@@ -253,5 +255,46 @@ describe('ensureNativeWindowReady', () => {
     }, { timeoutMs: 500 })
     expect(receipt.warnings).toContain('Background UIA pattern operation has no foreground hit-test evidence.')
     expect(requests.some(request => request.operation === 'action' && request.action === 'click')).toBeTrue()
+  })
+
+  it('keeps native validation ready after the user restores a background window', async () => {
+    let minimized = true
+    let visible = false
+    let userForeground = false
+    const window = {
+      webContents: { id: 13, isLoading: () => false },
+      isDestroyed: () => false,
+      isMinimized: () => minimized,
+      isVisible: () => visible,
+      isFocused: () => userForeground,
+      getTitle: () => 'Mortise',
+      getBounds: () => ({ x: 100, y: 50, width: 800, height: 600 }),
+    }
+    const driver = new WindowsNativeUiDriver(42, async () => ({ windows: [{
+      runtimeId: 'root', role: 'Window', name: 'Mortise', enabled: true, focused: userForeground,
+      bounds: { x: 120, y: 60, width: 960, height: 720 }, patterns: ['Window'], children: [],
+    }] }), 'win32')
+    const controller = new ElectronNativeWindowController(
+      driver,
+      () => undefined,
+      'background',
+      () => userForeground,
+    )
+
+    await controller.snapshot(window as never, { timeoutMs: 500 })
+    expect(controller.status(window as never)).toMatchObject({ ready: true, reason: 'background-ready' })
+
+    minimized = false
+    visible = true
+    userForeground = true
+
+    const snapshot = await controller.snapshot(window as never, { timeoutMs: 500 })
+    const root = snapshot.windows[0]!.nodes.find(node => node.name === 'Mortise')!
+    expect(root.actions).toEqual(['minimize', 'close'])
+    expect(controller.status(window as never)).toMatchObject({
+      ready: true,
+      reason: 'user-foreground-ready',
+      windowMode: 'background',
+    })
   })
 })

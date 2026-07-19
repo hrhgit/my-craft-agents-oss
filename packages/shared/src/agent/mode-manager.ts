@@ -14,7 +14,10 @@
 
 import { debug } from '../utils/debug.ts';
 import { expandHome, normalizeForComparison, isPathWithinDirectory } from '../utils/paths.ts';
-import { getSessionSafeAllowedToolNames } from '@craft-agent/session-tools-core';
+import {
+  getSessionSafeAllowedToolNames,
+  normalizeSessionToolName,
+} from '@mortise/session-tools-core';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { isBrowserToolNameOrAlias } from './browser-tool-names.ts';
 import type { PermissionsContext, MergedPermissionsConfig } from './permissions-config.ts';
@@ -231,7 +234,7 @@ class ModeManager {
 
     debug(`[Mode] Set permission mode to ${mode} for session ${sessionId} (changedBy=${changedBy}, modeVersion=${newState.modeVersion})`);
 
-    // Notify callbacks (for CraftAgent internal sync)
+    // Notify callbacks (for MortiseAgent internal sync)
     const callbacks = this.callbacks.get(sessionId);
     if (callbacks?.onStateChange) {
       callbacks.onStateChange(newState);
@@ -1632,20 +1635,20 @@ export function getPathHint(targetPath: string, plansFolderPath: string, dataFol
   }
 
   // Case: Writing to workspace root instead of session
-  // Legacy layout: ~/.craft-agent/workspaces/{id}/ (missing /sessions/)
-  // Pi layout: ~/.pi/agent/sessions/{encoded-cwd}/ (missing /.craft/{sessionId}/)
-  const inCraftAgentWorkspaceRoot =
-    normalizedTarget.includes('/.craft-agent/workspaces/') && !normalizedTarget.includes('/sessions/');
+  // Legacy layout: ~/.mortise/workspaces/{id}/ (missing /sessions/)
+  // Pi layout: ~/.pi/agent/sessions/{encoded-cwd}/ (missing /.mortise/{sessionId}/)
+  const inMortiseWorkspaceRoot =
+    normalizedTarget.includes('/.mortise/workspaces/') && !normalizedTarget.includes('/sessions/');
   const inPiSessionsBucketRoot =
-    normalizedTarget.includes('/.pi/agent/sessions/') && !normalizedTarget.includes('/.craft/');
-  if (inCraftAgentWorkspaceRoot || inPiSessionsBucketRoot) {
+    normalizedTarget.includes('/.pi/agent/sessions/') && !normalizedTarget.includes('/.mortise/');
+  if (inMortiseWorkspaceRoot || inPiSessionsBucketRoot) {
     return 'Hint: Write to the session plans or data folder, not the workspace root.';
   }
 
   // Case: Writing outside known session storage entirely
-  // Valid writes live under either ~/.craft-agent/ (legacy) or
-  // ~/.pi/agent/sessions/.../.craft/{sessionId}/ (Pi sidecar layout).
-  if (!normalizedTarget.includes('/.craft-agent/') && !normalizedTarget.includes('/.pi/agent/sessions/')) {
+  // Valid writes live under either ~/.mortise/ (legacy) or
+  // ~/.pi/agent/sessions/.../.mortise/{sessionId}/ (Pi sidecar layout).
+  if (!normalizedTarget.includes('/.mortise/') && !normalizedTarget.includes('/.pi/agent/sessions/')) {
     return 'Hint: Files must be written to the session plans or data folder. Use plansFolderPath or dataFolderPath from <session_state>.';
   }
 
@@ -1940,29 +1943,28 @@ export function shouldAllowToolInMode(
     };
   }
 
-  // Handle MCP tools - allow read-only, block write operations
-  if (toolName.startsWith('mcp__')) {
-    // Always allow documentation tools (read-only, always available)
-    if (toolName.startsWith('mcp__craft-agents-docs__')) {
+  // Session host tools use canonical names; legacy prefixed names remain readable.
+  const sessionToolName = normalizeSessionToolName(toolName);
+  if (sessionToolName) {
+    const safeAllowedSessionTools = getSessionSafeAllowedToolNames({
+      includeDeveloperFeedback: FEATURE_FLAGS.developerFeedback,
+    });
+
+    if (safeAllowedSessionTools.has(sessionToolName)) {
       return { allowed: true };
     }
 
-    // Handle session-scoped tools - derive safe-mode behavior from canonical session-tools-core metadata
-    if (toolName.startsWith('mcp__session__')) {
-      const safeAllowedSessionTools = getSessionSafeAllowedToolNames({
-        prefix: 'mcp__session__',
-        includeDeveloperFeedback: FEATURE_FLAGS.developerFeedback,
-      });
+    return {
+      allowed: false,
+      reason: `Session configuration changes are blocked in ${config.displayName}. Switch to Ask or Allow All mode (${config.shortcutHint}) to create, update, or delete sources and agents.`
+    };
+  }
 
-      if (safeAllowedSessionTools.has(toolName)) {
-        return { allowed: true };
-      }
-
-      // Write/auth/admin session tools - blocked in Explore mode
-      return {
-        allowed: false,
-        reason: `Session configuration changes are blocked in ${config.displayName}. Switch to Ask or Allow All mode (${config.shortcutHint}) to create, update, or delete sources and agents.`
-      };
+  // Handle external MCP tools - allow read-only, block write operations
+  if (toolName.startsWith('mcp__')) {
+    // Always allow documentation tools (read-only, always available)
+    if (toolName.startsWith('mcp__mortise-docs__')) {
+      return { allowed: true };
     }
 
     // Handle API tools exposed via MCP (mcp__<source>__api_<name>)

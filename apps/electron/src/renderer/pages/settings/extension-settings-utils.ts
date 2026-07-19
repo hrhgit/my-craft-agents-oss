@@ -1,4 +1,4 @@
-import type { PiExtensionCatalogEntry, PiExtensionSettingScalar } from '@craft-agent/shared/config'
+import type { PiExtensionCatalogEntry, PiExtensionSettingScalar } from '@mortise/shared/config'
 
 export function patchCatalogField(
   entries: PiExtensionCatalogEntry[],

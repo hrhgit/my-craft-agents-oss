@@ -9,7 +9,7 @@ describe('extractPiSessionIdFromPath', () => {
       .toBe('plain-id');
   });
 
-  it('preserves underscores in the Craft session id', () => {
+  it('preserves underscores in the Mortise session id', () => {
     expect(extractPiSessionIdFromPath('/sessions/2026-07-12T00-00-00-000Z_session_with_parts.jsonl'))
       .toBe('session_with_parts');
   });

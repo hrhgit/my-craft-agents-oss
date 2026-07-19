@@ -1,4 +1,4 @@
-import type { UiValidationRoute, UiValidationScopedWait } from '@craft-agent/shared/ui-validation'
+import type { UiValidationRoute, UiValidationScopedWait } from '@mortise/shared/ui-validation'
 import { isValidSettingsSubpage } from '../../shared/settings-registry'
 import { routes } from '../../shared/routes'
 import { ElectronUiDriverError } from './electron-surface-driver'

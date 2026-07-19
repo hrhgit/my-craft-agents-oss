@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai/types";
-import type { AssistantMessageDiagnostic } from "@earendil-works/pi-ai/utils/diagnostics";
+import type { AssistantMessage } from "@mortise/pi-ai/types";
+import type { AssistantMessageDiagnostic } from "@mortise/pi-ai/utils/diagnostics";
 
 export type NetworkMode = "auto" | "proxy" | "direct";
 export type NetworkRequestClass = "safe" | "model_pre_first_byte" | "never_replay";

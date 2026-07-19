@@ -14,15 +14,15 @@ export type {
   StoredSession,
   SessionHeader,
   PiSessionHeader,
-  CraftSessionMetadata,
+  MortiseSessionMetadata,
   SessionComputedMetadata,
-  CraftSessionMetadataField,
+  MortiseSessionMetadataField,
   SessionComputedMetadataField,
 } from './types.ts';
 
 // Field constants
 export {
-  CRAFT_SESSION_METADATA_FIELDS,
+  MORTISE_SESSION_METADATA_FIELDS,
   SESSION_COMPUTED_METADATA_FIELDS,
 } from './types.ts';
 
@@ -77,7 +77,7 @@ export {
   writeSessionJsonl,
 } from './jsonl.ts';
 
-// Tree JSONL shared session projection (Pi/Craft unified history format)
+// Tree JSONL shared session projection (Pi/Mortise unified history format)
 export {
   looksLikeTreeSessionJsonl,
   getCraftIdFromTreeHeader,

@@ -33,7 +33,7 @@ export default [
       },
     },
     plugins: {
-      'craft-styles': {
+      'mortise-styles': {
         rules: {
           'no-hardcoded-z-index': noHardcodedZIndex,
           'no-floating-z-tokens-in-island': noFloatingZTokensInIsland,
@@ -53,13 +53,13 @@ export default [
       }],
 
       // Enforce centralized z-index token scale
-      'craft-styles/no-hardcoded-z-index': 'error',
+      'mortise-styles/no-hardcoded-z-index': 'error',
 
       // Enforce dedicated island z-index tokens in island components
-      'craft-styles/no-floating-z-tokens-in-island': 'error',
+      'mortise-styles/no-floating-z-tokens-in-island': 'error',
 
       // Enforce approved shadow utility classes/tokens only
-      'craft-styles/no-nonstandard-shadows': ['error', {
+      'mortise-styles/no-nonstandard-shadows': ['error', {
         allowedClasses: [
           'shadow-none',
           'shadow-xs',
@@ -76,12 +76,12 @@ export default [
         allowInlineNone: true,
       }],
 
-      // Red line: Pi SDK (@earendil-works/pi-*) is bottom-layer. The UI package is
+      // Red line: Pi SDK (@mortise/pi-*) is bottom-layer. The UI package is
       // pure scaffolding and must never import Pi internals. See docs/architecture/red-line.md.
       'no-restricted-syntax': ['error',
         {
-          selector: 'ImportDeclaration[source.value=/^@earendil-works\\/pi-/]',
-          message: 'Pi SDK (@earendil-works/pi-*) is bottom-layer. The UI package must not import it. See docs/architecture/red-line.md.',
+          selector: 'ImportDeclaration[source.value=/^@mortise\\/pi-/]',
+          message: 'Pi SDK (@mortise/pi-*) is bottom-layer. The UI package must not import it. See docs/architecture/red-line.md.',
         },
       ],
     },
@@ -95,7 +95,7 @@ export default [
       'src/components/ui/__tests__/styled-dropdown.test.ts',
     ],
     rules: {
-      'craft-styles/no-nonstandard-shadows': 'off',
+      'mortise-styles/no-nonstandard-shadows': 'off',
     },
   },
 

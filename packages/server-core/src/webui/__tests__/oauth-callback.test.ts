@@ -15,7 +15,7 @@ const logger = {
 } as any;
 
 function createTestWebuiDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'craft-webui-oauth-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'mortise-webui-oauth-test-'));
   TEMP_DIRS.push(dir);
   writeFileSync(join(dir, 'login.html'), '<!doctype html><html><body>login</body></html>');
   writeFileSync(join(dir, 'index.html'), '<!doctype html><html><body>app</body></html>');
@@ -35,7 +35,7 @@ describe('WebUI /api/oauth/callback', () => {
       flowId: 'flow-1',
       state: 'inner-state-123',
       codeVerifier: 'verifier',
-      redirectUri: 'https://agents.craft.do/auth/callback',
+      redirectUri: 'https://auth.example.com/auth/callback',
       source: {} as any,
       clientId: 'test-client-id',
       clientSecret: 'test-client-secret',
@@ -67,7 +67,7 @@ describe('WebUI /api/oauth/callback', () => {
         },
       },
       credManager: {
-        exchangeAndStore: async () => ({ success: true, email: 'gyula@craft.do' }),
+        exchangeAndStore: async () => ({ success: true, email: 'gyula@mortise.do' }),
       },
       sessionManager: {
         completeAuthRequest: async () => {},

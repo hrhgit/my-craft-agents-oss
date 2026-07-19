@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 
-const BRIDGE_KEY = '__CRAFT_UI_VALIDATION_EXTENSION_BRIDGE_V1__'
+const BRIDGE_KEY = '__MORTISE_UI_VALIDATION_EXTENSION_BRIDGE_V1__'
 const MAX_REQUEST_BYTES = 32_768
 
 export class ExtensionValidationAdapterError extends Error {

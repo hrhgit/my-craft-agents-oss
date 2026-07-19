@@ -3,7 +3,7 @@
  *
  * CRUD operations for workspaces.
  * Workspaces can be stored anywhere on disk via rootPath.
- * Default location: ~/.craft-agent/workspaces/
+ * Default location: ~/.mortise/workspaces/
  */
 
 import {
@@ -33,7 +33,7 @@ const DEFAULT_WORKSPACES_DIR = join(CONFIG_DIR, 'workspaces');
 const LEGACY_WORKSPACE_AI_DEFAULT_KEYS = ['provider', 'model', 'thinkingLevel'] as const;
 const RETIRED_WORKSPACE_ORGANIZATION_PATHS = ['labels', 'statuses', 'views.json'] as const;
 const WORKSPACE_STORE_FILE = join(CONFIG_DIR, 'state.sqlite');
-const WORKSPACE_SNAPSHOT = Symbol('craftWorkspaceSnapshot');
+const WORKSPACE_SNAPSHOT = Symbol('mortiseWorkspaceSnapshot');
 const WORKSPACE_WRITER_VERSION = 1;
 let workspaceStore: MultiWriterStore | null = null;
 
@@ -70,7 +70,7 @@ function workspaceHash(value: unknown): string {
 
 function materializeWorkspaceConfig(rootPath: string, config: WorkspaceConfig): void {
   atomicWriteFileSync(join(rootPath, 'config.json'), JSON.stringify(config, null, 2));
-  atomicWriteFileSync(join(rootPath, '.craft-config.sync'), JSON.stringify(config));
+  atomicWriteFileSync(join(rootPath, '.mortise-config.sync'), JSON.stringify(config));
 }
 
 function attachWorkspaceSnapshot(config: WorkspaceConfig, snapshot: WorkspaceSnapshot): WorkspaceConfig {
@@ -114,7 +114,7 @@ function removeLegacyWorkspaceAiDefaults(config: WorkspaceConfig): boolean {
 // ============================================================
 
 /**
- * Get the default workspaces directory (~/.craft-agent/workspaces/)
+ * Get the default workspaces directory (~/.mortise/workspaces/)
  */
 export function getDefaultWorkspacesDir(): string {
   return DEFAULT_WORKSPACES_DIR;
@@ -229,7 +229,7 @@ export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
       if (existsSync(configPath)) {
         try {
           const fileConfig = readJsonFileSync<WorkspaceConfig>(configPath);
-          const syncPath = join(rootPath, '.craft-config.sync');
+          const syncPath = join(rootPath, '.mortise-config.sync');
           const baseline = existsSync(syncPath)
             ? JSON.parse(readFileSync(syncPath, 'utf8')) as WorkspaceConfig
             : null;
@@ -443,7 +443,7 @@ export function generateSlug(name: string): string {
  * E.g., "my-workspace", "my-workspace-2", "my-workspace-3", ...
  *
  * @param name - Display name to derive the slug from
- * @param baseDir - Parent directory where workspace folders live (e.g., ~/.craft-agent/workspaces/)
+ * @param baseDir - Parent directory where workspace folders live (e.g., ~/.mortise/workspaces/)
  * @returns Full path to a unique, non-existing folder
  */
 export function generateUniqueWorkspacePath(name: string, baseDir: string): string {
@@ -508,7 +508,7 @@ export function createWorkspaceAtPath(
   // workspace-skill fallback paths in pre-tool-use.ts and skill-validate.ts;
   // the stale `loadWorkspaceSkills` reference previously documented here
   // does not exist in the codebase).
-  // `sources/` and `automations/` remain Craft-owned.
+  // `sources/` and `automations/` remain Mortise-owned.
   mkdirSync(rootPath, { recursive: true });
   mkdirSync(getWorkspaceSourcesPath(rootPath), { recursive: true });
 
@@ -566,7 +566,7 @@ export function renameWorkspaceFolder(rootPath: string, newName: string): boolea
 
 /**
  * Discover workspace folders in the default location that have valid config.json
- * Returns paths to valid workspaces found in ~/.craft-agent/workspaces/
+ * Returns paths to valid workspaces found in ~/.mortise/workspaces/
  */
 export function discoverWorkspacesInDefaultLocation(): string[] {
   const discovered: string[] = [];
@@ -648,14 +648,14 @@ export function setWorkspaceColorTheme(rootPath: string, themeId: string | undef
 
 /**
  * Check if local (stdio) MCP servers are enabled for a workspace.
- * Resolution order: ENV (CRAFT_LOCAL_MCP_ENABLED) > workspace config > default (true)
+ * Resolution order: ENV (MORTISE_LOCAL_MCP_ENABLED) > workspace config > default (true)
  *
  * @param rootPath - Absolute path to workspace root folder
  * @returns true if local MCP servers should be enabled
  */
 export function isLocalMcpEnabled(rootPath: string): boolean {
   // 1. Environment variable override (highest priority)
-  const envValue = process.env.CRAFT_LOCAL_MCP_ENABLED;
+  const envValue = process.env.MORTISE_LOCAL_MCP_ENABLED;
   if (envValue !== undefined) {
     return envValue.toLowerCase() === 'true';
   }
@@ -699,7 +699,7 @@ export function ensurePluginManifest(rootPath: string, workspaceName: string): v
 
   // Create minimal plugin manifest
   const manifest = {
-    name: `craft-workspace-${workspaceName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    name: `mortise-workspace-${workspaceName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
     version: '1.0.0',
   };
 

@@ -5,11 +5,11 @@
  * Extracted here to avoid circular imports between pi-agent.ts and event-adapter.ts.
  */
 
-import type { ThinkingLevel as PiThinkingLevel } from '@earendil-works/pi-agent-core';
+import type { ThinkingLevel as PiThinkingLevel } from '@mortise/pi-agent-core';
 import type { ThinkingLevel } from '../../thinking-levels.ts';
 
 /**
- * Map Craft's {@link ThinkingLevel} to Pi's `ThinkingLevel`.
+ * Map Mortise's {@link ThinkingLevel} to Pi's `ThinkingLevel`.
  */
 export const THINKING_TO_PI: Record<ThinkingLevel, PiThinkingLevel> = {
   off: 'off',

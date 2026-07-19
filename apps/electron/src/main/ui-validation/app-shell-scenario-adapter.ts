@@ -1,8 +1,8 @@
 import type { WebContents } from 'electron'
-import { UI_VALIDATION_APP_SHELL_SCENARIO_IDS } from '@craft-agent/shared/ui-validation'
-import { UiValidationError } from '@craft-agent/shared/ui-validation'
+import { UI_VALIDATION_APP_SHELL_SCENARIO_IDS } from '@mortise/shared/ui-validation'
+import { UiValidationError } from '@mortise/shared/ui-validation'
 
-const BRIDGE_KEY = '__CRAFT_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__'
+const BRIDGE_KEY = '__MORTISE_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__'
 const MAX_REQUEST_BYTES = 32_768
 
 export const APP_SHELL_SCENARIO_IDS = new Set(UI_VALIDATION_APP_SHELL_SCENARIO_IDS)

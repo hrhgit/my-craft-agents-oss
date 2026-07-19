@@ -4,8 +4,8 @@ import { join, resolve, sep } from 'path'
 import { existsSync } from 'fs'
 import { release } from 'os'
 import { fileURLToPath } from 'url'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
-import { classifyExternalUrl, formatBlockedUrlError } from '@craft-agent/shared/utils/url-safety'
+import { getWorkspaceByNameOrId } from '@mortise/shared/config'
+import { classifyExternalUrl, formatBlockedUrlError } from '@mortise/shared/utils/url-safety'
 import { RPC_CHANNELS, type BrowserHostDockNavigationCommand, type WindowCloseRequestSource } from '../shared/types'
 import type { SavedWindow } from './window-state'
 import { clampWindowBounds, type WindowBounds } from './window-bounds'
@@ -19,7 +19,7 @@ import { isKeyboardCloseShortcut } from './keyboard-close-shortcut'
 
 // Vite dev server URL for hot reload
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
-const CRAFT_TEST_MODE = process.env.CRAFT_TEST_MODE === '1'
+const MORTISE_TEST_MODE = process.env.MORTISE_TEST_MODE === '1'
 
 /**
  * Get the appropriate background material for Windows transparency effects
@@ -148,7 +148,7 @@ export class WindowManager {
   // F11: parent webContents.id → set of child window webContents.ids, so that
   // closing a parent window cascades to its child session windows.
   private childWindowsByParent: Map<number, Set<number>> = new Map()
-  private eventSink: ((channel: string, target: import('@craft-agent/shared/protocol').PushTarget, ...args: any[]) => void) | null = null
+  private eventSink: ((channel: string, target: import('@mortise/shared/protocol').PushTarget, ...args: any[]) => void) | null = null
   private clientResolver: ((wcId: number) => string | undefined) | null = null
   private keyboardCloseIntents: Set<number> = new Set()  // webContents.id flagged by Cmd/Ctrl+W before close
   private keyboardCloseIntentTimeouts: Map<number, NodeJS.Timeout> = new Map()  // Auto-clear stale keyboard-close intents
@@ -177,7 +177,7 @@ export class WindowManager {
    * instead of webContents.send. Called after server creation.
    */
   setRpcEventSink(
-    sink: (channel: string, target: import('@craft-agent/shared/protocol').PushTarget, ...args: any[]) => void,
+    sink: (channel: string, target: import('@mortise/shared/protocol').PushTarget, ...args: any[]) => void,
     resolver: (wcId: number) => string | undefined
   ): void {
     this.eventSink = sink
@@ -185,7 +185,7 @@ export class WindowManager {
   }
 
   /** Return current RPC event sink, if transport has been initialized. */
-  getRpcEventSink(): ((channel: string, target: import('@craft-agent/shared/protocol').PushTarget, ...args: any[]) => void) | null {
+  getRpcEventSink(): ((channel: string, target: import('@mortise/shared/protocol').PushTarget, ...args: any[]) => void) | null {
     return this.eventSink
   }
 
@@ -270,7 +270,7 @@ export class WindowManager {
 
   /**
    * Apply the window-title policy across all managed windows:
-   *   1 window  → app name ("Craft Agents") on the lone window
+   *   1 window  → app name ("Mortise") on the lone window
    *   ≥2 windows → workspace name on each window, app-name fallback when the
    *                workspace can't be resolved (e.g. onboarding window).
    *
@@ -422,7 +422,7 @@ export class WindowManager {
       })
     }
 
-    // The renderer's index.html ships with `<title>Craft Agents</title>`, so
+    // The renderer's index.html ships with `<title>Mortise</title>`, so
     // without this Electron auto-syncs every window's title back to that on
     // load — clobbering the workspace-name policy applied below. Suppress the
     // default sync so setTitle() calls from refreshWindowTitles() stick.
@@ -452,7 +452,7 @@ export class WindowManager {
       this.primaryWebContentsByWorkspace.set(workspaceId, webContentsId)
     }
     const runtimeQueryOptions = {
-      craftTestMode: CRAFT_TEST_MODE,
+      mortiseTestMode: MORTISE_TEST_MODE,
       layoutReadOnly: layoutRuntime.layoutReadOnly,
     }
     const withWindowRuntimeQuery = (query: Record<string, string>): Record<string, string> =>
@@ -765,7 +765,7 @@ export class WindowManager {
       parentWebContentsId,
     } = options ?? {}
 
-    const deepLink = `craftagents://allSessions/session/${sessionId}`
+    const deepLink = `mortise://allSessions/session/${sessionId}`
 
     const childWindow = this.createWindow({
       workspaceId,
@@ -832,7 +832,7 @@ export class WindowManager {
       role: 'auxiliary',
       layoutWindowId,
       parentWebContentsId,
-      customTitle: 'Craft Workbench',
+      customTitle: 'Mortise Workbench',
       ...(bounds ? { width: bounds.width, height: bounds.height } : {}),
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
     })
@@ -1033,7 +1033,7 @@ export class WindowManager {
   async closeWindowGracefully(webContentsId: number): Promise<void> {
     const managed = this.windows.get(webContentsId)
     if (!managed) {
-      throw new WindowCloseHandshakeError('not-found', `Window ${webContentsId} is not managed by Craft`)
+      throw new WindowCloseHandshakeError('not-found', `Window ${webContentsId} is not managed by Mortise`)
     }
     if (managed.role === 'main') await this.closeAuxiliaryWindowsGracefully(webContentsId)
     await this.requestManagedWindowCloseAndWait(webContentsId, managed)

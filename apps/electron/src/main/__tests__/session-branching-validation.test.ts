@@ -4,7 +4,7 @@ import {
   getPiEntryMessageId,
   resolvePiBranchTarget,
   type PiBranchProjection,
-} from '@craft-agent/server-core/projection'
+} from '@mortise/server-core/projection'
 
 function projection(): PiBranchProjection {
   return {

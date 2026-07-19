@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test'
-import type { AnnotationV1 } from '@craft-agent/core/types'
+import type { AnnotationV1 } from '@mortise/core/types'
 
 mock.module('electron', () => ({
   app: {
@@ -25,7 +25,7 @@ mock.module('../notifications', () => ({
   updateBadgeCount: () => {},
 }))
 
-const { SessionManager } = await import('@craft-agent/server-core/sessions')
+const { SessionManager } = await import('@mortise/server-core/sessions')
 
 function makeAnnotation(id: string, extraMeta?: Record<string, unknown>): AnnotationV1 {
   return {
@@ -137,7 +137,7 @@ describe('SessionManager annotation validation', () => {
     expect(h.events).toHaveLength(0)
   })
 
-  it('creates a Craft overlay for a live projected message', () => {
+  it('creates a Mortise overlay for a live projected message', () => {
     const h = createHarness([])
     h.managed.messages = []
 

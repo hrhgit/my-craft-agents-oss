@@ -1,6 +1,6 @@
 import * as React from 'react'
-import type { ExtensionBridgeEvent } from '@craft-agent/shared/agent/backend/types'
-import type { ExtensionUISurface } from '@craft-agent/shared/protocol'
+import type { ExtensionBridgeEvent } from '@mortise/shared/agent/backend/types'
+import type { ExtensionUISurface } from '@mortise/shared/protocol'
 import { ContributionStore, SurfaceLayoutManager } from './extension-contribution-store'
 import { extensionValidationStore } from './extension-validation-store'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
@@ -30,7 +30,7 @@ function ensureHostSubscription(): void {
 export function useExtensionContributions(
   sessionId: string,
   surface: ExtensionUISurface,
-  target?: { turnId?: string; messageId?: string; toolCallId?: string },
+  target?: { turnId?: string; messageId?: string; toolCallId?: string; artifactId?: string },
   hydrateRuntime = true,
   workspaceId?: string | null,
 ) {
@@ -45,6 +45,7 @@ export function useExtensionContributions(
   const targetTurnId = target?.turnId
   const targetMessageId = target?.messageId
   const targetToolCallId = target?.toolCallId
+  const targetArtifactId = target?.artifactId
   const version = React.useSyncExternalStore(
     extensionContributionStore.subscribe,
     extensionContributionStore.getVersion,
@@ -69,7 +70,8 @@ export function useExtensionContributions(
       return (targetTurnId === undefined || ownTarget.turnId === targetTurnId)
         && (targetMessageId === undefined || ownTarget.messageId === targetMessageId)
         && (targetToolCallId === undefined || ownTarget.toolCallId === targetToolCallId)
+        && (targetArtifactId === undefined || ownTarget.artifactId === targetArtifactId)
     })
     return extensionSurfaceLayout.resolve(surface, items)
-  }, [hasTarget, resolvedWorkspaceId, sessionId, surface, targetMessageId, targetToolCallId, targetTurnId, version])
+  }, [hasTarget, resolvedWorkspaceId, sessionId, surface, targetArtifactId, targetMessageId, targetToolCallId, targetTurnId, version])
 }

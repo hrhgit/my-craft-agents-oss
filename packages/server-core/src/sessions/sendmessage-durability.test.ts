@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { getSessionFilePath, getSessionPath, readSessionJsonl, setSharedPiSessionsDirForTests } from '@craft-agent/shared/sessions'
+import { getSessionFilePath, getSessionPath, readSessionJsonl, setSharedPiSessionsDirForTests } from '@mortise/shared/sessions'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 
 // Regression test for the High-severity finding in eb81086e, adapted for
 // Pi-first transcript ownership:
 //
 //   sendMessage's `{ accepted, messageId }` ack contract must not return before
-//   the Craft-owned attachment/badge overlay hits disk. A crash inside the
+//   the Mortise-owned attachment/badge overlay hits disk. A crash inside the
 //   persistence debounce window would otherwise lose its Pi message identity.
 //
 // The fix added `await this.flushSession(managed.id)` between persistSession
@@ -45,7 +45,7 @@ describe('sendMessage durability', () => {
       createdAt: Date.now(),
     }
     const managed = createManagedSession(
-      { craftId: id, name: 'durability test' },
+      { mortiseId: id, name: 'durability test' },
       workspace as never,
       { messagesLoaded: true },
     )
@@ -62,7 +62,7 @@ describe('sendMessage durability', () => {
       }
     }
 
-    // In Pi tree mode, Craft persists pre-Pi user message IDs in the sidecar
+    // In Pi tree mode, Mortise persists pre-Pi user message IDs in the sidecar
     // overlay while Pi owns the canonical transcript body.
     const overlayPath = join(getSessionPath(tmpRoot, sessionId), 'overlay.json')
     if (existsSync(overlayPath)) {

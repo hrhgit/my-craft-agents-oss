@@ -1,15 +1,15 @@
 {
-  "name": "@craft-agent/shared",
-  "version": "0.10.4",
+  "name": "@mortise/shared",
+  "version": "0.1.0",
   "license": "Apache-2.0",
-  "description": "Shared business logic for Craft Agents - agent, auth, config, credentials, MCP integration",
+  "description": "Shared business logic for Mortise - agent, auth, config, credentials, MCP integration",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "sync:craft-agent-bash-patterns": "bun run src/config/sync-craft-agent-bash-patterns.ts"
+    "sync:mortise-bash-patterns": "bun run src/config/sync-mortise-bash-patterns.ts"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -39,6 +39,7 @@
     "./pi/skill-resolver": "./src/pi/pi-skill-resolver.ts",
     "./sessions": "./src/sessions/index.ts",
     "./storage": "./src/storage/index.ts",
+    "./coordination": "./src/coordination/index.ts",
     "./sources": "./src/sources/index.ts",
     "./sources/types": "./src/sources/types.ts",
     "./skills": "./src/skills/index.ts",
@@ -76,8 +77,8 @@
     "./ui-validation": "./src/ui-validation/index.ts"
   },
   "dependencies": {
-    "@craft-agent/core": "workspace:*",
-    "@craft-agent/session-tools-core": "workspace:*",
+    "@mortise/core": "workspace:*",
+    "@mortise/session-tools-core": "workspace:*",
     "@isaacs/ttlcache": "^2.1.4",
     "@leeoniya/ufuzzy": "^1.0.19",
     "bash-parser": "^0.5.0",
@@ -89,9 +90,9 @@
     "incr-regex-package": "^1.0.4",
     "proper-lockfile": "4.1.2",
     "shell-quote": "^1.8.3",
-    "@earendil-works/pi-agent-core": "workspace:*",
-    "@earendil-works/pi-ai": "workspace:*",
-    "@earendil-works/pi-coding-agent": "workspace:*"
+    "@mortise/pi-agent-core": "workspace:*",
+    "@mortise/pi-ai": "workspace:*",
+    "@mortise/pi-coding-agent": "workspace:*"
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": ">=1.29.0",

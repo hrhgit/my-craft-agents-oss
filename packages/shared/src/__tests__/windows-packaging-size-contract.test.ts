@@ -22,6 +22,6 @@ describe('Windows packaging size contract', () => {
     ]);
 
     const buildSource = readFileSync(join(repoRoot, 'scripts/build/common.ts'), 'utf-8');
-    expect(buildSource).toContain("config.platform === 'win32' && process.env.CRAFT_PI_BINARY_RUNTIME !== '0'");
+    expect(buildSource).toContain("config.platform === 'win32' && process.env.MORTISE_PI_BINARY_RUNTIME !== '0'");
   });
 });

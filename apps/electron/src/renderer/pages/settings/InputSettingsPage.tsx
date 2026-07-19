@@ -18,7 +18,7 @@ import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { routes } from '@/lib/navigate'
 import { isMac } from '@/lib/platform'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
-import type { MidStreamBehavior } from '@craft-agent/shared/config/midstream-behavior'
+import type { MidStreamBehavior } from '@mortise/shared/config/midstream-behavior'
 
 import {
   SettingsSection,

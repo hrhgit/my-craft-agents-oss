@@ -2,8 +2,8 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { AlertCircle, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Spinner } from "@craft-agent/ui"
-import { CraftAgentsSymbol } from "@/components/icons/CraftAgentsSymbol"
+import { Spinner } from "@mortise/ui"
+import { MortiseSymbol } from "@/components/icons/MortiseSymbol"
 import { StepFormLayout } from "./primitives"
 
 interface ReauthScreenProps {
@@ -13,7 +13,7 @@ interface ReauthScreenProps {
 /**
  * ReauthScreen - Simple re-login screen for expired sessions
  *
- * Shown when the user has existing workspaces/config but the Craft token
+ * Shown when the user has existing workspaces/config but the Mortise token
  * is missing or expired. Much simpler than full onboarding - just re-authenticate.
  */
 export function ReauthScreen({ onLogin }: ReauthScreenProps) {

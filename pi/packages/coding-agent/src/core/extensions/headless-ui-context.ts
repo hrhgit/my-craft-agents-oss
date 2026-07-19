@@ -5,7 +5,7 @@
  * child-process bridge). Extension UI calls are forwarded to an external
  * consumer via a transport, instead of being rendered in a terminal.
  *
- * This mirrors the behaviour craft-agent implemented as `createBridgeUIContext`:
+ * This mirrors the behaviour mortise implemented as `createBridgeUIContext`:
  * - notify / setWidget are forwarded as JSONL-style events via the transport
  * - select / confirm / input / editor return safe defaults (interactive
  *   dialogs are expected to be handled via the EventBus `remoteui:request`
@@ -14,7 +14,7 @@
  * - theme is a passthrough stub that strips ANSI styling
  */
 
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import type { Component, TUI } from "@mortise/pi-tui";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -68,7 +68,7 @@ const HEADLESS_RENDER_WIDTH = 120;
  *
  * @example
  * ```ts
- * import { createHeadlessUIContext } from "@earendil-works/pi-coding-agent";
+ * import { createHeadlessUIContext } from "@mortise/pi-coding-agent";
  *
  * const ui = createHeadlessUIContext({
  *   send(event) {
@@ -79,7 +79,7 @@ const HEADLESS_RENDER_WIDTH = 120;
  */
 export function createHeadlessUIContext(transport: HeadlessUITransport): ExtensionUIContext {
 	// Passthrough theme: strip ANSI styling so the external renderer can treat
-	// lines as plain text. Matches the stub used by craft's createBridgeUIContext.
+	// lines as plain text. Matches the stub used by mortise's createBridgeUIContext.
 	const stubTheme = {
 		fg: (_name: string, text: string) => text,
 		bold: (text: string) => text,

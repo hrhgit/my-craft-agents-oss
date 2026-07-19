@@ -5,7 +5,7 @@ import { clearAllCraftCredentials, getCredentialManager } from '../credentials/i
 import {
   readCraftLlmConnections as readLegacyProviderEntries,
   writeCraftLlmConnections,
-} from '@earendil-works/pi-coding-agent/host-facade';
+} from '@mortise/pi-coding-agent/host-facade';
 import { getOrCreateLatestSession, type SessionHeader } from '../sessions/index.ts';
 import {
   discoverWorkspacesInDefaultLocation,
@@ -22,7 +22,7 @@ import { expandPath, toPortablePath, getBundledAssetsDir } from '../utils/paths.
 import { debug } from '../utils/debug.ts';
 import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
 import { CONFIG_DIR } from './paths.ts';
-import type { StoredAttachment, StoredMessage } from '@craft-agent/core/types';
+import type { StoredAttachment, StoredMessage } from '@mortise/core/types';
 import type { Plan } from '../agent/plan-types.ts';
 import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
@@ -55,10 +55,10 @@ export type {
   McpAuthType,
   AuthType,
   OAuthCredentials,
-} from '@craft-agent/core/types';
+} from '@mortise/core/types';
 
 // Import for local use
-import type { RemoteServerConfig, Workspace } from '@craft-agent/core/types';
+import type { RemoteServerConfig, Workspace } from '@mortise/core/types';
 
 import {
   readPiGlobalProviders,
@@ -66,8 +66,8 @@ import {
   savePiGlobalProvider,
   setPiGlobalDefault,
   setPiGlobalDefaultThinkingLevel,
-  readPiCraftAgentBoolean,
-  writePiCraftAgentBoolean,
+  readPiMortiseBoolean,
+  writePiMortiseBoolean,
   readPiShellGuiBoolean,
   writePiShellGuiBoolean,
   type PiGlobalModel,
@@ -122,7 +122,7 @@ function legacyConnectionModels(connection: LegacyProviderEntry): PiGlobalModel[
 }
 
 /**
- * Import retired Craft connection data into Pi's provider/model files.
+ * Import retired Mortise connection data into Pi's provider/model files.
  * Existing Pi providers always win, making repeated startup calls idempotent.
  */
 function migrateLegacyLlmConfiguration(config: LegacyStoredConfig): void {
@@ -207,9 +207,9 @@ export interface StoredConfig {
   allowRemoteEvaluate?: boolean;  // Allow remote agents to call `browser_tool evaluate` on local browser (default: true).
   // Pi 扩展集成开关：控制全局 pi 扩展加载与 prompt 自动化委托
   piExtensions?: StoredPiExtensionSettings;
-  // Pi 壳模式：Craft 作为 Pi 的薄壳，完全透传 Pi 身份/会话/技能
+  // Pi 壳模式：Mortise 作为 Pi 的薄壳，完全透传 Pi 身份/会话/技能
   piShell?: {
-    fullPassthrough?: boolean;  // 完全 Pi 透传：使用 Pi 原生 system prompt，移除 Craft 身份覆盖。默认 true。
+    fullPassthrough?: boolean;  // 完全 Pi 透传：使用 Pi 原生 system prompt，移除 Mortise 身份覆盖。默认 true。
   };
   // Network proxy
   networkProxy?: import('./types.ts').NetworkProxySettings;
@@ -227,7 +227,7 @@ const CONFIG_DATABASE_FILE = join(CONFIG_DIR, 'state.sqlite');
 const CONFIG_SYNC_BASELINE_FILE = join(CONFIG_DIR, '.config.json.sync');
 const CONFIG_RECORD_NAMESPACE = 'config';
 const CONFIG_RECORD_KEY = 'root';
-const CONFIG_SNAPSHOT = Symbol('craftConfigSnapshot');
+const CONFIG_SNAPSHOT = Symbol('mortiseConfigSnapshot');
 const CONFIG_WRITER_VERSION = 1;
 
 interface ConfigSnapshot {
@@ -241,7 +241,7 @@ let configStore: MultiWriterStore | null = null;
 
 function getConfigStore(): MultiWriterStore {
   if (!configStore) {
-    const writerId = `craft-${process.pid}-${process.env.CRAFT_WRITER_ID ?? randomUUID()}`;
+    const writerId = `mortise-${process.pid}-${process.env.MORTISE_WRITER_ID ?? randomUUID()}`;
     configStore = MultiWriterStore.openSync({
       databasePath: CONFIG_DATABASE_FILE,
       writerId,
@@ -382,7 +382,7 @@ let configDefaultsSynced = false;
 /** Minimal config-defaults used when bundled assets aren't available (CI, standalone server). */
 const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
   version: '1.0',
-  description: 'Default configuration values for Craft Agents',
+  description: 'Default configuration values for Mortise',
   defaults: {
     notificationsEnabled: true,
     colorTheme: 'default',
@@ -441,7 +441,7 @@ function syncConfigDefaults(): void {
 }
 
 /**
- * Load config defaults from ~/.craft-agent/config-defaults.json
+ * Load config defaults from ~/.mortise/config-defaults.json
  * This file is synced from bundled assets on every launch.
  */
 export function loadConfigDefaults(): ConfigDefaults {
@@ -549,7 +549,7 @@ export function ensureConfigDir(): void {
   // Snapshot an existing config.json (dated, keep last 3) before anything can
   // mutate or — in a failure path — overwrite the workspace registry.
   backupConfigFile();
-  // Initialize bundled docs (creates ~/.craft-agent/docs/ with sources.md, agents.md, permissions.md)
+  // Initialize bundled docs (creates ~/.mortise/docs/ with sources.md, agents.md, permissions.md)
   initializeDocs();
 
   // Initialize config defaults
@@ -877,45 +877,45 @@ export function setRichToolDescriptions(enabled: boolean): void {
 }
 
 export function getExtendedPromptCache(): boolean {
-  return readPiCraftAgentBoolean('extendedPromptCache', false);
+  return readPiMortiseBoolean('extendedPromptCache', false);
 }
 
 export async function setExtendedPromptCache(enabled: boolean): Promise<void> {
-  await writePiCraftAgentBoolean('extendedPromptCache', enabled);
+  await writePiMortiseBoolean('extendedPromptCache', enabled);
 }
 
 export function getEnable1MContext(): boolean {
-  return readPiCraftAgentBoolean('enable1MContext', false);
+  return readPiMortiseBoolean('enable1MContext', false);
 }
 
 export async function setEnable1MContext(enabled: boolean): Promise<void> {
-  await writePiCraftAgentBoolean('enable1MContext', enabled);
+  await writePiMortiseBoolean('enable1MContext', enabled);
 }
 
 export function getRtkEnabled(): boolean {
-  return readPiCraftAgentBoolean('rtkEnabled', false);
+  return readPiMortiseBoolean('rtkEnabled', false);
 }
 
 export async function setRtkEnabled(enabled: boolean): Promise<void> {
-  await writePiCraftAgentBoolean('rtkEnabled', enabled);
+  await writePiMortiseBoolean('rtkEnabled', enabled);
 }
 
 /**
  * Get whether the built-in browser tool is enabled.
  * When disabled, browser_tool is not included in session tools.
- * Source of truth: Pi `~/.pi/agent/settings.json.shellGui.craft.browserToolEnabled`.
+ * Source of truth: Pi `~/.pi/agent/settings.json.shellGui.mortise.browserToolEnabled`.
  * Defaults to true if not set.
  */
 export function getBrowserToolEnabled(): boolean {
-  return readPiShellGuiBoolean('craft', 'browserToolEnabled', true);
+  return readPiShellGuiBoolean('mortise', 'browserToolEnabled', true);
 }
 
 /**
  * Set whether the built-in browser tool is enabled.
- * Persists to Pi `~/.pi/agent/settings.json.shellGui.craft.browserToolEnabled`.
+ * Persists to Pi `~/.pi/agent/settings.json.shellGui.mortise.browserToolEnabled`.
  */
 export async function setBrowserToolEnabled(enabled: boolean): Promise<void> {
-  await writePiShellGuiBoolean('craft', 'browserToolEnabled', enabled);
+  await writePiShellGuiBoolean('mortise', 'browserToolEnabled', enabled);
 
   // Clear session tool caches so all sessions pick up the change immediately.
   // Lazy import to avoid circular dependency (storage ← session-scoped-tools ← storage).
@@ -923,7 +923,7 @@ export async function setBrowserToolEnabled(enabled: boolean): Promise<void> {
 }
 
 /**
- * Get whether Craft data sources are available in the UI and agent runtime.
+ * Get whether Mortise data sources are available in the UI and agent runtime.
  * Uses the bundled default when the user has not explicitly chosen a value.
  */
 export function getDataSourcesEnabled(): boolean {
@@ -1041,20 +1041,20 @@ export function setPiExtensionsDelegatePromptAutomation(delegate: boolean): void
 
 /**
  * 是否启用完全 Pi 透传（壳模式）。
- * 默认 true。为 true 时使用 Pi 原生 system prompt，移除 Craft 身份覆盖；
- * 为 false 时回退到 Craft 独立身份模式（应用 applySystemPromptOverride）。
- * Source of truth: Pi `~/.pi/agent/settings.json.shellGui.craft.piShellFullPassthrough`.
+ * 默认 true。为 true 时使用 Pi 原生 system prompt，移除 Mortise 身份覆盖；
+ * 为 false 时回退到 Mortise 独立身份模式（应用 applySystemPromptOverride）。
+ * Source of truth: Pi `~/.pi/agent/settings.json.shellGui.mortise.piShellFullPassthrough`.
  */
 export function getPiShellFullPassthrough(): boolean {
-  return readPiShellGuiBoolean('craft', 'piShellFullPassthrough', true);
+  return readPiShellGuiBoolean('mortise', 'piShellFullPassthrough', true);
 }
 
 /**
  * 设置是否启用完全 Pi 透传（壳模式）。
- * Persists to Pi `~/.pi/agent/settings.json.shellGui.craft.piShellFullPassthrough`.
+ * Persists to Pi `~/.pi/agent/settings.json.shellGui.mortise.piShellFullPassthrough`.
  */
 export async function setPiShellFullPassthrough(enabled: boolean): Promise<void> {
-  await writePiShellGuiBoolean('craft', 'piShellFullPassthrough', enabled);
+  await writePiShellGuiBoolean('mortise', 'piShellFullPassthrough', enabled);
 }
 
 /**
@@ -1130,7 +1130,7 @@ export async function clearAllConfig(): Promise<void> {
   try {
     clearAllCraftCredentials();
   } catch (error) {
-    debug('[config] Failed to clear craft credentials from pi auth.json:', error instanceof Error ? error.message : error);
+    debug('[config] Failed to clear mortise credentials from pi auth.json:', error instanceof Error ? error.message : error);
   }
 
   // Optionally: Delete workspace data (conversations)
@@ -1409,7 +1409,7 @@ function ensureWorkspaceDir(workspaceId: string): string {
 
 
 // Re-export types from core for convenience
-export type { StoredAttachment, StoredMessage } from '@craft-agent/core/types';
+export type { StoredAttachment, StoredMessage } from '@mortise/core/types';
 
 export interface WorkspaceConversation {
   messages: StoredMessage[];
@@ -1841,7 +1841,7 @@ const APP_THEME_FILE = join(CONFIG_DIR, 'theme.json');
 const APP_THEMES_DIR = join(CONFIG_DIR, 'themes');
 
 /**
- * Get the path to the app-level theme override file (~/.craft-agent/theme.json).
+ * Get the path to the app-level theme override file (~/.mortise/theme.json).
  */
 export function getAppThemePath(): string {
   return APP_THEME_FILE;
@@ -1852,7 +1852,7 @@ let presetsInitialized = false;
 
 /**
  * Get the app-level themes directory.
- * Preset themes are stored at ~/.craft-agent/themes/
+ * Preset themes are stored at ~/.mortise/themes/
  */
 export function getAppThemesDir(): string {
   return APP_THEMES_DIR;
@@ -2182,7 +2182,7 @@ export function getDefaultThinkingLevel(): ThinkingLevel {
 /**
  * Set the app-level default thinking level for new sessions.
  * Persists to Pi `~/.pi/agent/settings.json.defaultThinkingLevel` so the Pi
- * subprocess picks it up immediately. No longer writes to Craft config.json.
+ * subprocess picks it up immediately. No longer writes to Mortise config.json.
  *
  * @returns true if persisted, false if validation failed
  */
@@ -2270,7 +2270,7 @@ export function setSetupDeferred(deferred: boolean): void {
 const TOOL_ICONS_DIR_NAME = 'tool-icons';
 
 /**
- * Returns the path to the tool-icons directory: ~/.craft-agent/tool-icons/
+ * Returns the path to the tool-icons directory: ~/.mortise/tool-icons/
  */
 export function getToolIconsDir(): string {
   return join(CONFIG_DIR, TOOL_ICONS_DIR_NAME);

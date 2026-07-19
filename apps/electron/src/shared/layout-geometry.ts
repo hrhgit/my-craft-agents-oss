@@ -513,12 +513,12 @@ function createGroupNode(groupId: string, children: GeometryNode[], activeTabId?
 
 function createTabNode(tab: GeometryContentTab | undefined): GeometryNode | null {
   if (!tab) return null
-  const workspaceContent = ['file', 'browser', 'side-task', 'extension'].includes(tab.ref.kind)
+  const workspaceContent = ['file', 'browser', 'extension'].includes(tab.ref.kind)
   return {
     type: 'tab',
     id: tab.id,
     name: tab.title,
-    component: 'craft-content',
+    component: 'mortise-content',
     config: {
       ...(workspaceContent ? {} : { route: tab.ref.resourceId }),
       serverId: tab.ref.serverId,

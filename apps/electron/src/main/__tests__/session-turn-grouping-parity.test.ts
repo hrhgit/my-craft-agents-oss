@@ -8,9 +8,9 @@
  * Imports groupMessagesByTurn (pure function) from turn-utils.
  */
 import { describe, it, expect, beforeEach } from 'bun:test'
-import { groupMessagesByTurn, type AssistantTurn } from '@craft-agent/ui/chat/turn-utils'
-import { messageToStored, storedToMessage } from '@craft-agent/core'
-import type { Message, MessageRole } from '@craft-agent/core'
+import { groupMessagesByTurn, type AssistantTurn } from '@mortise/ui/chat/turn-utils'
+import { messageToStored, storedToMessage } from '@mortise/core'
+import type { Message, MessageRole } from '@mortise/core'
 
 // ============================================================================
 // Mirror: persistence pipeline (two-stage filter)
@@ -198,7 +198,7 @@ describe('turn grouping stability across reload', () => {
     expect(lastReload?.response?.text).toBe('Here are the results.')
   })
 
-  it('legacy plan messages reload as assistant artifacts, not Craft plan turns', () => {
+  it('legacy plan messages reload as assistant artifacts, not Mortise plan turns', () => {
     const messages: Message[] = [
       createMessage('user', { content: 'Plan it' }),
       createMessage('plan', {

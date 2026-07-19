@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 import { RPC_CHANNELS } from '../../../shared/types'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
 type HandlerFn = (ctx: { clientId: string }, ...args: any[]) => Promise<any> | any
@@ -10,7 +10,7 @@ const setDefaultThinkingLevelMock = mock((_level: string) => true)
 const getMidStreamBehaviorMock = mock(() => 'steer')
 const setMidStreamBehaviorMock = mock((_behavior: string) => true)
 
-mock.module('@craft-agent/shared/config', () => ({
+mock.module('@mortise/shared/config', () => ({
   getPreferencesPath: () => '/tmp/preferences.json',
   getSessionDraft: () => null,
   setSessionDraft: () => {},
@@ -75,7 +75,7 @@ describe('settings default thinking RPC handlers', () => {
       } as unknown as HandlerDeps['oauthFlowStore'],
     }
 
-    const { registerSettingsHandlers } = await import('@craft-agent/server-core/handlers/rpc/settings')
+    const { registerSettingsHandlers } = await import('@mortise/server-core/handlers/rpc/settings')
     registerSettingsHandlers(server, deps)
   })
 

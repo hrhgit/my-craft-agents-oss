@@ -1,8 +1,8 @@
 import { join } from 'path'
 import { readdirSync, statSync } from 'fs'
-import { RPC_CHANNELS, type SkillFile } from '@craft-agent/shared/protocol'
-import { resolveSkillDir } from '@craft-agent/shared/skills'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { RPC_CHANNELS, type SkillFile } from '@mortise/shared/protocol'
+import { resolveSkillDir } from '@mortise/shared/skills'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
 
@@ -24,7 +24,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     deps.platform.logger?.info(`SKILLS_GET: Loading skills for workspace: ${wid}`)
     const workspace = getWorkspaceOrNull(wid, deps.platform.logger, 'SKILLS_GET')
     if (!workspace) return []
-    const { loadAllSkills } = await import('@craft-agent/shared/skills')
+    const { loadAllSkills } = await import('@mortise/shared/skills')
     const skills = loadAllSkills(workspace.rootPath, workspace.rootPath)
     deps.platform.logger?.info(`SKILLS_GET: Loaded ${skills.length} skills from ${workspace.rootPath}`)
     return skills
@@ -84,7 +84,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
 
-    const { deleteSkill } = await import('@craft-agent/shared/skills')
+    const { deleteSkill } = await import('@mortise/shared/skills')
     deleteSkill(workspace.rootPath, skillSlug, workspace.rootPath)
     deps.platform.logger?.info(`Deleted skill: ${skillSlug}`)
   })

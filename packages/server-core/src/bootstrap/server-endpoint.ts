@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { isAbsolute, join } from 'node:path'
-import { CONFIG_DIR } from '@craft-agent/shared/config/paths'
+import { CONFIG_DIR } from '@mortise/shared/config/paths'
 
 export const DEFAULT_SERVER_ENDPOINT_NAME = '.server-endpoint.json'
 

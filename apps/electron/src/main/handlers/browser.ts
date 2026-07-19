@@ -1,7 +1,7 @@
 import { RPC_CHANNELS, type BrowserPaneCreateOptions, type BrowserEmbedBounds } from '../../shared/types'
 import type { BrowserScreenshotOptions } from '../browser-pane-manager'
-import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { pushTyped, type RpcServer } from '@mortise/server-core/transport'
+import { getWorkspaceByNameOrId } from '@mortise/shared/config'
 import type { HandlerDeps } from './handler-deps'
 
 export const HANDLED_CHANNELS = [
@@ -229,7 +229,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
   //
   // We can't route STATE_CHANGED to `{ to: 'workspace', workspaceId }` here
   // because the broadcast routing uses the client's transport-level workspaceId
-  // (the local Craft Agents window's id, set by `updateClientWorkspace`),
+  // (the local Mortise window's id, set by `updateClientWorkspace`),
   // while remote-bridged instances are stamped with the remote server's
   // workspaceId. The two never match, so a workspace-targeted broadcast would
   // silently fail to reach the renderer. Broadcast to all + filter in the

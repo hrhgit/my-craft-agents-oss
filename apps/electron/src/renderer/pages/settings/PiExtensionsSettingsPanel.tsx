@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { AlertTriangle, ChevronRight } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { SettingsCard } from '@/components/settings'
-import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionCategory } from '@craft-agent/shared/config/pi-extension-settings'
+import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionCategory } from '@mortise/shared/config/pi-extension-settings'
 export function isExtensionConfigurable(extension: PiExtensionCatalogEntry): boolean {
   return extension.configurable && (extension.ui?.settings?.fields.length ?? 0) > 0
 }
@@ -97,7 +97,11 @@ export function ExtensionListPanel({
                   id={ext.id}
                   title={ext.title}
                   description={description}
-                  enabled={enabled}
+                  enabled={enabled && ext.loadable}
+                  loadable={ext.loadable}
+                  version={ext.manifest?.version}
+                  author={ext.manifest?.author.name}
+                  diagnostic={ext.manifestDiagnostics[0]}
                   configurable={configurable}
                   onToggle={(value) => onToggleExtension(ext.id, value)}
                   onSelect={() => onSelectExtension(ext.id)}
@@ -116,6 +120,10 @@ interface ExtensionRowProps {
   title: string
   description: string
   enabled: boolean
+  loadable: boolean
+  version?: string
+  author?: string
+  diagnostic?: PiExtensionCatalogEntry['manifestDiagnostics'][number]
   configurable: boolean
   onToggle: (enabled: boolean) => void
   onSelect: () => void
@@ -126,6 +134,10 @@ function ExtensionRow({
   title,
   description,
   enabled,
+  loadable,
+  version,
+  author,
+  diagnostic,
   configurable,
   onToggle,
   onSelect,
@@ -140,10 +152,24 @@ function ExtensionRow({
         >
           <div className="flex items-center gap-1">
             <span className="text-sm font-medium font-sans leading-tight">{title || id}</span>
+            {diagnostic && (
+              <AlertTriangle
+                aria-label={diagnostic.severity === 'error' ? 'Extension blocked' : 'Extension warning'}
+                className={diagnostic.severity === 'error' ? 'h-3.5 w-3.5 text-destructive' : 'h-3.5 w-3.5 text-amber-600'}
+              />
+            )}
             <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
           {description && (
             <div className="text-xs text-muted-foreground mt-0.5 truncate">{description}</div>
+          )}
+          {(version || author) && (
+            <div className="text-[11px] text-muted-foreground mt-0.5">{[version && `v${version}`, author].filter(Boolean).join(' - ')}</div>
+          )}
+          {diagnostic && (
+            <div className={diagnostic.severity === 'error' ? 'text-xs text-destructive mt-1' : 'text-xs text-amber-700 mt-1'}>
+              {diagnostic.message}
+            </div>
           )}
         </button>
       ) : (
@@ -152,11 +178,20 @@ function ExtensionRow({
           {description && (
             <div className="text-xs text-muted-foreground mt-0.5 truncate">{description}</div>
           )}
+          {(version || author) && (
+            <div className="text-[11px] text-muted-foreground mt-0.5">{[version && `v${version}`, author].filter(Boolean).join(' - ')}</div>
+          )}
+          {diagnostic && (
+            <div className={diagnostic.severity === 'error' ? 'text-xs text-destructive mt-1' : 'text-xs text-amber-700 mt-1'}>
+              {diagnostic.message}
+            </div>
+          )}
         </div>
       )}
       <Switch
         aria-label={`${enabled ? 'Disable' : 'Enable'} ${title || id}`}
         checked={enabled}
+        disabled={!loadable}
         onCheckedChange={onToggle}
         className="ml-4 shrink-0"
       />

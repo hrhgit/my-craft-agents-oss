@@ -15,8 +15,8 @@ describe('remote TLS policy', () => {
 
   it('allows untrusted certificates only after explicit opt-in', () => {
     expect(shouldRejectUnauthorizedTls({ allowInsecureTls: true })).toBe(false)
-    expect(allowsInsecureTlsFromEnvironment({ CRAFT_ALLOW_INSECURE_TLS: '1' })).toBe(true)
-    expect(allowsInsecureTlsFromEnvironment({ CRAFT_ALLOW_INSECURE_TLS: 'true' })).toBe(false)
+    expect(allowsInsecureTlsFromEnvironment({ MORTISE_ALLOW_INSECURE_TLS: '1' })).toBe(true)
+    expect(allowsInsecureTlsFromEnvironment({ MORTISE_ALLOW_INSECURE_TLS: 'true' })).toBe(false)
   })
 
   it('binds certificate consent to a normalized WSS origin', () => {

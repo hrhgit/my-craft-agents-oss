@@ -8,7 +8,7 @@ import type { BackendHostRuntimeContext } from '../types.ts';
  * interceptor and runtime assets in the monorepo / on the system PATH.
  * Intended for local `electron:dist:mac` builds that skip `build-dmg.sh`.
  */
-const IS_DEV_RUNTIME = !!process.env.CRAFT_DEV_RUNTIME;
+const IS_DEV_RUNTIME = !!process.env.MORTISE_DEV_RUNTIME;
 
 export interface ResolvedBackendRuntimePaths {
   sessionServerPath?: string;
@@ -80,14 +80,14 @@ function resolveServerPath(hostRuntime: BackendHostRuntimeContext, serverName: s
 }
 
 function resolvePiCliPath(hostRuntime: BackendHostRuntimeContext): string | undefined {
-  const override = process.env.CRAFT_PI_CLI_PATH;
+  const override = process.env.MORTISE_PI_CLI_PATH;
   if (override && existsSync(override)) return override;
 
   const bundledCli = join('dist', 'cli.bundle.js');
   const bundledFullCli = join('dist', 'cli.full.bundle.js');
   const packageCli = join(
     'node_modules',
-    '@earendil-works',
+    '@mortise',
     'pi-coding-agent',
     'dist',
     'cli.js',

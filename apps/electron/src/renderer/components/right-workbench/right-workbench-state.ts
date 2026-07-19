@@ -1,5 +1,4 @@
 const BROWSER_INSTANCE_TOOL_PREFIX = 'browser-instance:'
-const SIDE_TASKS_TOOL_PREFIX = 'side-tasks:'
 
 export function browserRegistryWorkspaceSyncKey(
   workspaceId: string | null | undefined,
@@ -15,21 +14,6 @@ export function browserInstanceContentId(instanceId: string): string {
 export function parseBrowserInstanceContentId(toolId: string | undefined): string | null {
   if (!toolId?.startsWith(BROWSER_INSTANCE_TOOL_PREFIX)) return null
   const encoded = toolId.slice(BROWSER_INSTANCE_TOOL_PREFIX.length)
-  if (!encoded) return null
-  try {
-    return decodeURIComponent(encoded)
-  } catch {
-    return null
-  }
-}
-
-export function sideTasksContentId(parentSessionId: string): string {
-  return `${SIDE_TASKS_TOOL_PREFIX}${encodeURIComponent(parentSessionId)}`
-}
-
-export function parseSideTasksContentId(toolId: string | undefined): string | null {
-  if (!toolId?.startsWith(SIDE_TASKS_TOOL_PREFIX)) return null
-  const encoded = toolId.slice(SIDE_TASKS_TOOL_PREFIX.length)
   if (!encoded) return null
   try {
     return decodeURIComponent(encoded)

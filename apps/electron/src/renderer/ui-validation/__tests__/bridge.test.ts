@@ -26,7 +26,7 @@ describe('automatic UI semantics', () => {
   })
 
   it('preserves duplicate explicit IDs so resolution reports ambiguity', () => {
-    const selector = '[data-craft-semantic-id="duplicate"]'
+    const selector = '[data-mortise-semantic-id="duplicate"]'
     expect(disambiguateAutomaticNodes([node('duplicate', selector), node('duplicate', selector)]).map(item => item.id))
       .toEqual(['duplicate', 'duplicate'])
   })

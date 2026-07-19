@@ -1,7 +1,7 @@
 {
 	"name": "pi-extension-sandbox",
 	"private": true,
-	"version": "1.8.0",
+	"version": "0.1.0",
 	"type": "module",
 	"scripts": {
 		"clean": "echo 'nothing to clean'",
@@ -10,7 +10,20 @@
 	},
 	"pi": {
 		"extensions": [
-			"./index.ts"
+			{
+				"id": "sandbox-example",
+				"path": "./index.ts",
+				"targets": ["pi"],
+				"manifest": {
+					"schemaVersion": 1,
+					"name": "Sandbox Example",
+					"version": "0.1.0",
+					"author": { "name": "Mortise Contributors" },
+					"engines": { "pi": "^0.1.0" },
+					"capabilities": ["tools.sandbox"],
+					"permissions": []
+				}
+			}
 		]
 	},
 	"dependencies": {

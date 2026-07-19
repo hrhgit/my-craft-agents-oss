@@ -1,8 +1,8 @@
 /**
- * Pi Global → Craft thin wrapper
+ * Pi Global → Mortise thin wrapper
  *
  * ~/.pi/agent/ 是 "pure Pi + custom provider" 模式的唯一数据源（SoT）。
- * Craft 现在直接读写 ~/.pi/agent/，不再在 config.json 中维护 `pi-*`
+ * Mortise 现在直接读写 ~/.pi/agent/，不再在 config.json 中维护 `pi-*`
  * Pi 凭证统一存储在 ~/.pi/agent/auth.json。
  *
  * 职责（thin wrapper）：
@@ -10,7 +10,7 @@
  *   自动修复）。
  *
  * 不再做的事：
- * - 不构建 Craft provider 副本，不调用 saveConfig。
+ * - 不构建 Mortise provider 副本，不调用 saveConfig。
  * - 不调用 credentialManager.setProviderApiKey / setProviderOAuth / setProviderIamCredentials
  *   写入 `pi-*` slug 的凭证。
  *
@@ -26,7 +26,7 @@ import {
   readPiGlobalSettings,
   setPiGlobalDefault,
   type PiGlobalProvider,
-} from '@craft-agent/shared/config'
+} from '@mortise/shared/config'
 
 /** 同步运行结果——调用方依据 `changed` 决定是否广播。 */
 export interface SyncResult {
@@ -38,7 +38,7 @@ export interface SyncResult {
  * ~/.pi/agent/ 的 thin wrapper。
  *
  * - 读取 ~/.pi/agent/ 的 providers + default，并对失效的 defaultProvider 做自动修复。
- * - 不写入 Craft 旧配置或旧凭证路径。
+ * - 不写入 Mortise 旧配置或旧凭证路径。
  *
  * 返回 SyncResult。永不抛错——错误会被记录并以 `error` 字段返回。
  */

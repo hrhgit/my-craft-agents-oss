@@ -10,12 +10,12 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const TOOL_ICONS_DIR = path.join(process.env.HOME!, '.craft-agent/tool-icons')
-// Workspace UUID is machine-specific; override via CRAFT_WORKSPACE_ID env var.
-const WORKSPACE_ID = process.env.CRAFT_WORKSPACE_ID ?? '046a02d0-6521-98eb-8756-95ec4bb8c41f'
+const TOOL_ICONS_DIR = path.join(process.env.HOME!, '.mortise/tool-icons')
+// Workspace UUID is machine-specific; override via MORTISE_WORKSPACE_ID env var.
+const WORKSPACE_ID = process.env.MORTISE_WORKSPACE_ID ?? '046a02d0-6521-98eb-8756-95ec4bb8c41f'
 const SOURCES_DIR = path.join(
   process.env.HOME!,
-  '.craft-agent/workspaces',
+  '.mortise/workspaces',
   WORKSPACE_ID,
   'sources'
 )
@@ -117,7 +117,7 @@ function generateIconsFile() {
  * DO NOT EDIT MANUALLY
  */
 
-// Native tool icons (from ~/.craft-agent/tool-icons/)
+// Native tool icons (from ~/.mortise/tool-icons/)
 export const nativeToolIcons = {
 ${Object.entries(nativeIcons)
   .map(([name, data]) => `  ${name}: '${data}',`)

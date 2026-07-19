@@ -1,7 +1,7 @@
 import { Info } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import type { PermissionMode } from '@craft-agent/shared/agent/modes'
+import type { PermissionMode } from '@mortise/shared/agent/modes'
 import { ActiveTasksBar, type BackgroundTask } from './ActiveTasksBar'
 import { SessionInfoPopover } from './SessionInfoPopover'
 

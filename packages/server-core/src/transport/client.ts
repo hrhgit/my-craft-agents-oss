@@ -16,7 +16,7 @@ import {
   isTransportErrorCode,
   type TransportErrorCode,
   type MessageEnvelope,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 import type { RpcClient } from './types'
 import { serializeEnvelope, deserializeEnvelope } from './codec'
 

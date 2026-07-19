@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { RPC_CHANNELS, type Session } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type Session } from '@mortise/shared/protocol'
 import type { PlatformServices } from '../../runtime/platform'
 import type { HandlerFn, RequestContext, RpcServer } from '../../transport'
 import type { HandlerDeps } from '../handler-deps'

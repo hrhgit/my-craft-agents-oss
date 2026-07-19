@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "bun";
-import { existsSync, readFileSync, statSync, mkdirSync, rmSync } from "fs";
+import { existsSync, readFileSync, statSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
   copySessionServer,
@@ -20,6 +20,7 @@ const DIST_DIR = join(ROOT_DIR, "apps/electron/dist");
 const OUTPUT_FILE = join(DIST_DIR, "main.cjs");
 const MAIN_METAFILE = join(DIST_DIR, ".main-build-meta.json");
 const UI_VALIDATION_BUILD_MARKER = join(DIST_DIR, ".ui-validation-build.json");
+const DEVELOPER_HOST_BUILD_MARKER = join(DIST_DIR, ".developer-host-build.json");
 const WORKSPACE_SERVER_OUTPUT = join(DIST_DIR, "workspace-server.mjs");
 const WORKSPACE_SERVER_METAFILE = join(DIST_DIR, ".workspace-server-build-meta.json");
 const SESSION_TOOLS_CORE_DIR = join(ROOT_DIR, "packages/session-tools-core");
@@ -68,7 +69,7 @@ function getBuildDefines(): string[] {
     "MICROSOFT_OAUTH_CLIENT_ID",
     "MICROSOFT_OAUTH_CLIENT_SECRET",
     "SENTRY_ELECTRON_INGEST_URL",
-    "CRAFT_DEV_RUNTIME",
+    "MORTISE_DEV_RUNTIME",
   ];
 
   return definedVars.map((varName) => {
@@ -189,8 +190,8 @@ async function buildSessionServer(): Promise<void> {
       "--target", "node",
       "--format", "cjs",
       "--minify-syntax",
-      "--define", `process.env.CRAFT_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
-      "--define", `process.env.CRAFT_UI_TEST_HOST=\"${uiValidationBuild ? '1' : '0'}\"`,
+      "--define", `process.env.MORTISE_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
+      "--define", `process.env.MORTISE_UI_TEST_HOST=\"${uiValidationBuild ? '1' : '0'}\"`,
     ],
     cwd: ROOT_DIR,
     stdout: "inherit",
@@ -244,7 +245,7 @@ async function buildWhatsAppWorker(): Promise<void> {
       `--outfile=${WA_WORKER_OUTPUT}`,
       "--external:electron",
       // Baileys' runtime-optional features — wrapped in try/catch at the
-      // call site and not used by Craft Agent (we send text + documents, no
+      // call site and not used by Mortise Agent (we send text + documents, no
       // link previews, no inline image processing, no terminal QR).
       "--external:link-preview-js",
       "--external:qrcode-terminal",
@@ -281,11 +282,12 @@ async function buildWorkspaceServer(uiValidationBuild: boolean): Promise<void> {
       "--format=esm",
       "--target=node20",
       "--outfile=apps/electron/dist/workspace-server.mjs",
+      "--banner:js=import { createRequire as __mortiseCreateRequire } from 'node:module'; import { fileURLToPath as __mortiseFileURLToPath } from 'node:url'; import { dirname as __mortiseDirname } from 'node:path'; var require = __mortiseCreateRequire(import.meta.url); var __filename = __mortiseFileURLToPath(import.meta.url); var __dirname = __mortiseDirname(__filename);",
       "--external:electron",
-      `--define:process.env.CRAFT_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
+      `--define:process.env.MORTISE_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
       `--metafile=${WORKSPACE_SERVER_METAFILE}`,
       ...(!uiValidationBuild ? ["--minify-syntax"] : []),
-      ...(!uiValidationBuild ? ["--alias:@craft-agent/shared/protocol=./packages/shared/src/protocol/production.ts"] : []),
+      ...(!uiValidationBuild ? ["--alias:@mortise/shared/protocol=./packages/shared/src/protocol/production.ts"] : []),
     ],
     cwd: ROOT_DIR,
     stdout: "inherit",
@@ -348,6 +350,10 @@ async function main(): Promise<void> {
   // the main process in packaged builds.
   const buildDefines = getBuildDefines();
   const uiValidationBuild = isUiValidationBuildEnabled();
+  const developerHostBuild = process.env.MORTISE_DEV_HOST_BUILD === '1';
+  if (developerHostBuild && !uiValidationBuild) {
+    throw new Error('MORTISE_DEV_HOST_BUILD=1 requires MORTISE_UI_VALIDATION_BUILD=1');
+  }
   await buildWorkspaceServer(uiValidationBuild);
 
   console.log("🔨 Building main process...");
@@ -360,12 +366,13 @@ async function main(): Promise<void> {
       "--platform=node",
       "--format=cjs",
       "--outfile=apps/electron/dist/main.cjs",
-      "--define:import.meta.url=__craft_import_meta_url",
-      "--define:import.meta.resolve=__craft_import_meta_resolve",
-      "--banner:js=const __craft_import_meta_url = require('url').pathToFileURL(__filename).href; const __craft_import_meta_resolve = (specifier) => require('url').pathToFileURL(require.resolve(specifier)).href;",
+      "--define:import.meta.url=__mortise_import_meta_url",
+      "--define:import.meta.resolve=__mortise_import_meta_resolve",
+      "--banner:js=const __mortise_import_meta_url = require('url').pathToFileURL(__filename).href; const __mortise_import_meta_resolve = (specifier) => require('url').pathToFileURL(require.resolve(specifier)).href;",
       "--external:electron",
-      `--define:__CRAFT_UI_VALIDATION_BUILD__=${uiValidationBuild}`,
-      `--define:process.env.CRAFT_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
+      `--define:__MORTISE_UI_VALIDATION_BUILD__=${uiValidationBuild}`,
+      `--define:__MORTISE_DEV_HOST_BUILD__=${developerHostBuild}`,
+      `--define:process.env.MORTISE_UI_VALIDATION_BUILD=\"${uiValidationBuild ? '1' : '0'}\"`,
       `--metafile=${MAIN_METAFILE}`,
       ...(!uiValidationBuild ? ["--minify-syntax"] : []),
       // Replace grammY's bundled polyfills (node-fetch@2 + abort-controller@3)
@@ -375,7 +382,7 @@ async function main(): Promise<void> {
       // fails every Telegram API call with a TypeError.
       "--alias:node-fetch=./apps/electron/src/main/shims/node-fetch.cjs",
       "--alias:abort-controller=./apps/electron/src/main/shims/abort-controller.cjs",
-      ...(!uiValidationBuild ? ["--alias:@craft-agent/shared/protocol=./packages/shared/src/protocol/production.ts"] : []),
+      ...(!uiValidationBuild ? ["--alias:@mortise/shared/protocol=./packages/shared/src/protocol/production.ts"] : []),
       ...buildDefines,
     ],
     cwd: ROOT_DIR,
@@ -420,6 +427,12 @@ async function main(): Promise<void> {
   if (!uiValidationBuild) {
     assertNoUiValidationProductionRuntime(readFileSync(OUTPUT_FILE, "utf-8"), "Electron main bundle");
   }
+
+  writeFileSync(DEVELOPER_HOST_BUILD_MARKER, `${JSON.stringify({
+    schemaVersion: 1,
+    developerHostBuild,
+    uiValidationBuild,
+  })}\n`, 'utf8');
 
   console.log("✅ Build complete and verified");
   process.exit(0);

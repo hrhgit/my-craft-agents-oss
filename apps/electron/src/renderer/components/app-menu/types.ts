@@ -4,7 +4,7 @@ import type { WorkspaceNavigationModel } from '@/components/workspace/useWorkspa
 /**
  * Props shared by `AppMenu` (router) and the desktop/mobile shapes underneath.
  *
- * The menu owns only the Craft logo trigger and its dropdown/sheet — back/forward
+ * The menu owns only the Mortise logo trigger and its dropdown/sheet — back/forward
  * nav lives directly in `TopBar.tsx` and does not pass through here.
  */
 export interface AppMenuProps {

@@ -2,14 +2,14 @@
  * BrowserPaneManager
  *
  * Owns browser instances backed by dedicated BrowserWindow objects. A page
- * view can be temporarily reparented into a Craft workbench without changing
+ * view can be temporarily reparented into a Mortise workbench without changing
  * its session, history, cookies, or CDP automation identity.
  */
 
 import { join, parse as parsePath, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { existsSync, mkdirSync } from 'fs'
-import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
+import { validateFilePath, getWorkspaceAllowedDirs } from '@mortise/server-core/handlers'
 import { BrowserView, BrowserWindow, app, ipcMain, nativeTheme, session, shell, type Session as ElectronSession } from 'electron'
 import { observeWebRequests } from './web-request-observer-hub'
 import { mainLog } from './logger'
@@ -21,17 +21,17 @@ import {
   type BrowserEmbedBounds,
   type BrowserInstanceInfo,
 } from '../shared/types'
-import { DEFAULT_THEME, loadAppTheme, getAllowRemoteEvaluate } from '@craft-agent/shared/config'
-import { CodedError } from '@craft-agent/shared/protocol'
+import { DEFAULT_THEME, loadAppTheme, getAllowRemoteEvaluate } from '@mortise/shared/config'
+import { CodedError } from '@mortise/shared/protocol'
 import { getBrowserLiveFxCornerRadii } from '../shared/browser-live-fx'
 import type {
   IBrowserPaneManager,
   BrowserInstanceSnapshot,
-} from '@craft-agent/server-core/handlers'
+} from '@mortise/server-core/handlers'
 import type {
   BrowserCapabilityRequest,
   ScreenshotResultWire,
-} from '@craft-agent/server-core/transport'
+} from '@mortise/server-core/transport'
 
 export type { BrowserInstanceInfo }
 
@@ -49,12 +49,12 @@ const SCREENSHOT_RETRY_DELAY_MS = 120
 const SCREENSHOT_RESCUE_PAINT_DELAY_MS = 180
 const SCREENSHOT_NETWORK_IDLE_TIMEOUT_MS = 1_000
 const SCREENSHOT_NETWORK_IDLE_MS = 300
-const THEME_COLOR_SIGNAL_PREFIX = '__craft_theme_color__:'
+const THEME_COLOR_SIGNAL_PREFIX = '__mortise_theme_color__:'
 const THEME_COLOR_NULL_SENTINEL = '__NULL__'
 const THEME_OBSERVER_MIN_INTERVAL_MS = 120
 const EARLY_THEME_EXTRACTION_DELAY_MS = 100
 const BROWSER_EMPTY_STATE_PAGE = 'browser-empty-state.html'
-const CRAFT_DEEPLINK_SCHEME_PREFIX = `${process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'}://`
+const MORTISE_DEEPLINK_SCHEME_PREFIX = `${process.env.MORTISE_DEEPLINK_SCHEME || 'mortise'}://`
 
 const THEME_COLOR_EXTRACTOR_FN = String.raw`
 () => {
@@ -1786,7 +1786,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     return instance.downloads.slice(-limit)
   }
 
-  // validateUploadFilePath removed — uses shared validateFilePath from @craft-agent/server-core/handlers
+  // validateUploadFilePath removed — uses shared validateFilePath from @mortise/server-core/handlers
 
   async uploadFile(id: string, ref: string, filePaths: string[]): Promise<ElementGeometry> {
     const instance = this.requireAliveInstance(id)
@@ -2406,7 +2406,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   }
 
   private async handleDeepLinkUrl(url: string): Promise<void> {
-    if (!url.startsWith(CRAFT_DEEPLINK_SCHEME_PREFIX)) return
+    if (!url.startsWith(MORTISE_DEEPLINK_SCHEME_PREFIX)) return
 
     try {
       if (!this.windowManager) {
@@ -3093,7 +3093,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         const extractThemeColor = ${THEME_COLOR_EXTRACTOR_FN};
 
         const w = window;
-        const previousCleanup = w.__CRAFT_THEME_OBSERVER_CLEANUP__;
+        const previousCleanup = w.__MORTISE_THEME_OBSERVER_CLEANUP__;
         if (typeof previousCleanup === 'function') {
           try { previousCleanup(); } catch {}
         }
@@ -3179,7 +3179,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         if (typeof mql.addEventListener === 'function') mql.addEventListener('change', onSchemeChange);
         else if (typeof mql.addListener === 'function') mql.addListener(onSchemeChange);
 
-        w.__CRAFT_THEME_OBSERVER_CLEANUP__ = () => {
+        w.__MORTISE_THEME_OBSERVER_CLEANUP__ = () => {
           headObserver.disconnect();
           rootObserver.disconnect();
           w.removeEventListener('scroll', onScroll);
@@ -3727,7 +3727,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     })
 
     pageWc.on('will-navigate', (event, url) => {
-      if (url.startsWith(CRAFT_DEEPLINK_SCHEME_PREFIX)) {
+      if (url.startsWith(MORTISE_DEEPLINK_SCHEME_PREFIX)) {
         event.preventDefault()
         void this.handleDeepLinkUrl(url)
       }
@@ -3743,7 +3743,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         `[browser-pane] window-open requested id=${instance.id} url=${details.url} disposition=${details.disposition ?? 'unknown'} frameName=${details.frameName || 'none'}`,
       )
 
-      if (details.url.startsWith(CRAFT_DEEPLINK_SCHEME_PREFIX)) {
+      if (details.url.startsWith(MORTISE_DEEPLINK_SCHEME_PREFIX)) {
         void this.handleDeepLinkUrl(details.url)
         return { action: 'deny' }
       }

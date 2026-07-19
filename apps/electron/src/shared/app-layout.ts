@@ -6,7 +6,7 @@ import {
 } from './layout-geometry'
 
 /**
- * Craft-owned layout domain model.
+ * Mortise-owned layout domain model.
  *
  * Geometry adapters (FlexLayout today) may store their own serializable tree in
  * `geometry`, but content identity and lifecycle never depend on that format.
@@ -19,7 +19,6 @@ export type ContentKind =
   | 'conversation'
   | 'file'
   | 'browser'
-  | 'side-task'
   | 'tool'
   | 'extension'
   | 'navigation'
@@ -996,7 +995,6 @@ function isContentKind(value: unknown): value is ContentKind {
   return value === 'conversation'
     || value === 'file'
     || value === 'browser'
-    || value === 'side-task'
     || value === 'tool'
     || value === 'extension'
     || value === 'navigation'

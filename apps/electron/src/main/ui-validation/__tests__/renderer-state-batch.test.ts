@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { UiValidationScopedState, UiValidationScopedStateUpdate } from '@craft-agent/shared/ui-validation'
+import type { UiValidationScopedState, UiValidationScopedStateUpdate } from '@mortise/shared/ui-validation'
 import { rendererStatesMissingFromBatch } from '../renderer-state-batch'
 
 function state(overrides: Partial<UiValidationScopedState>): UiValidationScopedState {

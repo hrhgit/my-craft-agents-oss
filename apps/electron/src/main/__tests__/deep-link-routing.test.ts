@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { handleDeepLink, parseDeepLink } from '../deep-link'
 import { RPC_CHANNELS } from '../../shared/types'
-import type { EventSink } from '@craft-agent/server-core/transport'
+import type { EventSink } from '@mortise/server-core/transport'
 import type { WindowManager } from '../window-manager'
 
 function createMockWindow(webContentsId: number) {
@@ -21,13 +21,13 @@ function createMockWindow(webContentsId: number) {
 
 describe('handleDeepLink routing', () => {
   it('does not restore or forward the retired sidebar query parameter', () => {
-    expect(parseDeepLink('craftagents://allSessions/session/s1?sidebar=files')).toEqual({
+    expect(parseDeepLink('mortise://allSessions/session/s1?sidebar=files')).toEqual({
       workspaceId: undefined,
       view: 'allSessions/session/s1',
       windowMode: undefined,
     })
 
-    expect(parseDeepLink('craftagents://action/new-chat?input=hello&sidebar=history')).toEqual({
+    expect(parseDeepLink('mortise://action/new-chat?input=hello&sidebar=history')).toEqual({
       workspaceId: undefined,
       action: 'new-chat',
       actionParams: { input: 'hello' },
@@ -51,7 +51,7 @@ describe('handleDeepLink routing', () => {
     }
 
     await handleDeepLink(
-      'craftagents://workspace/ws-target/allSessions',
+      'mortise://workspace/ws-target/allSessions',
       windowManager,
       sink,
       (wcId) => wcId === 22 ? 'client-target' : undefined,
@@ -79,7 +79,7 @@ describe('handleDeepLink routing', () => {
     }
 
     await handleDeepLink(
-      'craftagents://workspace/ws-target/allSessions',
+      'mortise://workspace/ws-target/allSessions',
       windowManager,
       sink,
       undefined,
@@ -106,7 +106,7 @@ describe('handleDeepLink routing', () => {
     }
 
     await handleDeepLink(
-      'craftagents://workspace/ws-target/allSessions',
+      'mortise://workspace/ws-target/allSessions',
       windowManager,
       sink,
       () => undefined,

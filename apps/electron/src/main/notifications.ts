@@ -13,7 +13,7 @@ import { readFileSync } from 'fs'
 import { mainLog } from './logger'
 import { RPC_CHANNELS } from '../shared/types'
 import type { WindowManager } from './window-manager'
-import type { EventSink } from '@craft-agent/server-core/transport'
+import type { EventSink } from '@mortise/server-core/transport'
 
 type ClientResolver = (webContentsId: number) => string | undefined
 
@@ -263,7 +263,7 @@ export function isAnyWindowFocused(): boolean {
 /**
  * Initialize instance badge for multi-instance development.
  *
- * When running from a numbered folder (e.g., craft-tui-agent-1), this shows
+ * When running from a numbered folder (e.g., mortise-tui-agent-1), this shows
  * a permanent badge on the dock icon to distinguish between instances.
  * Uses macOS dock.setBadge() for text-based badge display.
  *

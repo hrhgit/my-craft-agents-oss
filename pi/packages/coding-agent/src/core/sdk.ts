@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { Agent, type AgentMessage, type AgentOptions, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel } from "@earendil-works/pi-ai/model-utils";
-import { streamSimple } from "@earendil-works/pi-ai/stream";
-import type { Message, Model } from "@earendil-works/pi-ai/types";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
+import { Agent, type AgentMessage, type AgentOptions, type ThinkingLevel } from "@mortise/pi-agent-core";
+import { clampThinkingLevel } from "@mortise/pi-ai/model-utils";
+import { streamSimple } from "@mortise/pi-ai/stream";
+import type { Message, Model } from "@mortise/pi-ai/types";
+import { createAssistantMessageEventStream } from "@mortise/pi-ai/utils/event-stream";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -218,7 +218,7 @@ function getAttributionHeaders(
  * const { session } = await createAgentSession();
  *
  * // With explicit model
- * import { getModel } from '@earendil-works/pi-ai';
+ * import { getModel } from '@mortise/pi-ai';
  * const { session } = await createAgentSession({
  *   model: getModel('anthropic', 'claude-opus-4-5'),
  *   thinkingLevel: 'high',

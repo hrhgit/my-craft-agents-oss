@@ -20,7 +20,7 @@ afterEach(() => {
 })
 
 function createEndpointFile(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'craft-server-endpoint-'))
+  const directory = mkdtempSync(join(tmpdir(), 'mortise-server-endpoint-'))
   temporaryDirectories.push(directory)
   return join(directory, '.server-endpoint.json')
 }

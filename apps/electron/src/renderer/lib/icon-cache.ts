@@ -27,8 +27,8 @@
  */
 
 import { useState, useEffect, useMemo } from 'react'
-import { isEmoji } from '@craft-agent/shared/utils/icon-constants'
-import type { ResolvedEntityIcon } from '@craft-agent/shared/icons'
+import { isEmoji } from '@mortise/shared/utils/icon-constants'
+import type { ResolvedEntityIcon } from '@mortise/shared/icons'
 
 // ============================================================================
 // Types

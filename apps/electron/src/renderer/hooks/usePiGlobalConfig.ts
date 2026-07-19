@@ -6,7 +6,7 @@
  * external edits (e.g. via the `pi` CLI or cc-switch) refresh the UI live.
  *
  * This is the single source of truth for "pure Pi + custom provider" mode —
- * the desktop reads ~/.pi/agent/ directly instead of ~/.craft-agent/config.json.
+ * the desktop reads ~/.pi/agent/ directly instead of ~/.mortise/config.json.
  */
 
 import type {

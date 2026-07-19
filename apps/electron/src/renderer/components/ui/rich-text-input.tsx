@@ -788,8 +788,8 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
         <div
           ref={divRef}
           data-slot="rich-text-input"
-          data-craft-semantic-id={semanticId}
-          data-craft-ui-interactions="shortcut clipboard ime rich-text"
+          data-mortise-semantic-id={semanticId}
+          data-mortise-ui-interactions="shortcut clipboard ime rich-text"
           contentEditable={!disabled}
           suppressContentEditableWarning
           tabIndex={disabled ? -1 : 0}

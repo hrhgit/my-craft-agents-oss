@@ -1,7 +1,7 @@
 /**
- * ESLint configuration for the Craft WebUI browser entry.
+ * ESLint configuration for the Mortise WebUI browser entry.
  *
- * WebUI is a maintained Craft shell for headless/server use. It intentionally
+ * WebUI is a maintained Mortise shell for headless/server use. It intentionally
  * reuses the Electron renderer through aliases, while its own source stays
  * browser-only and talks to the server through the web API adapter.
  */
@@ -109,7 +109,7 @@ export default [
             message: 'Use browser-safe Sentry wiring for WebUI instead of @sentry/electron.',
           },
           {
-            name: '@craft-agent/shared/config/models-pi',
+            name: '@mortise/shared/config/models-pi',
             message: 'Pi model/provider catalog touches the Pi SDK and must stay server-side. Use WebUI RPC instead.',
           },
           ...nodeBuiltinImports.map((name) => ({
@@ -121,8 +121,8 @@ export default [
 
       'no-restricted-syntax': ['error',
         {
-          selector: 'ImportDeclaration[source.value=/^@earendil-works\\/pi-/]',
-          message: 'Pi SDK (@earendil-works/pi-*) is bottom-layer. WebUI must talk to Craft/Pi through server RPC.',
+          selector: 'ImportDeclaration[source.value=/^@mortise\\/pi-/]',
+          message: 'Pi SDK (@mortise/pi-*) is bottom-layer. WebUI must talk to Mortise/Pi through server RPC.',
         },
       ],
     },

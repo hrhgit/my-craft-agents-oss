@@ -31,17 +31,17 @@ interface SpawnedServer {
 async function spawnTestServer(extraEnv?: Record<string, string>): Promise<SpawnedServer> {
   const token = crypto.randomUUID() + crypto.randomUUID() // 72 chars, well above 16 minimum
   const { CLAUDECODE: _, ...parentEnv } = process.env
-  const configDir = mkdtempSync(join(tmpdir(), 'craft-server-smoke-'))
+  const configDir = mkdtempSync(join(tmpdir(), 'mortise-server-smoke-'))
 
   const proc = Bun.spawn(['bun', 'run', SERVER_ENTRY], {
     env: {
       ...parentEnv,
       ...extraEnv,
-      CRAFT_SERVER_TOKEN: token,
-      CRAFT_RPC_PORT: '0',
-      CRAFT_RPC_HOST: '127.0.0.1',
-      CRAFT_HEALTH_PORT: '0', // random port
-      CRAFT_CONFIG_DIR: configDir,
+      MORTISE_SERVER_TOKEN: token,
+      MORTISE_RPC_PORT: '0',
+      MORTISE_RPC_HOST: '127.0.0.1',
+      MORTISE_HEALTH_PORT: '0', // random port
+      MORTISE_CONFIG_DIR: configDir,
     },
     stdout: 'pipe',
     stderr: 'pipe',
@@ -61,8 +61,8 @@ async function spawnTestServer(extraEnv?: Record<string, string>): Promise<Spawn
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
       for (const line of lines) {
-        if (line.startsWith('CRAFT_SERVER_URL=')) {
-          url = line.slice('CRAFT_SERVER_URL='.length).trim()
+        if (line.startsWith('MORTISE_SERVER_URL=')) {
+          url = line.slice('MORTISE_SERVER_URL='.length).trim()
         }
         if (url) {
           clearTimeout(timer)
@@ -102,7 +102,7 @@ async function spawnTestServer(extraEnv?: Record<string, string>): Promise<Spawn
       clearTimeout(timer)
       if (!url) {
         rmSync(configDir, { recursive: true, force: true })
-        reject(new Error('Server exited before printing CRAFT_SERVER_URL'))
+        reject(new Error('Server exited before printing MORTISE_SERVER_URL'))
       }
     })()
   })
@@ -167,14 +167,14 @@ describe('headless server smoke test', () => {
   it('rejects short token at startup', async () => {
     const token = 'short'
     const { CLAUDECODE: _, ...parentEnv } = process.env
-    const configDir = mkdtempSync(join(tmpdir(), 'craft-server-smoke-'))
+    const configDir = mkdtempSync(join(tmpdir(), 'mortise-server-smoke-'))
     const proc = Bun.spawn(['bun', 'run', SERVER_ENTRY], {
       env: {
         ...parentEnv,
-        CRAFT_SERVER_TOKEN: token,
-        CRAFT_RPC_PORT: '0',
-        CRAFT_RPC_HOST: '127.0.0.1',
-        CRAFT_CONFIG_DIR: configDir,
+        MORTISE_SERVER_TOKEN: token,
+        MORTISE_RPC_PORT: '0',
+        MORTISE_RPC_HOST: '127.0.0.1',
+        MORTISE_CONFIG_DIR: configDir,
       },
       stdout: 'pipe',
       stderr: 'pipe',

@@ -8,7 +8,7 @@
  *   (title_regenerating 已从 SessionEvent union 中移除，但可能从旧服务端残留)
  */
 
-import type { SessionEvent } from '@craft-agent/shared/protocol'
+import type { SessionEvent } from '@mortise/shared/protocol'
 import type { AgentEvent } from './types'
 
 /**

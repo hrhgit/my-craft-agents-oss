@@ -182,7 +182,7 @@ export function processEvent(
       return handleAuthCompleted(state, event)
 
     case 'source_activated':
-      // Server-side handles the auto-retry now (craft-agents-oss#804); the renderer
+      // Server-side handles the auto-retry now (mortise-oss#804); the renderer
       // just receives the event for UI feedback. See SessionManager.processEvent.
       return { state, effects: [] }
 

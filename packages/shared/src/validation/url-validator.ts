@@ -9,7 +9,7 @@ export interface UrlValidationResult {
   typedError?: AgentError;
 }
 
-const CRAFT_MCP_HOST = 'mcp.craft.do';
+const MORTISE_MCP_HOST = 'mcp.mortise.do';
 const LINK_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 export async function validateMcpUrl(url: string): Promise<UrlValidationResult> {
@@ -17,7 +17,7 @@ export async function validateMcpUrl(url: string): Promise<UrlValidationResult> 
 
   const trimmed = url.trim();
   if (!trimmed) {
-    return { valid: false, error: 'Enter a Craft MCP URL.' };
+    return { valid: false, error: 'Enter a Mortise MCP URL.' };
   }
 
   let parsed: URL;
@@ -28,15 +28,15 @@ export async function validateMcpUrl(url: string): Promise<UrlValidationResult> 
   }
 
   if (parsed.protocol !== 'https:') {
-    return { valid: false, error: 'Craft MCP URLs must start with https://.' };
+    return { valid: false, error: 'Mortise MCP URLs must start with https://.' };
   }
 
   if (parsed.username || parsed.password) {
     return { valid: false, error: 'Remove credentials from the URL.' };
   }
 
-  if (parsed.hostname !== CRAFT_MCP_HOST) {
-    return { valid: false, error: `Host must be exactly ${CRAFT_MCP_HOST}.` };
+  if (parsed.hostname !== MORTISE_MCP_HOST) {
+    return { valid: false, error: `Host must be exactly ${MORTISE_MCP_HOST}.` };
   }
 
   const parts = parsed.pathname.split('/').filter(Boolean);

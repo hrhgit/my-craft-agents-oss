@@ -1,10 +1,17 @@
 import { debug } from "../utils/debug";
 
-const VERSIONS_URL = 'https://agents.craft.do/electron';
+function getVersionsUrl(): string | null {
+  return process.env.MORTISE_UPDATE_URL?.trim().replace(/\/+$/, '') || null;
+}
 
 export async function getLatestVersion(): Promise<string | null> {
+    const versionsUrl = getVersionsUrl();
+    if (!versionsUrl) {
+      debug('[manifest] Skipping version lookup because MORTISE_UPDATE_URL is not configured');
+      return null;
+    }
     try {
-      const response = await fetch(`${VERSIONS_URL}/latest`);
+      const response = await fetch(`${versionsUrl}/latest`);
       const data = await response.json();
       const version = (data as { version?: string }).version;
       if (typeof version !== 'string') {
@@ -19,8 +26,13 @@ export async function getLatestVersion(): Promise<string | null> {
 }
 
 export async function getManifest(version: string): Promise<VersionManifest | null> {
+    const versionsUrl = getVersionsUrl();
+    if (!versionsUrl) {
+      debug('[manifest] Skipping manifest lookup because MORTISE_UPDATE_URL is not configured');
+      return null;
+    }
     try {
-        const url = `${VERSIONS_URL}/${version}/manifest.json`;
+        const url = `${versionsUrl}/${version}/manifest.json`;
         debug(`[manifest] Getting manifest for version: ${url}`);
         const response = await fetch(url);
         const data = await response.json();

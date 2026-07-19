@@ -69,6 +69,7 @@ export const CHANNEL_MAP = {
   checkWorkspaceSlug: invoke(RPC_CHANNELS.workspaces.CHECK_SLUG),
   updateWorkspaceRemoteServer: invoke(RPC_CHANNELS.workspaces.UPDATE_REMOTE),
   onWorkspaceRemoteServerUpdated: listener(RPC_CHANNELS.workspaces.REMOTE_UPDATED),
+  getWorkspaceCoordinationStatus: invoke(RPC_CHANNELS.workspaceCoordination.GET_STATUS),
   testRemoteConnection: invoke(RPC_CHANNELS.remote.TEST_CONNECTION),
 
   // Server-level workspace operations (REMOTE_ELIGIBLE)
@@ -167,6 +168,12 @@ export const CHANNEL_MAP = {
   setMidStreamBehavior: invoke(RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR),
   getNetworkProxySettings: invoke(RPC_CHANNELS.settings.GET_NETWORK_PROXY),
   setNetworkProxySettings: invoke(RPC_CHANNELS.settings.SET_NETWORK_PROXY),
+
+  // Agent settings
+  getAgentSettings: invoke(RPC_CHANNELS.agentSettings.GET),
+  updateMainAgentSettings: invoke(RPC_CHANNELS.agentSettings.UPDATE_MAIN),
+  upsertSubagent: invoke(RPC_CHANNELS.agentSettings.UPSERT_SUBAGENT),
+  deleteSubagent: invoke(RPC_CHANNELS.agentSettings.DELETE_SUBAGENT),
 
   // Pi provider discovery
   getPiApiKeyProviders: invoke(RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS),

@@ -1,4 +1,4 @@
-import { listSkillsSync as listPiSkillsSync } from '@earendil-works/pi-coding-agent/host-facade';
+import { listSkillsSync as listPiSkillsSync } from '@mortise/pi-coding-agent/host-facade';
 import { validateSkillSlug } from '../skills/storage.ts';
 
 export type PiSkillTier = 'global' | 'project';

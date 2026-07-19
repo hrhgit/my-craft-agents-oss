@@ -1,5 +1,5 @@
 export interface WindowRendererRuntimeQueryOptions {
-  craftTestMode?: boolean
+  mortiseTestMode?: boolean
   layoutReadOnly?: boolean
 }
 
@@ -36,7 +36,7 @@ export function applyWindowRendererRuntimeQuery(
 ): Record<string, string> {
   return {
     ...query,
-    ...(options.craftTestMode ? { craftTestMode: '1' } : {}),
+    ...(options.mortiseTestMode ? { mortiseTestMode: '1' } : {}),
     ...(options.layoutReadOnly ? { layoutReadOnly: '1' } : {}),
   }
 }

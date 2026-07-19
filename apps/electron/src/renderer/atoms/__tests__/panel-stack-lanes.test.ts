@@ -72,11 +72,10 @@ describe('panel stack single-lane behavior', () => {
     expect(store.get(activeDockTabTypeAtom)).toBe('other')
     expect(shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))).toBe(false)
 
-    store.set(activeDockTabIdAtom, sessionTabId)
+    store.set(activeDockTabIdAtom, 'dock:content:files')
     store.set(pushPanelAtom, { route: 'sources/source/github' })
-    const sourceTabId = getStack(store).at(-1)!.id
-    store.set(activeDockTabIdAtom, sourceTabId)
-    expect(store.get(activeDockTabTypeAtom)).toBe('source')
+    expect(getStack(store)).toHaveLength(1)
+    expect(store.get(activeDockTabTypeAtom)).toBe('other')
     expect(shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))).toBe(false)
   })
 
@@ -113,7 +112,7 @@ describe('panel stack single-lane behavior', () => {
     expect(store.get(dockTabCloseRequestAtom)).toBeNull()
   })
 
-  it('keeps insertion order for new panels', () => {
+  it('keeps management routes out of the workspace panel stack', () => {
     const store = createStore()
 
     store.set(pushPanelAtom, { route: 'allSessions/session/s1' })
@@ -121,28 +120,32 @@ describe('panel stack single-lane behavior', () => {
     store.set(pushPanelAtom, { route: 'settings' })
 
     const stack = getStack(store)
-    expect(stack).toHaveLength(3)
+    expect(stack).toHaveLength(1)
     expect(stack[0].route).toBe('allSessions/session/s1')
-    expect(stack[1].route).toBe('sources/source/github')
-    expect(stack[2].route).toBe('settings')
     expect(stack.every((p) => p.laneId === 'main')).toBe(true)
   })
 
-  it('implicit navigation updates focused panel route', () => {
+  it('implicit navigation updates sessions but rejects management routes', () => {
     const store = createStore()
 
     store.set(pushPanelAtom, { route: 'allSessions/session/s1' })
-    store.set(pushPanelAtom, { route: 'sources/source/github' })
+    store.set(pushPanelAtom, { route: 'allSessions/session/s2' })
 
-    const sourcePanel = getStack(store).find((p) => p.route === 'sources/source/github')
-    expect(sourcePanel).toBeDefined()
-    store.set(focusedPanelIdAtom, sourcePanel!.id)
+    const secondPanel = getStack(store).find((p) => p.route === 'allSessions/session/s2')
+    expect(secondPanel).toBeDefined()
+    store.set(focusedPanelIdAtom, secondPanel!.id)
 
-    store.set(updateFocusedPanelRouteAtom, 'allSessions/session/s2')
+    store.set(updateFocusedPanelRouteAtom, 'settings/ai')
+    expect(getStack(store).map(panel => panel.route)).toEqual([
+      'allSessions/session/s1',
+      'allSessions/session/s2',
+    ])
+
+    store.set(updateFocusedPanelRouteAtom, 'allSessions/session/s3')
 
     const stack = getStack(store)
     expect(stack).toHaveLength(2)
-    expect(stack.some((p) => p.route === 'allSessions/session/s2')).toBe(true)
+    expect(stack.some((p) => p.route === 'allSessions/session/s3')).toBe(true)
     expect(stack.some((p) => p.route === 'allSessions/session/s1')).toBe(true)
   })
 
@@ -152,12 +155,12 @@ describe('panel stack single-lane behavior', () => {
     store.set(pushPanelAtom, { route: 'allSessions/session/s1' })
     store.set(pushPanelAtom, { route: 'allSessions/session/s2' })
 
-    store.set(pushPanelAtom, { route: 'sources/source/linear', afterIndex: 0 })
+    store.set(pushPanelAtom, { route: 'allSessions/session/s3', afterIndex: 0 })
 
     const stack = getStack(store)
     expect(stack).toHaveLength(3)
     expect(stack[0].route).toBe('allSessions/session/s1')
-    expect(stack[1].route).toBe('sources/source/linear')
+    expect(stack[1].route).toBe('allSessions/session/s3')
     expect(stack[2].route).toBe('allSessions/session/s2')
   })
 
@@ -178,6 +181,26 @@ describe('panel stack single-lane behavior', () => {
     expect(stack).toHaveLength(2)
     const focusedId = store.get(focusedPanelIdAtom)
     expect(focusedId).toBe(stack[1].id)
+  })
+
+  it('remaps focus after dropping legacy management panels', () => {
+    const store = createStore()
+
+    store.set(reconcilePanelStackAtom, {
+      entries: [
+        { route: 'settings/ai', proportion: 0.2 },
+        { route: 'allSessions/session/s1', proportion: 0.4 },
+        { route: 'allSessions/session/s2', proportion: 0.4 },
+      ],
+      focusedIndex: 1,
+    })
+
+    const stack = getStack(store)
+    expect(stack.map(panel => panel.route)).toEqual([
+      'allSessions/session/s1',
+      'allSessions/session/s2',
+    ])
+    expect(store.get(focusedPanelIdAtom)).toBe(stack[0].id)
   })
 
   it('reconcile no-op keeps focused index target with duplicate routes', () => {

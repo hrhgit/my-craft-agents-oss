@@ -156,7 +156,7 @@ describe('PiProjectionBuilder', () => {
     expect(failure[1]).toMatchObject({ kind: 'runtime_error', payload: { message: 'boom' } })
   })
 
-  it('projects Pi-native user messages without creating Craft messages', () => {
+  it('projects Pi-native user messages without creating Mortise messages', () => {
     const builder = new PiProjectionBuilder('session-1', 'runtime-1')
     const user = builder.acceptRuntimeEvent({
       type: 'message_end',
@@ -170,7 +170,7 @@ describe('PiProjectionBuilder', () => {
     })
   })
 
-  it('omits Craft-injected context from Pi-native user message projections', () => {
+  it('omits Mortise-injected context from Pi-native user message projections', () => {
     const builder = new PiProjectionBuilder('session-1', 'runtime-1')
     const user = builder.acceptRuntimeEvent({
       type: 'message_end',
@@ -261,10 +261,10 @@ sessionId: session-1
       state: 'ready' as const, review: { status: 'passed' as const }, checklist: [], createdAt: 1,
     }
     const created = builder.acceptRuntimeEvent({
-      type: 'message_end', message: { role: 'custom', customType: 'craft-plan-artifact', content: '# Plan', details: { schemaVersion: 1, artifact } },
+      type: 'message_end', message: { role: 'custom', customType: 'mortise-plan-artifact', content: '# Plan', details: { schemaVersion: 1, artifact } },
     })[0]!
     const updated = builder.acceptRuntimeEvent({
-      type: 'message_end', message: { role: 'custom', customType: 'craft-plan-artifact-update', content: '# Plan v2', details: { schemaVersion: 1, artifact: { ...artifact, revision: 2, state: 'executing' } } },
+      type: 'message_end', message: { role: 'custom', customType: 'mortise-plan-artifact-update', content: '# Plan v2', details: { schemaVersion: 1, artifact: { ...artifact, revision: 2, state: 'executing' } } },
     })[0]!
     expect(created).toMatchObject({ entityId: 'artifact:plan-1', entityType: 'artifact_ref', kind: 'plan_artifact', payload: { artifact, content: '# Plan' } })
     expect(updated).toMatchObject({ entityId: created.entityId, entityVersion: 2, kind: 'plan_artifact_update', payload: { content: '# Plan v2' } })
@@ -273,11 +273,11 @@ sessionId: session-1
   it('projects plan mode state and ignores malformed plan custom messages', () => {
     const builder = new PiProjectionBuilder('session-1', 'runtime-1')
     const state = builder.acceptRuntimeEvent({
-      type: 'message_end', message: { role: 'custom', customType: 'craft-plan-state', details: { schemaVersion: 1, state: { schemaVersion: 1, phase: 'ready', activeArtifactId: 'plan-1', updatedAt: 1 } } },
+      type: 'message_end', message: { role: 'custom', customType: 'mortise-plan-state', details: { schemaVersion: 1, state: { schemaVersion: 1, phase: 'ready', activeArtifactId: 'plan-1', updatedAt: 1 } } },
     })[0]!
     expect(state).toMatchObject({ entityId: 'plan-state:session-1', entityType: 'conversation', kind: 'plan_mode_state', payload: { phase: 'ready', activeArtifactId: 'plan-1' } })
     expect(builder.acceptRuntimeEvent({
-      type: 'message_end', message: { role: 'custom', customType: 'craft-plan-artifact', details: { schemaVersion: 1, artifact: { artifactId: '' } } },
+      type: 'message_end', message: { role: 'custom', customType: 'mortise-plan-artifact', details: { schemaVersion: 1, artifact: { artifactId: '' } } },
     })).toEqual([])
   })
 

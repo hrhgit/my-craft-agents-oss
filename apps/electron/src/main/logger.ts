@@ -6,22 +6,22 @@ import type {
   MessagingLogContext,
   MessagingLogMeta,
   MessagingLogger,
-} from '@craft-agent/messaging-gateway'
+} from '@mortise/messaging-gateway'
 
 /**
  * Resolve debug mode deterministically across runtimes.
  *
  * Priority:
  * 1) --debug flag always enables debug mode
- * 2) CRAFT_IS_PACKAGED env (when explicitly set)
+ * 2) MORTISE_IS_PACKAGED env (when explicitly set)
  * 3) Electron runtime heuristic (defaultApp => dev, otherwise packaged)
  * 4) Non-Electron runtimes default to debug mode (headless Bun / node --check)
  */
 function resolveDebugMode(): boolean {
-  if (process.env.CRAFT_E2E_DEBUG_LOGS === '1') return true
+  if (process.env.MORTISE_E2E_DEBUG_LOGS === '1') return true
   if (process.argv.includes('--debug')) return true
 
-  const packagedEnv = process.env.CRAFT_IS_PACKAGED
+  const packagedEnv = process.env.MORTISE_IS_PACKAGED
   if (packagedEnv === 'true') return false
   if (packagedEnv === 'false') return true
 
@@ -76,7 +76,7 @@ export const windowLog = log.scope('window')
 export const agentLog = log.scope('agent')
 export const searchLog = log.scope('search')
 
-const CONFIG_DIR = process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent')
+const CONFIG_DIR = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise')
 
 /**
  * Dedicated messaging gateway log.

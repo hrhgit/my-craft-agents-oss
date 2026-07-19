@@ -1,5 +1,5 @@
-import type { ExtensionContributionDeltaV1, ExtensionContributionV1, ExtensionUISurface } from '@craft-agent/shared/protocol'
-import { validateExtensionContributionDeltaV1 } from '@craft-agent/shared/protocol'
+import type { ExtensionContributionDeltaV1, ExtensionContributionV1, ExtensionUISurface } from '@mortise/shared/protocol'
+import { validateExtensionContributionDeltaV1 } from '@mortise/shared/protocol'
 
 export interface RegisteredExtensionContribution {
   extensionId: string

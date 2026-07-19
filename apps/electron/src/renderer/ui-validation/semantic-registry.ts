@@ -80,7 +80,7 @@ export class UiSemanticRegistry {
           semantic: [...new Set(definition.actions)],
           physical: [...new Set(definition.physicalActions ?? [])],
         },
-        domSelector: `[data-craft-semantic-id="${cssEscape(definition.id)}"]`,
+        domSelector: `[data-mortise-semantic-id="${cssEscape(definition.id)}"]`,
       })
     }
     return {
@@ -120,7 +120,7 @@ export class UiSemanticRegistry {
   }
 }
 
-export const UI_SEMANTIC_CHANGE_EVENT = 'craft:ui-validation:semantic-change'
+export const UI_SEMANTIC_CHANGE_EVENT = 'mortise:ui-validation:semantic-change'
 
 function validateDefinition(definition: UiSemanticDefinition): void {
   if (!ID_PATTERN.test(definition.id)) throw new Error(`Invalid UI semantic id: ${definition.id}`)

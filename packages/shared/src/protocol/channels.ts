@@ -199,6 +199,15 @@ export const RPC_CHANNELS = {
     SET_SERVER_CONFIG: 'settings:setServerConfig',
     GET_SERVER_STATUS: 'settings:getServerStatus',
   },
+  agentSettings: {
+    GET: 'agentSettings:get',
+    UPDATE_MAIN: 'agentSettings:updateMain',
+    UPSERT_SUBAGENT: 'agentSettings:upsertSubagent',
+    DELETE_SUBAGENT: 'agentSettings:deleteSubagent',
+  },
+  workspaceCoordination: {
+    GET_STATUS: 'workspaceCoordination:getStatus',
+  },
   pi: {
     GET_API_KEY_PROVIDERS: 'pi:getApiKeyProviders',
     GET_PROVIDER_BASE_URL: 'pi:getProviderBaseUrl',

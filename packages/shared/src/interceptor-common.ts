@@ -6,13 +6,13 @@
  * - toolMetadataStore (in-process metadata sharing for interceptor hooks)
  * - LastApiError (error capture for error handler)
  * - Logging utilities
- * - Config reading (richToolDescriptions, craft.agent runtime settings)
+ * - Config reading (richToolDescriptions, mortise.agent runtime settings)
  */
 
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, appendFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { CONFIG_DIR } from './config/paths.ts';
-import { readPiCraftAgentBoolean } from './config/pi-global-config.ts';
+import { readPiMortiseBoolean } from './config/pi-global-config.ts';
 
 // ============================================================================
 // CONSTANTS
@@ -25,13 +25,13 @@ export const IS_PACKAGED = process.argv.some(arg => arg.includes('app.asar'));
 export const INTERCEPTOR_LOGGING_ENABLED = !IS_PACKAGED;
 
 export const DEBUG = INTERCEPTOR_LOGGING_ENABLED &&
-  (process.argv.includes('--debug') || process.env.CRAFT_DEBUG === '1');
+  (process.argv.includes('--debug') || process.env.MORTISE_DEBUG === '1');
 
 /** Config file path for reading settings in the SDK subprocess */
 export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
 /** Session directory — set by env var (subprocess) or setSessionDir() (main process) */
-let _sessionDir: string | null = process.env.CRAFT_SESSION_DIR || null;
+let _sessionDir: string | null = process.env.MORTISE_SESSION_DIR || null;
 
 // ============================================================================
 // LOGGING
@@ -132,10 +132,10 @@ export function isRichToolDescriptionsEnabled(): boolean {
 /**
  * Check if extended prompt cache (1h TTL) is enabled.
  * When enabled, the interceptor upgrades all cache_control blocks from 5m to 1h TTL.
- * Source of truth is ~/.pi/agent/settings.json (`craft.agent.extendedPromptCache`).
+ * Source of truth is ~/.pi/agent/settings.json (`mortise.agent.extendedPromptCache`).
  */
 export function isExtendedPromptCacheEnabled(): boolean {
-  return readPiCraftAgentBoolean('extendedPromptCache', false);
+  return readPiMortiseBoolean('extendedPromptCache', false);
 }
 
 /**
@@ -143,10 +143,10 @@ export function isExtendedPromptCacheEnabled(): boolean {
  * When disabled, the interceptor strips the context-1m beta header.
  * Defaults to false — the 1M beta requires Anthropic Tier 4+, so it's opt-in
  * to avoid 400 "Invalid Request" on lower-tier API keys (issue #567).
- * Source of truth is ~/.pi/agent/settings.json (`craft.agent.enable1MContext`).
+ * Source of truth is ~/.pi/agent/settings.json (`mortise.agent.enable1MContext`).
  */
 export function is1MContextEnabled(): boolean {
-  return readPiCraftAgentBoolean('enable1MContext', false);
+  return readPiMortiseBoolean('enable1MContext', false);
 }
 
 // ============================================================================
@@ -240,7 +240,7 @@ export interface ToolMetadata {
  * In-process metadata store for tool display metadata.
  *
  * Pi now carries this data on typed `tool_execution_start` events via the host
- * hooks resolver, so Craft no longer uses `{sessionDir}/tool-metadata.json` as
+ * hooks resolver, so Mortise no longer uses `{sessionDir}/tool-metadata.json` as
  * a cross-process side channel. `sessionDir` arguments are retained as no-op
  * compatibility while older callers are cleaned up.
  */

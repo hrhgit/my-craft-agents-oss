@@ -1,6 +1,6 @@
-import { requestCraftUiHost } from '../../craft-ui/client.ts'
-import { startCraftUiRun, stopCraftUiRun } from '../../craft-ui/controller.ts'
-import type { CraftUiRunManifest } from '../../craft-ui/protocol.ts'
+import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
+import { startMortiseUiRun, stopMortiseUiRun } from '../../mortise-ui/controller.ts'
+import type { MortiseUiRunManifest } from '../../mortise-ui/protocol.ts'
 
 interface SnapshotNode {
   ref: string
@@ -22,13 +22,13 @@ interface ScenarioStatus {
   serviceEvents?: Array<{ operation: string; outcome: string }>
 }
 
-let manifest: CraftUiRunManifest | undefined
+let manifest: MortiseUiRunManifest | undefined
 try {
-  manifest = await startCraftUiRun({
+  manifest = await startMortiseUiRun({
     surface: 'electron',
     profileMode: 'fixture',
     waitMs: 180_000,
-    ...(process.env.CRAFT_UI_SKIP_BUILD === '1' ? { extraEnv: { CRAFT_UI_SKIP_BUILD: '1' } } : {}),
+    ...(process.env.MORTISE_UI_SKIP_BUILD === '1' ? { extraEnv: { MORTISE_UI_SKIP_BUILD: '1' } } : {}),
   })
 
   const capabilities = await ok<{
@@ -109,15 +109,15 @@ try {
   }
   throw error
 } finally {
-  if (manifest) await stopCraftUiRun(manifest.runDir)
+  if (manifest) await stopMortiseUiRun(manifest.runDir)
 }
 
 async function ok<T = Record<string, unknown>>(
-  run: CraftUiRunManifest,
+  run: MortiseUiRunManifest,
   command: string,
   params: Record<string, unknown> = {},
 ): Promise<T> {
-  const response = await requestCraftUiHost<T>({ ...run, command, params, timeoutMs: 60_000 })
+  const response = await requestMortiseUiHost<T>({ ...run, command, params, timeoutMs: 60_000 })
   if (!response.ok) throw new Error(`${command}: ${response.error.code}: ${response.error.message}`)
   return response.result
 }

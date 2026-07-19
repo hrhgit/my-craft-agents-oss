@@ -2,7 +2,7 @@ import type {
   ImportRemoteSessionTransferResult,
   RemoteSessionTransferPayload,
   ShareResult,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 import type { CapabilityProvider } from '../types.ts'
 
 export const TRANSFER_SUMMARY_MAX_LENGTH = 200_000

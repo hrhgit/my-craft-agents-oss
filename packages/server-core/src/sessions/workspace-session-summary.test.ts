@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { RPC_CHANNELS, type UnreadSummary } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type UnreadSummary } from '@mortise/shared/protocol'
 import { createManagedSession, SessionManager } from './SessionManager.ts'
 
 describe('workspace session summary', () => {
@@ -12,10 +12,10 @@ describe('workspace session summary', () => {
       rootPath: '/tmp/running-workspace',
       createdAt: Date.now(),
     }
-    const running = createManagedSession({ craftId: 'running' }, workspace as never)
+    const running = createManagedSession({ mortiseId: 'running' }, workspace as never)
     running.isProcessing = true
-    const idleUnread = createManagedSession({ craftId: 'idle-unread', hasUnread: true }, workspace as never)
-    const hiddenRunning = createManagedSession({ craftId: 'hidden-running', hidden: true }, {
+    const idleUnread = createManagedSession({ mortiseId: 'idle-unread', hasUnread: true }, workspace as never)
+    const hiddenRunning = createManagedSession({ mortiseId: 'hidden-running', hidden: true }, {
       ...workspace,
       id: 'ws_hidden',
     } as never)
@@ -42,7 +42,7 @@ describe('workspace session summary', () => {
       rootPath: '/tmp/broadcast-workspace',
       createdAt: Date.now(),
     }
-    const session = createManagedSession({ craftId: 'broadcast-session' }, workspace as never)
+    const session = createManagedSession({ mortiseId: 'broadcast-session' }, workspace as never)
     ;(manager as unknown as { sessions: Map<string, typeof session> }).sessions.set(session.id, session)
 
     const summaries: UnreadSummary[] = []

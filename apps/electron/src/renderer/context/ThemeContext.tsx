@@ -348,7 +348,7 @@ export function ThemeProvider({
 
   // Inject CSS variables
   useEffect(() => {
-    const styleId = 'craft-theme-overrides'
+    const styleId = 'mortise-theme-overrides'
     let styleEl = document.getElementById(styleId) as HTMLStyleElement | null
 
     if (!styleEl) {

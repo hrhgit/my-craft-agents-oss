@@ -171,11 +171,15 @@ export {
   SESSION_SAFE_ALLOWED_TOOL_NAMES,
   SESSION_SAFE_BLOCKED_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
+  LEGACY_SESSION_TOOL_PREFIX,
+  LEGACY_DIRECT_SESSION_TOOL_PREFIX,
   // Filtered helper views
   getSessionToolDefs,
   getSessionBackendToolNames,
   getSessionToolRegistry,
   getSessionSafeAllowedToolNames,
+  normalizeSessionToolName,
+  isSessionToolName,
   // JSON Schema converter
   getToolDefsAsJsonSchema,
 } from './tool-defs.ts';

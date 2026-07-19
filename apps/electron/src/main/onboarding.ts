@@ -3,12 +3,12 @@
  *
  * Handles workspace setup and configuration persistence.
  */
-import { getAuthState, getSetupNeeds } from '@craft-agent/shared/auth'
-import { isSetupDeferred, setSetupDeferred } from '@craft-agent/shared/config/storage'
-import { getCredentialManager } from '@craft-agent/shared/credentials'
-import { prepareMcpOAuth } from '@craft-agent/shared/auth'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { getAuthState, getSetupNeeds } from '@mortise/shared/auth'
+import { isSetupDeferred, setSetupDeferred } from '@mortise/shared/config/storage'
+import { getCredentialManager } from '@mortise/shared/credentials'
+import { prepareMcpOAuth } from '@mortise/shared/auth'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from './handlers/handler-deps'
 
 // ============================================

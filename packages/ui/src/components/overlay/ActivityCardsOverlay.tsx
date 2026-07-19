@@ -23,13 +23,13 @@ export interface ActivityCardsOverlayProps {
   onOpenFile?: (path: string) => void
 }
 
-const craftAgentDarkTheme = {
+const mortiseAgentDarkTheme = {
   ...vscodeTheme,
   '--w-rjv-font-family': 'var(--font-mono, ui-monospace, monospace)',
   '--w-rjv-background-color': 'transparent',
 }
 
-const craftAgentLightTheme = {
+const mortiseAgentLightTheme = {
   ...githubLightTheme,
   '--w-rjv-font-family': 'var(--font-mono, ui-monospace, monospace)',
   '--w-rjv-background-color': 'transparent',
@@ -66,7 +66,7 @@ export function ActivityCardsOverlay({
   onOpenUrl,
   onOpenFile,
 }: ActivityCardsOverlayProps) {
-  const jsonTheme = useMemo(() => (theme === 'dark' ? craftAgentDarkTheme : craftAgentLightTheme), [theme])
+  const jsonTheme = useMemo(() => (theme === 'dark' ? mortiseAgentDarkTheme : mortiseAgentLightTheme), [theme])
 
   const renderMarkdownCard = (card: OverlayCard, content: string) => {
     return (

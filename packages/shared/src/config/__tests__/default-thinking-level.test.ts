@@ -8,7 +8,7 @@ import { THINKING_LEVEL_IDS } from '../../agent/thinking-levels.ts'
 const STORAGE_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'storage.ts')).href
 
 function setupWorkspaceConfigDir() {
-  const configDir = mkdtempSync(join(tmpdir(), 'craft-agent-config-thinking-'))
+  const configDir = mkdtempSync(join(tmpdir(), 'mortise-config-thinking-'))
   const workspaceRoot = join(configDir, 'workspaces', 'my-workspace')
   mkdirSync(workspaceRoot, { recursive: true })
 
@@ -73,7 +73,7 @@ function runEval(configDir: string, code: string): string {
     '--eval',
     `import { getDefaultThinkingLevel, setDefaultThinkingLevel } from '${STORAGE_MODULE_PATH}'; ${code}`,
   ], {
-    env: { ...process.env, CRAFT_CONFIG_DIR: configDir, PI_CODING_AGENT_DIR: piAgentDir },
+    env: { ...process.env, MORTISE_CONFIG_DIR: configDir, PI_CODING_AGENT_DIR: piAgentDir },
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -149,7 +149,7 @@ describe('default thinking level storage', () => {
     expect(piSettings.defaultThinkingLevel).toBe('xhigh')
   }, 15_000)
 
-  it('does not read legacy defaultThinkingLevel from craft config', () => {
+  it('does not read legacy defaultThinkingLevel from mortise config', () => {
     const { configDir, configPath } = setupWorkspaceConfigDir()
     const config = JSON.parse(readFileSync(configPath, 'utf-8'))
     config.defaultThinkingLevel = 'xhigh'

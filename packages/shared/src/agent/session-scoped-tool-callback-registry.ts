@@ -12,7 +12,7 @@
 
 import type { SpawnSessionFn } from './spawn-session-tool.ts';
 import type { BrowserPaneFns } from './browser-tools.ts';
-import type { AuthRequest } from '@craft-agent/session-tools-core';
+import type { AuthRequest } from '@mortise/session-tools-core';
 import { debug } from '../utils/debug.ts';
 
 /**
@@ -45,9 +45,9 @@ export interface SessionScopedToolCallbacks {
   browserPaneFns?: BrowserPaneFns;
 
   /** Get detailed info about a session (defaults to current). */
-  getSessionInfoFn?: (sessionId?: string) => import('@craft-agent/session-tools-core').SessionInfo | null;
+  getSessionInfoFn?: (sessionId?: string) => import('@mortise/session-tools-core').SessionInfo | null;
   /** List sessions in the workspace with pagination. */
-  listSessionsFn?: (options?: import('@craft-agent/session-tools-core').ListSessionsOptions) => import('@craft-agent/session-tools-core').ListSessionsResult;
+  listSessionsFn?: (options?: import('@mortise/session-tools-core').ListSessionsOptions) => import('@mortise/session-tools-core').ListSessionsResult;
   /** Send a message to another session (inter-session messaging). */
   sendAgentMessageFn?: (sessionId: string, message: string, attachments?: Array<{ path: string; name?: string }>) => Promise<void>;
   /**

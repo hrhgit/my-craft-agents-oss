@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { PiProjectionEntityV1 } from '@craft-agent/shared/protocol'
+import type { PiProjectionEntityV1 } from '@mortise/shared/protocol'
 import type { Message, StoredAttachment } from '../../../shared/types'
 import { buildPiTurnOverlay, buildPiTurns } from '../../components/app-shell/pi-turn-model'
 import {

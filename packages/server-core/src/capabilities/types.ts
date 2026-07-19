@@ -5,13 +5,13 @@ export type {
   CapabilityRequestV1,
   CapabilityResultV1,
   ExtensionCapabilityDeclarationV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 
 import type {
   CapabilityProgressV1,
   CapabilityRequestV1,
   CapabilityResultV1,
-} from '@craft-agent/shared/protocol'
+} from '@mortise/shared/protocol'
 
 export interface CapabilityProviderContext {
   request: CapabilityRequestV1

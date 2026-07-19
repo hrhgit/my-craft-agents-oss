@@ -25,7 +25,7 @@ afterEach(() => {
 
 describe('JsonFileStore multi-writer persistence', () => {
   it('merges disjoint object updates from separate backend processes', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'craft-json-store-'))
+    const directory = mkdtempSync(join(tmpdir(), 'mortise-json-store-'))
     directories.push(directory)
     new ConfigStore(directory).update({ enabled: true })
 

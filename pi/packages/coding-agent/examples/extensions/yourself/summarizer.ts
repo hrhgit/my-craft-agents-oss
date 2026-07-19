@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { complete, type Message, parseJsonWithRepair } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { complete, type Message, parseJsonWithRepair } from "@mortise/pi-ai";
+import type { ExtensionContext } from "@mortise/pi-coding-agent";
 import { hashText, writeFileAtomic } from "./state.ts";
 import {
 	type SessionDigest,
