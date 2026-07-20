@@ -45,6 +45,8 @@ output/playwright/
 output/mortise-ui*/
 output/.mortise-ui-check/
 output/mortise-developer-kit-*/
+output/developer-kit-builds/
+output/developer-kit-latest.json
 
 # IntelliJ based IDEs
 .idea
