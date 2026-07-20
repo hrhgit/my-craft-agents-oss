@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   canReplaceContentTab,
   createDefaultAppLayout,
+  focusConversationRoute,
   detachContentTab,
   detachPanelGroup,
   moveContentTab,
@@ -51,6 +52,45 @@ function withRightGroup(layout: AppLayout): AppLayout {
 }
 
 describe('app layout domain', () => {
+  it('focuses a new conversation while preserving other workspace content', () => {
+    const initial = withRightGroup(createDefaultAppLayout({
+      serverId: 'local',
+      workspaceId: 'ws-a',
+      sessionId: 'old-session',
+      route: 'allSessions/session/old-session',
+    }))
+    const focused = focusConversationRoute(initial, 'allSessions/new/default')
+
+    expect(Object.keys(focused.tabs)).toHaveLength(Object.keys(initial.tabs).length)
+    expect(focused.tabs['content:main']?.ref).toEqual({
+      kind: 'conversation',
+      serverId: 'local',
+      workspaceId: 'ws-a',
+      resourceId: 'allSessions/new/default',
+    })
+    expect(focused.focusedTabId).toBe('content:main')
+  })
+
+  it('opens a separate draft instead of replacing a protected conversation', () => {
+    const initial = createDefaultAppLayout({
+      serverId: 'local',
+      workspaceId: 'ws-a',
+      sessionId: 'running-session',
+      route: 'allSessions/session/running-session',
+    })
+    initial.tabs['content:main'] = {
+      ...initial.tabs['content:main'],
+      protection: { ...initial.tabs['content:main'].protection, pinned: true, running: true },
+    }
+
+    const focused = focusConversationRoute(initial, 'allSessions/new/default')
+
+    expect(focused.tabs['content:main'].ref.sessionId).toBe('running-session')
+    expect(focused.tabs['content:main'].protection).toMatchObject({ pinned: true, running: true })
+    expect(focused.focusedTabId).not.toBe('content:main')
+    expect(focused.tabs[focused.focusedTabId!].ref.resourceId).toBe('allSessions/new/default')
+  })
+
   it('creates one main group and defers extra splits until content is opened', () => {
     const layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a', sessionId: 's1' })
     expect(layout.windows.primary.groupIds).toEqual(['group:main'])
@@ -466,6 +506,36 @@ describe('app layout domain', () => {
     expect(recovered.tabs.browser.ref.resourceId).toBeUndefined()
     expect(recovered.tabs.sideTasks).toBeUndefined()
     expect(recovered.groups['group:main'].tabIds).not.toContain('sideTasks')
+  })
+
+  it('drops retired Sources navigation tabs during persistence recovery', () => {
+    const layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const persisted = {
+      ...layout,
+      tabs: {
+        ...layout.tabs,
+        sources: {
+          ...tab('sources'),
+          ref: {
+            kind: 'navigation',
+            serverId: 'local',
+            workspaceId: 'ws-a',
+            resourceId: 'sources/api/source/github',
+          },
+        },
+      },
+      groups: {
+        ...layout.groups,
+        'group:main': {
+          ...layout.groups['group:main'],
+          tabIds: [...layout.groups['group:main'].tabIds, 'sources'],
+        },
+      },
+    }
+
+    const recovered = sanitizeAppLayout(persisted)
+    expect(recovered.tabs.sources).toBeUndefined()
+    expect(recovered.groups['group:main'].tabIds).not.toContain('sources')
   })
 
   it('preserves non-detachable content through persisted layout sanitization', () => {

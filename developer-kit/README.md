@@ -1,10 +1,11 @@
 # Mortise Developer Kit
 
-The Mortise Developer Kit is an optional, separately packaged extension-authoring toolset. It is not required to install or run Mortise.
+The Mortise Developer Kit is an optional, separately versioned extension-authoring toolset. Windows offline installers include it as a default-selected component; it is not required to install or run Mortise.
 
 The kit contains:
 
 - `bin/mortise-ui.exe`: the AI-operable UI validation CLI.
+- `bin/mortise-logs.exe`: the AI-facing, progressively disclosed runtime-log query CLI.
 - `dev-host/`: a version-matched Mortise Developer Host with the validation control plane enabled.
 - `docs/`: extension, CLI, and validation authoring guides.
 - `examples/`: complete extension packages, including Manifest V1.
@@ -18,6 +19,7 @@ bin\mortise-ui.exe start --surface electron --profile fixture
 bin\mortise-ui.exe capabilities list --kind scenario
 bin\mortise-ui.exe snapshot
 bin\mortise-ui.exe stop
+bin\mortise-logs.exe recent
 ```
 
 To load an extension directly from its development directory without copying its source or using the global Pi profile:

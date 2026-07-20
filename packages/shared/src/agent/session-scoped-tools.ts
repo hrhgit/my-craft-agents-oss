@@ -9,7 +9,7 @@
  *
  * All tool definitions, schemas, and handlers live in session-tools-core.
  * This adapter only handles:
- * - Session callback registry (per-session onPlanSubmitted, onAuthRequest, queryFn)
+ * - Session callback registry (per-session plan and query callbacks)
  * - Plan state management
  * - MCP tool wrapping with DOC_REF-enriched descriptions
  * - spawn_session, browser_tool (backend-specific, not in registry)
@@ -18,7 +18,6 @@
 import { getSessionPlansPath } from '../sessions/storage.ts';
 import { DOC_REFS } from '../docs/index.ts';
 import { createSessionToolContext } from './session-tool-context.ts';
-import { basename } from 'node:path';
 import {
   createInProcessMcpServer,
   createMcpTool,
@@ -35,28 +34,11 @@ import {
   // Types
   type ToolResult,
   type TextContent,
-  type AuthRequest,
 } from '@mortise/session-tools-core';
 import { createSpawnSessionTool, type SpawnSessionFn } from './spawn-session-tool.ts';
 import { createBrowserTools, type BrowserPaneFns } from './browser-tools.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { getBrowserToolEnabled } from '../config/storage.ts';
-
-// Re-export types for backward compatibility
-export type {
-  CredentialInputMode,
-  AuthRequestType,
-  AuthRequest,
-  AuthResult,
-  CredentialAuthRequest,
-  McpOAuthAuthRequest,
-  GoogleOAuthAuthRequest,
-  SlackOAuthAuthRequest,
-  MicrosoftOAuthAuthRequest,
-  GoogleService,
-  SlackService,
-  MicrosoftService,
-} from '@mortise/session-tools-core';
 
 // Re-export browser pane types for session manager wiring
 export type { BrowserPaneFns } from './browser-tools.ts';
@@ -203,10 +185,9 @@ function getToolDescriptions(): Record<string, string> {
     toolDescriptionsCache = {
       ...BASE_DESCRIPTIONS,
       // Session tool enrichments with DOC_REFs
-      config_validate: BASE_DESCRIPTIONS.config_validate + `\n\n**Reference:** ${DOC_REFS.sources}`,
+      config_validate: BASE_DESCRIPTIONS.config_validate,
       skill_validate: BASE_DESCRIPTIONS.skill_validate + `\n\n**Reference:** ${DOC_REFS.skills}`,
       mermaid_validate: BASE_DESCRIPTIONS.mermaid_validate + `\n\n**Reference:** ${DOC_REFS.mermaid}`,
-      source_test: BASE_DESCRIPTIONS.source_test + `\n\n**Reference:** ${DOC_REFS.sources}`,
     };
   }
   return toolDescriptionsCache;
@@ -226,7 +207,6 @@ function getToolDescriptions(): Record<string, string> {
 export function getSessionScopedTools(
   sessionId: string,
   workspaceRootPath: string,
-  workspaceId?: string
 ): InProcessMcpServer {
   const cacheKey = `${sessionId}::${workspaceRootPath}`;
 
@@ -236,15 +216,10 @@ export function getSessionScopedTools(
     const ctx = createSessionToolContext({
       sessionId,
       workspacePath: workspaceRootPath,
-      workspaceId: workspaceId || basename(workspaceRootPath) || '',
       onPlanSubmitted: (planPath: string) => {
         setLastPlanFilePath(sessionId, planPath);
         const callbacks = getSessionScopedToolCallbacks(sessionId);
         callbacks?.onPlanSubmitted?.(planPath);
-      },
-      onAuthRequest: (request: unknown) => {
-        const callbacks = getSessionScopedToolCallbacks(sessionId);
-        callbacks?.onAuthRequest?.(request as AuthRequest);
       },
     });
 

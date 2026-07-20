@@ -27,7 +27,6 @@ function createTestHarness(overrides?: { workspaceId?: string | null }) {
 
   const deps: HandlerDeps = {
     sessionManager: {} as HandlerDeps['sessionManager'],
-    oauthFlowStore: {} as HandlerDeps['oauthFlowStore'],
     platform: {
       appRootPath: '/',
       resourcesPath: '/',

@@ -161,21 +161,6 @@ describe('parseArgs', () => {
     expect(args.rest).toEqual(['hello', 'world'])
   })
 
-  it('--source accumulates into array', () => {
-    const args = parseArgs([
-      'bun', 'index.ts',
-      '--source', 'mortise-kb',
-      '--source', 'github',
-      'run', 'do stuff',
-    ])
-    expect(args.sources).toEqual(['mortise-kb', 'github'])
-  })
-
-  it('defaults sources to empty array', () => {
-    const args = parseArgs(['bun', 'index.ts', 'run', 'hello'])
-    expect(args.sources).toEqual([])
-  })
-
   it('--mode sets mode', () => {
     const args = parseArgs(['bun', 'index.ts', '--mode', 'safe', 'run', 'hello'])
     expect(args.mode).toBe('safe')
@@ -344,10 +329,10 @@ describe('getValidateSteps', () => {
     expect(new Set(names).size).toBe(names.length)
   })
 
-  it('includes session lifecycle steps (create, read, delete)', () => {
+  it('includes session lifecycle steps (first turn, read, delete)', () => {
     const steps = getValidateSteps()
     const names = steps.map((s) => s.name)
-    expect(names).toContain('sessions:create')
+    expect(names).toContain('sessions:createAndSendFirstTurn')
     expect(names).toContain('sessions:getMessages')
     expect(names).toContain('sessions:delete')
   })
@@ -362,14 +347,6 @@ describe('getValidateSteps', () => {
     const steps = getValidateSteps()
     const names = steps.map((s) => s.name)
     expect(names).toContain('send message + tool use')
-  })
-
-  it('includes source lifecycle steps (create, mention, delete)', () => {
-    const steps = getValidateSteps()
-    const names = steps.map((s) => s.name)
-    expect(names).toContain('sources:create')
-    expect(names).toContain('send + source mention')
-    expect(names).toContain('sources:delete')
   })
 
   it('includes skill lifecycle steps (create, mention, delete)', () => {
@@ -408,9 +385,9 @@ describe('getValidateSteps', () => {
     expect(names).toContain('webhook:verify failure')
   })
 
-  it('creates session with allow-all permission mode', () => {
+  it('creates its validation session through the first-turn transaction', () => {
     const steps = getValidateSteps()
-    const createStep = steps.find((s) => s.name === 'sessions:create')
+    const createStep = steps.find((s) => s.name === 'sessions:createAndSendFirstTurn')
     expect(createStep).toBeDefined()
   })
 
@@ -418,12 +395,10 @@ describe('getValidateSteps', () => {
     const steps = getValidateSteps()
     const names = steps.map((s) => s.name)
     const skillDelete = names.indexOf('skills:delete')
-    const sourceDelete = names.indexOf('sources:delete')
     const sessionDelete = names.indexOf('sessions:delete')
     const skillMention = names.indexOf('send + skill mention')
     expect(skillDelete).toBeGreaterThan(skillMention)
-    expect(sourceDelete).toBeGreaterThan(skillDelete)
-    expect(sessionDelete).toBeGreaterThan(sourceDelete)
+    expect(sessionDelete).toBeGreaterThan(skillDelete)
   })
 
   it('branching steps come after send message + tool use', () => {
@@ -433,11 +408,11 @@ describe('getValidateSteps', () => {
     expect(branch).toBeGreaterThan(toolUse)
   })
 
-  it('automation cleanup comes before sources:delete', () => {
+  it('automation cleanup comes before session deletion', () => {
     const names = getValidateSteps().map((s) => s.name)
     const cleanup = names.indexOf('automation:cleanup')
-    const srcDelete = names.indexOf('sources:delete')
+    const sessionDelete = names.indexOf('sessions:delete')
     expect(cleanup).toBeGreaterThan(-1)
-    expect(cleanup).toBeLessThan(srcDelete)
+    expect(cleanup).toBeLessThan(sessionDelete)
   })
 })

@@ -14,7 +14,6 @@ type BrowserPaneKeys = `browserPane.${FunctionKeys<ElectronAPI['browserPane']>}`
 // (no IPC round-trip to the main process). Each reads local state or orchestrates client-side.
 type ApiToChannelMapKeys = Exclude<
   FunctionKeys<ElectronAPI>,
-  | 'performOAuth'
   | 'getTransportConnectionState'
   | 'getRuntimeEnvironment'
   | 'onTransportConnectionStateChanged'

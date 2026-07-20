@@ -147,6 +147,8 @@ export interface RpcRuntimeOpenOptions {
 	parentSession?: string;
 	deferResourceLoad?: boolean;
 	persistInitialState?: boolean;
+	/** Keep the runtime transcript entirely in memory and never create a Session file. */
+	inMemory?: boolean;
 	/** Omit to expose no host UI. Extension target selection does not imply UI support. */
 	uiCapabilities?: RpcHostUICapabilities;
 }
@@ -175,6 +177,10 @@ export type RpcCommand = RpcEnvelope &
 				attachments?: UserAttachmentMetadata[];
 				/** Host system-prompt override for this turn onward (see PromptOptions.systemPrompt). */
 				systemPrompt?: string;
+				/** Clear a previously persisted host system-prompt override. */
+				clearSystemPrompt?: boolean;
+				/** Host system-prompt suffix for this turn onward (see PromptOptions.appendSystemPrompt). */
+				appendSystemPrompt?: string;
 		  }
 		| { id?: string; type: "steer"; message: string; images?: ImageContent[]; clientMutationId?: string }
 		| { id?: string; type: "follow_up"; message: string; images?: ImageContent[]; clientMutationId?: string }
@@ -769,6 +775,16 @@ export interface RpcExtensionHostCapabilityProgress extends RpcEnvelope {
 	id: string;
 	sequence: number;
 	progress: unknown;
+}
+
+export interface RpcExtensionHostCapabilityRouteRejected extends RpcEnvelope {
+	type: "extension_host_capability_route_rejected";
+	version: 1;
+	id: string;
+	phase: "progress" | "response";
+	reason: "unknown_request" | "routing_identity_mismatch";
+	expected?: { runtimeId: string; sessionId: string; clientId?: string };
+	actual: { runtimeId?: string; sessionId?: string; clientId?: string };
 }
 
 export type RpcExtensionHostCapabilityResponse = RpcEnvelope &

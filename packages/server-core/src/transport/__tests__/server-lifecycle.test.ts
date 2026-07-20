@@ -195,6 +195,45 @@ describe('WsRpcServer lifecycle', () => {
     // This test validates the handler is registered; full timeout is covered by the 60s static value
   })
 
+  it('honors a per-handler timeout and aborts the handler context', async () => {
+    server = createServer()
+    let observedAbort = false
+    server.handle('test:short-timeout', async (ctx) => {
+      await new Promise<void>((_resolve, reject) => {
+        ctx.signal?.addEventListener('abort', () => {
+          observedAbort = true
+          reject(ctx.signal?.reason)
+        }, { once: true })
+      })
+    }, { timeoutMs: 25 })
+    expect((server as unknown as { handlerOptions: Map<string, { timeoutMs?: number }> }).handlerOptions.get('test:short-timeout')?.timeoutMs).toBe(25)
+    await server.listen()
+    const { ws } = await handshake(`ws://127.0.0.1:${server.port}`, TEST_TOKEN)
+    openSockets.push(ws)
+
+    const requestId = crypto.randomUUID()
+    const response = new Promise<{ type: string; error?: { code?: string; message?: string } }>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Timed handler did not respond')), 2_000)
+      ws.on('message', data => {
+        const message = JSON.parse(data.toString())
+        if (message.id !== requestId) return
+        clearTimeout(timeout)
+        resolve(message)
+      })
+    })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    ws.send(JSON.stringify({ id: requestId, type: 'request', channel: 'test:short-timeout' }))
+
+    await expect(response).resolves.toMatchObject({
+      type: 'response',
+      error: {
+        code: 'REQUEST_TIMEOUT',
+        message: 'Handler timeout: test:short-timeout (25ms)',
+      },
+    })
+    expect(observedAbort).toBe(true)
+  })
+
   // -- Protocol version tests --
 
   it('rejects wrong protocol major version', async () => {

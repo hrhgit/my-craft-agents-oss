@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
-import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
+import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, SetupNeeds, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@mortise/shared/config'
 import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
@@ -31,7 +31,7 @@ import { createInitialState } from '@/hooks/useMultiSelect'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 import { NavigationProvider } from '@/contexts/NavigationContext'
 import { navigate, routes } from './lib/navigate'
-import { attachmentFromContentRef, toDraftRef } from './lib/drafts'
+import { attachmentFromContentRef, hasDraftContent, toDraftRef } from './lib/drafts'
 import { stripMarkdown } from './utils/text'
 import { coerceInputText } from './lib/input-text'
 import { getPiAgentEndHandoff } from './lib/pi-projection-handoff'
@@ -72,7 +72,6 @@ import {
   windowWorkspaceIdAtom,
   type SessionMeta,
 } from '@/atoms/sessions'
-import { sourcesAtom } from '@/atoms/sources'
 import {
   insertOptimisticPiUser,
   piProjectionAtomFamily,
@@ -340,13 +339,12 @@ export default function App() {
   const [menuNewChatTrigger, setMenuNewChatTrigger] = useState(0)
   // Permission requests per session (queue to handle multiple concurrent requests)
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PermissionRequest[]>>(new Map())
-  // Credential requests per session (queue to handle multiple concurrent requests)
-  const [pendingCredentials, setPendingCredentials] = useState<Map<string, CredentialRequest[]>>(new Map())
   // Draft composer state per session (text + attachment refs), preserved across mode
   // switches, conversation changes, and app restarts. Using a ref avoids re-renders
   // during typing; attachments are stored as lightweight refs (path + name) and
   // hydrated via readFileAttachment() on session switch.
   const sessionDraftsRef = useRef<Map<string, SessionDraft>>(new Map())
+  const draftsLoadStartedRef = useRef(false)
   // Unified session options for all session-scoped settings
   const [sessionOptions, setSessionOptions] = useState<Map<string, SessionOptions>>(new Map())
 
@@ -358,6 +356,7 @@ export default function App() {
 
   // Splash screen state - tracks when app is fully ready (all data loaded)
   const [sessionsLoaded, setSessionsLoaded] = useState(false)
+  const [draftsLoaded, setDraftsLoaded] = useState(false)
   const [sessionLoadError, setSessionLoadError] = useState<string | null>(null)
   const sessionLoadGenerationRef = useRef(0)
   const sessionLoadFlightRef = useRef<{ workspaceId: string; promise: Promise<void> } | null>(null)
@@ -368,8 +367,7 @@ export default function App() {
   // Notifications enabled state (from app settings)
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
 
-  // Sources and skills for badge extraction
-  const sources = useAtomValue(sourcesAtom)
+  // Skills for badge extraction
   const skills = useAtomValue(skillsAtom)
 
   // Compute if app is fully ready (all data loaded)
@@ -787,12 +785,6 @@ export default function App() {
       next.delete(handoff.sessionId)
       return next
     })
-    setPendingCredentials(previousCredentials => {
-      if (!previousCredentials.has(handoff.sessionId)) return previousCredentials
-      const next = new Map(previousCredentials)
-      next.delete(handoff.sessionId)
-      return next
-    })
 
     if (!updatedSession.hidden) {
       const preview = handoff.preview
@@ -845,11 +837,19 @@ export default function App() {
     // Load persisted input drafts into ref (no re-render needed).
     // Attachment files are not read here — hydration happens lazily when the session
     // is opened so app startup isn't delayed by reading potentially large files.
-    window.electronAPI.getAllDrafts().then((drafts) => {
-      if (Object.keys(drafts).length > 0) {
-        sessionDraftsRef.current = new Map(Object.entries(drafts))
-      }
-    })
+    if (!draftsLoadStartedRef.current) {
+      draftsLoadStartedRef.current = true
+      window.electronAPI.getAllDrafts()
+        .then((drafts) => {
+          if (Object.keys(drafts).length > 0) {
+            sessionDraftsRef.current = new Map(Object.entries(drafts))
+          }
+        })
+        .catch((error) => {
+          console.warn('[App] Failed to load persisted drafts:', error)
+        })
+        .finally(() => setDraftsLoaded(true))
+    }
     // Load app-level theme
     window.electronAPI.getAppTheme().then(setAppTheme)
   }, [appState, loadSessionsFromServer, windowWorkspaceId])
@@ -923,15 +923,6 @@ export default function App() {
             }
             break
           }
-          case 'credential_request': {
-            setPendingCredentials(prevCreds => {
-              const next = new Map(prevCreds)
-              const existingQueue = next.get(sessionId) || []
-              next.set(sessionId, [...existingQueue, effect.request])
-              return next
-            })
-            break
-          }
           case 'restore_input': {
             // Queued messages were removed from chat on abort — restore their text to the input field.
             // Append to existing draft (user may have started typing) rather than overwrite.
@@ -956,7 +947,7 @@ export default function App() {
         }
       }
 
-      // Clear pending permissions and credentials on complete
+      // Clear pending permissions on complete
       if (eventType === 'complete') {
         setPendingPermissions(prevPerms => {
           if (prevPerms.has(sessionId)) {
@@ -965,14 +956,6 @@ export default function App() {
             return next
           }
           return prevPerms
-        })
-        setPendingCredentials(prevCreds => {
-          if (prevCreds.has(sessionId)) {
-            const next = new Map(prevCreds)
-            next.delete(sessionId)
-            return next
-          }
-          return prevCreds
         })
       }
     }
@@ -1272,6 +1255,124 @@ export default function App() {
     window.electronAPI.sessionCommand(sessionId, { type: 'rename', name })
   }, [updateSessionById])
 
+  const prepareMessageAttachments = useCallback(async (
+    storageId: string,
+    attachments?: FileAttachment[],
+  ): Promise<{
+    storedAttachments?: StoredAttachment[]
+    processedAttachments?: FileAttachment[]
+    failedAttachmentNames: string[]
+  }> => {
+    if (!attachments?.length) return { failedAttachmentNames: [] }
+
+    const totalAttachmentBytes = attachments.reduce((sum, attachment) => sum + (attachment.size || 0), 0)
+    if (totalAttachmentBytes > ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES) {
+      throw new Error(`Attachments exceed the ${Math.round(ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES / 1024 / 1024)} MiB per-message limit`)
+    }
+    const oversized = attachments.find(attachment => (attachment.size || 0) > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES)
+    if (oversized) {
+      throw new Error(`"${oversized.name}" exceeds the ${Math.round(ATTACHMENT_SINGLE_FILE_LIMIT_BYTES / 1024 / 1024)} MiB single-file limit`)
+    }
+
+    const isAbsoluteLocalPath = (path: string) => /^(?:[a-zA-Z]:[\\/]|\/|\\\\)/.test(path)
+    const isPathOnlyAttachment = (attachment: FileAttachment) => (
+      !attachment.base64
+      && !attachment.text
+      && typeof attachment.path === 'string'
+      && isAbsoluteLocalPath(attachment.path)
+    )
+    const attachmentsForStorage = windowRemoteWorkspaceId
+      ? await Promise.all(attachments.map(async attachment => {
+          if (!isPathOnlyAttachment(attachment)) return attachment
+          try {
+            const materialized = await window.electronAPI.readUserAttachment(attachment.path)
+            if (!materialized) return attachment
+            return {
+              ...materialized,
+              type: attachment.type || materialized.type,
+              name: attachment.name || materialized.name,
+              mimeType: attachment.mimeType || materialized.mimeType,
+              size: attachment.size || materialized.size,
+              thumbnailBase64: attachment.thumbnailBase64 ?? materialized.thumbnailBase64,
+            }
+          } catch (error) {
+            console.warn(`Failed to materialize local attachment "${attachment.name}" for remote upload:`, error)
+            return attachment
+          }
+        }))
+      : attachments
+
+    const storeResults = await Promise.allSettled(
+      attachmentsForStorage.map(attachment => window.electronAPI.storeAttachment(storageId, attachment)),
+    )
+    const storedAttachments: StoredAttachment[] = []
+    const successfulAttachments: FileAttachment[] = []
+    const failedAttachmentNames: string[] = []
+    storeResults.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        storedAttachments.push(result.value)
+        successfulAttachments.push(attachmentsForStorage[index])
+      } else {
+        failedAttachmentNames.push(attachmentsForStorage[index].name)
+        console.warn(`Failed to store attachment "${attachmentsForStorage[index].name}":`, result.reason)
+      }
+    })
+
+    const processedAttachments = successfulAttachments.map((attachment, index) => {
+      const stored = storedAttachments[index]
+      return {
+        ...attachment,
+        storedPath: stored.storedPath,
+        markdownPath: stored.markdownPath,
+        base64: stored.resizedBase64 ?? attachment.base64,
+      }
+    })
+
+    return {
+      storedAttachments: storedAttachments.length > 0 ? storedAttachments : undefined,
+      processedAttachments: processedAttachments.length > 0 ? processedAttachments : undefined,
+      failedAttachmentNames,
+    }
+  }, [windowRemoteWorkspaceId])
+
+  const buildMessageBadges = useCallback((
+    message: string,
+    externalBadges?: ContentBadge[],
+  ): ContentBadge[] => {
+    const mentionBadges = windowWorkspaceSlug
+      ? extractBadges(message, skills, windowWorkspaceSlug)
+      : []
+    const badges: ContentBadge[] = [...(externalBadges || []), ...mentionBadges]
+
+    const commandMatch = message.match(/^\/([a-z]+)(\s|$)/i)
+    if (commandMatch && commandMatch[1].toLowerCase() === 'compact') {
+      const commandText = commandMatch[0].trimEnd()
+      badges.unshift({
+        type: 'command',
+        label: 'Compact',
+        rawText: commandText,
+        start: 0,
+        end: commandText.length,
+      })
+    }
+
+    const planExecuteMatch = message.match(/^(Read the plan at )(.+?)( and execute it\.?)$/i)
+    if (planExecuteMatch) {
+      const prefix = planExecuteMatch[1]
+      const filePath = planExecuteMatch[2]
+      badges.push({
+        type: 'file',
+        label: filePath.split('/').pop() || 'plan.md',
+        rawText: filePath,
+        filePath,
+        start: prefix.length,
+        end: prefix.length + filePath.length,
+      })
+    }
+
+    return badges
+  }, [skills, windowWorkspaceSlug])
+
   const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => {
     let optimisticMessageId: string | null = null
     try {
@@ -1280,153 +1381,22 @@ export default function App() {
       // returns status 'accepted', not 'queued').
       const sendingMidStream = store.get(sessionAtomFamily(sessionId))?.isProcessing === true
 
-      // Step 1: Store attachments and get persistent metadata
-      let storedAttachments: StoredAttachment[] | undefined
-      let processedAttachments: FileAttachment[] | undefined
-
-      if (attachments?.length) {
-        const totalAttachmentBytes = attachments.reduce((sum, attachment) => sum + (attachment.size || 0), 0)
-        if (totalAttachmentBytes > ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES) {
-          throw new Error(`Attachments exceed the ${Math.round(ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES / 1024 / 1024)} MiB per-message limit`)
-        }
-        const oversized = attachments.find(attachment => (attachment.size || 0) > ATTACHMENT_SINGLE_FILE_LIMIT_BYTES)
-        if (oversized) {
-          throw new Error(`"${oversized.name}" exceeds the ${Math.round(ATTACHMENT_SINGLE_FILE_LIMIT_BYTES / 1024 / 1024)} MiB single-file limit`)
-        }
-
-        const isAbsoluteLocalPath = (path: string) =>
-          /^(?:[a-zA-Z]:[\\/]|\/|\\\\)/.test(path)
-        const isPathOnlyAttachment = (attachment: FileAttachment) =>
-          !attachment.base64 &&
-          !attachment.text &&
-          typeof attachment.path === 'string' &&
-          isAbsoluteLocalPath(attachment.path)
-
-        const attachmentsForStorage = windowRemoteWorkspaceId
-          ? await Promise.all(attachments.map(async (attachment) => {
-              if (!isPathOnlyAttachment(attachment)) return attachment
-              try {
-                const materialized = await window.electronAPI.readUserAttachment(attachment.path)
-                if (!materialized) return attachment
-                return {
-                  ...materialized,
-                  type: attachment.type || materialized.type,
-                  name: attachment.name || materialized.name,
-                  mimeType: attachment.mimeType || materialized.mimeType,
-                  size: attachment.size || materialized.size,
-                  thumbnailBase64: attachment.thumbnailBase64 ?? materialized.thumbnailBase64,
-                }
-              } catch (error) {
-                console.warn(`Failed to materialize local attachment "${attachment.name}" for remote upload:`, error)
-                return attachment
-              }
-            }))
-          : attachments
-
-        // Store each attachment to disk (generates thumbnails, converts Office→markdown)
-        // Use allSettled so one failure doesn't kill all attachments
-        const storeResults = await Promise.allSettled(
-          attachmentsForStorage.map(a => window.electronAPI.storeAttachment(sessionId, a))
-        )
-
-        // Filter successful stores, warn about failures
-        storedAttachments = []
-        const successfulAttachments: FileAttachment[] = []
-        storeResults.forEach((result, i) => {
-          if (result.status === 'fulfilled') {
-            storedAttachments!.push(result.value)
-            successfulAttachments.push(attachmentsForStorage[i])
-          } else {
-            console.warn(`Failed to store attachment "${attachmentsForStorage[i].name}":`, result.reason)
-          }
-        })
-
-        // Notify user about failed attachments
-        const failedCount = storeResults.filter(r => r.status === 'rejected').length
-        if (failedCount > 0) {
-          console.warn(`${failedCount} attachment(s) failed to store`)
-          // Add warning message to session so user knows some attachments weren't included
-          const failedNames = attachments
-            .filter((_, i) => storeResults[i].status === 'rejected')
-            .map(a => a.name)
-            .join(', ')
-          updateSessionById(sessionId, (s) => ({
-            messages: [...s.messages, {
-              id: generateMessageId(),
-              role: 'warning' as const,
-              content: `⚠️ ${failedCount} attachment(s) could not be stored and will not be sent: ${failedNames}`,
-              timestamp: Date.now()
-            }]
-          }))
-        }
-
-        // Step 2: Create processed attachments for Claude
-        // - Office files: Convert to text with markdown content
-        // - Others: Use original FileAttachment
-        // - All: Include storedPath so agent knows where files are stored
-        // - Resized images: Use resizedBase64 instead of original large base64
-        processedAttachments = await Promise.all(
-          successfulAttachments.map(async (att, i) => {
-            const stored = storedAttachments?.[i]
-            if (!stored) {
-              console.error(`Missing stored attachment at index ${i}`)
-              return att // Fall back to original
-            }
-            // Include storedPath and markdownPath for all attachment types
-            // Agent will use Read tool to access text/office files via these paths
-            // If image was resized, use the resized base64 for Claude API
-            return {
-              ...att,
-              storedPath: stored.storedPath,
-              markdownPath: stored.markdownPath,
-              // Use resized base64 if available (for images that exceeded size limits)
-              base64: stored.resizedBase64 ?? att.base64,
-            }
-          })
-        )
+      const {
+        storedAttachments,
+        processedAttachments,
+        failedAttachmentNames,
+      } = await prepareMessageAttachments(sessionId, attachments)
+      if (failedAttachmentNames.length > 0) {
+        updateSessionById(sessionId, session => ({
+          messages: [...session.messages, {
+            id: generateMessageId(),
+            role: 'warning' as const,
+            content: `${failedAttachmentNames.length} attachment(s) could not be stored and will not be sent: ${failedAttachmentNames.join(', ')}`,
+            timestamp: Date.now(),
+          }],
+        }))
       }
-
-      // Step 3: Extract badges from mentions (sources/skills) with embedded icons
-      // Badges are self-contained for display in UserMessageBubble and viewer
-      // Merge with any externally provided badges (e.g., from EditPopover context badges)
-      // Use workspace slug (not UUID) for skill qualification - SDK expects "workspaceSlug:skillSlug"
-      const mentionBadges: ContentBadge[] = windowWorkspaceSlug
-        ? extractBadges(message, skills, sources, windowWorkspaceSlug)
-        : []
-      const badges: ContentBadge[] = [...(externalBadges || []), ...mentionBadges]
-
-      // Step 4.1: Detect SDK slash commands (e.g., /compact) and create command badges
-      // This makes /compact render as an inline badge rather than raw text
-      const commandMatch = message.match(/^\/([a-z]+)(\s|$)/i)
-      if (commandMatch && commandMatch[1].toLowerCase() === 'compact') {
-        const commandText = commandMatch[0].trimEnd() // "/compact" without trailing space
-        badges.unshift({
-          type: 'command',
-          label: 'Compact',
-          rawText: commandText,
-          start: 0,
-          end: commandText.length,
-        })
-      }
-
-      // Step 4.2: Detect plan execution messages and create file badges
-      // Pattern: "Read the plan at <path> and execute it."
-      // This is sent after compaction when accepting a plan, displays as clickable file badge
-      // Only the file path is replaced with a badge - surrounding text remains visible
-      const planExecuteMatch = message.match(/^(Read the plan at )(.+?)( and execute it\.?)$/i)
-      if (planExecuteMatch) {
-        const prefix = planExecuteMatch[1]      // "Read the plan at "
-        const filePath = planExecuteMatch[2]    // the actual path
-        const fileName = filePath.split('/').pop() || 'plan.md'
-        badges.push({
-          type: 'file',
-          label: fileName,
-          rawText: filePath,
-          filePath: filePath,
-          start: prefix.length,
-          end: prefix.length + filePath.length,
-        })
-      }
+      const badges = buildMessageBadges(message, externalBadges)
 
       // Step 5: Create a Mortise-owned UI overlay keyed by the projected message.
       // Pi owns text and order; this carrier supplies persistent attachment paths,
@@ -1467,6 +1437,7 @@ export default function App() {
       updateSessionById(sessionId, (s) => ({
         messages: settlePiUserOverlayCarrier(s.messages, optimisticMessageId!),
       }))
+      return true
     } catch (error) {
       console.error('Failed to send message:', error)
       if (optimisticMessageId) {
@@ -1479,8 +1450,54 @@ export default function App() {
           ? removePiUserOverlayCarrier(s.messages, optimisticMessageId)
           : s.messages,
       }))
+      return false
     }
-  }, [sessionOptions, updateSessionById, skills, sources, windowWorkspaceId, windowRemoteWorkspaceId])
+  }, [buildMessageBadges, prepareMessageAttachments, store, updateSessionById])
+
+  const handleCreateAndSendFirstTurn: AppShellContextType['onCreateAndSendFirstTurn'] = useCallback(async input => {
+    const attachmentStagingId = input.attachments?.length
+      ? `draft-${crypto.randomUUID()}`
+      : undefined
+    const {
+      storedAttachments,
+      processedAttachments,
+      failedAttachmentNames,
+    } = await prepareMessageAttachments(attachmentStagingId ?? 'unused-first-turn-staging', input.attachments)
+    const badges = buildMessageBadges(input.message, input.sendOptions?.badges)
+    let result
+    try {
+      result = await window.electronAPI.createAndSendFirstTurn({
+        ...input,
+        attachments: processedAttachments,
+        storedAttachments,
+        attachmentStagingId,
+        sendOptions: {
+          ...input.sendOptions,
+          badges: badges.length > 0 ? badges : undefined,
+        },
+      })
+    } catch (error) {
+      if (attachmentStagingId) {
+        await window.electronAPI.discardFirstTurnAttachmentStaging(input.workspaceId, attachmentStagingId).catch(() => undefined)
+      }
+      throw error
+    }
+
+    const session = failedAttachmentNames.length > 0
+      ? {
+          ...result.session,
+          messages: [...result.session.messages, {
+            id: generateMessageId(),
+            role: 'warning' as const,
+            content: `${failedAttachmentNames.length} attachment(s) could not be stored and will not be sent: ${failedAttachmentNames.join(', ')}`,
+            timestamp: Date.now(),
+          }],
+        }
+      : result.session
+    addSession(session)
+    syncSessionOptionsFromSession(session)
+    return { ...result, session }
+  }, [addSession, buildMessageBadges, prepareMessageAttachments, syncSessionOptionsFromSession])
 
   /**
    * Unified handler for all session option changes.
@@ -1530,6 +1547,14 @@ export default function App() {
   const getDraftAttachmentRefs = useCallback((sessionId: string): DraftAttachmentRef[] => {
     const attachments = sessionDraftsRef.current.get(sessionId)?.attachments
     return Array.isArray(attachments) ? attachments : []
+  }, [])
+
+  const hasDraft = useCallback((sessionId: string): boolean => {
+    const draft = sessionDraftsRef.current.get(sessionId)
+    return hasDraftContent({
+      text: coerceInputText(draft?.text),
+      attachments: draft?.attachments,
+    })
   }, [])
 
   // Hydrate persisted attachment refs into full FileAttachment objects.
@@ -1619,28 +1644,16 @@ export default function App() {
     schedulePersistDraft(sessionId)
   }, [schedulePersistDraft])
 
-  // Open new chat - creates session and selects it
-  // Used by components via AppShellContext and for programmatic navigation
+  // Open the workspace-scoped draft page. A real session is created only when
+  // the first message is submitted from that page.
   const openNewChat = useCallback(async (params: NewChatActionParams = {}) => {
     if (!windowWorkspaceId) {
       console.warn('[App] Cannot open new chat: no workspace ID')
       return
     }
 
-    const session = await handleCreateSession(windowWorkspaceId)
-
-    if (params.name) {
-      await window.electronAPI.sessionCommand(session.id, { type: 'rename', name: params.name })
-    }
-
-    // Navigate to the chat view - this sets both selectedSession and activeView
-    navigate(routes.view.allSessions(session.id))
-
-    // Pre-fill input if provided (after a small delay to ensure component is mounted)
-    if (params.input) {
-      setTimeout(() => handleInputChange(session.id, params.input!), 100)
-    }
-  }, [windowWorkspaceId, handleCreateSession, handleInputChange])
+    navigate(routes.action.newSession(params))
+  }, [windowWorkspaceId])
 
   const handleRespondToPermission = useCallback(async (
     sessionId: string,
@@ -1669,40 +1682,6 @@ export default function App() {
       // Response failed (agent/session gone) - clear the permission anyway
       // to avoid UI being stuck with stale permission
       setPendingPermissions(prev => {
-        const next = new Map(prev)
-        const queue = next.get(sessionId) || []
-        const remainingQueue = queue.slice(1)
-        if (remainingQueue.length === 0) {
-          next.delete(sessionId)
-        } else {
-          next.set(sessionId, remainingQueue)
-        }
-        return next
-      })
-    }
-  }, [])
-
-  const handleRespondToCredential = useCallback(async (sessionId: string, requestId: string, response: CredentialResponse) => {
-    const success = await window.electronAPI.respondToCredential(sessionId, requestId, response)
-
-    if (success) {
-      // Remove only the first credential from the queue (the one we just responded to)
-      setPendingCredentials(prev => {
-        const next = new Map(prev)
-        const queue = next.get(sessionId) || []
-        const remainingQueue = queue.slice(1) // Remove first item
-        if (remainingQueue.length === 0) {
-          next.delete(sessionId)
-        } else {
-          next.set(sessionId, remainingQueue)
-        }
-        return next
-      })
-      // Note: No need to force session refresh - per-session atoms update automatically
-    } else {
-      // Response failed (agent/session gone) - clear the credential anyway
-      // to avoid UI being stuck with stale credential request
-      setPendingCredentials(prev => {
         const next = new Map(prev)
         const queue = next.get(sessionId) || []
         const remainingQueue = queue.slice(1)
@@ -1817,8 +1796,10 @@ export default function App() {
       && workspaceId === currentTransportWorkspaceId
       && !transitionQueue.isRunning
     ) {
-      if (!openInNewWindow && destination === 'allSessions') {
-        navigate(routes.view.allSessions())
+      if (!openInNewWindow) {
+        if (destination === 'allSessions') navigate(routes.view.allSessions())
+        else if (destination === 'newConversation') navigate(routes.view.newConversation())
+        else if (typeof destination === 'object') navigate(routes.view.allSessions(destination.sessionId))
       }
       return
     }
@@ -1834,6 +1815,8 @@ export default function App() {
       const activeTransportWorkspaceId = transportWorkspaceIdRef.current ?? activeWorkspaceId
       if (workspaceId === activeWorkspaceId && workspaceId === activeTransportWorkspaceId) {
         if (destination === 'allSessions') navigate(routes.view.allSessions())
+        else if (destination === 'newConversation') navigate(routes.view.newConversation())
+        else if (typeof destination === 'object') navigate(routes.view.allSessions(destination.sessionId))
         return
       }
 
@@ -1932,10 +1915,7 @@ export default function App() {
       // Clear workspace-scoped transient state.
       if (rendererWorkspaceChanged) {
         setPendingPermissions(new Map())
-        setPendingCredentials(new Map())
         setSessionOptions(new Map())
-        sessionDraftsRef.current.clear()
-        store.set(sourcesAtom, [])
         store.set(skillsAtom, [])
       }
 
@@ -1945,6 +1925,8 @@ export default function App() {
       if (!rendererWorkspaceChanged) {
         if (destination === 'allSessions') {
           navigate(routes.view.allSessions())
+        } else if (destination === 'newConversation') {
+          navigate(routes.view.newConversation())
         } else if (typeof destination === 'object') {
           navigate(routes.view.allSessions(destination.sessionId))
         }
@@ -1997,13 +1979,13 @@ export default function App() {
     piGlobalSettings,
     refreshPiGlobalConfig,
     pendingPermissions,
-    pendingCredentials,
     getDraft,
     getDraftAttachmentRefs,
     hydrateDraftAttachments,
     sessionOptions,
     // Session callbacks
     onCreateSession: handleCreateSession,
+    onCreateAndSendFirstTurn: handleCreateAndSendFirstTurn,
     onSendMessage: handleSendMessage,
     onRenameSession: handleRenameSession,
     onMarkSessionRead: handleMarkSessionRead,
@@ -2011,7 +1993,6 @@ export default function App() {
     onSetActiveViewingSession: handleSetActiveViewingSession,
     onDeleteSession: handleDeleteSession,
     onRespondToPermission: handleRespondToPermission,
-    onRespondToCredential: handleRespondToCredential,
     // File/URL handlers
     onOpenFile: handleOpenFile,
     onOpenUrl: handleOpenUrl,
@@ -2039,12 +2020,12 @@ export default function App() {
     piGlobalSettings,
     refreshPiGlobalConfig,
     pendingPermissions,
-    pendingCredentials,
     getDraft,
     getDraftAttachmentRefs,
     hydrateDraftAttachments,
     sessionOptions,
     handleCreateSession,
+    handleCreateAndSendFirstTurn,
     handleSendMessage,
     handleRenameSession,
     handleMarkSessionRead,
@@ -2052,7 +2033,6 @@ export default function App() {
     handleSetActiveViewingSession,
     handleDeleteSession,
     handleRespondToPermission,
-    handleRespondToCredential,
     handleOpenFile,
     handleOpenUrl,
     handleSelectWorkspace,
@@ -2175,12 +2155,14 @@ export default function App() {
           workspaceId={windowWorkspaceId}
           workspaceSlug={windowWorkspaceSlug}
           onSwitchWorkspaceBySlug={handleSwitchWorkspaceBySlug}
-          onCreateSession={handleCreateSession}
+          onCreateAndSendFirstTurn={handleCreateAndSendFirstTurn}
           onInputChange={handleInputChange}
           getDraft={getDraft}
+          hasDraft={hasDraft}
           onAutoDeleteEmptySession={handleAutoDeleteEmptySession}
           isReady={appState === 'ready'}
           isSessionsReady={sessionsLoaded}
+          areDraftsReady={draftsLoaded}
           remoteWorkspaceId={windowRemoteWorkspaceId}
           workspaceSwitchDestination={workspaceSwitchDestination}
           onWorkspaceSwitchDestinationConsumed={() => setWorkspaceSwitchDestination(null)}

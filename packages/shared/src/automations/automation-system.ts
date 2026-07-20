@@ -106,8 +106,6 @@ export interface AutomationSystemOptions {
   workspaceId: string;
   /** Working directory for command execution */
   workingDir?: string;
-  /** Active source slugs for permission rules */
-  activeSourceSlugs?: string[];
   /** Whether to start the scheduler service (default: false) */
   enableScheduler?: boolean;
   /** Called when prompts are ready to be executed */
@@ -118,17 +116,6 @@ export interface AutomationSystemOptions {
   onError?: (event: AutomationEvent, error: Error) => void;
   /** Called when events are lost after retries */
   onEventLost?: (events: string[], error: Error) => void;
-  /**
-   * 是否将 prompt automation 委托给 pi prompt-automation 扩展执行。
-   * 对应配置项 `piExtensions.delegatePromptAutomation`，默认 false（mortise 自行处理）。
-   * 启用后 prompt action 走 {@link onDelegatePrompts} 回调而非 {@link onPromptsReady}。
-   */
-  delegatePromptAutomation?: boolean;
-  /**
-   * 委托给 pi prompt-automation 扩展执行时的回调。
-   * 仅当 {@link delegatePromptAutomation} 为 true 时被调用。
-   */
-  onDelegatePrompts?: (prompts: PendingPrompt[]) => void | Promise<void>;
 }
 
 // ============================================================================
@@ -334,8 +321,6 @@ export class AutomationSystem implements AutomationsConfigProvider {
         workspaceRootPath: this.options.workspaceRootPath,
         onPromptsReady: this.options.onPromptsReady,
         onError: this.options.onError,
-        delegatePromptAutomation: this.options.delegatePromptAutomation,
-        onDelegatePrompts: this.options.onDelegatePrompts,
       },
       this
     );

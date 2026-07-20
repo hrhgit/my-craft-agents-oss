@@ -8,7 +8,6 @@
 import tsParser from '@typescript-eslint/parser'
 import tsPlugin from '@typescript-eslint/eslint-plugin'
 import noDirectOpenImport from './eslint-rules/no-direct-open-import.cjs'
-import noInlineSourceAuthCheck from './eslint-rules/no-inline-source-auth-check.cjs'
 import noRawPiFileIo from './eslint-rules/no-raw-pi-file-io.cjs'
 
 export default [
@@ -38,7 +37,6 @@ export default [
       'mortise-shared': {
         rules: {
           'no-direct-open-import': noDirectOpenImport,
-          'no-inline-source-auth-check': noInlineSourceAuthCheck,
           'no-raw-pi-file-io': noRawPiFileIo,
         },
       },
@@ -46,8 +44,6 @@ export default [
     rules: {
       // Prevent direct imports of 'open' package — use openUrl() from utils instead
       'mortise-shared/no-direct-open-import': 'error',
-      // Prevent inline source.config.isAuthenticated checks — use isSourceUsable() instead
-      'mortise-shared/no-inline-source-auth-check': 'error',
       // Prevent new raw ~/.pi/agent file access outside documented seams
       'mortise-shared/no-raw-pi-file-io': 'error',
 

@@ -8,7 +8,6 @@
  * Compound format (hierarchical navigation):
  *   mortise://allSessions[/session/{sessionId}]            - Session list (all sessions)
  *   Retired organization routes (flagged, archived, state, label, view) fall back to All Sessions.
- *   mortise://sources[/source/{sourceSlug}]          - Sources list
  *   mortise://settings[/{subpage}]                   - Settings (general, shortcuts, preferences)
  *
  * Action format:
@@ -25,7 +24,6 @@
  *   mortise://allSessions                               (all sessions view)
  *   mortise://allSessions/session/abc123                (specific session)
  *   mortise://settings/shortcuts                     (shortcuts page)
- *   mortise://sources/source/github                  (github source info)
  *   mortise://action/new-chat                        (uses active window)
  *   mortise://action/resume-sdk-session/{sdkId}      (resume Claude Code session)
  *   mortise://workspace/ws123/allSessions/session/abc123   (targets specific workspace)
@@ -103,7 +101,7 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
     // Compound route prefixes
     const COMPOUND_ROUTE_PREFIXES = [
       'allSessions', 'flagged', 'archived', 'state', 'label', 'view',
-      'sources', 'settings', 'skills'
+      'settings', 'skills'
     ]
 
     // mortise://allSessions/..., mortise://settings/..., etc. (compound routes)

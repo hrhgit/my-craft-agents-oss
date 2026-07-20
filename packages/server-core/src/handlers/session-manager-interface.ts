@@ -10,14 +10,12 @@ import type { Workspace, WorkspaceInfo, ActiveSessionInfo } from '@mortise/core/
 import type { StoredAttachment, AnnotationV1 } from '@mortise/core/types'
 import type { PermissionMode } from '@mortise/shared/agent/mode-types'
 import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels'
-import type { AuthResult } from '@mortise/shared/agent'
 import type {
   Session,
   CreateSessionOptions,
   FileAttachment,
   SendMessageOptions,
   PermissionResponseOptions,
-  CredentialResponse,
   PermissionModeState,
   UnreadSummary,
   PiProjectionEventV1,
@@ -49,6 +47,8 @@ export interface ISessionManager {
   getPiProjectionSnapshot(sessionId: string): Promise<PiProjectionSnapshotV1 | null>
   applyPiProjectionEvent(event: PiProjectionEventV1): ProjectionApplyResult
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
+  createAndSendFirstTurn(input: CreateAndSendFirstTurnInput): Promise<{ session: Session; messageId: string }>
+  discardFirstTurnAttachmentStaging(workspaceId: string, stagingId: string): Promise<void>
   deleteSession(sessionId: string): Promise<void>
 
   // ---------------------------------------------------------------------------
@@ -69,7 +69,6 @@ export interface ISessionManager {
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): void
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void
   updateWorkingDirectory(sessionId: string, path: string): void
-  setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void>
   setSessionProvider(sessionId: string, provider: string): Promise<void>
   clearDeletedProviderReferences(provider: string): Promise<void>
   updateSessionModel(sessionId: string, workspaceId: string, model: string | null, provider?: string): Promise<void>
@@ -112,7 +111,6 @@ export interface ISessionManager {
     alwaysAllow: boolean,
     options?: PermissionResponseOptions,
   ): boolean
-  respondToCredential(sessionId: string, requestId: string, response: CredentialResponse): Promise<boolean>
   getSessionPermissionModeState(sessionId: string): PermissionModeState | null
 
   /**
@@ -234,6 +232,7 @@ export interface ISessionManager {
   getActiveSessionCount(workspaceId?: string): number
   /** Automation summary for a workspace (count of configured automations + scheduler state). */
   getWorkspaceAutomationSummary(workspaceId: string): { automationCount: number; schedulerRunning: boolean }
+  getAutomationHost(workspaceId: string): import('@mortise/shared/automations').AutomationWorkspaceHostV3 | null
   /** Active sessions across all workspaces (sessions with running backend processes). */
   getActiveSessionsInfo(): ActiveSessionInfo[]
 
@@ -252,9 +251,6 @@ export interface ISessionManager {
   reloadProviderRuntime(provider?: string): Promise<void>
   /** Inspect one loaded Pi runtime for the global agent settings surface. */
   getAgentRuntimeProfile(): Promise<import('@mortise/shared/config').AgentRuntimeProfile | null>
-  /** Rebuild active source bridges after the global data-source feature changes. */
-  refreshDataSourcesRuntime?(): Promise<void>
-  completeAuthRequest(sessionId: string, result: AuthResult): Promise<void>
   executePromptAutomation(input: ExecutePromptAutomationInput): Promise<{ sessionId: string }>
 
   /**
@@ -294,4 +290,22 @@ export interface ExecutePromptAutomationInput {
    * (created on first use). Silently ignored when prerequisites aren't met.
    */
   telegramTopic?: string
+}
+
+/**
+ * Server-owned first-turn transaction for an ordinary new conversation.
+ * The provisional runtime/session identity is never returned. Resolution means
+ * Pi persisted the first assistant message and SessionManager published the
+ * fully durable Session; rejection guarantees no stored Session remains.
+ */
+export interface CreateAndSendFirstTurnInput {
+  workspaceId: string
+  message: string
+  createOptions?: CreateSessionOptions
+  attachments?: FileAttachment[]
+  storedAttachments?: StoredAttachment[]
+  attachmentStagingId?: string
+  sendOptions?: SendMessageOptions
+  callerClientId?: string
+  signal?: AbortSignal
 }

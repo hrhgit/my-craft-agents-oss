@@ -12,7 +12,6 @@
 
 import type { SpawnSessionFn } from './spawn-session-tool.ts';
 import type { BrowserPaneFns } from './browser-tools.ts';
-import type { AuthRequest } from '@mortise/session-tools-core';
 import { debug } from '../utils/debug.ts';
 
 /**
@@ -24,12 +23,6 @@ export interface SessionScopedToolCallbacks {
    * Receives the path to the plan markdown file.
    */
   onPlanSubmitted?: (planPath: string) => void;
-
-  /**
-   * Called when authentication is requested via OAuth/credential tools.
-   * The auth UI should be shown and execution paused.
-   */
-  onAuthRequest?: (request: AuthRequest) => void;
 
   /**
    * Callback for spawn_session tool — creates an independent session and sends initial prompt.
@@ -50,16 +43,6 @@ export interface SessionScopedToolCallbacks {
   listSessionsFn?: (options?: import('@mortise/session-tools-core').ListSessionsOptions) => import('@mortise/session-tools-core').ListSessionsResult;
   /** Send a message to another session (inter-session messaging). */
   sendAgentMessageFn?: (sessionId: string, message: string, attachments?: Array<{ path: string; name?: string }>) => Promise<void>;
-  /**
-   * Activate a source in the running session (source_test auto-enable flow).
-   * Wired by SessionManager to the per-session onSourceActivationRequest callback
-   * plus a backend-aware readiness signal (Pi vs Claude).
-   */
-  activateSourceInSessionFn?: (sourceSlug: string) => Promise<{
-    ok: boolean;
-    reason?: string;
-    availability?: 'immediate' | 'next-turn';
-  }>;
   /** Get messaging bindings for a session. */
   getMessagingBindingsFn?: (sessionId: string) => Array<{ platform: string; channelId: string; threadId?: number; channelName?: string; enabled: boolean }>;
   /** Unbind messaging channels from a session. Returns count of removed bindings. */

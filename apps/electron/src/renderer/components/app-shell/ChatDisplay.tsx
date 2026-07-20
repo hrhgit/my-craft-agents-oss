@@ -42,7 +42,7 @@ import {
 } from "@mortise/ui"
 import { useFocusZone } from "@/hooks/keyboard"
 import { useTheme } from "@/hooks/useTheme"
-import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, LoadedSource, LoadedSkill } from "../../../shared/types"
+import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, LoadedSkill } from "../../../shared/types"
 import type { PermissionMode } from "@mortise/shared/agent/modes"
 import type { ThinkingLevel } from "@mortise/shared/agent/thinking-levels"
 import type { MidStreamSendIntent } from '@mortise/shared/protocol'
@@ -59,7 +59,6 @@ import {
   normalizeFollowUpText,
   type Turn,
 } from "@mortise/ui"
-import { MemoizedAuthRequestCard } from "@/components/chat/AuthRequestCard"
 import { ChatInputZone, type StructuredInputState, type StructuredResponse, type PermissionResponse, type AdminApprovalResponse } from "./input"
 import { ExtensionWidgetZone } from "@/components/extensions/ExtensionWidgetZone"
 import { ExtensionContributionZone, ExtensionReplaceZone } from "@/components/extensions/ExtensionContributionZone"
@@ -75,7 +74,7 @@ import { collectFileChangesFromActivities, getFirstFileChangeIdForActivity } fro
 import { resolveBranchNewPanelOption } from "./branching"
 import { handleErrorMessageAction } from "./error-message-actions"
 import { piProjectionAtomFamily } from "@/atoms/pi-projection"
-import { selectPendingPiCredential, selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
+import { selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
 import { buildPiTurnOverlay, buildPiTurns, getPiTurnSearchText } from "./pi-turn-model"
 import { useWorkspaceElectronApi } from "@/context/WorkspaceElectronApiContext"
 
@@ -128,7 +127,6 @@ function isStackedActivityTool(activity: ActivityItem): boolean {
 function getTurnKey(turn: Turn): string {
   if (turn.type === 'user') return `user-${turn.message.id}`
   if (turn.type === 'system') return `system-${turn.message.id}`
-  if (turn.type === 'auth-request') return `auth-${turn.message.id}`
   return `turn-${turn.turnId}-${turn.timestamp}`
 }
 
@@ -157,10 +155,6 @@ interface ChatDisplayProps {
     alwaysAllow: boolean,
     options?: import('../../../shared/types').PermissionResponseOptions
   ) => void
-  /** Pending credential request for this session */
-  pendingCredential?: CredentialRequest
-  /** Callback to respond to credential request */
-  onRespondToCredential?: (sessionId: string, requestId: string, response: CredentialResponse) => void
   // Thinking level (session-level setting)
   /** Current thinking level ('off', 'think', 'max') */
   thinkingLevel?: ThinkingLevel
@@ -181,11 +175,6 @@ interface ChatDisplayProps {
   attachmentsValue?: FileAttachment[]
   /** Callback when attachment draft changes (add, remove, clear on send) */
   onAttachmentsChange?: (attachments: FileAttachment[]) => void
-  // Source selection
-  /** Available sources (enabled only) */
-  sources?: LoadedSource[]
-  /** Callback when source selection changes */
-  onSourcesChange?: (slugs: string[]) => void
   // Skill selection (for @mentions)
   /** Available skills for @mention autocomplete */
   skills?: LoadedSkill[]
@@ -455,7 +444,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   textareaRef: externalTextareaRef,
   disabled = false,
   onRespondToPermission,
-  onRespondToCredential,
   // Thinking level
   thinkingLevel = 'medium',
   onThinkingLevelChange,
@@ -468,9 +456,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onInputChange,
   attachmentsValue,
   onAttachmentsChange,
-  // Sources
-  sources,
-  onSourcesChange,
   // Skills (for @mentions)
   skills,
   workspaceId,
@@ -513,11 +498,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     )
   }, [activeSessionId, piProjection.syncState, projectionEntities])
   const effectivePendingPermission = projectedPermission
-  const projectedCredential = React.useMemo(() => {
-    if (!activeSessionId || piProjection.syncState !== 'synced') return undefined
-    return selectPendingPiCredential(projectionEntities, activeSessionId)
-  }, [activeSessionId, piProjection.syncState, projectionEntities])
-  const effectivePendingCredential = projectedCredential
   const projectedRuntimeState = React.useMemo(
     () => piProjection.syncState === 'synced' ? selectPiRuntimeState(projectionEntities) : undefined,
     [piProjection.syncState, projectionEntities],
@@ -1377,13 +1357,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         false,
         { rememberForMinutes: adminResponse.rememberForMinutes }
       )
-    } else if (response.type === 'credential' && effectivePendingCredential && onRespondToCredential) {
-      const credResponse = response as CredentialResponse
-      onRespondToCredential(
-        effectivePendingCredential.sessionId,
-        effectivePendingCredential.requestId,
-        credResponse
-      )
     }
   }
 
@@ -1405,11 +1378,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       }
       return { type: 'permission', data: effectivePendingPermission }
     }
-    if (effectivePendingCredential) {
-      return { type: 'credential', data: effectivePendingCredential }
-    }
     return undefined
-  }, [effectivePendingCredential, effectivePendingPermission])
+  }, [effectivePendingPermission])
 
   // Keep ref in sync for scroll handler
   totalTurnCountRef.current = allTurns.length
@@ -1699,35 +1669,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       )
                     }
 
-                    // Auth-request turns - render inline auth UI
-                    // mt-2 matches ResponseCard spacing for visual consistency
-                    if (turn.type === 'auth-request') {
-                      // Interactive only if no user message follows
-                      const isAuthInteractive = !turns.slice(index + 1).some(t => t.type === 'user')
-                      return (
-                        <div
-                          key={turnKey}
-                          ref={el => { if (el) turnRefs.current.set(turnKey, el); else turnRefs.current.delete(turnKey) }}
-                          className={cn(
-                            "mt-2 rounded-lg transition-all duration-200",
-                            isCurrentMatch && "ring-2 ring-info ring-offset-2 ring-offset-background",
-                            isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
-                          )}
-                        >
-                          <ExtensionContributionZone sessionId={session.id} surface="conversation.message.before" target={{ messageId: turn.message.id }} />
-                          <ExtensionReplaceZone sessionId={session.id} surface="conversation.message.replace" target={{ messageId: turn.message.id }}>
-                          <MemoizedAuthRequestCard
-                            message={turn.message}
-                            sessionId={session.id}
-                            onRespondToCredential={onRespondToCredential}
-                            isInteractive={isAuthInteractive}
-                          />
-                          </ExtensionReplaceZone>
-                          <ExtensionContributionZone sessionId={session.id} surface="conversation.message.after" target={{ messageId: turn.message.id }} />
-                        </div>
-                      )
-                    }
-
                     // Check if this is the last response (for Accept Plan button visibility)
                     const isLastResponse = index === turns.length - 1 || !turns.slice(index + 1).some(t => t.type === 'user')
 
@@ -1793,6 +1734,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         isComplete={turn.isComplete}
                         completedAt={turn.completedAt}
                         durationMs={turn.durationMs}
+                        inputTokens={turn.inputTokens}
+                        outputTokens={turn.outputTokens}
                         isExpanded={turn.isComplete
                           ? expandedTurns.has(assistantUiKey)
                           : !collapsedActiveTurns.has(assistantUiKey)}
@@ -1820,7 +1763,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                                 model: session.model,
                                 permissionMode: session.permissionMode,
                                 workingDirectory: session.workingDirectory,
-                                enabledSourceSlugs: session.enabledSourceSlugs,
                               }
                             )
                             navigate(routes.view.allSessions(child.id), { newPanel: resolveBranchNewPanelOption(options) })
@@ -2042,9 +1984,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               onInputChange,
               attachmentsValue,
               onAttachmentsChange,
-              sources,
-              enabledSourceSlugs: session.enabledSourceSlugs,
-              onSourcesChange,
               skills,
               workspaceId,
               workingDirectory,

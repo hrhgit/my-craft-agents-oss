@@ -73,6 +73,10 @@ function isActiveRun(run: MortiseUiRunManifest): boolean {
     && (hostAlive(run) || launcherAlive(run))
 }
 
+export function isMortiseUiRunProcessAlive(run: MortiseUiRunManifest): boolean {
+  return hostAlive(run) || launcherAlive(run)
+}
+
 export function listMortiseUiRuns(root = DEFAULT_MORTISE_UI_RUN_ROOT): MortiseUiRunManifest[] {
   if (!existsSync(root)) return []
   return readdirSync(root, { withFileTypes: true })
@@ -317,7 +321,8 @@ export async function startMortiseUiRun(args: {
     throw new MortiseUiStartError(message, failed)
   }
   child.unref()
-  updateRunManifest(runDir, { launcherPid: child.pid, launcherStartedAt: getProcessStartTime(child.pid) })
+  const launcherStartedAt = Date.now()
+  updateRunManifest(runDir, { launcherPid: child.pid, launcherStartedAt })
   if (args.waitForReady === false) return readRunManifest(runDir)
 
   const deadline = Date.now() + waitMs
@@ -337,9 +342,9 @@ export async function startMortiseUiRun(args: {
       }
       let readyManifest = updateRunManifest(runDir, {
         launcherPid: child.pid,
-        launcherStartedAt: getProcessStartTime(child.pid),
+        launcherStartedAt,
         hostPid: endpoint.pid,
-        hostStartedAt: getProcessStartTime(endpoint.pid),
+        hostStartedAt: endpoint.pid === child.pid ? launcherStartedAt : getProcessStartTime(endpoint.pid),
       })
       const appReadyTimeoutMs = Math.max(1, deadline - Date.now())
       const readiness = await requestMortiseUiHost({
@@ -593,11 +598,19 @@ async function terminateOwnedProcessTrees(processes: MortiseUiProcessIdentity[])
 }
 
 function launcherAlive(manifest: MortiseUiRunManifest): boolean {
-  return matchesProcessIdentity({ pid: manifest.launcherPid, startedAt: manifest.launcherStartedAt, recordedAt: Date.parse(manifest.createdAt) })
+  return matchesProcessIdentity({
+    pid: manifest.launcherPid,
+    startedAt: manifest.launcherStartedAt,
+    recordedAt: Date.parse(manifest.createdAt),
+  })
 }
 
 function hostAlive(manifest: MortiseUiRunManifest): boolean {
-  return matchesProcessIdentity({ pid: manifest.hostPid, startedAt: manifest.hostStartedAt, recordedAt: Date.parse(manifest.createdAt) })
+  return matchesProcessIdentity({
+    pid: manifest.hostPid,
+    startedAt: manifest.hostStartedAt,
+    recordedAt: Date.parse(manifest.createdAt),
+  })
 }
 
 function processIdentities(manifest: MortiseUiRunManifest): MortiseUiProcessIdentity[] {

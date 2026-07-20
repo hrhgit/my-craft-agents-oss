@@ -39,7 +39,6 @@ export const playgroundAppShellContext: AppShellContextType = {
   piGlobalSettings: {},
   refreshPiGlobalConfig: async () => {},
   pendingPermissions: new Map(),
-  pendingCredentials: new Map(),
   getDraft: () => '',
   getDraftAttachmentRefs: () => [],
   hydrateDraftAttachments: async () => [],
@@ -47,7 +46,13 @@ export const playgroundAppShellContext: AppShellContextType = {
   onCreateSession: (async () => {
     throw new Error('[Playground] onCreateSession is not available')
   }) as AppShellContextType['onCreateSession'],
-  onSendMessage: logCall('onSendMessage'),
+  onCreateAndSendFirstTurn: (async () => {
+    throw new Error('[Playground] onCreateAndSendFirstTurn is not available')
+  }) as AppShellContextType['onCreateAndSendFirstTurn'],
+  onSendMessage: async (...args) => {
+    logCall('onSendMessage')(...args)
+    return true
+  },
   onRenameSession: logCall('onRenameSession'),
   onMarkSessionRead: logCall('onMarkSessionRead'),
   onMarkSessionUnread: logCall('onMarkSessionUnread'),

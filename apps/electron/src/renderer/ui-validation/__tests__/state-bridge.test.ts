@@ -37,6 +37,16 @@ describe('deriveRendererValidationStates', () => {
     expect(states.find(state => state.scope === 'route')?.phase).toBe('loading')
   })
 
+  it('does not expose removed Sources routes as a supported surface', () => {
+    const states = deriveRendererValidationStates({
+      appState: 'ready', sessionsLoaded: true, sessionLoadError: null, splashHidden: true,
+      workspaceId: 'w1', workspaceTransitioning: false,
+      transport: { mode: 'local', status: 'connected', url: 'ws://localhost', attempt: 0, updatedAt: 1 },
+    }, { route: 'sources/source/legacy', focusedSessionId: null, sessions: [] })
+
+    expect(states.find(state => state.scope === 'route')?.detail).toMatchObject({ surface: 'unknown' })
+  })
+
   it('publishes extension readiness as a stable scoped state', () => {
     const state = extensionValidationScopedState({
       extensionId: 'build', commandOwnerExtensionId: 'build', sessionId: 's1', runtimeId: 'r1', revision: 1,

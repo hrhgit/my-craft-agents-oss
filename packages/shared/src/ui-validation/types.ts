@@ -14,7 +14,7 @@ export type UiValidationVerificationLevel =
   | 'native-verified'
 
 export interface UiValidationRoute {
-  surface: 'chat' | 'settings' | 'sources' | 'skills' | 'automations' | 'workspace-picker' | 'unknown'
+  surface: 'chat' | 'settings' | 'skills' | 'automations' | 'workspace-picker' | 'unknown'
   workspaceId?: string
   sessionId?: string
   section?: string

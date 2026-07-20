@@ -154,11 +154,10 @@ function routeDetail(route: string | null): Record<string, unknown> {
   const segments = route.split('/')
   const sessionIndex = segments.indexOf('session')
   const surface = route.startsWith('settings') ? 'settings'
-    : route.startsWith('sources') ? 'sources'
-      : route.startsWith('skills') ? 'skills'
-        : route.startsWith('automations') ? 'automations'
-          : route.startsWith('allSessions') ? 'chat'
-            : route === 'workspace-picker' ? 'workspace-picker'
+    : route.startsWith('skills') ? 'skills'
+      : route.startsWith('automations') ? 'automations'
+        : route.startsWith('allSessions') ? 'chat'
+          : route === 'workspace-picker' ? 'workspace-picker'
             : 'unknown'
   return {
     surface,

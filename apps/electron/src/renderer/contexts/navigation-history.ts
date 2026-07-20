@@ -1,3 +1,5 @@
+import type { SessionsNavigationState } from '../../shared/types'
+
 interface SemanticHistoryKeyInput {
   workspaceSlug: string | null
   panelRoutes: string[]
@@ -12,7 +14,7 @@ interface InitialRestoreGateInput {
   initialRouteRestored: boolean
 }
 
-export type WorkspaceSwitchDestination = 'restore' | 'allSessions' | { sessionId: string }
+export type WorkspaceSwitchDestination = 'restore' | 'allSessions' | 'newConversation' | { sessionId: string }
 
 interface WorkspaceSwitchSearchInput {
   destination: WorkspaceSwitchDestination | null | undefined
@@ -52,6 +54,22 @@ export function canRunInitialRestore({
   return isReady && isSessionsReady && !!workspaceId && !initialRouteRestored
 }
 
+export function shouldAutoSelectSessionOnLoad({
+  suppressed,
+  isReady,
+  workspaceId,
+  panelCount,
+  state,
+}: {
+  suppressed: boolean
+  isReady: boolean
+  workspaceId: string | null
+  panelCount: number
+  state: SessionsNavigationState
+}): boolean {
+  return !suppressed && isReady && !!workspaceId && panelCount > 0 && !state.details
+}
+
 export function shouldNavigateToInitialDefault(params: URLSearchParams): boolean {
   if (params.has('route') || params.has('panels')) return false
   const layoutWindowId = params.get('layoutWindowId')
@@ -71,6 +89,10 @@ export function resolveWorkspaceSwitchSearch({
       ws: workspaceSlug,
       route: `allSessions/session/${destination.sessionId}`,
     })
+    return `?${params.toString()}`
+  }
+  if (destination === 'newConversation') {
+    const params = new URLSearchParams({ ws: workspaceSlug, route: 'allSessions/new/default' })
     return `?${params.toString()}`
   }
   if (destination !== 'allSessions' && savedSearch) return savedSearch

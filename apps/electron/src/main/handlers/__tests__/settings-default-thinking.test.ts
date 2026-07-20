@@ -9,6 +9,7 @@ const getDefaultThinkingLevelMock = mock(() => 'think')
 const setDefaultThinkingLevelMock = mock((_level: string) => true)
 const getMidStreamBehaviorMock = mock(() => 'steer')
 const setMidStreamBehaviorMock = mock((_behavior: string) => true)
+const updateMainAgentSettingsMock = mock(() => {})
 
 mock.module('@mortise/shared/config', () => ({
   getPreferencesPath: () => '/tmp/preferences.json',
@@ -21,6 +22,10 @@ mock.module('@mortise/shared/config', () => ({
   setDefaultThinkingLevel: setDefaultThinkingLevelMock,
   getMidStreamBehavior: getMidStreamBehaviorMock,
   setMidStreamBehavior: setMidStreamBehaviorMock,
+  getAgentSettingsSnapshot: () => ({}),
+  updateMainAgentSettings: updateMainAgentSettingsMock,
+  upsertSubagent: () => ({}),
+  deleteSubagent: () => {},
   readPiGlobalProviders: () => ({}),
 }))
 
@@ -47,7 +52,10 @@ describe('settings default thinking RPC handlers', () => {
     }
 
     const deps: HandlerDeps = {
-      sessionManager: {} as HandlerDeps['sessionManager'],
+      sessionManager: {
+        reloadProviderRuntime: async () => {},
+        getAgentRuntimeProfile: async () => undefined,
+      } as unknown as HandlerDeps['sessionManager'],
       platform: {
         appRootPath: '',
         resourcesPath: '',
@@ -65,14 +73,6 @@ describe('settings default thinking RPC handlers', () => {
           process: async () => Buffer.from(''),
         },
       },
-      oauthFlowStore: {
-        store: () => {},
-        getByState: () => null,
-        remove: () => {},
-        cleanup: () => {},
-        dispose: () => {},
-        get size() { return 0 },
-      } as unknown as HandlerDeps['oauthFlowStore'],
     }
 
     const { registerSettingsHandlers } = await import('@mortise/server-core/handlers/rpc/settings')

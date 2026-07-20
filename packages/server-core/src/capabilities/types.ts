@@ -29,7 +29,7 @@ export type CapabilityAuthorization =
   | { allowed: false; reason?: string }
 
 export interface CapabilityAuditEvent {
-  phase: 'started' | 'finished'
+  phase: 'started' | 'progress' | 'finished'
   requestId: string
   capability: string
   operation: string
@@ -38,6 +38,8 @@ export interface CapabilityAuditEvent {
   extensionId: string
   status?: CapabilityResultV1['status']
   durationMs?: number
+  errorCode?: string
+  sequence?: number
 }
 
 export interface CapabilityRouterOptions {

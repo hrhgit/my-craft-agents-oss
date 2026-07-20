@@ -12,6 +12,23 @@ import { resolveBackendRuntimePaths } from '../internal/runtime-resolver.ts';
 import { resolveBackendHostTooling } from '../factory.ts';
 import type { BackendHostRuntimeContext } from '../types.ts';
 
+describe('resolveBackendRuntimePaths', () => {
+  it('returns only the supported backend runtime path keys', () => {
+    const paths = resolveBackendRuntimePaths({
+      appRootPath: tmpdir(),
+      resourcesPath: tmpdir(),
+      isPackaged: true,
+    });
+
+    expect(Object.keys(paths).sort()).toEqual([
+      'bundledRuntimePath',
+      'nodeRuntimePath',
+      'piCliPath',
+      'sessionServerPath',
+    ]);
+  });
+});
+
 describe('resolveRipgrepPath', () => {
   const tmpBase = join(tmpdir(), `rg-resolver-test-${Date.now()}`);
 

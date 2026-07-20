@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test'
 import type { CapabilityRequestV1 } from '@mortise/shared/protocol'
-import { createCapabilityAuthorizationPolicy } from '../policy.ts'
+import { createCapabilityAuthorizationPolicy, ELECTRON_CAPABILITY_POLICY_V1 } from '../policy.ts'
 
 const request = (overrides: Partial<CapabilityRequestV1> = {}): CapabilityRequestV1 => ({
   version: 1,
@@ -23,7 +23,7 @@ describe('capability authorization policy', () => {
 
     expect(await authorize(request({ sessionId: 'other' }))).toMatchObject({ allowed: false })
     expect(await authorize(request({ operation: 'evaluate' }))).toMatchObject({ allowed: false })
-    expect(await authorize(request({ capability: 'credentials.keychain', operation: 'read' }))).toMatchObject({ allowed: false })
+    expect(await authorize(request({ capability: 'unknown.capability', operation: 'read' }))).toMatchObject({ allowed: false })
     expect(await authorize(request())).toEqual({ allowed: true })
   })
 
@@ -45,22 +45,13 @@ describe('capability authorization policy', () => {
     expect(prompt).toHaveBeenCalledTimes(1)
   })
 
-  it('requires confirmation for account mutations but not secret-free status', async () => {
-    const prompt = mock(async () => true)
-    const authorize = createCapabilityAuthorizationPolicy({
-      sessionExists: () => true,
-      rules: [
-        { capability: 'oauth.flow', operations: ['begin', 'revoke'], decision: 'prompt' },
-        { capability: 'oauth.flow', operations: ['status', 'cancel'], decision: 'allow' },
-        { capability: 'credentials.keychain', operations: ['has'], decision: 'allow' },
-        { capability: 'credentials.keychain', operations: ['remove'], decision: 'prompt' },
-      ],
-      prompt,
-    })
-    expect(await authorize(request({ capability: 'oauth.flow', operation: 'status' }))).toEqual({ allowed: true })
-    expect(await authorize(request({ capability: 'credentials.keychain', operation: 'has' }))).toEqual({ allowed: true })
-    expect(await authorize(request({ capability: 'oauth.flow', operation: 'begin' }))).toEqual({ allowed: true })
-    expect(await authorize(request({ capability: 'credentials.keychain', operation: 'remove' }))).toEqual({ allowed: true })
-    expect(prompt).toHaveBeenCalledTimes(2)
+  it('uses one canonical automation surface and keeps mutations confirmable', () => {
+    const automationRules = ELECTRON_CAPABILITY_POLICY_V1.filter(rule => rule.capability.includes('automation') || rule.capability.includes('scheduler') || rule.capability.includes('webhook'))
+    expect(automationRules.every(rule => rule.capability === 'automation.workspace')).toBe(true)
+    expect(automationRules.find(rule => rule.decision === 'allow')?.operations).toContain('simulate')
+    const promptedOperations = automationRules.filter(rule => rule.decision === 'prompt').flatMap(rule => [...rule.operations])
+    expect(promptedOperations).toContain('emit-event')
+    expect(promptedOperations).toContain('list')
+    expect(promptedOperations).toContain('get-run')
   })
 })

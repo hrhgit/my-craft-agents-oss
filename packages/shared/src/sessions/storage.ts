@@ -9,7 +9,7 @@
  * - plans/ (plan files for Safe Mode)
  * - data/ (transform_data tool output: JSON files for datatable/spreadsheet blocks)
  * - long_responses/ (full tool results that were summarized due to size limits)
- * - downloads/ (binary files downloaded from API sources: PDFs, images, archives, etc.)
+ * - downloads/ (binary files downloaded during sessions)
  */
 
 import {
@@ -443,7 +443,6 @@ export async function createSession(
     name?: string;
     workingDirectory?: string;
     permissionMode?: SessionHeader['permissionMode'];
-    enabledSourceSlugs?: string[];
     model?: string;
     provider?: string;
     hidden?: boolean;
@@ -471,7 +470,6 @@ export async function createSession(
     workingDirectory,
     sdkCwd,
     permissionMode: options?.permissionMode,
-    enabledSourceSlugs: options?.enabledSourceSlugs,
     model: options?.model,
     provider: options?.provider,
     hidden: options?.hidden,
@@ -701,7 +699,6 @@ export async function updateSessionMetadata(
     | 'name'
     | 'lastReadMessageId'
     | 'hasUnread'
-    | 'enabledSourceSlugs'
     | 'workingDirectory'
     | 'sdkCwd'
     | 'permissionMode'
@@ -715,7 +712,6 @@ export async function updateSessionMetadata(
   if (!session) return;
 
   if (updates.name !== undefined) session.name = updates.name;
-  if (updates.enabledSourceSlugs !== undefined) session.enabledSourceSlugs = updates.enabledSourceSlugs;
   if (updates.workingDirectory !== undefined) session.workingDirectory = workspaceRootPath;
   if (updates.sdkCwd !== undefined) session.sdkCwd = updates.sdkCwd;
   if (updates.permissionMode !== undefined) session.permissionMode = updates.permissionMode;

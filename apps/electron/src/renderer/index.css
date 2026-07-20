@@ -936,25 +936,6 @@ html.dark[data-scenic] .fullscreen-overlay-background {
 }
 
 /* =============================================================================
-   SOURCES LIST - SEPARATOR VISIBILITY
-
-   Hide separators when source items are hovered or selected.
-   Same logic as session list.
-============================================================================= */
-
-/* Hide own separator when item is hovered or selected */
-.source-item:hover > .source-separator,
-.source-item[data-selected] > .source-separator {
-  opacity: 0;
-}
-
-/* Hide next item's separator when current item is hovered or selected */
-.source-item:hover + .source-item > .source-separator,
-.source-item[data-selected] + .source-item > .source-separator {
-  opacity: 0;
-}
-
-/* =============================================================================
    IMPORT LIST - SEPARATOR VISIBILITY
 
    Hide separators when import items are hovered or selected.
@@ -1417,7 +1398,7 @@ html.dark[data-scenic] .fullscreen-overlay-background {
   /* Bottom safe area for iOS home indicator + FAB clearance.
      Sessions list keeps a 72px buffer (FAB is ~56px + bottom inset 16px)
      so the last row never sits underneath the floating action button.
-     Other list roles (sources/skills/automations) only need the iOS
+     Other list roles (skills/automations) only need the iOS
      safe-area inset since they don't have a FAB. */
   [data-list-role] {
     padding-bottom: env(safe-area-inset-bottom, 0px);

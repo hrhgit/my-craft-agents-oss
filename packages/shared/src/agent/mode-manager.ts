@@ -38,7 +38,6 @@ import {
 import {
   type PermissionMode,
   type ModeConfig,
-  type CompiledApiEndpointRule,
   type CompiledBashPattern,
   type CompiledBlockedCommandHint,
   type MismatchAnalysis,
@@ -59,7 +58,6 @@ export {
   type PermissionMode,
   type PermissionModeCanonical,
   type ModeConfig,
-  type CompiledApiEndpointRule,
   type CompiledBashPattern,
   type CompiledBlockedCommandHint,
   type MismatchAnalysis,
@@ -1663,55 +1661,6 @@ function isReadOnlyMcpToolWithConfig(toolName: string, config: ToolCheckConfig):
 }
 
 /**
- * Check if an API call is allowed using the given config
- * Checks fine-grained endpoint rules (method + path pattern)
- */
-function isApiCallAllowedWithConfig(method: string, path: string | undefined, config: ToolCheckConfig): boolean {
-  const upperMethod = method.toUpperCase();
-
-  // GET is always allowed
-  if (upperMethod === 'GET') return true;
-
-  // Check fine-grained endpoint rules (if path is available)
-  if (path && config.allowedApiEndpoints) {
-    for (const rule of config.allowedApiEndpoints) {
-      if (rule.method === upperMethod && rule.pathPattern.test(path)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-/**
- * Check if an API endpoint is allowed based on permissions context.
- * Used in 'ask' mode to auto-allow whitelisted API endpoints from permissions.json.
- *
- * @param method - HTTP method (GET, POST, etc.)
- * @param path - API endpoint path
- * @param permissionsContext - Context for loading custom permissions
- * @returns true if endpoint is allowed (GET or matches allowedApiEndpoints rules)
- */
-export function isApiEndpointAllowed(
-  method: string,
-  path: string | undefined,
-  permissionsContext?: PermissionsContext
-): boolean {
-  let config: ToolCheckConfig;
-
-  if (permissionsContext) {
-    // Lazy import to avoid circular dependency
-    const { permissionsConfigCache } = require('./permissions-config.ts');
-    config = permissionsConfigCache.getMergedConfig(permissionsContext);
-  } else {
-    config = SAFE_MODE_CONFIG;
-  }
-
-  return isApiCallAllowedWithConfig(method, path, config);
-}
-
-/**
  * Tools that are always allowed in any mode (read-only by nature)
  */
 const ALWAYS_ALLOWED_TOOLS = new Set([
@@ -1956,7 +1905,7 @@ export function shouldAllowToolInMode(
 
     return {
       allowed: false,
-      reason: `Session configuration changes are blocked in ${config.displayName}. Switch to Ask or Allow All mode (${config.shortcutHint}) to create, update, or delete sources and agents.`
+      reason: `Session configuration changes are blocked in ${config.displayName}. Switch to Ask or Allow All mode (${config.shortcutHint}) to create, update, or delete agents.`
     };
   }
 
@@ -1967,41 +1916,12 @@ export function shouldAllowToolInMode(
       return { allowed: true };
     }
 
-    // Handle API tools exposed via MCP (mcp__<source>__api_<name>)
-    // These need endpoint-level permission checks, not just MCP read-only patterns
-    if (toolName.includes('__api_')) {
-      const input = toolInput as Record<string, unknown> | null;
-      const method = (input?.method as string) || 'GET';
-      const path = input?.path as string | undefined;
-      if (isApiCallAllowedWithConfig(method, path, config)) {
-        return { allowed: true };
-      }
-      return {
-        allowed: false,
-        reason: `API ${method} ${path ?? ''} is blocked in ${config.displayName}. Switch to Ask or Allow All mode (${config.shortcutHint}) to make changes.`
-      };
-    }
-
     if (isReadOnlyMcpToolWithConfig(toolName, config)) {
       return { allowed: true };
     }
     return {
       allowed: false,
       reason: `MCP write operations are blocked in ${config.displayName}. Switch to Ask or Allow All mode (${config.shortcutHint}) to make changes.`
-    };
-  }
-
-  // Handle API tools - allow GET, block mutations unless endpoint is whitelisted
-  if (toolName.startsWith('api_')) {
-    const input = toolInput as Record<string, unknown> | null;
-    const method = (input?.method as string) || 'GET';
-    const path = input?.path as string | undefined;
-    if (isApiCallAllowedWithConfig(method, path, config)) {
-      return { allowed: true };
-    }
-    return {
-      allowed: false,
-      reason: `API ${method} ${path ?? ''} is blocked in ${config.displayName}. Switch to Ask or Allow All mode (${config.shortcutHint}) to make changes.`
     };
   }
 
@@ -2024,9 +1944,6 @@ function getBlockReasonWithConfig(toolName: string, config: ToolCheckConfig): st
   }
   if (toolName.startsWith('mcp__')) {
     return `MCP write operations are blocked in ${displayName}. Switch to Ask or Allow All mode (${shortcut}) to make changes.`;
-  }
-  if (toolName.startsWith('api_')) {
-    return `API mutations are blocked in ${displayName}. Switch to Ask or Allow All mode (${shortcut}) to make changes.`;
   }
   return `${toolName} is blocked in ${displayName}. Switch to Ask or Allow All mode (${shortcut}) to use this tool.`;
 }

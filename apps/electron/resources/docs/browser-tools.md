@@ -11,16 +11,16 @@ Use `browser_tool` to control built-in browser windows (Chromium) inside Mortise
 
 ---
 
-## Browser as an Alternative to Source Setup
+## Browser or a Reusable Integration
 
-Use browser workflows when creating a source would add unnecessary overhead for the current task.
+Use browser workflows when setting up a reusable integration would add unnecessary overhead for the current task.
 
 **Good fit for browser-first:**
 - One-off tasks that don’t need reusable integration
 - UI-only workflows where API/MCP coverage is poor
-- Fragile source setup/auth cases where user needs results now
+- Fragile integration or authentication cases where the user needs results now
 
-**Still prefer sources when:**
+**Prefer a CLI, Pi extension, or direct MCP server when:**
 - Work is repeatable and automation/reporting is needed
 - Team-wide reuse and stable tooling matter
 

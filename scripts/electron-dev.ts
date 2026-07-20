@@ -271,25 +271,6 @@ async function buildMcpServers(): Promise<void> {
   console.log("✅ Session MCP server built");
 }
 
-// Get OAuth defines for esbuild API
-function getOAuthDefines(): Record<string, string> {
-  const oauthVars = [
-    "GOOGLE_OAUTH_CLIENT_ID",
-    "GOOGLE_OAUTH_CLIENT_SECRET",
-    "SLACK_OAUTH_CLIENT_ID",
-    "SLACK_OAUTH_CLIENT_SECRET",
-    "MICROSOFT_OAUTH_CLIENT_ID",
-    "MICROSOFT_OAUTH_CLIENT_SECRET",
-  ];
-
-  const defines: Record<string, string> = {};
-  for (const varName of oauthVars) {
-    const value = process.env[varName] || "";
-    defines[`process.env.${varName}`] = JSON.stringify(value);
-  }
-  return defines;
-}
-
 // Get environment variables for electron process
 function getElectronEnv(): Record<string, string> {
   const vitePort = process.env.MORTISE_VITE_PORT || "5173";
@@ -401,8 +382,6 @@ async function main(): Promise<void> {
   await Promise.all([buildMcpServers(), buildWaWorker()]);
 
   const vitePort = process.env.MORTISE_VITE_PORT || "5173";
-  const oauthDefines = getOAuthDefines();
-
   const mainCjsPath = join(DIST_DIR, "main.cjs");
   const preloadCjsPath = join(DIST_DIR, "bootstrap-preload.cjs");
   const toolbarPreloadCjsPath = join(DIST_DIR, "browser-toolbar-preload.cjs");
@@ -435,7 +414,6 @@ async function main(): Promise<void> {
       ...MAIN_PROCESS_IMPORT_META_DEFINES,
       __MORTISE_UI_VALIDATION_BUILD__: "true",
       __MORTISE_DEV_HOST_BUILD__: "false",
-      ...oauthDefines,
     },
     banner: { js: MAIN_PROCESS_IMPORT_META_BANNER },
     logLevel: "info",

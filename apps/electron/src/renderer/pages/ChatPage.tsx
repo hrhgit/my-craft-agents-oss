@@ -21,7 +21,7 @@ import { toast } from 'sonner'
 import { PanelHeaderCenterButton } from '@/components/ui/PanelHeaderCenterButton'
 import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { StyledDropdownMenuContent, StyledDropdownMenuItem, StyledDropdownMenuSeparator } from '@/components/ui/styled-dropdown'
-import { useAppShellContext, usePendingPermission, usePendingCredential, useSessionOptionsFor, useSession as useSessionData } from '@/context/AppShellContext'
+import { useAppShellContext, usePendingPermission, useSessionOptionsFor, useSession as useSessionData } from '@/context/AppShellContext'
 import { rendererPerf } from '@/lib/perf'
 import { navigate, routes } from '@/lib/navigate'
 import { coerceInputText } from '@/lib/input-text'
@@ -57,7 +57,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onOpenUrl,
     workspaces,
     onRespondToPermission,
-    onRespondToCredential,
     onMarkSessionRead,
     onMarkSessionUnread,
     onSetActiveViewingSession,
@@ -65,10 +64,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     hydrateDraftAttachments,
     onInputChange,
     onAttachmentsChange,
-    enabledSources,
     skills,
     enabledModes,
-    onSessionSourcesChange,
     onRenameSession,
     onDeleteSession,
     panelHeaderTrailingAction,
@@ -163,9 +160,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, isWindowFocused, isFocusedPanel, onSetActiveViewingSession])
 
-  // Get pending permission and credential for this session
+  // Get pending permission for this session
   const pendingPermission = usePendingPermission(sessionId)
-  const pendingCredential = usePendingCredential(sessionId)
 
   // Track draft value for this session
   const [inputValue, setInputValue] = React.useState(() => coerceInputText(getDraft(sessionId)))
@@ -589,7 +585,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         messages: [],
         isProcessing: sessionMeta.isProcessing || false,
         workingDirectory: sessionMeta.workingDirectory,
-        enabledSourceSlugs: sessionMeta.enabledSourceSlugs,
       }
 
       return (
@@ -608,8 +603,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 onProviderChange={handleProviderChange}
                 pendingPermission={undefined}
                 onRespondToPermission={onRespondToPermission}
-                pendingCredential={undefined}
-                onRespondToCredential={onRespondToCredential}
                 thinkingLevel={sessionOpts.thinkingLevel}
                 onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
                 permissionMode={sessionOpts.permissionMode}
@@ -619,12 +612,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 onInputChange={handleInputChange}
                 attachmentsValue={attachmentsValue}
                 onAttachmentsChange={handleAttachmentsChange}
-                sources={enabledSources}
                 skills={skills}
                 workspaceId={activeWorkspaceId || undefined}
-                onSourcesChange={onSessionSourcesChange
-                  ? (slugs) => onSessionSourcesChange(sessionId, slugs)
-                  : undefined}
                 workingDirectory={sessionMeta.workingDirectory}
                 messagesLoading={messageLoadState.messagesLoading}
                 searchQuery={sessionListSearchQuery}
@@ -681,8 +670,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             onProviderChange={handleProviderChange}
             pendingPermission={pendingPermission}
             onRespondToPermission={onRespondToPermission}
-            pendingCredential={pendingCredential}
-            onRespondToCredential={onRespondToCredential}
             thinkingLevel={sessionOpts.thinkingLevel}
             onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
             permissionMode={sessionOpts.permissionMode}
@@ -692,12 +679,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             onInputChange={handleInputChange}
             attachmentsValue={attachmentsValue}
             onAttachmentsChange={handleAttachmentsChange}
-            sources={enabledSources}
             skills={skills}
             workspaceId={activeWorkspaceId || undefined}
-            onSourcesChange={onSessionSourcesChange
-              ? (slugs) => onSessionSourcesChange(sessionId, slugs)
-              : undefined}
             workingDirectory={workingDirectory}
             sessionFolderPath={session?.sessionFolderPath}
             messagesLoading={messageLoadState.messagesLoading}

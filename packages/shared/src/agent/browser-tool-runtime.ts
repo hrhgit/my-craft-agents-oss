@@ -613,13 +613,14 @@ export async function executeBrowserToolCommand(args: {
   fns: BrowserPaneFns;
   sessionId: string;
   platform?: NodeJS.Platform;
+  onLifecycle?: (event: BrowserCommandLifecycleEvent) => void;
 }): Promise<BrowserCommandResult> {
   // Array mode: no batch splitting, pass directly to single command execution
   if (Array.isArray(args.command)) {
     if (args.command.length === 0) {
       throw new Error('Missing command. Use "--help" to see supported browser_tool commands.');
     }
-    return executeSingleCommand(args);
+    return executeSingleCommandWithLifecycle(args, 0);
   }
 
   // String mode: existing behavior unchanged
@@ -633,7 +634,15 @@ export async function executeBrowserToolCommand(args: {
     return executeBatchCommands({ ...args, commands });
   }
 
-  return executeSingleCommand(args);
+  return executeSingleCommandWithLifecycle(args, 0);
+}
+
+export interface BrowserCommandLifecycleEvent {
+  phase: 'started' | 'finished' | 'failed' | 'skipped';
+  index: number;
+  command: string;
+  durationMs?: number;
+  reason?: string;
 }
 
 async function executeBatchCommands(args: {
@@ -641,6 +650,7 @@ async function executeBatchCommands(args: {
   fns: BrowserPaneFns;
   sessionId: string;
   platform?: NodeJS.Platform;
+  onLifecycle?: (event: BrowserCommandLifecycleEvent) => void;
 }): Promise<BrowserCommandResult> {
   const outputs: string[] = [];
   let lastImage: BrowserCommandImage | undefined;
@@ -648,7 +658,7 @@ async function executeBatchCommands(args: {
 
   for (let i = 0; i < args.commands.length; i++) {
     const command = args.commands[i]!;
-    const result = await executeSingleCommand({ ...args, command });
+    const result = await executeSingleCommandWithLifecycle({ ...args, command }, i);
 
     outputs.push(result.output);
     if (result.image) lastImage = result.image;
@@ -657,6 +667,9 @@ async function executeBatchCommands(args: {
     const batchCmd = tokenizeCommand(command)[0]?.toLowerCase();
     if (batchCmd && NAVIGATION_COMMANDS.has(batchCmd) && i < args.commands.length - 1) {
       outputs.push(`(stopped batch after "${batchCmd}" — page may have changed, re-snapshot before continuing)`);
+      for (let skipped = i + 1; skipped < args.commands.length; skipped += 1) {
+        args.onLifecycle?.({ phase: 'skipped', index: skipped, command: commandName(args.commands[skipped]!), reason: 'navigation_boundary' });
+      }
       break;
     }
   }
@@ -666,6 +679,27 @@ async function executeBatchCommands(args: {
     appendReleaseHint,
     image: lastImage,
   };
+}
+
+function commandName(command: string | string[]): string {
+  return (Array.isArray(command) ? command[0] : tokenizeCommand(command.trim())[0])?.toLowerCase() || 'help';
+}
+
+async function executeSingleCommandWithLifecycle(
+  args: Parameters<typeof executeSingleCommand>[0] & { onLifecycle?: (event: BrowserCommandLifecycleEvent) => void },
+  index: number,
+): Promise<BrowserCommandResult> {
+  const command = commandName(args.command);
+  const startedAt = Date.now();
+  args.onLifecycle?.({ phase: 'started', index, command });
+  try {
+    const result = await executeSingleCommand(args);
+    args.onLifecycle?.({ phase: 'finished', index, command, durationMs: Date.now() - startedAt });
+    return result;
+  } catch (error) {
+    args.onLifecycle?.({ phase: 'failed', index, command, durationMs: Date.now() - startedAt, reason: error instanceof Error ? error.message : String(error) });
+    throw error;
+  }
 }
 
 async function executeSingleCommand(args: {

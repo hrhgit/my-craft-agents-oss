@@ -176,10 +176,12 @@ describe('PiAgent GlobalHost recovery', () => {
     expect(reportProgress).toHaveBeenCalledWith({
       type: 'extension_host_capability_progress', version: 1, id: 'cap-1',
       sequence: 1, progress: { phase: 'picking' },
+      runtimeId: 'runtime-1', sessionId: 'session-host-recovery',
     });
     expect(respond).toHaveBeenCalledWith({
       type: 'extension_host_capability_response', version: 1, id: 'cap-1',
       status: 'success', output: { paths: ['C:/picked.txt'] },
+      runtimeId: 'runtime-1', sessionId: 'session-host-recovery',
     });
     internals.handlePiClientEvent({
       type: 'extension_host_capability_cancel', version: 1, id: 'cap-1',
@@ -189,5 +191,31 @@ describe('PiAgent GlobalHost recovery', () => {
 
     await agent.disposeForRestart();
     expect(onHostCapabilityRuntimeReleased).toHaveBeenCalledWith('runtime-1');
+  });
+
+  it('keeps legacy capability declarations and cancellation on the Pi envelope runtime', () => {
+    const onHostCapabilityCancel = mock(() => undefined);
+    const onHostCapabilityDeclaration = mock(() => undefined);
+    const agent = new PiAgent({ ...createConfig(), onHostCapabilityDeclaration, onHostCapabilityCancel });
+    const internals = agent as unknown as PiAgentRecoveryInternals;
+    internals.rpcClient = {
+      invokeExtensionCommandResult: mock(async () => ({ invoked: true })),
+      prompt: mock(async () => undefined),
+      getStderr: () => '',
+      stop: mock(async () => undefined),
+    };
+
+    internals.handlePiClientEvent({
+      type: 'extension_host_capability_declaration', version: 1,
+      extensionId: 'legacy-extension', runtimeId: 'default', declarations: [],
+    });
+    internals.handlePiClientEvent({
+      type: 'extension_host_capability_cancel', version: 1,
+      extensionId: 'legacy-extension', id: 'cap-legacy', runtimeId: 'default',
+    });
+
+    expect(onHostCapabilityDeclaration).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: 'default' }));
+    expect(onHostCapabilityCancel).toHaveBeenCalledWith('cap-legacy', 'default');
+    agent.destroy();
   });
 });

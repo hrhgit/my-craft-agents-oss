@@ -1,22 +1,21 @@
 import type { EventSink, RpcServer } from '@mortise/server-core/transport'
 import { CLIENT_BROWSER_INVOKE } from '@mortise/server-core/transport'
-import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput } from '@mortise/server-core/handlers'
+import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput, CreateAndSendFirstTurnInput } from '@mortise/server-core/handlers'
 import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@mortise/server-core/handlers'
 import { createExtensionEventForwarder } from '../handlers/pi-extension-bridge'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@mortise/server-core/runtime'
-import { basename, dirname, join } from 'path'
+import { basename, dirname, isAbsolute, join, relative } from 'path'
 import { existsSync } from 'fs'
-import { readFile, writeFile, mkdir, rename } from 'fs/promises'
+import { readFile, writeFile, mkdir, rename, rm } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
-import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@mortise/shared/agent'
+import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type BrowserPaneFns, generateConversationSummary } from '@mortise/shared/agent'
 import type { AgentEvent, PlanModeStateV1 } from '@mortise/core/types'
 import {
   resolveSessionProvider,
   createBackendFromProvider,
   resolveBackendContext,
   createBackendFromResolvedContext,
-  cleanupSourceRuntimeArtifacts,
   type AgentBackend,
   type BackendHostRuntimeContext,
   type HostRuntimeErrorProjection,
@@ -25,7 +24,7 @@ import {
   PiProjectionBuilder,
   piHostManager,
 } from '@mortise/shared/agent/backend'
-import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDataSourcesEnabled, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
+import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
 import { PrivilegedExecutionBroker, SessionShareTransferService } from '@mortise/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@mortise/server-core/domain'
@@ -58,6 +57,7 @@ import {
   getSessionPath as getSessionStoragePath,
   ensureSessionDir,
   getSessionFilePath,
+  tryGetSessionFilePath,
   generateSessionId,
   sessionPersistenceQueue,
   getHeaderMetadataSignature,
@@ -68,6 +68,7 @@ import {
   projectTreeSessionProjectionAsStoredSession,
   serializeSession,
   validateBundle,
+  validateSessionId,
   type SessionBundle,
   type DispatchMode,
   type StoredSession,
@@ -76,12 +77,9 @@ import {
   pickCraftSessionMetadata,
   parsePlanCustomMessage,
 } from '@mortise/shared/sessions'
-import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@mortise/shared/sources'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@mortise/shared/config'
 import { getLastApiError } from '@mortise/shared/interceptor'
 import { restoreFiles } from '@mortise/shared/utils/bundle-files'
-import { getCredentialManager } from '@mortise/shared/credentials'
-import { MortiseMcpClient, McpClientPool, McpPoolServer } from '@mortise/shared/mcp'
 import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, RPC_CHANNELS, generateMessageId } from '@mortise/shared/protocol'
 import {
   ConversationProjector,
@@ -93,13 +91,19 @@ import {
 import { CapabilityRouter, ELECTRON_CAPABILITY_POLICY_V1, createCapabilityAuthorizationPolicy, type CapabilityProvider } from '../capabilities'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@mortise/core/types'
 import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, writeRuntimeLog } from '@mortise/shared/utils'
-import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@mortise/shared/skills'
+import { loadAllSkills } from '@mortise/shared/skills'
 import { getToolIconsDir } from '@mortise/shared/config'
 import { getDefaultSummarizationModel } from '@mortise/shared/config/models'
-import type { SummarizeCallback } from '@mortise/shared/sources'
+import { getCredentialManager } from '@mortise/shared/credentials'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@mortise/shared/agent/thinking-levels'
-import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot, type PendingPrompt } from '@mortise/shared/automations'
-import { FEATURE_FLAGS } from '@mortise/shared/feature-flags'
+import {
+  AutomationWorkspaceHostV3,
+  type AutomationActionExecutionResultV1,
+  type AutomationExecutionContextV1,
+  type PromptActionV3,
+  type SessionReferenceV1,
+} from '@mortise/shared/automations'
+import { createAutomationWebhookExecutor } from '../services/automation-webhook-executor'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput, normalizeProviderRuntimeBaseUrl } from './runtime-config'
 
 // Import from server-core domain utilities
@@ -174,6 +178,7 @@ export const AGENT_FLAGS = {
 const MAX_ADMIN_REMEMBER_MINUTES = 60
 const MAX_ANNOTATIONS_PER_MESSAGE = 200
 const MAX_ANNOTATION_JSON_BYTES = 32 * 1024
+const AUTOMATION_NOTIFICATION_MAX_CHARS = 8_000
 
 // Window during which fs.watch metadata-revert events from our own atomic write
 // are ignored, so the watcher does not roll back the in-memory mutation we
@@ -269,208 +274,12 @@ async function saveClaudeTurnAnchor(
 }
 
 /**
- * Build MCP and API servers from sources using the new unified modules.
- * Handles credential loading and server building in one step.
- * When auth errors occur, updates source configs to reflect actual state.
- *
- * @param sources - Sources to build servers for
- * @param sessionPath - Optional path to session folder for saving large API responses
- * @param tokenRefreshManager - Optional TokenRefreshManager for OAuth token refresh
- */
-async function buildServersFromSources(
-  sources: LoadedSource[],
-  sessionPath?: string,
-  tokenRefreshManager?: TokenRefreshManager,
-  summarize?: SummarizeCallback
-) {
-  const span = perf.span('sources.buildServers', { count: sources.length })
-  const credManager = getSourceCredentialManager()
-  const serverBuilder = getSourceServerBuilder()
-
-  // Load credentials for all sources
-  const sourcesWithCreds: SourceWithCredential[] = await Promise.all(
-    sources.map(async (source) => ({
-      source,
-      token: await credManager.getToken(source),
-      credential: await credManager.getApiCredential(source),
-    }))
-  )
-  span.mark('credentials.loaded')
-
-  // Build token getter for refreshable sources (OAuth + renew-endpoint)
-  // Uses TokenRefreshManager for unified refresh logic (DRY principle)
-  const getTokenForSource = (source: LoadedSource) => {
-    const provider = source.config.provider
-    // Provider-specific OAuth (Google, Slack, Microsoft) or generic OAuth (authType: 'oauth')
-    if (isApiOAuthProvider(provider) || source.config.api?.authType === 'oauth') {
-      const manager = tokenRefreshManager ?? new TokenRefreshManager(credManager, {
-        log: (msg) => sessionLog.debug(msg),
-      })
-      return createTokenGetter(manager, source)
-    }
-    // API renew endpoint — non-OAuth token refresh
-    if (hasRenewEndpoint(source)) {
-      const manager = tokenRefreshManager ?? new TokenRefreshManager(credManager, {
-        log: (msg) => sessionLog.debug(msg),
-      })
-      return createTokenGetter(manager, source)
-    }
-    return undefined
-  }
-
-  // Per-request credential getter for non-OAuth / non-renew API sources
-  // (bearer / header / query / basic auth).
-  //
-  // Without this, the in-process API tool captures the credential as a static
-  // string at build time and keeps using it forever — meaning a fresh JWT
-  // entered via source_credential_prompt is ignored until session restart.
-  //
-  // With this getter, every API call reads the latest credential from the
-  // vault, so credential updates take effect on the next call. OAuth and
-  // renew-endpoint sources have their own refresh logic via TokenRefreshManager
-  // and are skipped here.
-  const getCredentialForSource = (source: LoadedSource) => {
-    if (source.config.type !== 'api') return undefined
-    if (source.config.api?.authType === 'none') return undefined
-    if (isApiOAuthProvider(source.config.provider)) return undefined
-    if (source.config.api?.authType === 'oauth') return undefined
-    if (hasRenewEndpoint(source)) return undefined
-    return async () => credManager.getApiCredential(source)
-  }
-
-  // Pass sessionPath to enable saving large API responses to session folder
-  const result = await serverBuilder.buildAll(
-    sourcesWithCreds,
-    getTokenForSource,
-    sessionPath,
-    summarize,
-    getCredentialForSource,
-  )
-  span.mark('servers.built')
-  span.setMetadata('mcpCount', Object.keys(result.mcpServers).length)
-  span.setMetadata('apiCount', Object.keys(result.apiServers).length)
-
-  // Update source configs for auth errors so UI reflects actual state.
-  // Re-classify AUTH_REQUIRED → TOKEN_EXPIRED when the credential is merely
-  // expired-but-refreshable; in that case the refresh cycle handles recovery
-  // and we must NOT prematurely mark the source as needing re-auth (#710).
-  for (const error of result.errors) {
-    if (error.error !== SERVER_BUILD_ERRORS.AUTH_REQUIRED) continue
-    const source = sources.find(s => s.config.slug === error.sourceSlug)
-    if (!source) continue
-
-    const cred = await credManager.load(source)
-    const isExpiredRefreshable =
-      cred &&
-      (credManager.isExpired(cred) || credManager.needsRefresh(cred)) &&
-      (cred.refreshToken || hasRenewEndpoint(source))
-
-    if (isExpiredRefreshable) {
-      error.error = SERVER_BUILD_ERRORS.TOKEN_EXPIRED
-      sessionLog.debug(`Source ${error.sourceSlug}: TOKEN_EXPIRED — refresh cycle will handle`)
-      continue
-    }
-
-    credManager.markSourceNeedsReauth(source, 'Token missing or expired')
-    sessionLog.info(`Marked source ${error.sourceSlug} as needing re-auth`)
-  }
-
-  span.end()
-  return result
-}
-
-/**
- * Result of expired-credential refresh.
- */
-interface RefreshExpiredCredentialsResult {
-  /** Number of sources whose tokens were successfully refreshed */
-  refreshedCount: number
-  /** Sources that failed to refresh (for warning display) */
-  failedSources: Array<{ slug: string; reason: string }>
-}
-
-/**
- * Refresh expired OAuth / renew-endpoint tokens for the given sources.
- *
- * Side effects (carried by `TokenRefreshManager.ensureFreshToken`):
- * - Success: source.config.isAuthenticated = true (in-memory + on disk).
- * - Failure: source.config.isAuthenticated = false + connectionStatus = 'needs_auth'
- *   (in-memory + on disk), so isSourceUsable() returns false and the source is
- *   excluded from intendedSlugs by callers.
- *
- * The caller is responsible for building servers AFTER this returns — that way
- * a single fresh build sees the correct credentials and the correct usable set.
- * Issue #710.
- */
-async function refreshExpiredCredentials(
-  sources: LoadedSource[],
-  tokenRefreshManager: TokenRefreshManager
-): Promise<RefreshExpiredCredentialsResult> {
-  sessionLog.debug('[OAuth] Checking if any tokens need refresh')
-
-  const needRefresh = await tokenRefreshManager.getSourcesNeedingRefresh(sources)
-  if (needRefresh.length === 0) {
-    return { refreshedCount: 0, failedSources: [] }
-  }
-
-  sessionLog.debug(`[OAuth] Refreshing ${needRefresh.length} source(s): ${needRefresh.map(s => s.config.slug).join(', ')}`)
-
-  const { refreshed, failed } = await tokenRefreshManager.refreshSources(needRefresh)
-
-  const failedSources = failed.map(({ source, reason }) => ({
-    slug: source.config.slug,
-    reason,
-  }))
-
-  return { refreshedCount: refreshed.length, failedSources }
-}
-
-/**
- * Apply bridge-mcp-server updates for backends that use it.
- * Delegates to the backend's own applyBridgeUpdates() method.
- * Each backend handles its own strategy via applyBridgeUpdates().
- */
-async function applyBridgeUpdates(
-  agent: AgentInstance,
-  sessionPath: string,
-  enabledSources: LoadedSource[],
-  mcpServers: Record<string, import('@mortise/shared/agent/backend').SdkMcpServerConfig>,
-  sessionId: string,
-  workspaceRootPath: string,
-  context: string,
-  poolServerUrl?: string
-): Promise<void> {
-  await agent.applyBridgeUpdates({
-    sessionPath,
-    enabledSources,
-    mcpServers,
-    sessionId,
-    workspaceRootPath,
-    context,
-    poolServerUrl,
-  })
-}
-
-function loadRuntimeAllSources(workspaceRootPath: string): LoadedSource[] {
-  return getDataSourcesEnabled() ? loadAllSources(workspaceRootPath) : []
-}
-
-function loadRuntimeSourcesBySlugs(workspaceRootPath: string, sourceSlugs: string[]): LoadedSource[] {
-  return getDataSourcesEnabled() ? getSourcesBySlugs(workspaceRootPath, sourceSlugs) : []
-}
-
-function loadRuntimeWorkspaceSources(workspaceRootPath: string): LoadedSource[] {
-  return getDataSourcesEnabled() ? loadWorkspaceSources(workspaceRootPath) : []
-}
-
-/**
  * Resolve tool display metadata for a tool call.
  * Returns metadata with base64-encoded icon for viewer compatibility.
  *
  * @param toolName - Tool name from the event (e.g., "Skill", "mcp__linear__list_issues")
  * @param toolInput - Tool input (used for Skill tool to get skill identifier)
- * @param workspaceRootPath - Path to workspace for loading skills/sources
- * @param sources - Loaded sources for the workspace
+ * @param workspaceRootPath - Path to workspace for loading skills
  */
 const BROWSER_TOOL_ICON_FILENAME = 'chrome.svg'
 let browserToolIconDataUrlCache: string | null | undefined
@@ -511,16 +320,9 @@ const SESSION_TOOL_DISPLAY_NAMES: Record<string, string> = {
   config_validate: 'Validate Config',
   skill_validate: 'Validate Skill',
   mermaid_validate: 'Validate Mermaid',
-  source_test: 'Test Source',
-  source_oauth_trigger: 'OAuth',
-  source_google_oauth_trigger: 'Google Auth',
-  source_slack_oauth_trigger: 'Slack Auth',
-  source_microsoft_oauth_trigger: 'Microsoft Auth',
-  source_credential_prompt: 'Enter Credentials',
   update_user_preferences: 'Update Preferences',
   transform_data: 'Transform Data',
   script_sandbox: 'Run Script',
-  render_template: 'Render Template',
   send_developer_feedback: 'Send Feedback',
   spawn_session: 'Spawn Session',
   browser_tool: 'Browser',
@@ -535,7 +337,6 @@ async function resolveToolDisplayMeta(
   toolName: string,
   toolInput: Record<string, unknown> | undefined,
   workspaceRootPath: string,
-  sources: LoadedSource[]
 ): Promise<ToolDisplayMeta | undefined> {
   const directSessionDisplayName = SESSION_TOOL_DISPLAY_NAMES[toolName]
   if (directSessionDisplayName) {
@@ -574,28 +375,6 @@ async function resolveToolDisplayMeta(
         }
       }
 
-      // External source tools
-      let sourceSlug = serverSlug
-
-      // Special case: api-bridge server embeds source slug in tool name as "api_{slug}"
-      // e.g., mcp__api-bridge__api_stripe → sourceSlug = "stripe"
-      if (sourceSlug === 'api-bridge' && toolSlug.startsWith('api_')) {
-        sourceSlug = toolSlug.slice(4)
-      }
-
-      const source = sources.find(s => s.config.slug === sourceSlug)
-      if (source) {
-        // Try file-based icon first, fall back to emoji icon from config
-        const iconDataUrl = source.iconPath
-          ? await encodeIconToDataUrlAsync(source.iconPath, { resize: resizeIconBuffer })
-          : getEmojiIcon(source.config.icon)
-        return {
-          displayName: source.config.name,
-          iconDataUrl,
-          description: source.config.tagline,
-          category: 'source' as const,
-        }
-      }
     }
     return undefined
   }
@@ -726,10 +505,6 @@ interface ManagedSession {
   previousPermissionMode?: PermissionMode
   /** Session-authoritative state published by the Pi Plan Mode extension. */
   planModeState?: PlanModeStateV1
-  /** Centralized MCP client pool for this session's source connections */
-  mcpPool?: McpClientPool
-  /** HTTP MCP server exposing pool tools to external SDK subprocesses */
-  poolServer?: McpPoolServer
   // SDK session ID for conversation continuity
   sdkSessionId?: string
   // Token usage for display
@@ -752,8 +527,6 @@ interface ManagedSession {
    * Set to false when user views the session (and not processing).
    */
   hasUnread?: boolean
-  // Per-session source selection (slugs of enabled sources)
-  enabledSourceSlugs?: string[]
   // Compatibility DTO field. Under complete-unification semantics this always
   // equals workspace.rootPath; callers must not use it for ownership/bucket routing.
   workingDirectory?: string
@@ -812,9 +585,6 @@ interface ManagedSession {
   backgroundTaskOutputs: Map<string, { outputFile: string; summary: string; status: string; completedAt: number }>
   // Whether messages have been loaded from disk (for lazy loading)
   messagesLoaded: boolean
-  // Pending auth request tracking (for unified auth flow)
-  pendingAuthRequestId?: string
-  pendingAuthRequest?: AuthRequest
   // Auth retry tracking (for mid-session token expiry)
   // Store last sent message/attachments to enable retry after token refresh
   lastSentMessage?: string
@@ -827,9 +597,11 @@ interface ManagedSession {
   authRetryInProgress?: boolean
   // Whether this session is hidden from session list (e.g., mini edit sessions)
   hidden?: boolean
-  // User-created sessions stay hidden until their first message is durable.
-  // This is runtime-only: abandoned drafts remain hidden after a restart.
-  deferListUntilFirstMessage?: boolean
+  // Ordinary new conversations remain internal until Pi atomically persists
+  // the first assistant message. Runtime-only; never serialized.
+  publicationState?: 'provisional' | 'publishing' | 'abandoning'
+  publicationPromise?: Promise<boolean>
+  abandonPromise?: Promise<void>
   branchFromMessageId?: string
   // Branch context strategy:
   // - sdk-fork: provider-level fork from parent SDK session
@@ -853,8 +625,6 @@ interface ManagedSession {
   transferredSessionSummary?: string
   // Whether the transferred-session summary has already been injected.
   transferredSessionSummaryApplied?: boolean
-  // Token refresh manager for OAuth token refresh with rate limiting
-  tokenRefreshManager: TokenRefreshManager
   // Metadata for sessions created by automations
   triggeredBy?: { automationName?: string; event?: string; timestamp?: number }
   // Promise that resolves when the agent instance is ready (for title gen to await)
@@ -874,48 +644,6 @@ interface ManagedSession {
   // Whether the previous turn was interrupted (for context injection on next message).
   // Ephemeral — not persisted to disk. Cleared after one-shot injection.
   wasInterrupted?: boolean
-  // Source-activation auto-retry (mortise-oss#804). When a source activates
-  // mid-turn, we re-send the original message with a "[<slug> activated]" suffix
-  // after a short delay. The pending slot lets `sendMessage` dedup a duplicate
-  // RPC from a legacy renderer that still ships the client-side auto_retry.
-  autoRetryTimer?: ReturnType<typeof setTimeout>
-  autoRetryPending?: {
-    content: string
-    deadlineMs: number
-    /** True after the first matching sendMessage consumes the slot; later matches drop. */
-    committed: boolean
-  }
-}
-
-export interface AutoRetryPendingHost {
-  autoRetryPending?: {
-    content: string
-    deadlineMs: number
-    committed: boolean
-  }
-}
-
-export function claimAutoRetryPending(
-  host: AutoRetryPendingHost,
-  message: string,
-  nowMs = Date.now(),
-): 'send' | 'drop' {
-  const pending = host.autoRetryPending
-  if (pending && message === pending.content) {
-    if (nowMs < pending.deadlineMs) {
-      if (pending.committed) return 'drop'
-      pending.committed = true
-      return 'send'
-    }
-    host.autoRetryPending = undefined
-    return 'send'
-  }
-
-  if (pending && nowMs >= pending.deadlineMs) {
-    host.autoRetryPending = undefined
-  }
-
-  return 'send'
 }
 
 /**
@@ -962,9 +690,6 @@ export function createManagedSession(
     backgroundShellCommands: new Map(),
     backgroundTaskOutputs: new Map(),
     messagesLoaded: false,
-    tokenRefreshManager: new TokenRefreshManager(getSourceCredentialManager(), {
-      log: (msg) => sessionLog.debug(msg),
-    }),
     // Caller overrides (permissionMode defaults, thinkingLevel, messagesLoaded, etc.)
     ...overrides,
   } as ManagedSession
@@ -1200,7 +925,28 @@ export class SessionManager implements ISessionManager {
       sessionExists: (sessionId) => this.sessions.has(sessionId),
       prompt: (request) => this.capabilityPrompt?.(request) ?? Promise.resolve(false),
     }),
-    audit: (event) => sessionLog.info('[HostCapability]', event),
+    audit: (event) => {
+      sessionLog.info('[HostCapability]', event)
+      const logEvent = event.errorCode === 'CAPABILITY_TIMEOUT' ? 'timed_out' : event.phase
+      writeRuntimeLog(logEvent === 'timed_out' ? 'warn' : 'info', {
+        scope: 'capability',
+        event: logEvent,
+        correlation: {
+          sessionId: event.sessionId,
+          runtimeId: event.runtimeId,
+          requestId: event.requestId,
+        },
+        data: {
+          capability: event.capability,
+          operation: event.operation,
+          extensionId: event.extensionId,
+          status: event.status,
+          errorCode: event.errorCode,
+          durationMs: event.durationMs,
+          sequence: event.sequence,
+        },
+      })
+    },
   })
   readonly shareTransferService = new SessionShareTransferService({
     logger: sessionLog,
@@ -1260,16 +1006,15 @@ export class SessionManager implements ISessionManager {
     },
   })
   // Delta batching for performance - reduces IPC events from 50+/sec to ~20/sec
-  // Config watchers for live updates (sources, etc.) - one per workspace
+  // Config watchers for live updates - one per workspace
   private configWatchers: Map<string, ConfigWatcher> = new Map()
-  // Automation systems for workspace event automations - one per workspace (includes scheduler, diffing, and handlers)
-  private automationSystems: Map<string, AutomationSystem> = new Map()
-  // Pending credential request resolvers (keyed by requestId)
-  private pendingCredentialResolvers: Map<string, (response: import('@mortise/shared/protocol').CredentialResponse) => void> = new Map()
+  // Canonical V3 host runtime - one scheduler/store/ledger owner per workspace.
+  private automationHosts: Map<string, AutomationWorkspaceHostV3> = new Map()
+  private automationSessionMetadata = new Map<string, { permissionMode?: string; sessionName?: string }>()
   // Permission request metadata tracking (keyed by requestId)
   private pendingPermissionRequests: Map<string, {
     sessionId: string
-    type?: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval'
+    type?: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval'
     commandHash?: string
   }> = new Map()
   // Privileged approval binding + audit logger
@@ -1571,7 +1316,7 @@ export class SessionManager implements ISessionManager {
 
   /**
    * Set up ConfigWatcher for a workspace to broadcast live updates
-   * (sources added/removed, guide.md changes, etc.)
+   * for workspace configuration changes.
    * Called eagerly at boot for all workspaces (automations/scheduler) and
    * on client connect (GET_WORKSPACE / SWITCH_WORKSPACE).
    * Idempotent — returns immediately if already watching.
@@ -1586,37 +1331,9 @@ export class SessionManager implements ISessionManager {
     sessionLog.info(`Setting up ConfigWatcher for workspace: ${workspaceId} (${workspaceRootPath})`)
 
     const callbacks: ConfigWatcherCallbacks = {
-      onSourcesListChange: async (sources: LoadedSource[]) => {
-        sessionLog.info(`Sources list changed in ${workspaceRootPath} (${sources.length} sources)`)
-        this.broadcastSourcesChanged(workspaceId, getDataSourcesEnabled() ? sources : [])
-        await this.reloadSourcesForWorkspace(workspaceRootPath)
-      },
-      onSourceChange: async (slug: string, source: LoadedSource | null) => {
-        sessionLog.info(`Source '${slug}' changed:`, source ? 'updated' : 'deleted')
-        const sources = loadRuntimeWorkspaceSources(workspaceRootPath)
-        this.broadcastSourcesChanged(workspaceId, sources)
-        await this.reloadSourcesForWorkspace(workspaceRootPath)
-      },
-      onSourceGuideChange: (sourceSlug: string) => {
-        sessionLog.info(`Source guide changed: ${sourceSlug}`)
-        // Broadcast the updated sources list so sidebar picks up guide changes
-        // Note: Guide changes don't require session source reload (no server changes)
-        const sources = loadRuntimeWorkspaceSources(workspaceRootPath)
-        this.broadcastSourcesChanged(workspaceId, sources)
-      },
       onAutomationsConfigChange: () => {
         sessionLog.info(`Automations config changed in ${workspaceId}`)
-        // Reload automations config via AutomationSystem
-        const automationSystem = this.automationSystems.get(workspaceRootPath)
-        if (automationSystem) {
-          const result = automationSystem.reloadConfig()
-          if (result.errors.length === 0) {
-            sessionLog.info(`Reloaded ${result.automationCount} automations for workspace ${workspaceId}`)
-          } else {
-            sessionLog.error(`Failed to reload automations for workspace ${workspaceId}:`, result.errors)
-          }
-        }
-        // Notify renderer to re-read automations.json
+        this.automationHosts.get(workspaceRootPath)?.refresh()
         this.broadcastAutomationsChanged(workspaceId)
       },
       onProvidersChange: () => {
@@ -1687,17 +1404,11 @@ export class SessionManager implements ISessionManager {
           }
         }
 
-        // Always notify automation system — it does its own diffing and needs
-        // to see both self-writes and external changes for event matching.
-        const automationSystem = this.automationSystems.get(workspaceRootPath)
-        if (automationSystem) {
-          automationSystem.updateSessionMetadata(sessionId, {
-            permissionMode: header.permissionMode,
-            sessionName: header.name,
-          }).catch((error) => {
-            sessionLog.error(`[Automations] Failed to update session metadata:`, error)
-          })
-        }
+        void this.updateAutomationSessionMetadata(workspaceRootPath, workspaceId, sessionId, {
+          permissionMode: header.permissionMode,
+          sessionName: header.name,
+        }).catch(error => sessionLog.error('[Automations] Failed to emit Session metadata event:', error))
+
       },
     }
 
@@ -1705,84 +1416,28 @@ export class SessionManager implements ISessionManager {
     watcher.start()
     this.configWatchers.set(workspaceRootPath, watcher)
 
-    // Initialize AutomationSystem for this workspace (includes scheduler, handlers, and event logging)
-    if (!this.automationSystems.has(workspaceRootPath)) {
-      const automationSystem = new AutomationSystem({
-        workspaceRootPath,
-        workspaceId,
-        enableScheduler: true,
-        // piExtensions.delegatePromptAutomation：启用后 prompt action 委托给 pi prompt-automation 扩展
-        delegatePromptAutomation: FEATURE_FLAGS.delegatePromptAutomation,
-        onDelegatePrompts: async (prompts) => {
-          sessionLog.info(`[Automations] Delegating ${prompts.length} prompt(s) to pi prompt-automation extension`)
-          const delegateSession = this.findActivePiSessionForWorkspace(workspaceRootPath)
-          if (delegateSession) {
-            try {
-              const accepted = await this.invokeExtensionCommand(
-                delegateSession,
-                'prompt-automation',
-                JSON.stringify(prompts),
-              )
-              if (accepted.invoked) {
-                sessionLog.info(`[Automations] Delegated prompt batch to Pi session ${delegateSession}`)
-                return
-              }
-              sessionLog.warn(`[Automations] Pi prompt-automation command was not accepted by session ${delegateSession}, using native fallback`)
-            } catch (error) {
-              sessionLog.warn(`[Automations] Pi prompt-automation delegate failed, using native fallback: ${error instanceof Error ? error.message : String(error)}`)
-            }
-          } else {
-            sessionLog.warn(`[Automations] No active Pi session for workspace ${workspaceRootPath}, using native fallback`)
-          }
-          await this.executePromptsNative(workspaceId, workspaceRootPath, prompts)
-        },
-        onPromptsReady: async (prompts) => {
-          // Execute prompt automations by creating new sessions
-          const settled = await Promise.allSettled(
-            prompts.map((pending) =>
-              this.executePromptAutomation({
-                workspaceId,
-                workspaceRootPath,
-                prompt: pending.prompt,
-                permissionMode: pending.permissionMode,
-                mentions: pending.mentions,
-                provider: pending.provider,
-                model: pending.model,
-                thinkingLevel: pending.thinkingLevel,
-                automationName: pending.automationName,
-                telegramTopic: pending.telegramTopic,
-              })
-            )
-          )
-
-          // Write enriched history entries (with session IDs and prompt summaries)
-          for (const [idx, result] of settled.entries()) {
-            const pending = prompts[idx]
-            if (!pending.matcherId) continue
-
-            const entry = createPromptHistoryEntry({
-              matcherId: pending.matcherId,
-              ok: result.status === 'fulfilled',
-              sessionId: result.status === 'fulfilled' ? result.value.sessionId : undefined,
-              prompt: pending.prompt,
-              error: result.status === 'rejected' ? String(result.reason) : undefined,
-            })
-
-            appendAutomationHistoryEntry(workspaceRootPath, entry).catch(e => sessionLog.warn('[Automations] Failed to write history:', e))
-
-            if (result.status === 'rejected') {
-              sessionLog.error(`[Automations] Failed to execute prompt action ${idx + 1}:`, result.reason)
-            } else {
-              sessionLog.info(`[Automations] Created session ${result.value.sessionId} from prompt action`)
-            }
-          }
-        },
-        onError: (event, error) => {
-          sessionLog.error(`Automation failed for ${event}:`, error.message)
+    if (!this.automationHosts.has(workspaceRootPath)) {
+      const executeWebhook = createAutomationWebhookExecutor({
+        resolveSecret: {
+          resolve: (reference, secretWorkspaceId) =>
+            getCredentialManager().getAutomationSecret(secretWorkspaceId, reference.id),
         },
       })
-      this.automationSystems.set(workspaceRootPath, automationSystem)
-      sessionLog.info(`Initialized AutomationSystem for workspace ${workspaceId}`)
+      const host = new AutomationWorkspaceHostV3({
+        workspaceRootPath,
+        workspaceId,
+        writerId: `${process.env.MORTISE_BUILD_ID ?? 'mortise'}:${process.pid}:${workspaceId}`,
+        callbacks: {
+          prompt: (action, context) => this.executeAutomationPromptAction(action, context),
+          webhook: executeWebhook,
+        },
+        validateSession: (sessionId, expectedWorkspaceId) => this.sessions.get(sessionId)?.workspace.id === expectedWorkspaceId,
+        onChanged: () => this.broadcastAutomationsChanged(workspaceId),
+        onError: error => sessionLog.error(`[Automations] ${workspaceId}:`, error),
+      })
+      host.start()
+      this.automationHosts.set(workspaceRootPath, host)
+      sessionLog.info(`Initialized canonical Automations V3 host for workspace ${workspaceId}`)
     }
   }
 
@@ -1793,26 +1448,6 @@ export class SessionManager implements ISessionManager {
   notifyConfigFileChange(workspaceRootPath: string, relativePath: string): void {
     const watcher = this.configWatchers.get(workspaceRootPath)
     watcher?.notifyFileChange(relativePath)
-  }
-
-  /**
-   * Reload sources for all sessions in a workspace, skipping those currently processing.
-   */
-  private async reloadSourcesForWorkspace(workspaceRootPath: string): Promise<void> {
-    for (const [_, managed] of this.sessions) {
-      if (managed.workspace.rootPath === workspaceRootPath) {
-        if (managed.isProcessing) {
-          sessionLog.info(`Skipping source reload for session ${managed.id} (processing)`)
-          continue
-        }
-        await this.reloadSessionSources(managed)
-      }
-    }
-  }
-
-  private broadcastSourcesChanged(workspaceId: string, sources: LoadedSource[]): void {
-    if (!this.eventSink) return
-    this.eventSink(RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId }, workspaceId, sources)
   }
 
   private broadcastAutomationsChanged(workspaceId: string): void {
@@ -1843,39 +1478,6 @@ export class SessionManager implements ISessionManager {
     if (!this.eventSink) return
     sessionLog.info('Broadcasting default permissions changed')
     this.eventSink(RPC_CHANNELS.permissions.DEFAULTS_CHANGED, { to: 'all' }, null)
-  }
-
-  /**
-   * Reload sources for a session with an active agent.
-   * Called by ConfigWatcher when source files change on disk.
-   * If agent is null (session hasn't sent any messages), skip - fresh build happens on next message.
-   */
-  private async reloadSessionSources(managed: ManagedSession): Promise<void> {
-    if (!managed.agent) return  // No agent = nothing to update (fresh build on next message)
-
-    const workspaceRootPath = managed.workspace.rootPath
-    sessionLog.info(`Reloading sources for session ${managed.id}`)
-
-    // Reload all sources from disk (mortise-docs is always available as MCP server)
-    const allSources = loadRuntimeAllSources(workspaceRootPath)
-    managed.agent.setAllSources(allSources)
-
-    // Rebuild MCP and API servers for session's enabled sources
-    const enabledSlugs = managed.enabledSourceSlugs || []
-    const enabledSources = allSources.filter(s =>
-      enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
-    )
-    // Pass session path so large API responses can be saved to session folder
-    const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
-    const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager, managed.agent?.getSummarizeCallback())
-    const intendedSlugs = enabledSources.map(s => s.config.slug)
-
-    // Update bridge-mcp-server config/credentials for backends that need it
-    await applyBridgeUpdates(managed.agent, sessionPath, enabledSources, mcpServers, managed.id, workspaceRootPath, 'source reload', managed.poolServer?.url)
-
-    await managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
-
-    sessionLog.info(`Sources reloaded for session ${managed.id}: ${Object.keys(mcpServers).length} MCP, ${Object.keys(apiServers).length} API`)
   }
 
   /**
@@ -2122,11 +1724,13 @@ export class SessionManager implements ISessionManager {
           managed.lastMessageRole = 'plan'
         }
         if (applied.kind === 'runtime_error') managed.lastMessageRole = 'error'
-        this.eventSink?.(
-          RPC_CHANNELS.sessions.PI_PROJECTION_EVENT,
-          { to: 'workspace', workspaceId: managed.workspace.id },
-          applied,
-        )
+        if (!managed.publicationState) {
+          this.eventSink?.(
+            RPC_CHANNELS.sessions.PI_PROJECTION_EVENT,
+            { to: 'workspace', workspaceId: managed.workspace.id },
+            applied,
+          )
+        }
       }
       syncPiProjectionComputedMetadata(managed, projector.createSnapshot())
     }
@@ -2142,6 +1746,42 @@ export class SessionManager implements ISessionManager {
   }
 
   private persistPiProjection(managed: ManagedSession, snapshot: PiProjectionSnapshotV1): void {
+    if (managed.publicationState) return
+    this.enqueuePiProjectionPersist(managed, snapshot)
+  }
+
+  private async updateAutomationSessionMetadata(
+    workspaceRootPath: string,
+    workspaceId: string,
+    sessionId: string,
+    next: { permissionMode?: string; sessionName?: string },
+  ): Promise<void> {
+    const previous = this.automationSessionMetadata.get(sessionId)
+    this.automationSessionMetadata.set(sessionId, next)
+    if (!previous || previous.permissionMode === next.permissionMode) return
+    const host = this.automationHosts.get(workspaceRootPath)
+    if (!host) return
+    const result = await host.acceptEvent({
+      specversion: '1.0',
+      id: randomUUID(),
+      source: `mortise://session/${sessionId}`,
+      type: 'PermissionModeChange',
+      time: new Date().toISOString(),
+      datacontenttype: 'application/json',
+      mortisesessionid: sessionId,
+      data: {
+        sessionId,
+        sessionName: next.sessionName ?? '',
+        oldMode: previous.permissionMode ?? '',
+        newMode: next.permissionMode ?? '',
+      },
+    }, { sourceKind: 'mortise', matchValue: next.permissionMode ?? '' })
+    if (result.status !== 'accepted' && result.status !== 'duplicate') {
+      throw new Error(result.error?.message ?? `Session event rejected: ${result.status}`)
+    }
+  }
+
+  private enqueuePiProjectionPersist(managed: ManagedSession, snapshot: PiProjectionSnapshotV1): void {
     this.piProjectionPendingSnapshots.set(managed.id, snapshot)
     if (this.piProjectionWrites.has(managed.id)) return
 
@@ -2184,7 +1824,7 @@ export class SessionManager implements ISessionManager {
       // Set up authentication environment variables (critical for SDK to work)
       await this.reinitializeAuth()
 
-      // Eagerly activate ConfigWatcher + AutomationSystem for every workspace so
+      // Eagerly activate the config watcher and canonical Automations V3 host so
       // the scheduler and event handlers start at boot — not lazily on first
       // client connect. This is critical for headless servers where no UI may
       // ever connect, yet scheduled/event-driven automations must still fire.
@@ -2214,14 +1854,12 @@ export class SessionManager implements ISessionManager {
       for (const workspace of workspaces) {
         const workspaceRootPath = workspace.rootPath
         const sessionMetadata = listStoredSessions(workspaceRootPath)
-        const automationSystem = this.automationSystems.get(workspaceRootPath)
 
         for (const meta of sessionMetadata) {
           // Create managed session from metadata only (messages lazy-loaded on demand)
           // This dramatically reduces memory usage at startup - messages are loaded
           // when getSession() is called for a specific session
           const managed = createManagedSession(meta, workspace, {
-            enabledSourceSlugs: undefined,  // Loaded with messages
             workingDirectory: workspaceRootPath,
           })
 
@@ -2243,14 +1881,7 @@ export class SessionManager implements ISessionManager {
           }
 
           this.sessions.set(meta.mortiseId, managed)
-
-          // Initialize session metadata in AutomationSystem for diffing
-          if (automationSystem) {
-            automationSystem.setInitialSessionMetadata(meta.mortiseId, {
-              permissionMode: meta.permissionMode,
-              sessionName: managed.name,
-            })
-          }
+          this.automationSessionMetadata.set(meta.mortiseId, { permissionMode: meta.permissionMode, sessionName: managed.name })
 
           totalSessions++
         }
@@ -2281,6 +1912,7 @@ export class SessionManager implements ISessionManager {
    * stays sync — no microtask race window between the load and the enqueue.
    */
   private persistSession(managed: ManagedSession): void {
+    if (managed.publicationState) return
     if (!managed.messagesLoaded) {
       this.hydrateMessagesForColdPersist(managed)
     }
@@ -2299,9 +1931,7 @@ export class SessionManager implements ISessionManager {
       managed.messages = (stored.messages || []).map(storedToMessage)
       managed.tokenUsage = stored.tokenUsage
       // Deferred-load fields (intentionally undefined after startup, see
-      // loadSessionsFromDisk). Populate from disk only if not already set in
-      // memory — a caller may have mutated them via setSessionSources etc.
-      if (managed.enabledSourceSlugs === undefined) managed.enabledSourceSlugs = stored.enabledSourceSlugs
+      // loadSessionsFromDisk). Populate from disk only if not already set in memory.
       if (managed.lastReadMessageId === undefined) managed.lastReadMessageId = stored.lastReadMessageId
       if (managed.hasUnread === undefined) managed.hasUnread = stored.hasUnread
       if (managed.sharedUrl === undefined) managed.sharedUrl = stored.sharedUrl
@@ -2358,205 +1988,6 @@ export class SessionManager implements ISessionManager {
     await sessionPersistenceQueue.flushAll()
   }
 
-  // ============================================
-  // Unified Auth Request Helpers
-  // ============================================
-
-  /**
-   * Get human-readable description for auth request
-   */
-  private getAuthRequestDescription(request: AuthRequest): string {
-    switch (request.type) {
-      case 'credential':
-        return `Authentication required for ${request.sourceName}`
-      case 'oauth':
-        return `OAuth authentication for ${request.sourceName}`
-      case 'oauth-google':
-        return `Sign in with Google for ${request.sourceName}`
-      case 'oauth-slack':
-        return `Sign in with Slack for ${request.sourceName}`
-      case 'oauth-microsoft':
-        return `Sign in with Microsoft for ${request.sourceName}`
-    }
-  }
-
-  /**
-   * Format auth result message to send back to agent
-   */
-  private formatAuthResultMessage(result: AuthResult): string {
-    if (result.success) {
-      let msg = `Authentication completed for ${result.sourceSlug}.`
-      if (result.email) msg += ` Signed in as ${result.email}.`
-      if (result.workspace) msg += ` Connected to workspace: ${result.workspace}.`
-      msg += ' Credentials have been saved.'
-      return msg
-    }
-    if (result.cancelled) {
-      return `Authentication cancelled for ${result.sourceSlug}.`
-    }
-    return `Authentication failed for ${result.sourceSlug}: ${result.error || 'Unknown error'}`
-  }
-
-
-  /**
-   * Complete an auth request and send result back to agent
-   * This updates the auth message status and sends a faked user message
-   */
-  async completeAuthRequest(sessionId: string, result: AuthResult): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (!managed) {
-      sessionLog.warn(`Cannot complete auth request - session ${sessionId} not found`)
-      return
-    }
-
-    managed.agent?.projectAuthPromptResolution?.(
-      result.requestId,
-      result.cancelled ? 'cancelled' : result.success ? 'completed' : 'failed',
-    )
-
-    // Emit auth_completed event to update UI
-    this.sendEvent({
-      type: 'auth_completed',
-      sessionId,
-      requestId: result.requestId,
-      success: result.success,
-      cancelled: result.cancelled,
-      error: result.error,
-    }, managed.workspace.id)
-
-    // Create faked user message with result
-    const resultContent = this.formatAuthResultMessage(result)
-
-    // Clear pending auth state
-    managed.pendingAuthRequestId = undefined
-    managed.pendingAuthRequest = undefined
-
-    // Auto-enable the source in the session after successful auth
-    if (result.success && result.sourceSlug) {
-      const slugSet = new Set(managed.enabledSourceSlugs || [])
-      if (!slugSet.has(result.sourceSlug)) {
-        slugSet.add(result.sourceSlug)
-        managed.enabledSourceSlugs = Array.from(slugSet)
-        sessionLog.info(`Auto-enabled source ${result.sourceSlug} in session ${sessionId} after auth`)
-      }
-
-      // Clear any refresh cooldown so the source is immediately usable
-      managed.tokenRefreshManager.clearCooldown(result.sourceSlug)
-    }
-
-    // Persist Host-owned auth state and enabled sources. The auth prompt and
-    // its resolution are already represented by Pi projection entities.
-    this.persistSession(managed)
-
-    // Update bridge-mcp-server config/credentials for backends that need it
-    if (result.success && result.sourceSlug && managed.agent) {
-      const workspaceRootPath = managed.workspace.rootPath
-      const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
-      const enabledSlugs = managed.enabledSourceSlugs || []
-      const allSources = loadRuntimeAllSources(workspaceRootPath)
-      const enabledSources = allSources.filter(s =>
-        enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
-      )
-      const { mcpServers } = await buildServersFromSources(
-        enabledSources, sessionPath, managed.tokenRefreshManager
-      )
-      await applyBridgeUpdates(managed.agent, sessionPath, enabledSources, mcpServers, managed.id, workspaceRootPath, 'source auth', managed.poolServer?.url)
-    }
-
-    // Send the result as a new message to resume conversation
-    // Use empty arrays for attachments since this is a system-generated message
-    await this.sendMessage(sessionId, resultContent, [], [], {})
-
-    sessionLog.info(`Auth request completed for ${result.sourceSlug}: ${result.success ? 'success' : 'failed'}`)
-  }
-
-  /**
-   * Handle credential input from the UI (for non-OAuth auth)
-   * Called when user submits credentials via the inline form
-   */
-  async handleCredentialInput(
-    sessionId: string,
-    requestId: string,
-    response: import('@mortise/shared/protocol').CredentialResponse
-  ): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (!managed?.pendingAuthRequest) {
-      sessionLog.warn(`Cannot handle credential input - no pending auth request for session ${sessionId}`)
-      return
-    }
-
-    const request = managed.pendingAuthRequest as CredentialAuthRequest
-    if (request.requestId !== requestId) {
-      sessionLog.warn(`Credential request ID mismatch: expected ${request.requestId}, got ${requestId}`)
-      return
-    }
-
-    if (response.cancelled) {
-      await this.completeAuthRequest(sessionId, {
-        requestId,
-        sourceSlug: request.sourceSlug,
-        success: false,
-        cancelled: true,
-      })
-      return
-    }
-
-    try {
-      // Store credentials using existing workspace ID extraction pattern
-      const credManager = getCredentialManager()
-      // Extract workspace ID from root path (last segment of path)
-      const wsId = basename(managed.workspace.rootPath) || managed.workspace.id
-
-      if (request.mode === 'basic') {
-        // Store value as JSON string {username, password} - credential-manager.ts parses it for basic auth
-        await credManager.set(
-          { type: 'source_basic', workspaceId: wsId, sourceId: request.sourceSlug },
-          { value: JSON.stringify({ username: response.username, password: response.password }) }
-        )
-      } else if (request.mode === 'bearer') {
-        await credManager.set(
-          { type: 'source_bearer', workspaceId: wsId, sourceId: request.sourceSlug },
-          { value: response.value! }
-        )
-      } else if (request.mode === 'multi-header') {
-        // Store multi-header credentials as JSON { "DD-API-KEY": "...", "DD-APPLICATION-KEY": "..." }
-        await credManager.set(
-          { type: 'source_apikey', workspaceId: wsId, sourceId: request.sourceSlug },
-          { value: JSON.stringify(response.headers) }
-        )
-      } else {
-        // header or query - both use API key storage
-        await credManager.set(
-          { type: 'source_apikey', workspaceId: wsId, sourceId: request.sourceSlug },
-          { value: response.value! }
-        )
-      }
-
-      // Update source config to mark as authenticated
-      const { markSourceAuthenticated } = await import('@mortise/shared/sources')
-      markSourceAuthenticated(managed.workspace.rootPath, request.sourceSlug)
-
-      // Mark source as unseen so fresh guide is injected on next message
-      if (managed.agent) {
-        managed.agent.markSourceUnseen(request.sourceSlug)
-      }
-
-      await this.completeAuthRequest(sessionId, {
-        requestId,
-        sourceSlug: request.sourceSlug,
-        success: true,
-      })
-    } catch (error) {
-      sessionLog.error(`Failed to save credentials for ${request.sourceSlug}:`, error)
-      await this.completeAuthRequest(sessionId, {
-        requestId,
-        sourceSlug: request.sourceSlug,
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to save credentials',
-      })
-    }
-  }
-
   getWorkspaces(): Workspace[] {
     return getWorkspaces()
   }
@@ -2568,6 +1999,7 @@ export class SessionManager implements ISessionManager {
   getActiveSessionCount(workspaceId?: string): number {
     let count = 0
     for (const managed of this.sessions.values()) {
+      if (managed.publicationState) continue
       if (workspaceId && managed.workspace.id !== workspaceId) continue
       if (managed.isProcessing) count++
     }
@@ -2578,27 +2010,20 @@ export class SessionManager implements ISessionManager {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) return { automationCount: 0, schedulerRunning: false }
 
-    const automationSystem = this.automationSystems.get(workspace.rootPath)
-    if (!automationSystem) return { automationCount: 0, schedulerRunning: false }
+    const host = this.automationHosts.get(workspace.rootPath)
+    if (!host) return { automationCount: 0, schedulerRunning: false }
+    return { automationCount: host.store.initializeOrMigrate().document.definitions.length, schedulerRunning: !host.isReadOnly() }
+  }
 
-    const config = automationSystem.getConfig()
-    let automationCount = 0
-    if (config) {
-      for (const matchers of Object.values(config.automations)) {
-        automationCount += matchers?.length ?? 0
-      }
-    }
-
-    return {
-      automationCount,
-      // SchedulerService is running if the system was created with enableScheduler
-      schedulerRunning: !automationSystem.isDisposed(),
-    }
+  getAutomationHost(workspaceId: string): AutomationWorkspaceHostV3 | null {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    return workspace ? this.automationHosts.get(workspace.rootPath) ?? null : null
   }
 
   getActiveSessionsInfo(): ActiveSessionInfo[] {
     const result: ActiveSessionInfo[] = []
     for (const managed of this.sessions.values()) {
+      if (managed.publicationState) continue
       if (!managed.isProcessing) continue
 
       let status: SessionProcessingStatus = 'processing'
@@ -2630,7 +2055,7 @@ export class SessionManager implements ISessionManager {
   getSessions(workspaceId?: string): Session[] {
     // Returns session metadata only - messages are NOT included to save memory
     // Use getSession(id) to load messages for a specific session
-    let sessions = Array.from(this.sessions.values())
+    let sessions = Array.from(this.sessions.values()).filter(session => !session.publicationState)
 
     // Filter by workspace if specified (used when switching workspaces)
     if (workspaceId) {
@@ -2658,7 +2083,7 @@ export class SessionManager implements ISessionManager {
     }
 
     for (const session of this.sessions.values()) {
-      if (session.hidden) continue
+      if (session.hidden || session.publicationState) continue
 
       const workspaceId = session.workspace.id
       if (session.isProcessing) hasProcessingByWorkspace[workspaceId] = true
@@ -2751,7 +2176,6 @@ export class SessionManager implements ISessionManager {
       managed.tokenUsage = storedSession.tokenUsage
       managed.lastReadMessageId = storedSession.lastReadMessageId
       managed.hasUnread = storedSession.hasUnread  // Explicit unread flag for NEW badge state machine
-      managed.enabledSourceSlugs = storedSession.enabledSourceSlugs
       managed.sharedUrl = storedSession.sharedUrl
       managed.sharedId = storedSession.sharedId
       // Sync name from disk - ensures title persistence across lazy loading
@@ -2778,13 +2202,241 @@ export class SessionManager implements ISessionManager {
     return getSessionStoragePath(managed.workspace.rootPath, sessionId)
   }
 
+  async createAndSendFirstTurn(
+    input: CreateAndSendFirstTurnInput,
+    prepareProvisional?: (managed: ManagedSession) => void | Promise<void>,
+  ): Promise<{ session: Session; messageId: string }> {
+    if (
+      input.createOptions?.hidden
+      || input.createOptions?.branchFromSessionId
+      || input.createOptions?.branchFromMessageId
+    ) {
+      throw new Error('createAndSendFirstTurn only supports ordinary new conversations')
+    }
+    if ((input.attachments?.length || input.storedAttachments?.length) && !input.attachmentStagingId) {
+      throw new Error('First-turn attachments require a dedicated staging identity')
+    }
+    const workspace = getWorkspaceByNameOrId(input.workspaceId)
+    if (!workspace) throw new Error(`Workspace ${input.workspaceId} not found`)
+    if (input.attachmentStagingId) this.validateFirstTurnAttachmentStagingId(input.attachmentStagingId)
+
+    let provisional: Session | null = null
+    try {
+      provisional = await this.createSessionInternal(input.workspaceId, input.createOptions, true)
+      const managed = this.sessions.get(provisional.id)
+      if (!managed?.publicationState) {
+        throw new Error(`Provisional session ${provisional.id} was not created`)
+      }
+      await prepareProvisional?.(managed)
+    } catch (error) {
+      const managed = provisional ? this.sessions.get(provisional.id) : undefined
+      if (managed?.publicationState) {
+        await this.abandonProvisionalSession(
+          managed,
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+      await this.cleanupFirstTurnAttachmentStaging(workspace.rootPath, input.attachmentStagingId)
+      throw error
+    }
+    if (!provisional) throw new Error('First-turn provisional session was not created')
+    let firstTurnAttachments = input.attachments
+    let firstTurnStoredAttachments = input.storedAttachments
+
+    try {
+      const adopted = await this.adoptFirstTurnAttachmentStaging(
+        provisional,
+        input.attachmentStagingId,
+        input.attachments,
+        input.storedAttachments,
+      )
+      firstTurnAttachments = adopted.attachments
+      firstTurnStoredAttachments = adopted.storedAttachments
+    } catch (error) {
+      const managed = this.sessions.get(provisional.id)
+      if (managed?.publicationState) {
+        await this.abandonProvisionalSession(
+          managed,
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+      await this.cleanupFirstTurnAttachmentStaging(workspace.rootPath, input.attachmentStagingId)
+      throw error
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let abortListener: (() => void) | undefined
+      const removeAbortListener = () => {
+        if (abortListener) input.signal?.removeEventListener('abort', abortListener)
+        abortListener = undefined
+      }
+      const rejectAfterAbandon = async (error: unknown) => {
+        if (settled) return
+        settled = true
+        removeAbortListener()
+        const managed = this.sessions.get(provisional.id)
+        if (managed?.publicationState) {
+          await this.abandonProvisionalSession(
+            managed,
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+      const settlePublished = (messageId: string) => {
+        if (settled) return
+        const managed = this.sessions.get(provisional.id)
+        if (!managed || managed.publicationState) {
+          settled = true
+          reject(new Error(`Session ${provisional.id} was acknowledged before publication`))
+          return
+        }
+        settled = true
+        removeAbortListener()
+        resolve({
+          session: managedToSession(managed, { messages: managed.messages }),
+          messageId,
+        })
+      }
+
+      if (input.signal) {
+        abortListener = () => {
+          void rejectAfterAbandon(input.signal?.reason ?? new Error('First-turn request cancelled'))
+        }
+        if (input.signal.aborted) {
+          abortListener()
+          return
+        }
+        input.signal.addEventListener('abort', abortListener, { once: true })
+      }
+
+      void this.sendMessage(
+        provisional.id,
+        input.message,
+        firstTurnAttachments,
+        firstTurnStoredAttachments,
+        input.sendOptions,
+        undefined,
+        undefined,
+        settlePublished,
+        { callerClientId: input.callerClientId },
+      ).then(async () => {
+        if (settled) return
+        await rejectAfterAbandon(new Error('First turn completed without publishing a session'))
+      }).catch(async error => {
+        if (settled) return
+        await rejectAfterAbandon(error)
+      })
+    })
+  }
+
+  private async adoptFirstTurnAttachmentStaging(
+    session: Session,
+    stagingId: string | undefined,
+    attachments: FileAttachment[] | undefined,
+    storedAttachments: StoredAttachment[] | undefined,
+  ): Promise<{ attachments?: FileAttachment[]; storedAttachments?: StoredAttachment[] }> {
+    if (!stagingId) return { attachments, storedAttachments }
+    this.validateFirstTurnAttachmentStagingId(stagingId)
+
+    const workspace = this.sessions.get(session.id)?.workspace ?? getWorkspaceByNameOrId(session.workspaceId)
+    if (!workspace) throw new Error(`Workspace ${session.workspaceId} not found`)
+
+    const stagingSessionPath = getSessionStoragePath(workspace.rootPath, stagingId)
+    const stagingAttachmentsPath = getSessionAttachmentsPath(workspace.rootPath, stagingId)
+    const targetAttachmentsPath = getSessionAttachmentsPath(workspace.rootPath, session.id)
+
+    const remapRequiredPath = (value: string | undefined): string | undefined => {
+      if (!value) return value
+      const relativePath = relative(stagingAttachmentsPath, value)
+      if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+        throw new Error(`Attachment path is outside first-turn staging: ${value}`)
+      }
+      return join(targetAttachmentsPath, relativePath)
+    }
+
+    const adoptedStored = storedAttachments?.map(attachment => ({
+      ...attachment,
+      storedPath: remapRequiredPath(attachment.storedPath) ?? attachment.storedPath,
+      thumbnailPath: remapRequiredPath(attachment.thumbnailPath),
+      markdownPath: remapRequiredPath(attachment.markdownPath),
+    }))
+    const adoptedModelAttachments = attachments?.map((attachment, index) => {
+      const adoptedStoredAttachment = adoptedStored?.[index]
+      let adoptedPath: string | undefined = attachment.path
+      if (attachment.path) {
+        const relativePath = relative(stagingAttachmentsPath, attachment.path)
+        adoptedPath = relativePath.startsWith('..') || isAbsolute(relativePath)
+          ? (adoptedStoredAttachment?.storedPath ?? adoptedStoredAttachment?.markdownPath)
+          : join(targetAttachmentsPath, relativePath)
+        if (!adoptedPath) {
+          throw new Error(`Attachment path is outside first-turn staging: ${attachment.path}`)
+        }
+      }
+      return {
+        ...attachment,
+        ...(adoptedPath ? { path: adoptedPath } : {}),
+        storedPath: remapRequiredPath(attachment.storedPath),
+        markdownPath: remapRequiredPath(attachment.markdownPath),
+      }
+    })
+
+    if (existsSync(stagingAttachmentsPath)) {
+      if (existsSync(targetAttachmentsPath)) {
+        throw new Error(`First-turn attachment target already exists for ${session.id}`)
+      }
+      await mkdir(dirname(targetAttachmentsPath), { recursive: true })
+      await rename(stagingAttachmentsPath, targetAttachmentsPath)
+    }
+
+    await rm(stagingSessionPath, { recursive: true, force: true })
+    return { attachments: adoptedModelAttachments, storedAttachments: adoptedStored }
+  }
+
+  private validateFirstTurnAttachmentStagingId(stagingId: string): void {
+    validateSessionId(stagingId)
+    if (!/^draft-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(stagingId)) {
+      throw new Error('Invalid first-turn attachment staging identity')
+    }
+  }
+
+  private async cleanupFirstTurnAttachmentStaging(
+    workspaceRootPath: string,
+    stagingId: string | undefined,
+  ): Promise<void> {
+    if (!stagingId) return
+    this.validateFirstTurnAttachmentStagingId(stagingId)
+    await rm(getSessionStoragePath(workspaceRootPath, stagingId), { recursive: true, force: true })
+  }
+
+  async discardFirstTurnAttachmentStaging(workspaceId: string, stagingId: string): Promise<void> {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error(`Workspace ${workspaceId} not found`)
+    await this.cleanupFirstTurnAttachmentStaging(workspace.rootPath, stagingId)
+  }
+
   async createSession(workspaceId: string, options?: import('@mortise/shared/protocol').CreateSessionOptions): Promise<Session> {
+    return this.createSessionInternal(workspaceId, options, false)
+  }
+
+  private generateProvisionalSessionId(workspaceRootPath: string): string {
+    let sessionId = generateSessionId(workspaceRootPath)
+    while (this.sessions.has(sessionId)) sessionId = generateSessionId(workspaceRootPath)
+    return sessionId
+  }
+
+  private async createSessionInternal(
+    workspaceId: string,
+    options: import('@mortise/shared/protocol').CreateSessionOptions | undefined,
+    provisionalFirstTurn: boolean,
+  ): Promise<Session> {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       throw new Error(`Workspace ${workspaceId} not found`)
     }
 
-    // Workspace defaults remain for workspace-scoped behavior such as permissions and sources.
+    // Workspace defaults remain for workspace-scoped behavior such as permissions.
     // Options.permissionMode overrides the workspace default (used by EditPopover for auto-execute).
     const workspaceRootPath = workspace.rootPath
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
@@ -2807,9 +2459,6 @@ export class SessionManager implements ISessionManager {
     if (requestedProvider && !sessionProvider) {
       sessionLog.warn(`Creating session without deleted provider "${requestedProvider}"; using defaults`)
     }
-
-    // Get default enabled sources from workspace config
-    const defaultEnabledSourceSlugs = options?.enabledSourceSlugs ?? wsConfig?.defaults?.enabledSourceSlugs
 
     // Resolve model tier hints ('fast' / 'default') to actual model IDs.
     // EditPopover uses tier hints instead of hardcoded Anthropic model names
@@ -2961,17 +2610,27 @@ export class SessionManager implements ISessionManager {
       })
     }
 
-    // New chat tabs need a real session immediately, but should not clutter the
-    // list until the user has actually sent a durable first message.
-    const deferListUntilFirstMessage = options?.deferListUntilFirstMessage === true && !options?.hidden
-
-    // Use storage layer to create and persist the session
-    const storedSession = await createStoredSession(workspaceRootPath, {
-      name: options?.name,
-      permissionMode: defaultPermissionMode,
-      workingDirectory: resolvedWorkingDir,
-      hidden: options?.hidden || deferListUntilFirstMessage,
-    })
+    // Pi's native SessionManager buffers the header + user input and creates
+    // the JSONL atomically when the first assistant message is appended.
+    const provisional = provisionalFirstTurn && !options?.hidden && !validatedBranch
+    const now = Date.now()
+    const storedSession: SessionHeader = provisional
+      ? {
+          mortiseId: this.generateProvisionalSessionId(workspaceRootPath),
+          workspaceRootPath,
+          name: options?.name,
+          createdAt: now,
+          lastUsedAt: now,
+          permissionMode: defaultPermissionMode,
+          workingDirectory: resolvedWorkingDir,
+          sdkCwd: resolvedWorkingDir,
+        }
+      : await createStoredSession(workspaceRootPath, {
+          name: options?.name,
+          permissionMode: defaultPermissionMode,
+          workingDirectory: resolvedWorkingDir,
+          hidden: options?.hidden,
+        })
 
     // Branch: project the active Pi path up to the selected entry, then append
     // only canonical messages through Pi's public SessionManager API. Mortise
@@ -3054,12 +2713,11 @@ export class SessionManager implements ISessionManager {
       provider: sessionProvider,
       thinkingLevel: defaultThinkingLevel,
       systemPromptPreset: options?.systemPromptPreset,
-      enabledSourceSlugs: defaultEnabledSourceSlugs,
       branchFromMessageId: validatedBranch?.sourceMessageId,
       branchContextStrategy: validatedBranch?.branchContextStrategy,
       branchSeedApplied: validatedBranch ? true : undefined,
-      deferListUntilFirstMessage,
-      messagesLoaded: !isBranch,  // Branched sessions: lazy-load messages from JSONL
+      publicationState: provisional ? 'provisional' : undefined,
+      messagesLoaded: provisional || !isBranch,  // Branched sessions: lazy-load messages from JSONL
     })
 
     // Eagerly load messages for branched sessions so the renderer gets the full
@@ -3090,12 +2748,6 @@ export class SessionManager implements ISessionManager {
             workspaceRootPath,
             sessionId: storedSession.mortiseId,
             deleteFromRuntimeSessions: (id) => {
-              const m = this.sessions.get(id)
-              if (m?.autoRetryTimer) {
-                clearTimeout(m.autoRetryTimer)
-                m.autoRetryTimer = undefined
-              }
-              if (m) m.autoRetryPending = undefined
               this.sessions.delete(id)
             },
             deleteStoredSession,
@@ -3116,15 +2768,7 @@ export class SessionManager implements ISessionManager {
     }
 
     this.sessions.set(storedSession.mortiseId, managed)
-
-    // Initialize session metadata in AutomationSystem for diffing
-    const automationSystem = this.automationSystems.get(workspaceRootPath)
-    if (automationSystem) {
-      automationSystem.setInitialSessionMetadata(storedSession.mortiseId, {
-        permissionMode: storedSession.permissionMode,
-        sessionName: managed.name,
-      })
-    }
+    if (!provisional) this.automationSessionMetadata.set(storedSession.mortiseId, { permissionMode: storedSession.permissionMode, sessionName: managed.name })
 
     return managedToSession(managed, isBranch ? { messages: managed.messages } : undefined)
   }
@@ -3144,25 +2788,7 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    if (managed.poolServer) {
-      try {
-        await managed.poolServer.stop()
-      } catch (error) {
-        sessionLog.warn(`Failed to stop pool server for ${sessionId} during ${reason}: ${error instanceof Error ? error.message : error}`)
-      }
-    }
-
-    if (managed.mcpPool) {
-      try {
-        await managed.mcpPool.disconnectAll()
-      } catch (error) {
-        sessionLog.warn(`Failed to disconnect MCP pool for ${sessionId} during ${reason}: ${error instanceof Error ? error.message : error}`)
-      }
-    }
-
     managed.agent = null
-    managed.poolServer = undefined
-    managed.mcpPool = undefined
     managed.envOverrides = undefined
     managed.agentReady = undefined
     managed.agentReadyResolve = undefined
@@ -3398,31 +3024,10 @@ export class SessionManager implements ISessionManager {
       managed.agentReady = new Promise<void>(r => { managed.agentReadyResolve = r })
 
       // ============================================================
-      // Common setup: sources, MCP pool, session config
+      // Common session setup
       // ============================================================
 
       const sessionPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
-      const enabledSlugs = managed.enabledSourceSlugs || []
-      const allSources = loadRuntimeAllSources(managed.workspace.rootPath)
-      const enabledSources = allSources.filter(s =>
-        enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
-      )
-
-      // Build server configs for enabled sources
-      const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager)
-
-      // Create centralized MCP client pool (all backends use it)
-      managed.mcpPool = new McpClientPool({ debug: (msg) => sessionLog.debug(msg), workspaceRootPath: managed.workspace.rootPath, sessionPath })
-
-      // Backends that run as external subprocesses need an HTTP pool server
-      let poolServerUrl: string | undefined
-      if (backendContext.capabilities.needsHttpPoolServer) {
-        managed.poolServer = new McpPoolServer(managed.mcpPool, { debug: (msg) => sessionLog.debug(msg) })
-        managed.mcpPool.onToolsChanged = () => managed.poolServer?.notifyToolsChanged()
-        poolServerUrl = await managed.poolServer.start()
-        await managed.mcpPool.sync(mcpServers) // Ensure pool has tools before SDK connects
-      }
-
       // Per-session env overrides
       const miniModel = providerConfig?.models?.[1]?.id ?? providerConfig?.models?.[0]?.id
       const envOverrides: Record<string, string> = {
@@ -3495,7 +3100,16 @@ export class SessionManager implements ISessionManager {
       }
 
       // 扩展事件桥接：将 Pi RpcClient的扩展事件转发到渲染进程
-      const onExtensionEvent = createExtensionEventForwarder(this.eventSink, managed.workspace.id, managed.id)
+      const provisionalAwareEventSink: EventSink | null = this.eventSink
+        ? ((channel, target, ...args) => {
+            if (!managed.publicationState) this.eventSink?.(channel, target, ...args)
+          })
+        : null
+      const onExtensionEvent = createExtensionEventForwarder(
+        provisionalAwareEventSink,
+        managed.workspace.id,
+        managed.id,
+      )
       const onPiProjectionEvent = (event: PiProjectionEventV1) => {
         try {
           this.applyPiProjectionEvent(event)
@@ -3589,13 +3203,30 @@ export class SessionManager implements ISessionManager {
         markBranchSeedApplied,
         getTransferredSessionSummary,
         markTransferredSessionSummaryApplied,
-        mcpPool: managed.mcpPool,
-        poolServerUrl,
         envOverrides,
         // Claude-specific
         isHeadless: !AGENT_FLAGS.defaultModesEnabled,
         skipConfigWatcher: true, // Server owns workspace-level ConfigWatcher — don't duplicate in agents
-        automationSystem: this.automationSystems.get(managed.workspace.rootPath),
+        automationEventSink: async (event, input) => {
+          const host = this.automationHosts.get(managed.workspace.rootPath)
+          if (!host) return
+          const result = await host.acceptEvent({
+            specversion: '1.0',
+            id: randomUUID(),
+            source: `mortise://agent/${managed.id}`,
+            type: event,
+            time: new Date().toISOString(),
+            datacontenttype: 'application/json',
+            mortisesessionid: managed.id,
+            data: input,
+          }, {
+            sourceKind: 'agent',
+            matchValue: input.tool_name ?? input.source ?? '',
+          })
+          if (result.status !== 'accepted' && result.status !== 'duplicate') {
+            throw new Error(result.error?.message ?? `Automation event rejected: ${result.status}`)
+          }
+        },
         systemPromptPreset: managed.systemPromptPreset,
         debugMode: _platform?.isDebugMode ? { enabled: true, logFilePath: _platform.getLogFilePath?.() } : undefined,
         // Image resize callback — prevents oversized images from entering conversation history
@@ -3618,13 +3249,6 @@ export class SessionManager implements ISessionManager {
             sessionLog.error('Image resize failed:', err)
             return null
           }
-        },
-        // Source configs for postInit() — backends set up their own bridge/config
-        initialSources: {
-          enabledSources,
-          mcpServers,
-          apiServers,
-          enabledSlugs,
         },
         // 扩展事件桥接回调：将 Pi RpcClient的扩展事件转发到渲染进程
         onExtensionEvent,
@@ -3690,11 +3314,6 @@ export class SessionManager implements ISessionManager {
         })
       }
 
-      // Wire up large response handling in the MCP pool (all backends)
-      if (managed.mcpPool && managed.agent) {
-        managed.mcpPool.setSummarizeCallback(managed.agent.getSummarizeCallback())
-      }
-
       // Signal that the agent instance is ready (unblocks title generation)
       managed.agentReadyResolve?.()
 
@@ -3704,7 +3323,7 @@ export class SessionManager implements ISessionManager {
         toolName: string;
         command?: string;
         description: string;
-        type?: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
+        type?: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval';
         appName?: string;
         reason?: string;
         impact?: string;
@@ -3777,11 +3396,6 @@ export class SessionManager implements ISessionManager {
         }, managed.workspace.id)
       }
 
-      // Note: Credential requests now flow through onAuthRequest (unified auth flow)
-      // The legacy onCredentialRequest callback has been removed from MortiseAgent
-      // Auth refresh for mid-session token expiry is handled by the error handler in sendMessage
-      // which destroys/recreates the agent to get fresh credentials
-
       // Set up mode change handlers
       managed.agent.onPermissionModeChange = (mode) => {
         if (managed.permissionMode === mode) {
@@ -3852,51 +3466,6 @@ export class SessionManager implements ISessionManager {
         }
       }
 
-      // Wire up onAuthRequest to add auth message to conversation and pause execution
-      managed.agent.onAuthRequest = (request) => {
-        sessionLog.info(`Auth request for session ${managed.id}:`, request.type, request.sourceSlug)
-
-        // Store pending auth request for later resolution
-        managed.pendingAuthRequestId = request.requestId
-        managed.pendingAuthRequest = request
-
-        managed.agent?.projectAuthPromptRequest?.({
-          requestId: request.requestId,
-          authType: request.type,
-          sourceSlug: request.sourceSlug,
-          sourceName: request.sourceName,
-          ...(request.type === 'credential' ? {
-            mode: request.mode,
-            labels: request.labels,
-            headerNames: request.headerNames,
-            passwordRequired: request.passwordRequired,
-          } : {}),
-          ...('service' in request && typeof request.service === 'string' ? { service: request.service } : {}),
-        })
-
-        // Interrupt execution
-        if (managed.isProcessing && managed.agent) {
-          sessionLog.info(`Interrupting for auth request in session ${managed.id}`)
-          managed.agent.interruptForHandoff(AbortReason.AuthRequest)
-          this.setProcessing(managed, false)
-
-          // Release browser overlay + session binding because the agent is paused awaiting user auth.
-          void releaseBrowserOwnershipOnForcedStop(
-            (sid) => this.getBrowserPaneManagerForSession(sid),
-            managed.id,
-          )
-
-          // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
-          this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage }, managed.workspace.id)
-        }
-
-        // Persist session state
-        this.persistSession(managed)
-
-        // OAuth flow is client-driven via performOAuth() (preload).
-        // The UI calls window.electronAPI.performOAuth() when user clicks "Sign in".
-      }
-
       // Wire up onSpawnSession. When the backend exposes spawnChildSession
       // (PiAgent), delegate to pi's session tree as a thin wrapper — pi creates
       // the child session file (header + spawnedFrom + spawnConfig + optional
@@ -3922,7 +3491,6 @@ export class SessionManager implements ISessionManager {
           prompt: request.prompt,
           connection: request.provider,
           model: request.model,
-          enabledSources: getDataSourcesEnabled() ? request.enabledSourceSlugs : [],
           permissionMode: request.permissionMode,
           thinkingLevel: request.thinkingLevel,
           name: request.name,
@@ -4021,122 +3589,7 @@ export class SessionManager implements ISessionManager {
 
           await this.sendMessage(sessionId, message, fileAttachments)
         },
-        activateSourceInSessionFn: async (sourceSlug: string) => {
-          const cb = managed.agent?.onSourceActivationRequest
-          if (!cb) {
-            return { ok: false, reason: 'Agent has no activation callback wired' }
-          }
-          const ok = await cb(sourceSlug)
-          if (!ok) {
-            return {
-              ok: false,
-              reason: 'Activation failed — source may be unusable (disabled/unauthenticated) or server build failed. Check session logs.',
-            }
-          }
-          // The current turn must end before new tools are visible:
-          // Pi picks up new proxy tool defs on the next handlePrompt
-          // (`toolsChanged` flag in Pi RpcClient).
-          // Mark a pending restart on the agent — PiAgent consumes it after
-          // the next tool_result, yield source_activated, and forceAbort. The
-          // `source_activated` handler in this class then schedules a server-side
-          // resend of the original user message with a "[{slug} activated]" suffix —
-          // landing in a fresh turn with tools live (mortise-oss#804).
-          const userMessage = managed.agent?.getCurrentTurnUserMessage?.() ?? ''
-          if (userMessage) {
-            managed.agent?.setPendingSourceActivationRestart({ sourceSlug, userMessage })
-          }
-          return { ok: true, availability: 'next-turn' as const }
-        },
       })
-
-      // Wire up onSourceActivationRequest to auto-enable sources when agent tries to use them
-      managed.agent.onSourceActivationRequest = async (sourceSlug: string): Promise<boolean> => {
-        sessionLog.info(`Source activation request for session ${managed.id}:`, sourceSlug)
-
-        const workspaceRootPath = managed.workspace.rootPath
-
-        // Check if source is already enabled
-        if (managed.enabledSourceSlugs?.includes(sourceSlug)) {
-          sessionLog.info(`Source ${sourceSlug} already in enabledSourceSlugs, checking server status`)
-          // Source is in the list but server might not be active (e.g., build failed previously)
-        }
-
-        // Load the source to check if it exists and is ready
-        const sources = loadRuntimeSourcesBySlugs(workspaceRootPath, [sourceSlug])
-        if (sources.length === 0) {
-          sessionLog.warn(`Source ${sourceSlug} not found in workspace`)
-          return false
-        }
-
-        const source = sources[0]
-
-        // Check if source is usable (enabled and authenticated if auth is required)
-        if (!isSourceUsable(source)) {
-          sessionLog.warn(`Source ${sourceSlug} is not usable (disabled or requires authentication)`)
-          return false
-        }
-
-        // Track whether we added this slug (for rollback on failure)
-        const slugSet = new Set(managed.enabledSourceSlugs || [])
-        const wasAlreadyEnabled = slugSet.has(sourceSlug)
-
-        // Add to enabled sources if not already there
-        if (!wasAlreadyEnabled) {
-          slugSet.add(sourceSlug)
-          managed.enabledSourceSlugs = Array.from(slugSet)
-          sessionLog.info(`Added source ${sourceSlug} to session enabled sources`)
-        }
-
-        // Build server configs for all enabled sources
-        const allEnabledSources = loadRuntimeSourcesBySlugs(workspaceRootPath, managed.enabledSourceSlugs || [])
-        // Pass session path so large API responses can be saved to session folder
-        const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
-        const { mcpServers, apiServers, errors } = await buildServersFromSources(allEnabledSources, sessionPath, managed.tokenRefreshManager, managed.agent?.getSummarizeCallback())
-
-        if (errors.length > 0) {
-          sessionLog.warn(`Source build errors during auto-enable:`, errors)
-        }
-
-        // Check if our target source was built successfully
-        const sourceBuilt = sourceSlug in mcpServers || sourceSlug in apiServers
-        if (!sourceBuilt) {
-          sessionLog.warn(`Source ${sourceSlug} failed to build`)
-          // Only remove if WE added it (not if it was already there)
-          if (!wasAlreadyEnabled) {
-            slugSet.delete(sourceSlug)
-            managed.enabledSourceSlugs = Array.from(slugSet)
-          }
-          return false
-        }
-
-        // Apply source servers to the agent
-        const intendedSlugs = allEnabledSources
-          .filter(isSourceUsable)
-          .map(s => s.config.slug)
-
-        // Update bridge-mcp-server config/credentials for backends that need it
-        await applyBridgeUpdates(managed.agent!, sessionPath, allEnabledSources, mcpServers, managed.id, workspaceRootPath, 'source enable', managed.poolServer?.url)
-
-        await managed.agent!.setSourceServers(mcpServers, apiServers, intendedSlugs)
-
-        sessionLog.info(`Auto-enabled source ${sourceSlug} for session ${managed.id}`)
-
-        // Persist session with updated enabled sources
-        this.persistSession(managed)
-
-        // Notify renderer of source change
-        this.sendEvent({
-          type: 'sources_changed',
-          sessionId: managed.id,
-          enabledSourceSlugs: managed.enabledSourceSlugs || [],
-        }, managed.workspace.id)
-
-        return true
-      }
-
-      // NOTE: Source reloading is now handled by ConfigWatcher callbacks
-      // which detect filesystem changes and update all affected sessions.
-      // See setupConfigWatcher() for the full reload logic.
 
       // Apply session-scoped permission mode to the newly created agent
       // This ensures the UI toggle state is reflected in the agent before first message
@@ -4229,21 +3682,6 @@ export class SessionManager implements ISessionManager {
       }
     }
     return null
-  }
-
-  /** Apply the global data-source feature flag to every active runtime. */
-  async refreshDataSourcesRuntime(): Promise<void> {
-    const activeSessions = [...this.sessions.values()].filter(managed => managed.agent)
-    const results = await Promise.allSettled(activeSessions.map(managed => this.reloadSessionSources(managed)))
-
-    for (let index = 0; index < results.length; index++) {
-      const result = results[index]
-      if (result?.status === 'rejected') {
-        sessionLog.warn(
-          `Failed to refresh data-source runtime for session ${activeSessions[index]?.id}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
-        )
-      }
-    }
   }
 
   /**
@@ -4361,87 +3799,6 @@ export class SessionManager implements ISessionManager {
     }
 
     await this.sendMessage(sessionId, PLAN_APPROVAL_MESSAGE)
-  }
-
-  // ============================================
-  // Session Sources
-  // ============================================
-
-  /**
-   * Update session's enabled sources
-   * If agent exists, builds and applies servers immediately.
-   * Otherwise, servers will be built fresh on next message.
-   */
-  async setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (!managed) {
-      throw new Error(`Session not found: ${sessionId}`)
-    }
-
-    const workspaceRootPath = managed.workspace.rootPath
-    sessionLog.info(`Setting sources for session ${sessionId}:`, sourceSlugs)
-
-    // Clean up credential cache for sources being disabled (security)
-    // This removes decrypted tokens from disk when sources are no longer active
-    const previousSlugs = new Set(managed.enabledSourceSlugs || [])
-    const newSlugs = new Set(sourceSlugs)
-    const disabledSlugs = [...previousSlugs].filter(prevSlug => !newSlugs.has(prevSlug))
-    if (disabledSlugs.length > 0) {
-      try {
-        await cleanupSourceRuntimeArtifacts(workspaceRootPath, disabledSlugs)
-      } catch (err) {
-        sessionLog.warn(`Failed to clean up source runtime artifacts: ${err}`)
-      }
-    }
-
-    // Store the selection
-    managed.enabledSourceSlugs = sourceSlugs
-
-    // If agent exists, build and apply servers immediately
-    if (managed.agent) {
-      const sources = loadRuntimeSourcesBySlugs(workspaceRootPath, sourceSlugs)
-      // Pass session path so large API responses can be saved to session folder
-      const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
-      const { mcpServers, apiServers, errors } = await buildServersFromSources(sources, sessionPath, managed.tokenRefreshManager, managed.agent.getSummarizeCallback())
-      if (errors.length > 0) {
-        sessionLog.warn(`Source build errors:`, errors)
-      }
-
-      // Set all sources for context (agent sees full list with descriptions, including built-ins)
-      const allSources = loadRuntimeAllSources(workspaceRootPath)
-      managed.agent.setAllSources(allSources)
-
-      // Set active source servers (tools are only available from these)
-      const intendedSlugs = sources.filter(isSourceUsable).map(s => s.config.slug)
-
-      // Update bridge-mcp-server config/credentials for backends that need it
-      const usableSources = sources.filter(isSourceUsable)
-      await applyBridgeUpdates(managed.agent, sessionPath, usableSources, mcpServers, managed.id, workspaceRootPath, 'source config change', managed.poolServer?.url)
-
-      await managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
-
-      sessionLog.info(`Applied ${Object.keys(mcpServers).length} MCP + ${Object.keys(apiServers).length} API sources to active agent (${allSources.length} total)`)
-    }
-
-    // Persist the session with updated sources
-    this.persistSession(managed)
-
-    // Notify renderer of the source change
-    this.sendEvent({
-      type: 'sources_changed',
-      sessionId,
-      enabledSourceSlugs: sourceSlugs,
-    }, managed.workspace.id)
-
-    sessionLog.info(`Session ${sessionId} sources updated: ${sourceSlugs.length} sources`)
-  }
-
-  /**
-   * Get the enabled source slugs for a session
-   */
-  getSessionSources(sessionId: string): string[] {
-    const managed = this.sessions.get(sessionId)
-    return managed?.enabledSourceSlugs ?? []
   }
 
   /**
@@ -4990,6 +4347,109 @@ export class SessionManager implements ISessionManager {
     this.sendEvent({ type: 'message_annotations_updated', sessionId, messageId, annotations: message.annotations }, managed.workspace.id)
   }
 
+  /**
+   * Publish a provisional first turn after Pi has atomically created its tree
+   * JSONL. Until this point Mortise keeps metadata, overlays, and projection
+   * state in memory and excludes the session from every public list/event.
+   */
+  private async publishProvisionalSessionIfReady(managed: ManagedSession): Promise<boolean> {
+    if (!managed.publicationState) return true
+    if (managed.publicationState !== 'provisional' || this.sessions.get(managed.id) !== managed) return false
+    if (managed.publicationPromise) return managed.publicationPromise
+
+    const work = (async (): Promise<boolean> => {
+      const isCurrentProvisional = () => (
+        managed.publicationState === 'provisional' && this.sessions.get(managed.id) === managed
+      )
+      if (!isCurrentProvisional()) return false
+      const sessionFile = tryGetSessionFilePath(managed.workspace.rootPath, managed.id)
+      if (!sessionFile || !existsSync(sessionFile)) return false
+      const projection = await findPiSessionProjectionById(managed.workspace.rootPath, managed.id)
+      if (!isCurrentProvisional()) return false
+      const entries = (projection as { entries?: unknown[] } | null)?.entries ?? []
+      const hasAssistant = entries.some(entry => {
+        if (!entry || typeof entry !== 'object') return false
+        const candidate = entry as { type?: unknown; message?: { role?: unknown } }
+        return candidate.type === 'message' && candidate.message?.role === 'assistant'
+      })
+      if (!hasAssistant) return false
+
+      if (!isCurrentProvisional()) return false
+      managed.publicationState = 'publishing'
+      try {
+        // Pi's first-assistant write is already atomic and contains the header,
+        // user entry, and assistant entry. Attach Mortise metadata/overlays and
+        // the latest projection before making the session publicly discoverable.
+        if (this.sessions.get(managed.id) !== managed || managed.publicationState !== 'publishing') return false
+        if (!managed.messagesLoaded) managed.messagesLoaded = true
+        this.enqueuePersist(managed)
+        await this.flushSession(managed.id)
+        if (this.sessions.get(managed.id) !== managed || managed.publicationState !== 'publishing') return false
+
+        const snapshot = this.piProjectionBySession.get(managed.id)?.createSnapshot()
+        if (snapshot) {
+          this.enqueuePiProjectionPersist(managed, snapshot)
+          await this.flushPiProjectionWrites(managed)
+        }
+        if (this.sessions.get(managed.id) !== managed || managed.publicationState !== 'publishing') return false
+
+        managed.publicationState = undefined
+        this.automationSessionMetadata.set(managed.id, { permissionMode: managed.permissionMode, sessionName: managed.name })
+        this.sendEvent({ type: 'session_created', sessionId: managed.id }, managed.workspace.id)
+        this.emitUnreadSummaryChanged()
+        sessionLog.info(`Published provisional session ${managed.id} after first assistant persistence`)
+        return true
+      } catch (error) {
+        if (managed.publicationState === 'publishing') managed.publicationState = 'provisional'
+        throw error
+      }
+    })()
+
+    managed.publicationPromise = work
+    try {
+      return await work
+    } finally {
+      if (managed.publicationPromise === work) managed.publicationPromise = undefined
+    }
+  }
+
+  /** Remove every runtime and storage artifact for a first turn that failed
+   * before assistant publication. No public deletion event is emitted because
+   * the session was never public. */
+  private async abandonProvisionalSession(managed: ManagedSession, reason: string): Promise<void> {
+    if (!managed.publicationState) return
+    if (managed.abandonPromise) return managed.abandonPromise
+
+    const work = (async () => {
+      // Mark the runtime terminal before the first await. Late Pi events must
+      // never be able to re-enter publication while cleanup is in flight.
+      managed.publicationState = 'abandoning'
+      if (managed.agent) {
+        try {
+          await managed.agent.abort(AbortReason.UserStop)
+        } catch (error) {
+          sessionLog.warn(`Failed to abort provisional agent ${managed.id}: ${error instanceof Error ? error.message : error}`)
+        }
+      }
+      managed.isProcessing = false
+      managed.processingGeneration++
+      await this.disposeManagedAgentRuntime(managed, `provisional session abandoned: ${reason}`)
+      await this.flushPiProjectionWrites(managed)
+      await sessionPersistenceQueue.cancel(managed.id, { preventFutureEnqueue: true })
+
+      this.sessions.delete(managed.id)
+      this.automationSessionMetadata.delete(managed.id)
+      this.piProjectionBySession.delete(managed.id)
+      this.piProjectionRetiredRuntimeIds.delete(managed.id)
+      this.piProjectionWrites.delete(managed.id)
+      this.piProjectionPendingSnapshots.delete(managed.id)
+      await deleteStoredSession(managed.workspace.rootPath, managed.id)
+      sessionLog.info(`Abandoned unpublished provisional session ${managed.id}: ${reason}`)
+    })()
+    managed.abandonPromise = work
+    return work
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
@@ -5043,24 +4503,12 @@ export class SessionManager implements ISessionManager {
     await this.disposeManagedAgentRuntime(managed, 'session deleted')
     await this.flushPiProjectionWrites(managed)
 
-    // Cancel any pending source-activation auto-retry timer (mortise-oss#804).
-    if (managed.autoRetryTimer) {
-      clearTimeout(managed.autoRetryTimer)
-      managed.autoRetryTimer = undefined
-    }
-    managed.autoRetryPending = undefined
-
     this.sessions.delete(sessionId)
+    this.automationSessionMetadata.delete(sessionId)
     this.piProjectionBySession.delete(sessionId)
     this.piProjectionRetiredRuntimeIds.delete(sessionId)
     this.piProjectionWrites.delete(sessionId)
     this.piProjectionPendingSnapshots.delete(sessionId)
-
-    // Clean up session metadata in AutomationSystem (prevents memory leak)
-    const automationSystem = this.automationSystems.get(workspaceRootPath)
-    if (automationSystem) {
-      automationSystem.removeSessionMetadata(sessionId)
-    }
 
     // Delete from disk too
     await deleteStoredSession(workspaceRootPath, sessionId)
@@ -5119,16 +4567,6 @@ export class SessionManager implements ISessionManager {
     }
 
     this.setLastMessageClientId(sessionId, rpcContext?.callerClientId)
-
-    // Source-activation auto-retry dedup (mortise-oss#804). When the server
-    // has just scheduled or committed a "[<slug> activated]" retry, drop a matching
-    // duplicate that arrives from a legacy renderer still running the client-side
-    // auto_retry. The first matching caller wins (server timer or legacy RPC,
-    // whichever arrives first), subsequent matching calls within the deadline drop.
-    if (claimAutoRetryPending(managed, message) === 'drop') {
-      sessionLog.info(`sendMessage: dropped duplicate source-activation retry for ${sessionId}`)
-      return
-    }
 
     // Clear any pending plan execution state when a new user message is sent.
     // This acts as a safety valve - if the user moves on, we don't want to
@@ -5218,7 +4656,7 @@ export class SessionManager implements ISessionManager {
         managed.wasInterrupted = true
       }
 
-      onAck?.(messageId)
+      if (!managed.publicationState) onAck?.(messageId)
       writeRuntimeLog('info', {
         scope: 'session',
         event: 'send_message.accepted',
@@ -5238,27 +4676,11 @@ export class SessionManager implements ISessionManager {
     // Pi owns the canonical user message. Mortise only records the UI overlay
     // needed to reconcile optimistic queue/attachment state.
     const messageId = existingMessageId ?? options?.optimisticMessageId ?? generateMessageId()
-    managed.lastMessageRole = 'user'
-    this.upsertUserMessageOverlay(
-      managed,
-      messageId,
-      storedAttachments,
-      options?.badges,
-      false,
-    )
-    const revealInSessionList = managed.deferListUntilFirstMessage === true
-    if (revealInSessionList) {
-      managed.hidden = false
-      managed.deferListUntilFirstMessage = false
-    }
-    this.persistSession(managed)
-    await this.flushSession(managed.id)
-    if (revealInSessionList) {
-      // Existing clients already hydrate this lifecycle event. Re-emitting it
-      // after the durable visibility change keeps every open window in sync.
-      this.sendEvent({ type: 'session_created', sessionId }, managed.workspace.id)
-    }
-    if (!existingMessageId) {
+    const awaitsFirstAssistantPublication = managed.publicationState === 'provisional'
+    let acknowledged = false
+    const acknowledge = () => {
+      if (existingMessageId || acknowledged) return
+      acknowledged = true
       onAck?.(messageId)
       writeRuntimeLog('info', {
         scope: 'session',
@@ -5268,10 +4690,24 @@ export class SessionManager implements ISessionManager {
           workspaceId: managed.workspace.id,
           messageId,
           optimisticMessageId: options?.optimisticMessageId,
+          status: awaitsFirstAssistantPublication ? 'published' : 'accepted',
           provider: managed.provider,
           model: managed.model,
         },
       })
+    }
+    managed.lastMessageRole = 'user'
+    this.upsertUserMessageOverlay(
+      managed,
+      messageId,
+      storedAttachments,
+      options?.badges,
+      false,
+    )
+    this.persistSession(managed)
+    await this.flushSession(managed.id)
+    if (!existingMessageId) {
+      if (!awaitsFirstAssistantPublication) acknowledge()
 
       // If this is the first user message and no title exists, set one immediately
       // AI generation will enhance it later, but we always have a title from the start
@@ -5333,127 +4769,12 @@ export class SessionManager implements ISessionManager {
     // This prevents the finally block from clobbering state when a follow-up message arrives.
     const myGeneration = managed.processingGeneration
 
-    // Pre-enable sources required by invoked skills (Issue #249)
-    // This eliminates the two-turn penalty where the agent discovers missing sources at runtime.
-    // Uses targeted loadSkillBySlug() instead of loadAllSkills() to avoid O(N) filesystem scans.
-    if (getDataSourcesEnabled() && options?.skillSlugs?.length) {
-      try {
-        const workspaceRoot = managed.workspace.rootPath
-
-        const requiredSources = new Set<string>()
-        for (const slug of options.skillSlugs) {
-          const skill = loadSkillBySlug(workspaceRoot, slug, workspaceRoot)
-          if (skill?.metadata.requiredSources) {
-            for (const src of skill.metadata.requiredSources) {
-              requiredSources.add(src)
-            }
-          }
-        }
-
-        if (requiredSources.size > 0) {
-          const currentSlugs = new Set(managed.enabledSourceSlugs || [])
-          const toEnable: string[] = []
-          const skipped: string[] = []
-          const candidateSlugs = Array.from(requiredSources)
-          const loadedSources = loadRuntimeSourcesBySlugs(workspaceRoot, candidateSlugs)
-          const usableSources = new Set(
-            loadedSources
-              .filter(isSourceUsable)
-              .map(source => source.config.slug)
-          )
-
-          for (const srcSlug of candidateSlugs) {
-            if (currentSlugs.has(srcSlug)) continue
-            if (usableSources.has(srcSlug)) {
-              toEnable.push(srcSlug)
-            } else {
-              skipped.push(srcSlug)
-            }
-          }
-
-          if (skipped.length > 0) {
-            sessionLog.warn(`Skill requires sources that are not usable (missing or unauthenticated): ${skipped.join(', ')}`)
-          }
-
-          if (toEnable.length > 0) {
-            managed.enabledSourceSlugs = [...(managed.enabledSourceSlugs || []), ...toEnable]
-            sessionLog.info(`Pre-enabled sources for skill invocation: ${toEnable.join(', ')}`)
-            this.persistSession(managed)
-            this.sendEvent({
-              type: 'sources_changed',
-              sessionId,
-              enabledSourceSlugs: managed.enabledSourceSlugs,
-            }, managed.workspace.id)
-          }
-        }
-      } catch (e) {
-        sessionLog.warn(`Failed to pre-enable skill sources for session ${sessionId}:`, e)
-      }
-    }
-
     // Start perf span for entire sendMessage flow
     const sendSpan = perf.span('session.sendMessage', { sessionId })
 
     try {
-      const workspaceRootPath = managed.workspace.rootPath
-      const enabledSlugs = managed.enabledSourceSlugs ?? []
-      const dataSourcesEnabled = getDataSourcesEnabled()
-      const hasSources = dataSourcesEnabled && enabledSlugs.length > 0
-
-      // Load enabled sources up-front so we can refresh tokens BEFORE getOrCreateAgent
-      // runs its internal cold-session build. Otherwise that build sees stale tokens
-      // and emits AUTH_REQUIRED, causing a brief "needs_auth" UI flicker before the
-      // post-build refresh restores state (#710).
-      const sources: LoadedSource[] = hasSources
-        ? loadRuntimeSourcesBySlugs(workspaceRootPath, enabledSlugs)
-        : []
-
-      if (hasSources && managed.tokenRefreshManager) {
-        const refreshResult = await refreshExpiredCredentials(sources, managed.tokenRefreshManager)
-        if (refreshResult.failedSources.length > 0) {
-          sessionLog.warn('[OAuth] Some sources failed token refresh:', refreshResult.failedSources.map(f => f.slug))
-        }
-        if (refreshResult.refreshedCount > 0) {
-          sendSpan.mark('oauth.refreshed')
-        }
-      }
-
-      // Get or create the agent (lazy loading). Its internal cold-session build at
-      // ~L2956 now sees fresh tokens (or correctly-needs_auth failed sources, since
-      // ensureFreshToken mirrors the disk write to source.config in-memory).
       const agent = await this.getOrCreateAgent(managed)
       sendSpan.mark('agent.ready')
-
-      // Always set all sources for context (even if none are enabled), including built-ins
-      const allSources = loadRuntimeAllSources(workspaceRootPath)
-      agent.setAllSources(allSources)
-      sendSpan.mark('sources.loaded')
-
-      // Keep existing source selections persisted, but remove all runtime bridges while disabled.
-      if (!dataSourcesEnabled) {
-        const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
-        await agent.setSourceServers({}, {}, [])
-        await applyBridgeUpdates(agent, sessionPath, [], {}, sessionId, workspaceRootPath, 'data sources disabled', managed.poolServer?.url)
-        sendSpan.mark('servers.disabled')
-      } else if (hasSources) {
-        const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
-        // Single fresh build — tokens already refreshed above.
-        const { mcpServers, apiServers, errors } = await buildServersFromSources(sources, sessionPath, managed.tokenRefreshManager, agent.getSummarizeCallback())
-        if (errors.length > 0) {
-          sessionLog.warn(`Source build errors:`, errors)
-        }
-
-        const mcpCount = Object.keys(mcpServers).length
-        const apiCount = Object.keys(apiServers).length
-        if (mcpCount > 0 || apiCount > 0 || enabledSlugs.length > 0) {
-          const usableSources = sources.filter(isSourceUsable)
-          const intendedSlugs = usableSources.map(s => s.config.slug)
-          await agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
-          await applyBridgeUpdates(agent, sessionPath, usableSources, mcpServers, sessionId, workspaceRootPath, 'send message', managed.poolServer?.url)
-          sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
-        }
-        sendSpan.mark('servers.applied')
-      }
 
       sessionLog.info('Starting chat for session:', sessionId)
       sessionLog.info('Workspace:', JSON.stringify(managed.workspace, null, 2))
@@ -5526,7 +4847,21 @@ export class SessionManager implements ISessionManager {
           }
         }
 
-        // Process the event first
+        const published = await this.publishProvisionalSessionIfReady(managed)
+        if (awaitsFirstAssistantPublication && published) acknowledge()
+        if (awaitsFirstAssistantPublication && managed.publicationState) {
+          if (managed.publicationState !== 'provisional') {
+            throw new Error('First turn was abandoned before publishing a session')
+          }
+          if (event.type === 'error') throw new Error(event.message)
+          if (event.type === 'typed_error') throw new Error(event.error.message || event.error.title)
+          if (event.type === 'complete') {
+            throw new Error('First turn completed before Pi persisted an assistant message')
+          }
+        }
+
+        // Process the event after the publication gate so no session event can
+        // outrun session_created for a provisional first turn.
         await this.processEvent(managed, event)
 
         if (event.type === 'pi_user_message_persisted') {
@@ -5623,6 +4958,9 @@ export class SessionManager implements ISessionManager {
       }
 
       // Loop exited - either via complete event (normal) or generator ended after soft interrupt
+      if (awaitsFirstAssistantPublication && managed.publicationState) {
+        throw new Error('First turn ended before Pi persisted an assistant message')
+      }
       if (!managed.isProcessing) {
         sessionLog.info('Chat loop exited after explicit handoff/stop')
         sendSpan.mark('chat.exit.already_stopped')
@@ -5634,6 +4972,17 @@ export class SessionManager implements ISessionManager {
         sessionLog.info('Chat loop exited unexpectedly')
       }
     } catch (error) {
+      if (awaitsFirstAssistantPublication && managed.publicationState) {
+        sendSpan.mark('chat.provisional_abandoned')
+        sendSpan.setMetadata('error', error instanceof Error ? error.message : String(error))
+        sendSpan.end()
+        await this.abandonProvisionalSession(
+          managed,
+          error instanceof Error ? error.message : String(error),
+        )
+        throw error
+      }
+
       // Check if this is an abort error (expected when interrupted)
       const isAbortError = error instanceof Error && (
         error.name === 'AbortError' ||
@@ -6367,80 +5716,6 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * 查找 workspace 下首个活跃的 Pi 会话 ID（用于 extension 命令委托载体）。
-   * 活跃 = agent 已加载且当前未在处理中。
-   */
-  private findActivePiSessionForWorkspace(workspaceRootPath: string): string | null {
-    for (const [sessionId, managed] of this.sessions) {
-      if (
-        managed.workspace.rootPath === workspaceRootPath &&
-        managed.agent &&
-        !managed.isProcessing
-      ) {
-        return sessionId
-      }
-    }
-    return null
-  }
-
-  /**
-   * 保底路径：原生执行 prompt automation（从 onPromptsReady 逻辑提取）。
-   * 当 delegatePromptAutomation 启用但扩展调用失败/无载体时使用。
-   */
-  private async executePromptsNative(
-    workspaceId: string,
-    workspaceRootPath: string,
-    prompts: PendingPrompt[],
-  ): Promise<void> {
-    await Promise.allSettled(
-      prompts.map((pending) =>
-        this.executePromptAutomation({
-          workspaceId,
-          workspaceRootPath,
-          prompt: pending.prompt,
-          permissionMode: pending.permissionMode,
-          mentions: pending.mentions,
-          provider: pending.provider,
-          model: pending.model,
-          thinkingLevel: pending.thinkingLevel,
-          automationName: pending.automationName,
-          telegramTopic: pending.telegramTopic,
-        }),
-      ),
-    )
-  }
-
-  /**
-   * Respond to a pending credential request
-   * Returns true if the response was delivered, false if no pending request found
-   *
-   * Supports both:
-   * - New unified auth flow (via handleCredentialInput)
-   * - Legacy callback flow (via pendingCredentialResolvers)
-   */
-  async respondToCredential(sessionId: string, requestId: string, response: import('@mortise/shared/protocol').CredentialResponse): Promise<boolean> {
-    // First, check if this is a new unified auth flow request
-    const managed = this.sessions.get(sessionId)
-    if (managed?.pendingAuthRequest && managed.pendingAuthRequest.requestId === requestId) {
-      sessionLog.info(`Credential response (unified flow) for ${requestId}: cancelled=${response.cancelled}`)
-      await this.handleCredentialInput(sessionId, requestId, response)
-      return true
-    }
-
-    // Fall back to legacy callback flow
-    const resolver = this.pendingCredentialResolvers.get(requestId)
-    if (resolver) {
-      sessionLog.info(`Credential response (legacy flow) for ${requestId}: cancelled=${response.cancelled}`)
-      resolver(response)
-      this.pendingCredentialResolvers.delete(requestId)
-      return true
-    } else {
-      sessionLog.warn(`Cannot respond to credential - no pending request for ${requestId}`)
-      return false
-    }
-  }
-
-  /**
    * Set the permission mode for a session ('safe', 'ask', 'allow-all')
    */
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): void {
@@ -6740,8 +6015,7 @@ export class SessionManager implements ISessionManager {
         const workspaceRootPath = managed.workspace.rootPath
         let toolDisplayMeta: ToolDisplayMeta | undefined
         if (formattedToolInput && Object.keys(formattedToolInput).length > 0) {
-          const allSources = loadRuntimeAllSources(workspaceRootPath)
-          toolDisplayMeta = await resolveToolDisplayMeta(event.toolName, formattedToolInput, workspaceRootPath, allSources)
+          toolDisplayMeta = await resolveToolDisplayMeta(event.toolName, formattedToolInput, workspaceRootPath)
         }
         const shouldActivateOverlay = shouldActivateBrowserOverlay(
           event.toolName,
@@ -6920,68 +6194,6 @@ export class SessionManager implements ISessionManager {
         }, workspaceId)
         break
 
-      case 'source_activated': {
-        // A source was auto-activated mid-turn. The server schedules a re-send of the
-        // original message with a "[<slug> activated]" suffix so headless deployments
-        // (WebUI, docker server) chain activations the same way the renderer used to.
-        // The renderer still receives the event to render activation feedback, but no
-        // longer fires its own auto_retry (see processor.ts).
-        sessionLog.info(`Source "${event.sourceSlug}" activated for session ${sessionId}, scheduling auto-retry`)
-
-        this.sendEvent({
-          type: 'source_activated',
-          sessionId,
-          sourceSlug: event.sourceSlug,
-          originalMessage: event.originalMessage,
-        }, workspaceId)
-
-        if (!managed) break
-
-        const originalMessage = event.originalMessage ?? ''
-        if (!originalMessage.trim()) {
-          sessionLog.warn(`Source "${event.sourceSlug}" activated for session ${sessionId}, but originalMessage was empty; skipping auto-retry`)
-          break
-        }
-
-        const messageWithSuffix = `${originalMessage}\n\n[${event.sourceSlug} activated]`
-        const userMessageCountAtSchedule = this.piProjectionBySession.get(sessionId)?.createSnapshot().entities
-          .filter(entity => entity.kind === 'user_text').length ?? 0
-
-        // Stash the retry payload so a duplicate sendMessage from a legacy renderer
-        // (mixed-version rollout: new server + v0.9.5 Electron client) gets deduped.
-        // 2s window covers WS latency tail on flaky mobile / proxy links.
-        managed.autoRetryPending = {
-          content: messageWithSuffix,
-          deadlineMs: Date.now() + 2000,
-          committed: false,
-        }
-
-        if (managed.autoRetryTimer) clearTimeout(managed.autoRetryTimer)
-        managed.autoRetryTimer = setTimeout(() => {
-          const current = this.sessions.get(sessionId)
-          if (!current) return
-          current.autoRetryTimer = undefined
-
-          // If a user follow-up arrived in the 100ms window, skip — they preempted us.
-          const currentUserMessageCount = this.piProjectionBySession.get(sessionId)?.createSnapshot().entities
-            .filter(entity => entity.kind === 'user_text').length ?? 0
-          if (currentUserMessageCount > userMessageCountAtSchedule) {
-            sessionLog.info(`Auto-retry skipped for ${sessionId}: follow-up message arrived first`)
-            current.autoRetryPending = undefined
-            return
-          }
-
-          // Note: do NOT clear autoRetryPending here — sendMessage() needs to see it
-          // so a legacy renderer's duplicate RPC arriving ~50ms later gets dropped.
-          // The pending slot is cleared by the deadline check in sendMessage, by the
-          // next matching sendMessage that drops as a duplicate, or by session deletion.
-          this.sendMessage(sessionId, messageWithSuffix).catch(err => {
-            sessionLog.error(`Auto-retry sendMessage failed for ${sessionId}:`, err)
-          })
-        }, 100)
-        break
-      }
-
       case 'complete':
         // Complete event from MortiseAgent - accumulate usage from this turn
         // Actual 'complete' sent to renderer comes from the finally block in sendMessage
@@ -7058,6 +6270,11 @@ export class SessionManager implements ISessionManager {
   }
 
   private sendEvent(event: SessionEvent, workspaceId?: string): void {
+    const managed = 'sessionId' in event && typeof event.sessionId === 'string'
+      ? this.sessions.get(event.sessionId)
+      : undefined
+    if (managed?.publicationState) return
+
     if (!this.eventSink) {
       sessionLog.warn('Cannot send event - no event sink')
       return
@@ -7071,112 +6288,319 @@ export class SessionManager implements ISessionManager {
     this.eventSink(RPC_CHANNELS.sessions.EVENT, { to: 'workspace', workspaceId }, event)
   }
 
-  /**
-   * Execute a prompt automation by creating a new session and sending the prompt.
-   *
-   * The options-object form replaced the previous positional-args signature
-   * once the param list outgrew readability — `thinkingLevel` was the trigger.
-   * When `thinkingLevel` is omitted, `createSession` uses the global default.
-   */
-  async executePromptAutomation(
-    input: ExecutePromptAutomationInput,
-  ): Promise<{ sessionId: string }> {
-    const {
-      workspaceId,
-      workspaceRootPath,
-      prompt,
-      permissionMode,
-      mentions,
-      provider,
-      model,
-      thinkingLevel,
-      automationName,
-      telegramTopic,
-    } = input
-
-    const automationProvider = hasConfiguredPiProvider(provider) ? provider : undefined
-    if (provider && !automationProvider) {
-      sessionLog.warn(`[Automations] provider "${provider}" not found, using default`)
+  private async executeNewAutomationSession(input: {
+    workspaceId: string
+    prompt: string
+    permissionMode?: PermissionMode
+    provider?: string
+    model?: string
+    thinkingLevel?: string
+    automationName?: string
+    eventType?: string
+    telegramTopic?: string
+    skillSlugs?: string[]
+    signal?: AbortSignal
+  }): Promise<{ sessionId: string }> {
+    const automationProvider = hasConfiguredPiProvider(input.provider) ? input.provider : undefined
+    if (input.provider && !automationProvider) {
+      sessionLog.warn(`[Automations] provider "${input.provider}" not found, using default`)
     }
 
-    // Resolve @mentions to source/skill slugs
-    const resolved = mentions ? this.resolveAutomationMentions(workspaceRootPath, mentions) : undefined
-
-    // Use automation name if provided, otherwise fall back to prompt snippet
-    const fallback = `Automation: ${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`
-    const sessionName = automationName || fallback
-
-    // Create a new session for this automation
-    const session = await this.createSession(workspaceId, {
-      name: sessionName,
-      permissionMode: permissionMode || 'safe',
-      enabledSourceSlugs: resolved?.sourceSlugs,
-      provider: automationProvider,
-      model,
-      thinkingLevel,
+    const fallback = `Automation: ${input.prompt.slice(0, 50)}${input.prompt.length > 50 ? '...' : ''}`
+    const sessionName = input.automationName || fallback
+    const result = await this.createAndSendFirstTurn({
+      workspaceId: input.workspaceId,
+      message: input.prompt,
+      createOptions: {
+        name: sessionName,
+        permissionMode: input.permissionMode || 'safe',
+        provider: automationProvider,
+        model: input.model,
+        thinkingLevel: normalizeThinkingLevel(input.thinkingLevel),
+      },
+      sendOptions: input.skillSlugs?.length ? { skillSlugs: input.skillSlugs } : undefined,
+      signal: input.signal,
+    }, async managed => {
+      // This metadata remains memory-only until the first assistant-backed Pi
+      // publication transaction flushes the complete Session.
+      managed.triggeredBy = {
+        automationName: input.automationName,
+        event: input.eventType,
+        timestamp: Date.now(),
+      }
     })
 
-    // Populate triggeredBy metadata so title generation is explicitly skipped
-    // and the session is identifiable as automation-initiated after reload
-    const managed = this.sessions.get(session.id)
-    if (managed) {
-      managed.triggeredBy = { automationName, timestamp: Date.now() }
-      this.persistSession(managed)
-    }
-
-    // Notify renderer to hydrate full session metadata (including title)
-    // before streaming events arrive. Without this, the renderer may create
-    // a synthetic empty session and temporarily show "New chat".
-    this.sendEvent({ type: 'session_created', sessionId: session.id }, workspaceId)
-
-    // Bind the new session to its Telegram forum topic if the matcher
-    // declared `telegramTopic`. Done before `sendMessage` so the first
-    // assistant tokens already route through the bound topic. Failure
-    // is logged inside the binder; the session continues unbound.
-    if (this.automationBinder && telegramTopic && telegramTopic.trim().length > 0) {
+    // Binding writes messaging state, so it happens only after the Session has
+    // crossed the assistant-backed publication boundary. It remains best-effort.
+    const topicName = input.telegramTopic?.trim()
+    if (this.automationBinder && topicName) {
       try {
         await this.automationBinder({
-          workspaceId,
-          sessionId: session.id,
-          topicName: telegramTopic.trim(),
+          workspaceId: input.workspaceId,
+          sessionId: result.session.id,
+          topicName,
         })
-      } catch (err) {
+      } catch (error) {
         sessionLog.warn('[Automations] automation binder threw', {
-          sessionId: session.id,
-          telegramTopic,
-          error: err instanceof Error ? err.message : String(err),
+          sessionId: result.session.id,
+          telegramTopic: input.telegramTopic,
+          error: error instanceof Error ? error.message : String(error),
         })
       }
     }
 
-    // Send the prompt
-    await this.sendMessage(session.id, prompt, undefined, undefined, {
+    return { sessionId: result.session.id }
+  }
+
+  /** Compatibility entry point for V2 prompt actions. */
+  async executePromptAutomation(
+    input: ExecutePromptAutomationInput,
+  ): Promise<{ sessionId: string }> {
+    const resolved = input.mentions
+      ? this.resolveAutomationMentions(input.workspaceRootPath, input.mentions)
+      : undefined
+    return this.executeNewAutomationSession({
+      workspaceId: input.workspaceId,
+      prompt: input.prompt,
+      permissionMode: input.permissionMode,
+      provider: input.provider,
+      model: input.model,
+      thinkingLevel: input.thinkingLevel,
+      automationName: input.automationName,
+      telegramTopic: input.telegramTopic,
       skillSlugs: resolved?.skillSlugs,
     })
+  }
 
-    return { sessionId: session.id }
+  /** Execute the Session-owned portion of a canonical V3 prompt action. */
+  async executeAutomationPromptAction(
+    action: PromptActionV3,
+    context: AutomationExecutionContextV1,
+  ): Promise<AutomationActionExecutionResultV1> {
+    if (context.event && context.event.workspaceId !== context.workspaceId) {
+      return this.automationActionError('blocked', 'event_workspace_mismatch', 'The trusted event belongs to another workspace')
+    }
+    if (context.signal?.aborted) {
+      return this.automationActionError('cancelled', 'action_cancelled', 'The automation action was cancelled')
+    }
+
+    const prompt = action.eventData === 'append-json' && context.event
+      ? `${action.prompt}\n\nEvent payload:\n${JSON.stringify(context.event.cloudEvent.data).slice(0, 65_536)}`
+      : action.prompt
+    const target = action.target
+    if (target.kind === 'new-session') {
+      if (target.provider && !hasConfiguredPiProvider(target.provider)) {
+        return this.automationActionError('blocked', 'provider_not_found', `Provider "${target.provider}" is not configured`)
+      }
+      if (target.thinkingLevel && !normalizeThinkingLevel(target.thinkingLevel)) {
+        return this.automationActionError('blocked', 'thinking_level_invalid', `Thinking level "${target.thinkingLevel}" is not supported`)
+      }
+      try {
+        const created = await this.executeNewAutomationSession({
+          workspaceId: context.workspaceId,
+          prompt,
+          permissionMode: target.permissionMode,
+          provider: target.provider,
+          model: target.model,
+          thinkingLevel: target.thinkingLevel,
+          automationName: context.definition.name,
+          eventType: context.event?.cloudEvent.type,
+          telegramTopic: target.telegramTopic,
+          signal: context.signal,
+        })
+        return { status: 'succeeded', sessionId: created.sessionId }
+      } catch (error) {
+        const cancelled = context.signal?.aborted
+        return this.automationActionError(
+          cancelled ? 'cancelled' : 'failed',
+          cancelled ? 'action_cancelled' : 'session_first_turn_failed',
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+    }
+
+    if (target.kind === 'session') {
+      const resolved = this.resolveAutomationSessionReference(context, target.session)
+      if ('error' in resolved) return resolved.error
+      try {
+        await this.deliverAutomationSessionPrompt(resolved.managed, prompt, target.delivery, context.signal)
+        return { status: 'succeeded', sessionId: resolved.managed.id }
+      } catch (error) {
+        return this.automationActionError(
+          context.signal?.aborted ? 'cancelled' : 'failed',
+          context.signal?.aborted ? 'action_cancelled' : 'session_delivery_failed',
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+    }
+
+    if (target.provider && !hasConfiguredPiProvider(target.provider)) {
+      return this.automationActionError('blocked', 'provider_not_found', `Provider "${target.provider}" is not configured`)
+    }
+    const thinkingLevel = normalizeThinkingLevel(target.thinkingLevel)
+    if (target.thinkingLevel && !thinkingLevel) {
+      return this.automationActionError('blocked', 'thinking_level_invalid', `Thinking level "${target.thinkingLevel}" is not supported`)
+    }
+
+    const workspace = getWorkspaceByNameOrId(context.workspaceId)
+    if (!workspace) {
+      return this.automationActionError('blocked', 'workspace_not_found', `Workspace ${context.workspaceId} was not found`)
+    }
+    const backendContext = resolveBackendContext({
+      sessionProvider: target.provider,
+      managedModel: target.model,
+    })
+    const isolated = createBackendFromResolvedContext({
+      context: backendContext,
+      hostRuntime: buildBackendHostRuntimeContext(),
+      coreConfig: {
+        workspace,
+        session: {
+          mortiseId: `automation-isolated-${randomUUID()}`,
+          workspaceRootPath: workspace.rootPath,
+          createdAt: Date.now(),
+          lastUsedAt: Date.now(),
+          workingDirectory: workspace.rootPath,
+          sdkCwd: workspace.rootPath,
+          model: target.model,
+          provider: target.provider,
+          permissionMode: target.permissionMode ?? 'safe',
+        },
+        model: target.model,
+        miniModel: target.model ?? backendContext.resolvedModel,
+        thinkingLevel,
+        systemPromptPreset: 'mini',
+        envOverrides: { MORTISE_WORKSPACE_PATH: workspace.rootPath },
+        isHeadless: true,
+        skipConfigWatcher: true,
+      },
+      providerOptions: { piAuthProvider: backendContext.providerKey },
+    })
+
+    try {
+      const output = await isolated.runIsolatedAgent({
+        prompt,
+        ...(target.provider ? { provider: target.provider } : {}),
+        ...(target.model ? { model: target.model } : {}),
+        ...(thinkingLevel ? { thinkingLevel } : {}),
+        ...(context.signal ? { signal: context.signal } : {}),
+      })
+      if (!output) {
+        return this.automationActionError('failed', 'isolated_agent_no_result', 'The isolated Agent returned no result')
+      }
+      const boundedOutput = output.slice(0, 65_536)
+      if (!target.notify) return { status: 'succeeded', details: { kind: 'isolated-agent', output: boundedOutput, notification: 'none' } }
+
+      const notifyTarget = this.resolveAutomationSessionReference(context, target.notify.session)
+      if ('error' in notifyTarget) return notifyTarget.error
+      const notification = this.formatAutomationNotification(context.definition.name, output)
+      try {
+        await this.deliverAutomationSessionPrompt(
+          notifyTarget.managed,
+          notification,
+          target.notify.delivery,
+          context.signal,
+        )
+      } catch (error) {
+        return this.automationActionError(
+          context.signal?.aborted ? 'cancelled' : 'failed',
+          context.signal?.aborted ? 'action_cancelled' : 'notification_delivery_failed',
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+      return { status: 'succeeded', sessionId: notifyTarget.managed.id, details: { kind: 'isolated-agent', output: boundedOutput, notification: 'delivered' } }
+    } catch (error) {
+      return this.automationActionError(
+        context.signal?.aborted ? 'cancelled' : 'failed',
+        context.signal?.aborted ? 'action_cancelled' : 'isolated_agent_failed',
+        error instanceof Error ? error.message : String(error),
+      )
+    } finally {
+      isolated.destroy()
+    }
+  }
+
+  private resolveAutomationSessionReference(
+    context: AutomationExecutionContextV1,
+    reference: SessionReferenceV1,
+  ): { managed: ManagedSession } | { error: AutomationActionExecutionResultV1 } {
+    const sessionId = reference === 'event-session' ? context.event?.sessionId : reference.id
+    if (!sessionId) {
+      return { error: this.automationActionError('blocked', 'event_session_unavailable', 'The trusted event has no Session identity') }
+    }
+    const managed = this.sessions.get(sessionId)
+    if (!managed || managed.publicationState) {
+      return { error: this.automationActionError('blocked', 'session_not_found', `Session ${sessionId} was not found`) }
+    }
+    if (managed.workspace.id !== context.workspaceId) {
+      return { error: this.automationActionError('blocked', 'session_workspace_mismatch', `Session ${sessionId} belongs to another workspace`) }
+    }
+    return { managed }
+  }
+
+  private async deliverAutomationSessionPrompt(
+    managed: ManagedSession,
+    prompt: string,
+    delivery: 'followUp' | 'steer',
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (signal?.aborted) throw signal.reason ?? new Error('Automation action cancelled')
+    const desiredBehavior = delivery === 'followUp' ? 'queue' : 'steer'
+    const midStreamSendIntent = getMidStreamBehavior() === desiredBehavior ? 'default' : 'alternate'
+
+    await new Promise<void>((resolve, reject) => {
+      let acknowledged = false
+      void this.sendMessage(
+        managed.id,
+        prompt,
+        undefined,
+        undefined,
+        { midStreamSendIntent },
+        undefined,
+        undefined,
+        () => {
+          acknowledged = true
+          resolve()
+        },
+      ).then(() => {
+        if (!acknowledged) reject(new Error(`Session ${managed.id} did not acknowledge the automation message`))
+      }).catch(error => {
+        if (!acknowledged) reject(error)
+        else sessionLog.warn(`[Automations] Session ${managed.id} failed after accepting an automation message`, error)
+      })
+    })
+  }
+
+  private formatAutomationNotification(automationName: string, output: string): string {
+    const prefix = `Automation "${automationName}" completed.\n\n`
+    const available = Math.max(0, AUTOMATION_NOTIFICATION_MAX_CHARS - prefix.length)
+    return `${prefix}${output.slice(0, available)}`
+  }
+
+  private automationActionError(
+    status: 'failed' | 'blocked' | 'cancelled',
+    code: string,
+    message: string,
+  ): AutomationActionExecutionResultV1 {
+    return { status, error: { code, message, retryable: false } }
   }
 
   /**
-   * Resolve @mentions in automation prompts to source and skill slugs
+   * Resolve @mentions in automation prompts to skill slugs
    */
-  private resolveAutomationMentions(workspaceRootPath: string, mentions: string[]): { sourceSlugs: string[]; skillSlugs: string[] } | undefined {
-    const sources = loadRuntimeWorkspaceSources(workspaceRootPath)
+  private resolveAutomationMentions(workspaceRootPath: string, mentions: string[]): { skillSlugs: string[] } | undefined {
     const skills = loadAllSkills(workspaceRootPath)
-    const sourceSlugs: string[] = []
     const skillSlugs: string[] = []
 
     for (const mention of mentions) {
-      if (sources.some(s => s.config.slug === mention)) {
-        sourceSlugs.push(mention)
-      } else if (skills.some(s => s.slug === mention)) {
+      if (skills.some(s => s.slug === mention)) {
         skillSlugs.push(mention)
       } else {
         sessionLog.warn(`[Automations] Unknown mention: @${mention}`)
       }
     }
 
-    return (sourceSlugs.length > 0 || skillSlugs.length > 0) ? { sourceSlugs, skillSlugs } : undefined
+    return skillSlugs.length > 0 ? { skillSlugs } : undefined
   }
 
   // ============================================
@@ -7387,17 +6811,6 @@ export class SessionManager implements ISessionManager {
       storedSession.workingDirectory = workspaceRootPath
     }
 
-    // Check source compatibility (before writing JSONL so fixes are persisted)
-    if (storedSession.enabledSourceSlugs?.length) {
-      const availableSources = loadWorkspaceSources(workspaceRootPath)
-      const availableSlugs = new Set(availableSources.map(s => s.config.slug))
-      const missingSources = storedSession.enabledSourceSlugs.filter(s => !availableSlugs.has(s))
-      if (missingSources.length > 0) {
-        sessionLog.warn(`[import] Sources not available: ${missingSources.join(', ')}`)
-        warnings.push(`Sources not available in target workspace: ${missingSources.join(', ')}`)
-      }
-    }
-
     // Check Pi provider compatibility for move mode (fork already cleared above)
     if (mode === 'move' && storedSession.provider) {
       sessionLog.info(`[import] Checking Pi provider: "${storedSession.provider}"`)
@@ -7456,15 +6869,7 @@ export class SessionManager implements ISessionManager {
     }
 
     this.sessions.set(sessionId, managed)
-
-    // Initialize automation metadata
-    const automationSystem = this.automationSystems.get(workspaceRootPath)
-    if (automationSystem) {
-      automationSystem.setInitialSessionMetadata(sessionId, {
-        permissionMode: storedSession.permissionMode,
-        sessionName: managed.name,
-      })
-    }
+    this.automationSessionMetadata.set(sessionId, { permissionMode: storedSession.permissionMode, sessionName: managed.name })
 
     // Emit session_created so renderer picks it up
     this.sendEvent({ type: 'session_created', sessionId }, workspaceId)
@@ -7508,7 +6913,13 @@ export class SessionManager implements ISessionManager {
       }
     }
     await Promise.all([...this.sessions.values()].map(managed => this.flushPiProjectionWrites(managed)))
+    await Promise.all(
+      [...this.sessions.values()]
+        .filter(managed => managed.publicationState)
+        .map(managed => deleteStoredSession(managed.workspace.rootPath, managed.id)),
+    )
     this.sessions.clear()
+    this.automationSessionMetadata.clear()
     this.piProjectionBySession.clear()
     this.piProjectionRetiredRuntimeIds.clear()
     this.piProjectionWrites.clear()
@@ -7521,19 +6932,17 @@ export class SessionManager implements ISessionManager {
     }
     this.configWatchers.clear()
 
-    // Dispose all AutomationSystems (includes scheduler, handlers, and event loggers)
-    for (const [workspacePath, automationSystem] of this.automationSystems) {
+    // Stop canonical schedulers and wait for in-flight automation actions.
+    for (const [workspacePath, host] of this.automationHosts) {
       try {
-        automationSystem.dispose()
-        sessionLog.info(`Disposed AutomationSystem for ${workspacePath}`)
+        await host.stop()
+        sessionLog.info(`Stopped Automations V3 host for ${workspacePath}`)
       } catch (error) {
-        sessionLog.error(`Failed to dispose AutomationSystem for ${workspacePath}:`, error)
+        sessionLog.error(`Failed to stop Automations V3 host for ${workspacePath}:`, error)
       }
     }
-    this.automationSystems.clear()
+    this.automationHosts.clear()
 
-    // Clear pending credential resolvers (they won't be resolved, but prevents memory leak)
-    this.pendingCredentialResolvers.clear()
     this.pendingPermissionRequests.clear()
     this.adminRememberApprovals.clear()
 

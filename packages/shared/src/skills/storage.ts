@@ -32,25 +32,6 @@ export function validateSkillSlug(slug: unknown): string | null {
   return slug;
 }
 
-function normalizeRequiredSources(value: unknown): string[] | undefined {
-  const asArray = typeof value === 'string'
-    ? [value]
-    : Array.isArray(value)
-      ? value
-      : undefined;
-
-  if (!asArray) return undefined;
-
-  const normalized = Array.from(new Set(
-    asArray
-      .filter((entry): entry is string => typeof entry === 'string')
-      .map(entry => entry.trim())
-      .filter(Boolean),
-  ));
-
-  return normalized.length > 0 ? normalized : undefined;
-}
-
 function metadataFromHostSkill(skill: HostSkillSummary): SkillMetadata {
   const frontmatter = skill.frontmatter ?? {};
   return {
@@ -59,7 +40,6 @@ function metadataFromHostSkill(skill: HostSkillSummary): SkillMetadata {
     globs: Array.isArray(frontmatter.globs) ? frontmatter.globs.filter((entry): entry is string => typeof entry === 'string') : undefined,
     alwaysAllow: Array.isArray(frontmatter.alwaysAllow) ? frontmatter.alwaysAllow.filter((entry): entry is string => typeof entry === 'string') : undefined,
     icon: validateIconValue(frontmatter.icon, 'Skills'),
-    requiredSources: normalizeRequiredSources(frontmatter.requiredSources),
   };
 }
 

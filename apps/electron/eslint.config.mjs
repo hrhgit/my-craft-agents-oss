@@ -14,7 +14,6 @@ import noLocalStorage from './eslint-rules/no-localstorage.cjs'
 import noDirectPlatformCheck from './eslint-rules/no-direct-platform-check.cjs'
 import noHardcodedPathSeparator from './eslint-rules/no-hardcoded-path-separator.cjs'
 import noDirectFileOpen from './eslint-rules/no-direct-file-open.cjs'
-import noInlineSourceAuthCheck from './eslint-rules/no-inline-source-auth-check.cjs'
 import noHardcodedZIndex from './eslint-rules/no-hardcoded-z-index.cjs'
 import noNonstandardShadows from './eslint-rules/no-nonstandard-shadows.cjs'
 
@@ -72,12 +71,6 @@ export default [
           'no-direct-file-open': noDirectFileOpen,
         },
       },
-      // Custom plugin for source auth checks (shared with packages/shared)
-      'mortise-sources': {
-        rules: {
-          'no-inline-source-auth-check': noInlineSourceAuthCheck,
-        },
-      },
       // Custom style rules
       'mortise-styles': {
         rules: {
@@ -108,9 +101,6 @@ export default [
 
       // Custom link interceptor rule — prevents bypassing in-app file preview
       'mortise-links/no-direct-file-open': 'error',
-
-      // Custom source auth check rule — use isSourceUsable() instead of inline checks
-      'mortise-sources/no-inline-source-auth-check': 'error',
 
       // Custom style rule — use z-index token scale instead of hardcoded literals
       'mortise-styles/no-hardcoded-z-index': 'error',

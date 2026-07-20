@@ -15,7 +15,7 @@ scroll down 800, screenshot, wait network-idle 8000, windows, release, close.`,
       additionalProperties: false,
     },
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const result = await ctx.capabilities.invoke("browser.command", "execute", { command: params.command }, { signal });
+      const result = await ctx.capabilities.invoke("browser.command", "execute", { command: params.command }, { signal, timeoutMs: 35000 });
       if (result.status !== "success") {
         return { content: [{ type: "text", text: result.error?.message ?? `Browser command ${result.status}` }], details: { status: result.status }, isError: true };
       }

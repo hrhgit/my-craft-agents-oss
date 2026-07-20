@@ -27,7 +27,7 @@ import { useWorkspaceIcons } from '@/hooks/useWorkspaceIcon'
 import { cn } from '@/lib/utils'
 import type { Workspace, ExportResourcesOptions, ResourceImportMode } from '../../../shared/types'
 
-export type SendResourceType = 'source' | 'skill' | 'automation'
+export type SendResourceType = 'skill' | 'automation'
 
 export interface SendResourceToWorkspaceDialogProps {
   open: boolean
@@ -36,7 +36,7 @@ export interface SendResourceToWorkspaceDialogProps {
   resourceType: SendResourceType
   /** Slug(s) or ID(s) of resources to send */
   resourceIds: string[]
-  /** Display label for the dialog description (e.g., "Slack source") */
+  /** Display label for the dialog description */
   resourceLabel: string
   /** All workspaces */
   workspaces: Workspace[]
@@ -47,7 +47,6 @@ export interface SendResourceToWorkspaceDialogProps {
 }
 
 const RESOURCE_TYPE_LABELS: Record<SendResourceType, { singular: string; plural: string }> = {
-  source: { singular: 'source', plural: 'sources' },
   skill: { singular: 'skill', plural: 'skills' },
   automation: { singular: 'automation', plural: 'automations' },
 }
@@ -132,8 +131,7 @@ export function SendResourceToWorkspaceDialog({
     try {
       // 1. Export the selected resource(s) from current workspace
       const exportOptions: ExportResourcesOptions = {}
-      if (resourceType === 'source') exportOptions.sources = resourceIds
-      else if (resourceType === 'skill') exportOptions.skills = resourceIds
+      if (resourceType === 'skill') exportOptions.skills = resourceIds
       else if (resourceType === 'automation') exportOptions.automations = resourceIds
 
       const { bundle, warnings: exportWarnings } = await window.electronAPI.exportResources(

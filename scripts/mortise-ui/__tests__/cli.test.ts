@@ -54,14 +54,21 @@ describe('mortise-ui CLI', () => {
       lastRevision: 0,
       verificationLevel: 'scenario-verified',
     }))
+    writeFileSync(join(artifactsDir, 'manifest.json'), '{broken')
+    const listed = await runCli(['runs', 'list', '--run-root', runRoot, '--all'])
+    expect(listed.code).toBe(0)
+    expect(listed.json.result.runs[0].attention[0]).toContain('Evidence manifest is unavailable')
+    rmSync(join(artifactsDir, 'manifest.json'))
     const status = await runCli(['status', '--run-root', runRoot, '--run', runId])
     expect(status.code).toBe(0)
     expect(status.json.result.processAlive).toBe(false)
 
     const stopped = await runCli(['stop', '--run-root', runRoot, '--run', runId])
     expect(stopped.code).toBe(0)
-    expect(stopped.json.result.manifest.status).toBe('stopped')
-    expect(stopped.json.result.manifest.profileCleanedAt).toBeString()
+    expect(stopped.json.result.cleanup).toMatchObject({ profileRemoved: true })
+    expect(stopped.json.result.manifest).toBeUndefined()
+    const inspected = await runCli(['runs', 'inspect', '--run-root', runRoot, '--run', runId])
+    expect(inspected.json.result.manifest).toMatchObject({ status: 'stopped', profileCleanedAt: expect.any(String) })
   })
 
   it('exposes the fixture schema before a run exists', async () => {
@@ -80,7 +87,7 @@ describe('mortise-ui CLI', () => {
     const adapter = JSON.stringify([process.execPath, join(import.meta.dir, '..', 'test-host.fixture.ts')])
     const started = await runCli([
       'start', '--run-root', runRoot, '--adapter-command-json', adapter,
-      '--extension', first, '--extension', second,
+      '--extension', first, '--extension', second, '--full',
     ])
     expect(started.code).toBe(0)
     const manifest = started.json.result.manifest
@@ -111,7 +118,7 @@ describe('mortise-ui CLI', () => {
       }],
     }))
     const label = 'cli-lifecycle'
-    const started = await runCli(['start', '--label', label, '--run-root', runRoot, '--adapter-command-json', adapter, '--fixture', fixturePath, '--window-mode', 'background'])
+    const started = await runCli(['start', '--label', label, '--run-root', runRoot, '--adapter-command-json', adapter, '--fixture', fixturePath, '--window-mode', 'background', '--full'])
     expect(started.code).toBe(0)
     expectEnvelope(started.json)
     expect(started.json.result.manifest.profileMode).toBe('fixture')
@@ -155,7 +162,7 @@ describe('mortise-ui CLI', () => {
       const stopped = await runCli(['stop', '--run-root', runRoot, '--run', label])
       expect(stopped.code).toBe(0)
       expectEnvelope(stopped.json, runId)
-      expect(stopped.json.result.manifest.status).toBe('stopped')
+      expect(stopped.json.result.cleanup).toMatchObject({ profileRemoved: true })
     }
   }, 30_000)
 
@@ -187,11 +194,13 @@ describe('mortise-ui CLI', () => {
       stderrTail: expect.stringContaining('fixture startup failed'),
       cleanup: { attempted: true, remainingPids: [], profileRemoved: true },
     })
-    expect(result.json.error.details.nextCommands).toContain('mortise-ui status --run failed-start')
+    expect(result.json.error.details.nextActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'status', argv: expect.arrayContaining(['--run', result.json.runId, '--run-root', runRoot]) }),
+    ]))
     const evidence = await runCli(['evidence', '--run-root', runRoot, '--run', 'failed-start'])
     expect(evidence.code).toBe(0)
     expect(evidence.json.result).toMatchObject({ hostAvailable: false, manifest: { status: 'failed' } })
-    expect(evidence.json.result.artifactManifest.artifacts.some((item: { path: string }) => item.path.endsWith('host.stderr.redacted.log'))).toBe(true)
+    expect(evidence.json.result.briefing.highlights.some((item: { path: string }) => item.path.endsWith('host.stderr.redacted.log'))).toBe(true)
   }, 10_000)
 
   it('classifies adapter-reported build failures before the endpoint opens', async () => {
@@ -224,7 +233,7 @@ describe('mortise-ui CLI', () => {
     const runRoot = mkdtempSync(join(tmpdir(), 'mortise-ui-cli-no-wait-')); roots.push(runRoot)
     const adapterPath = join(import.meta.dir, 'process-tree.fixture.ts')
     const adapter = JSON.stringify([process.execPath, adapterPath])
-    const started = await runCli(['start', '--run-root', runRoot, '--adapter-command-json', adapter, '--no-wait'])
+    const started = await runCli(['start', '--run-root', runRoot, '--adapter-command-json', adapter, '--no-wait', '--full'])
     expect(started.code).toBe(0)
     expect(started.json.result).toMatchObject({ accepted: true, ready: false, manifest: { windowMode: 'background', status: 'starting' } })
     const manifest = started.json.result.manifest
@@ -237,7 +246,7 @@ describe('mortise-ui CLI', () => {
 
     const stopped = await runCli(['stop', '--run-root', runRoot, '--run', manifest.runId])
     expect(stopped.code).toBe(0)
-    expect(stopped.json.result.manifest.status).toBe('stopped')
+    expect(stopped.json.result.cleanup).toMatchObject({ profileRemoved: true })
     expect(isPidAlive(descendantPid)).toBe(false)
     expect(isPidAlive(manifest.launcherPid)).toBe(false)
   }, 15_000)
@@ -261,6 +270,70 @@ describe('mortise-ui CLI', () => {
     expectEnvelope(result.json, 'unassigned')
     expect(result.json).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
   })
+
+  it('gives AI callers run discovery, action observation, resume history, and safe pruning', async () => {
+    const runRoot = mkdtempSync(join(tmpdir(), 'mortise-ui-cli-ai-workflow-')); roots.push(runRoot)
+    const adapter = JSON.stringify([process.execPath, join(import.meta.dir, '..', 'test-host.fixture.ts')])
+    const started = await runCli(['start', '--label', 'ai-workflow', '--run-root', runRoot, '--adapter-command-json', adapter])
+    expect(started.code).toBe(0)
+    const runId = started.json.runId as string
+
+    const listed = await runCli(['runs', 'list', '--run-root', runRoot])
+    expect(listed.code).toBe(0)
+    expect(listed.json.result.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ identity: { runId, label: 'ai-workflow', surface: 'electron' } }),
+    ]))
+
+    const snapshot = await runCli(['snapshot', '--run-root', runRoot, '--run', runId])
+    expect(snapshot.code).toBe(0)
+    expect(snapshot.json.result.briefing).toMatchObject({
+      summary: expect.stringContaining('Mortise Fixture'),
+      targets: [expect.objectContaining({ label: 'Reload extensions', suggestedAction: { target: { semanticId: 'settings.extensions.reload' }, action: 'click' } })],
+    })
+    expect(snapshot.json.result.snapshot).toBeUndefined()
+    expect(snapshot.json.result.disclosure.details).toMatchObject({ command: 'snapshot', argv: ['--full-observation'] })
+    const fullSnapshot = await runCli(['snapshot', '--run-root', runRoot, '--run', runId, '--full-observation'])
+    expect(fullSnapshot.json.result.snapshot.regions.main).toBeArray()
+
+    const relevant = await runCli(['capabilities', 'relevant', '--run-root', runRoot, '--run', runId])
+    expect(relevant.code).toBe(0)
+    expect(relevant.json.result).toMatchObject({
+      capabilities: { operation: 'relevant', currentActions: ['click'] },
+      briefing: { targets: [expect.objectContaining({ label: 'Reload extensions' })] },
+    })
+
+    const action = await runCli(['action', '--run-root', runRoot, '--run', runId, '--params', JSON.stringify({
+      target: { semanticId: 'settings.extensions.reload' }, action: 'click',
+    })])
+    expect(action.code).toBe(0)
+    expect(action.json.result).toMatchObject({
+      action: { targetResolved: { name: 'Reload extensions' } },
+      observed: { revision: expect.any(Number), window: expect.any(Object) },
+      semanticDelta: expect.any(Object),
+      briefing: { targets: expect.any(Array) },
+    })
+    expect(action.json.result.observed.regions).toBeUndefined()
+    expect(action.json.result.semanticDelta.changes).toBeUndefined()
+
+    writeFileSync(join(runRoot, runId, 'artifacts', 'manifest.json'), '{broken')
+    const resumed = await runCli(['resume', '--run-root', runRoot, '--run', runId])
+    expect(resumed.code).toBe(0)
+    expect(resumed.json.result.briefing.attention[0]).toContain('Evidence manifest is unavailable')
+    expect(resumed.json.result.resume.evidence.artifactCount).toBe(0)
+    expect(resumed.json.result.resume.recentActivity).toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'action', outcome: 'succeeded' }),
+    ]))
+    expect(resumed.json.result.manifest).toBeUndefined()
+
+    const stopped = await runCli(['stop', '--run-root', runRoot, '--run', runId])
+    expect(stopped.code).toBe(0)
+    const preview = await runCli(['runs', 'prune', '--run-root', runRoot, '--keep', '0', '--older-than-hours', '0'])
+    expect(preview.json.result).toMatchObject({ applied: false, candidateRunIds: [runId], removedRunIds: [] })
+    expect(existsSync(join(runRoot, runId))).toBe(true)
+    const pruned = await runCli(['runs', 'prune', '--run-root', runRoot, '--keep', '0', '--older-than-hours', '0', '--apply'])
+    expect(pruned.json.result).toMatchObject({ applied: true, removedRunIds: [runId] })
+    expect(existsSync(join(runRoot, runId))).toBe(false)
+  }, 30_000)
 })
 
 function expectEnvelope(value: any, runId?: string): void {

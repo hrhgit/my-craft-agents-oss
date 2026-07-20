@@ -11,10 +11,11 @@
 
 import { join } from 'node:path';
 import { createPiSkillResolver } from '@mortise/shared/pi/skill-resolver';
+import { readSessionHeader, sanitizeSessionId, tryGetSessionFilePath } from '@mortise/shared/sessions';
+import { expandPath } from '@mortise/shared/utils';
 import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { errorResponse } from '../response.ts';
-import { resolveSessionWorkingDirectory } from '../source-helpers.ts';
 import {
   validateSlug,
   validateSkillContent,
@@ -23,6 +24,13 @@ import {
 
 export interface SkillValidateArgs {
   skillSlug: string;
+}
+
+function resolveSessionWorkingDirectory(workspacePath: string, sessionId: string): string | undefined {
+  const sessionFile = tryGetSessionFilePath(workspacePath, sanitizeSessionId(sessionId));
+  if (!sessionFile) return undefined;
+  const workingDirectory = readSessionHeader(sessionFile)?.workingDirectory;
+  return workingDirectory ? expandPath(workingDirectory) : undefined;
 }
 
 /**

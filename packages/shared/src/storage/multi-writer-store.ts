@@ -27,6 +27,7 @@ export interface StoredRecord<T extends JsonValue = JsonValue> {
 }
 
 export interface RecordMutation<T extends JsonValue = JsonValue> {
+  capability?: string
   namespace: string
   key: string
   value: T
@@ -43,6 +44,7 @@ export interface RecordPatchOperation {
 }
 
 export interface RecordPatchMutation {
+  capability?: string
   namespace: string
   key: string
   operations: RecordPatchOperation[]
@@ -55,6 +57,7 @@ export type RecordMutationResult<T extends JsonValue = JsonValue> =
   | { status: 'conflict'; currentVersion: number | null; currentValue: JsonValue | null; replayed: boolean }
 
 export interface AppendEventInput<T extends JsonValue = JsonValue> {
+  capability?: string
   streamId: string
   eventId: string
   eventType: string
@@ -399,6 +402,7 @@ export class MultiWriterStore {
     )
     try {
       store.applyMigrations()
+      store.ensureAdvertisedCapabilities()
       return store
     } catch (error) {
       database.close()
@@ -423,6 +427,7 @@ export class MultiWriterStore {
     )
     try {
       store.applyMigrations()
+      store.ensureAdvertisedCapabilities()
       return store
     } catch (error) {
       database.close()
@@ -456,6 +461,8 @@ export class MultiWriterStore {
   }
 
   mutateRecord<T extends JsonValue>(mutation: RecordMutation<T>): RecordMutationResult<T> {
+    const capability = mutation.capability ?? 'records'
+    assertIdentifier(capability, 'capability')
     assertIdentifier(mutation.namespace, 'namespace')
     assertIdentifier(mutation.key, 'key')
     assertIdentifier(mutation.operationId, 'operationId')
@@ -474,11 +481,11 @@ export class MultiWriterStore {
     return this.transaction(() => {
       const replay = this.readOperation<RecordMutationResult<T>>(
         mutation.operationId,
-        'records',
+        capability,
         payloadHash,
       )
       if (replay) return { ...replay, replayed: true }
-      this.assertWritable('records')
+      this.assertWritable(capability)
 
       const current = this.getRecord<T>(mutation.namespace, mutation.key)
       const versionMatches = current === null
@@ -491,7 +498,7 @@ export class MultiWriterStore {
           currentValue: current?.value ?? null,
           replayed: false,
         }
-        this.saveOperation(mutation.operationId, 'records', payloadHash, conflict)
+        this.saveOperation(mutation.operationId, capability, payloadHash, conflict)
         return conflict
       }
 
@@ -534,12 +541,14 @@ export class MultiWriterStore {
         value: mutation.value,
         replayed: false,
       }
-      this.saveOperation(mutation.operationId, 'records', payloadHash, result)
+      this.saveOperation(mutation.operationId, capability, payloadHash, result)
       return result
     })
   }
 
   mutateRecordPatch(mutation: RecordPatchMutation): RecordMutationResult {
+    const capability = mutation.capability ?? 'records'
+    assertIdentifier(capability, 'capability')
     assertIdentifier(mutation.namespace, 'namespace')
     assertIdentifier(mutation.key, 'key')
     assertIdentifier(mutation.operationId, 'operationId')
@@ -559,9 +568,9 @@ export class MultiWriterStore {
     })) as JsonValue))
 
     return this.transaction(() => {
-      const replay = this.readOperation<RecordMutationResult>(mutation.operationId, 'records', payloadHash)
+      const replay = this.readOperation<RecordMutationResult>(mutation.operationId, capability, payloadHash)
       if (replay) return { ...replay, replayed: true }
-      this.assertWritable('records')
+      this.assertWritable(capability)
 
       const current = this.getRecord(mutation.namespace, mutation.key)
       if (current === null || mutation.expectedVersion === null) {
@@ -571,7 +580,7 @@ export class MultiWriterStore {
           currentValue: current?.value ?? null,
           replayed: false,
         }
-        this.saveOperation(mutation.operationId, 'records', payloadHash, conflict)
+        this.saveOperation(mutation.operationId, capability, payloadHash, conflict)
         return conflict
       }
 
@@ -586,7 +595,7 @@ export class MultiWriterStore {
             currentValue: current.value,
             replayed: false,
           }
-          this.saveOperation(mutation.operationId, 'records', payloadHash, conflict)
+          this.saveOperation(mutation.operationId, capability, payloadHash, conflict)
           return conflict
         }
         nextValue = applyPointerOperation(nextValue, operation)
@@ -613,12 +622,14 @@ export class MultiWriterStore {
         value: nextValue,
         replayed: false,
       }
-      this.saveOperation(mutation.operationId, 'records', payloadHash, result)
+      this.saveOperation(mutation.operationId, capability, payloadHash, result)
       return result
     })
   }
 
   appendEvent<T extends JsonValue>(input: AppendEventInput<T>): AppendEventResult {
+    const capability = input.capability ?? 'events'
+    assertIdentifier(capability, 'capability')
     assertIdentifier(input.streamId, 'streamId')
     assertIdentifier(input.eventId, 'eventId')
     assertIdentifier(input.eventType, 'eventType')
@@ -641,9 +652,9 @@ export class MultiWriterStore {
     }))
 
     return this.transaction(() => {
-      const replay = this.readOperation<AppendEventResult>(input.operationId, 'events', payloadHash)
+      const replay = this.readOperation<AppendEventResult>(input.operationId, capability, payloadHash)
       if (replay) return { ...replay, replayed: true }
-      this.assertWritable('events')
+      this.assertWritable(capability)
 
       const head = this.database.prepare(`
         SELECT last_sequence FROM mortise_stream_heads WHERE stream_id = ?
@@ -660,7 +671,7 @@ export class MultiWriterStore {
           currentSequence: Number(existingEvent.sequence),
           replayed: false,
         }
-        this.saveOperation(input.operationId, 'events', payloadHash, conflict)
+        this.saveOperation(input.operationId, capability, payloadHash, conflict)
         return conflict
       }
 
@@ -671,7 +682,7 @@ export class MultiWriterStore {
           currentSequence,
           replayed: false,
         }
-        this.saveOperation(input.operationId, 'events', payloadHash, conflict)
+        this.saveOperation(input.operationId, capability, payloadHash, conflict)
         return conflict
       }
 
@@ -700,7 +711,7 @@ export class MultiWriterStore {
       `).run(input.streamId, sequence)
 
       const result: AppendEventResult = { status: 'applied', sequence, replayed: false }
-      this.saveOperation(input.operationId, 'events', payloadHash, result)
+      this.saveOperation(input.operationId, capability, payloadHash, result)
       return result
     })
   }
@@ -732,6 +743,15 @@ export class MultiWriterStore {
     return row ? Number(row.version) : null
   }
 
+  isCapabilityWritable(capability: string): boolean {
+    const databaseVersion = this.getCapabilityVersion(capability)
+    const supportedRange = this.capabilities[capability]
+    return databaseVersion !== null
+      && supportedRange !== undefined
+      && databaseVersion >= supportedRange.minWriteVersion
+      && databaseVersion <= supportedRange.maxWriteVersion
+  }
+
   private applyMigrations(): void {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS mortise_schema_migrations (
@@ -759,13 +779,21 @@ export class MultiWriterStore {
     })
   }
 
+  private ensureAdvertisedCapabilities(): void {
+    this.transaction(() => {
+      for (const [name, range] of Object.entries(this.capabilities)) {
+        this.database.prepare(`
+          INSERT OR IGNORE INTO mortise_capabilities (name, version, updated_at)
+          VALUES (?, ?, ?)
+        `).run(name, range.maxWriteVersion, Date.now())
+      }
+    })
+  }
+
   private assertWritable(capability: string): void {
     const databaseVersion = this.getCapabilityVersion(capability)
     const supportedRange = this.capabilities[capability]
-    if (databaseVersion === null
-      || !supportedRange
-      || databaseVersion < supportedRange.minWriteVersion
-      || databaseVersion > supportedRange.maxWriteVersion) {
+    if (!this.isCapabilityWritable(capability)) {
       throw new CapabilityReadOnlyError(capability, databaseVersion, supportedRange)
     }
   }

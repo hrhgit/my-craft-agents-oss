@@ -10,7 +10,7 @@ describe('navigation surface ownership', () => {
   it('keeps management routes out of the workspace dock', () => {
     for (const route of [
       'settings/ai',
-      'sources/source/github',
+      'skills/skill/review',
       'skills/skill/review',
       'automations/automation/nightly',
     ]) {

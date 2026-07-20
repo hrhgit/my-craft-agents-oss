@@ -20,7 +20,6 @@ function writeDefaultPermissions(configDir: string) {
           { pattern: '^rg\\b', comment: 'Ripgrep search' },
         ],
         allowedMcpPatterns: [],
-        allowedApiEndpoints: [],
         allowedWritePaths: [],
         blockedCommandHints: [],
       },
@@ -54,7 +53,6 @@ describe('permissions config mortise-cli feature flag', () => {
 
       const merged = permissionsConfigCache.getMergedConfig({
         workspaceRootPath: '/tmp/workspace',
-        activeSourceSlugs: [],
       })
 
       const sources = merged.readOnlyBashPatterns.map(p => p.source)
@@ -74,7 +72,6 @@ describe('permissions config mortise-cli feature flag', () => {
 
       const merged = permissionsConfigCache.getMergedConfig({
         workspaceRootPath: '/tmp/workspace',
-        activeSourceSlugs: [],
       })
 
       const sources = merged.readOnlyBashPatterns.map(p => p.source)

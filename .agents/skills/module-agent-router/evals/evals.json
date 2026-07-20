@@ -1,0 +1,49 @@
+{
+  "skill_name": "module-agent-router",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Investigate why a newly created conversation appears in the sidebar before its first message is sent. Trace the behavior across the renderer and session lifecycle, but do not change code.",
+      "expected_output": "Routes before loading module documents, dispatches read-only consult specialists for the owning modules, and synthesizes their evidence without copying complete module documents.",
+      "files": [],
+      "expectations": [
+        "Uses the route command before selecting module documents",
+        "Assigns consult mode and preserves a read-only worktree",
+        "Keeps agent creation and final synthesis with the root agent"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Implement a change that adds a new session tool contract and renders its result in the conversation UI. Coordinate the work across the relevant packages and add regression coverage.",
+      "expected_output": "Routes the cross-module task, assigns one writer per owning module, coordinates interface dependencies through the root, and completes impact, digest refresh, strict validation, and module-specific tests.",
+      "files": [],
+      "expectations": [
+        "Splits implementation by primary file owner with at most one writer per module",
+        "Allows only already-active specialists to communicate directly and prevents recursive spawning",
+        "Runs impact, owner review, named digest refresh, strict validation, and the recommended module test plans"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Review my current changes. They touch provider configuration and a root build script, and module validation reports a stale scope digest. Find regressions and leave the tree unchanged.",
+      "expected_output": "Routes review work to the affected owners, reports the stale digest as blocking evidence, performs no writes in review mode, and explains that a later owner implementation assignment must refresh the reviewed module.",
+      "files": [],
+      "expectations": [
+        "Uses route or impact evidence to identify both owning modules",
+        "Treats the stale digest as a blocking diagnostic rather than refreshing it during review",
+        "Performs no code, document, or digest writes in review mode"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "A provider contract and its conversation UI consumer changed. Plan the affected validation without executing expensive or physical checks, then explain what should run before merge and release.",
+      "expected_output": "Uses impact validation recommendations, inspects contract plans with test --dry-run, and reserves explicit full physical validation for release acceptance.",
+      "files": ["packages/shared/src/models/model.ts", "apps/electron/src/renderer/components/chat/Chat.tsx"],
+      "expectations": [
+        "Uses impact to identify multiple owners and recommend contract validation",
+        "Uses test --dry-run to inspect commands without execution",
+        "Explains that full is explicit and physical UI validation belongs to the business module through the Developer Kit"
+      ]
+    }
+  ]
+}

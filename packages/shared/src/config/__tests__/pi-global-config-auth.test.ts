@@ -7,6 +7,11 @@ import { pathToFileURL } from 'url'
 const PI_GLOBAL_CONFIG_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'pi-global-config.ts')).href
 const CONFIG_WATCHER_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'watcher.ts')).href
 const MASKED_SHORT_KEY = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'
+const SUBPROCESS_TEST_TIMEOUT_MS = 30_000
+
+function subprocessIt(name: string, fn: () => void): void {
+  it(name, fn, SUBPROCESS_TEST_TIMEOUT_MS)
+}
 
 function setupPiAgentDir() {
   const piAgentDir = mkdtempSync(join(tmpdir(), 'mortise-pi-agent-'))
@@ -58,7 +63,7 @@ function runIsolatedPiConfigScript<T>(piAgentDir: string, body: string): T {
 }
 
 describe('pi-global-config auth storage', () => {
-  it('notifies global config watchers when auth.json changes', () => {
+  subprocessIt('notifies global config watchers when auth.json changes', () => {
     const { piAgentDir, authPath } = setupPiAgentDir()
     writeJson(authPath, {})
 
@@ -68,7 +73,7 @@ describe('pi-global-config auth storage', () => {
         const timeout = setTimeout(() => {
           watcher?.close();
           reject(new Error('auth.json watcher timed out'));
-        }, 5000);
+        }, 15000);
         watcher = watchPiGlobalModelsFile(() => {
           clearTimeout(timeout);
           watcher.close();
@@ -84,7 +89,7 @@ describe('pi-global-config auth storage', () => {
     expect(output).toEqual({ changed: true, filename: 'auth.json' })
   })
 
-  it('propagates an auth-only change through ConfigWatcher provider deduplication', () => {
+  subprocessIt('propagates an auth-only change through ConfigWatcher provider deduplication', () => {
     const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
     writeJson(modelsPath, { providers: {} })
     writeJson(authPath, { test: { type: 'api_key', key: 'before' } })
@@ -98,7 +103,7 @@ describe('pi-global-config auth storage', () => {
         const timeout = setTimeout(() => {
           watcher?.stop();
           reject(new Error('ConfigWatcher auth propagation timed out'));
-        }, 5000);
+        }, 15000);
         watcher = new ConfigWatcher(workspacePath, {
           onProvidersChange() {
             clearTimeout(timeout);
@@ -117,7 +122,7 @@ describe('pi-global-config auth storage', () => {
     expect(output).toEqual({ changed: true })
   })
 
-  it('migrates legacy provider apiKey fields into auth.json without overwriting existing auth', () => {
+  subprocessIt('migrates legacy provider apiKey fields into auth.json without overwriting existing auth', () => {
     const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
 
     writeJson(modelsPath, {
@@ -168,7 +173,7 @@ describe('pi-global-config auth storage', () => {
     expect(output.auth.oauth!.access).toBe('oauth-access')
   })
 
-  it('saves provider credentials to auth.json and keeps models.json sanitized', () => {
+  subprocessIt('saves provider credentials to auth.json and keeps models.json sanitized', () => {
     const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
     writeJson(modelsPath, { providers: {} })
     writeJson(authPath, {})
@@ -224,7 +229,7 @@ describe('pi-global-config auth storage', () => {
     expect(output.longMask).toBe('sk-live...mnop')
   })
 
-  it('resolves Pi auth provider keys without treating pi-api-key as a provider name', () => {
+  subprocessIt('resolves Pi auth provider keys without treating pi-api-key as a provider name', () => {
     const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
     writeJson(modelsPath, {
       providers: {

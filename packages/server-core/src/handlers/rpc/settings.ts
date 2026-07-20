@@ -56,10 +56,6 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.agentSettings.DELETE_SUBAGENT,
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
-  RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED,
-  RPC_CHANNELS.tools.SET_DATA_SOURCES_ENABLED,
-  RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION,
-  RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION,
   RPC_CHANNELS.piExtensions.GET_SETTINGS,
   RPC_CHANNELS.piExtensions.SET_SETTINGS,
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
@@ -69,6 +65,9 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES,
   RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED,
   RPC_CHANNELS.settings.GET_NETWORK_PROXY,
+  RPC_CHANNELS.settings.GET_DEVELOPER_KIT,
+  RPC_CHANNELS.settings.DISCOVER_DEVELOPER_KIT,
+  RPC_CHANNELS.settings.SET_DEVELOPER_KIT,
   RPC_CHANNELS.dialog.OPEN_FOLDER,
 ] as const
 
@@ -191,8 +190,6 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       permissionMode: config?.defaults?.permissionMode,
       cyclablePermissionModes: config?.defaults?.cyclablePermissionModes,
       workingDirectory: workspace.rootPath,
-      localMcpEnabled: config?.localMcpServers?.enabled ?? true,
-      enabledSourceSlugs: config?.defaults?.enabledSourceSlugs ?? [],
     }
   })
 
@@ -203,7 +200,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     const normalizedValue = value
 
     // Validate key is a known workspace setting
-    const validKeys = ['name', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'localMcpEnabled']
+    const validKeys = ['name', 'permissionMode', 'cyclablePermissionModes']
     if (!validKeys.includes(key)) {
       throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
     }
@@ -217,10 +214,6 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     // Handle 'name' specially - it's a top-level config property, not in defaults
     if (key === 'name') {
       config.name = String(normalizedValue).trim()
-    } else if (key === 'localMcpEnabled') {
-      // Store in localMcpServers.enabled (top-level, not in defaults)
-      config.localMcpServers = config.localMcpServers || { enabled: true }
-      config.localMcpServers.enabled = Boolean(normalizedValue)
     } else {
       // Update the setting in defaults
       config.defaults = config.defaults || {}
@@ -351,27 +344,6 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     await configStorage.setBrowserToolEnabled(enabled)
   })
 
-  server.handle(RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED, async () => {
-    return configStorage.getDataSourcesEnabled()
-  })
-
-  server.handle(RPC_CHANNELS.tools.SET_DATA_SOURCES_ENABLED, async (_ctx, enabled: boolean) => {
-    configStorage.setDataSourcesEnabled(enabled)
-    await deps.sessionManager.refreshDataSourcesRuntime?.()
-  })
-
-  // ============================================================
-  // Pi Extensions 集成开关（控制全局 pi 扩展加载与 automation 委托）
-  // ============================================================
-
-  server.handle(RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION, async () => {
-    return configStorage.getPiExtensionsDelegatePromptAutomation()
-  })
-
-  server.handle(RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION, async (_ctx, delegate: boolean) => {
-    await configStorage.setPiExtensionsDelegatePromptAutomation(delegate)
-  })
-
   server.handle(RPC_CHANNELS.piExtensions.GET_SETTINGS, async () => {
     return configStorage.getPiExtensionSettings()
   })
@@ -436,5 +408,23 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Get network proxy settings
   server.handle(RPC_CHANNELS.settings.GET_NETWORK_PROXY, async () => {
     return configStorage.getNetworkProxySettings()
+  })
+
+  server.handle(RPC_CHANNELS.settings.GET_DEVELOPER_KIT, async () => {
+    const { getDeveloperKitStatus } = await import('@mortise/shared/config')
+    return getDeveloperKitStatus()
+  })
+
+  server.handle(RPC_CHANNELS.settings.DISCOVER_DEVELOPER_KIT, async () => {
+    const { discoverAndConfigureDeveloperKit } = await import('@mortise/shared/config')
+    return discoverAndConfigureDeveloperKit()
+  })
+
+  server.handle(RPC_CHANNELS.settings.SET_DEVELOPER_KIT, async (
+    _ctx,
+    rootPath: string | null,
+  ) => {
+    const { setDeveloperKitPath } = await import('@mortise/shared/config')
+    return setDeveloperKitPath(rootPath, 'manual')
   })
 }

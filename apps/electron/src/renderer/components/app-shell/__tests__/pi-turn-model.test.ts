@@ -295,7 +295,11 @@ describe('buildPiTurns', () => {
       }),
       entity({
         entityId: 'content:text:assistant-comment:0', createdSeq: 4, turnId: 'turn-1',
-        payload: { role: 'assistant', messageId: 'assistant-comment', contentIndex: 0, text: 'I will inspect it.', streaming: false, isIntermediate: true },
+        payload: {
+          role: 'assistant', messageId: 'assistant-comment', contentIndex: 0,
+          text: 'I will inspect it.', streaming: false, isIntermediate: true,
+          usage: { inputTokens: 1_200, outputTokens: 80 },
+        },
       }),
       entity({
         entityId: 'tool:read-1', entityType: 'tool_run', createdSeq: 5, turnId: 'turn-1', kind: 'tool_execution_end',
@@ -304,7 +308,11 @@ describe('buildPiTurns', () => {
       entity({ entityId: 'turn:turn-2', entityType: 'turn', createdSeq: 7, lastSeq: 9, turnId: 'turn-2', kind: 'turn_end', payload: { status: 'completed', stopReason: 'stop' } }),
       entity({
         entityId: 'content:text:assistant-final:0', createdSeq: 8, turnId: 'turn-2',
-        payload: { role: 'assistant', messageId: 'assistant-final', contentIndex: 0, text: 'Done.', streaming: false, isFinal: true },
+        payload: {
+          role: 'assistant', messageId: 'assistant-final', contentIndex: 0,
+          text: 'Done.', streaming: false, isFinal: true,
+          usage: { inputTokens: 1_500, outputTokens: 120 },
+        },
       }),
       entity({ entityId: 'agent:end', entityType: 'conversation', createdSeq: 10, lastSeq: 10, turnId: undefined, kind: 'agent_end', payload: { status: 'completed' } }),
     ])
@@ -313,12 +321,54 @@ describe('buildPiTurns', () => {
     expect(turns[1]).toMatchObject({
       type: 'assistant', isComplete: true,
       response: { messageId: 'assistant-final', text: 'Done.' },
+      inputTokens: 2_700,
+      outputTokens: 200,
     })
     if (turns[1]?.type !== 'assistant') throw new Error('Expected assistant turn')
     expect(turns[1].activities.map(activity => [activity.type, activity.content])).toEqual([
       ['intermediate', 'I will inspect it.'],
       ['tool', 'source'],
     ])
+  })
+
+  it('counts usage from a tool-call model round without visible text', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'content:user:user-tool-only', createdSeq: 1, turnId: 'turn-tool-only', kind: 'user_text',
+        payload: { role: 'user', messageId: 'user-tool-only', text: 'inspect it', streaming: false },
+      }),
+      entity({
+        entityId: 'content:thinking:assistant-tool-only:0', createdSeq: 2,
+        turnId: 'turn-tool-only', kind: 'thinking_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-tool-only',
+          contentIndex: 0, text: 'checking', streaming: false,
+          usage: { inputTokens: 400, outputTokens: 25 },
+        },
+      }),
+      entity({
+        entityId: 'tool:read-tool-only', entityType: 'tool_run', createdSeq: 3,
+        turnId: 'turn-tool-only', kind: 'tool_execution_end',
+        payload: { toolCallId: 'read-tool-only', toolName: 'Read', result: 'source', status: 'completed' },
+      }),
+      entity({
+        entityId: 'content:text:assistant-tool-final:0', createdSeq: 4,
+        turnId: 'turn-tool-final', kind: 'assistant_text',
+        payload: {
+          role: 'assistant', messageId: 'assistant-tool-final', contentIndex: 0,
+          text: 'Done.', streaming: false, isFinal: true,
+          usage: { inputTokens: 600, outputTokens: 75 },
+        },
+      }),
+      entity({
+        entityId: 'agent:end-tool-only', entityType: 'conversation', createdSeq: 5,
+        lastSeq: 5, turnId: undefined, kind: 'agent_end', payload: { status: 'completed' },
+      }),
+    ])
+
+    expect(turns[1]).toMatchObject({
+      type: 'assistant', response: { text: 'Done.' }, inputTokens: 1_000, outputTokens: 100,
+    })
   })
 
   it('keeps a completed tool round expanded at the batch level while the agent is still running', () => {
@@ -413,25 +463,15 @@ describe('buildPiTurns', () => {
     })
   })
 
-  it('renders auth lifecycle and runtime failures through the existing turn variants', () => {
+  it('renders runtime failures through the existing turn variants', () => {
     const turns = buildPiTurns([
-      entity({
-        entityId: 'prompt:oauth-1', entityType: 'prompt_request', createdSeq: 1, turnId: undefined,
-        kind: 'prompt_resolved', payload: {
-          requestId: 'oauth-1', authType: 'oauth-google', sourceSlug: 'drive', sourceName: 'Google Drive',
-          status: 'resolved', resolution: 'completed',
-        },
-      }),
       entity({
         entityId: 'error:2', entityType: 'conversation', createdSeq: 2, turnId: undefined,
         kind: 'runtime_error', payload: { message: 'Process exited', code: 'process_exited' },
       }),
     ])
-    expect(turns.map(turn => turn.type)).toEqual(['auth-request', 'system'])
-    expect(turns[0]).toMatchObject({
-      message: { authRequestId: 'oauth-1', authRequestType: 'oauth-google', authStatus: 'completed' },
-    })
-    expect(turns[1]).toMatchObject({ message: { role: 'error', content: 'Process exited', errorCode: 'process_exited' } })
+    expect(turns.map(turn => turn.type)).toEqual(['system'])
+    expect(turns[0]).toMatchObject({ message: { role: 'error', content: 'Process exited', errorCode: 'process_exited' } })
   })
 
   it('renders Host status, info, queue warnings, and displayable custom messages', () => {

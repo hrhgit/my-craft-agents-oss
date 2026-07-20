@@ -336,10 +336,6 @@ permissionMode: explore
 plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
 </session_state>
 
-<sources>
-Active: none
-</sources>
-
 在吗?`,
         },
       },

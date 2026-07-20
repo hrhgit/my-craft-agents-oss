@@ -17,6 +17,7 @@ import { UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
 import { captureBuildSource } from '../build-source-snapshot.ts'
 import { withFileLock } from './artifacts.ts'
 import { writeJsonAtomic } from './files.ts'
+import { matchesProcessIdentity } from './process-identity.ts'
 
 const BUILD_SCHEMA_VERSION = 1
 const DEFAULT_REPO_ROOT = resolve(import.meta.dir, '..', '..')
@@ -26,13 +27,6 @@ const DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 const BUILD_LOCK_STALE_MS = 60_000
 const STAGING_STALE_MS = 60 * 60 * 1_000
 const ACTIVE_RUN_STATUSES = new Set(['starting', 'ready', 'stopping'])
-const BUILD_ENV_KEYS = [
-  'GOOGLE_OAUTH_CLIENT_ID',
-  'GOOGLE_OAUTH_CLIENT_SECRET',
-  'SLACK_OAUTH_CLIENT_ID',
-  'SLACK_OAUTH_CLIENT_SECRET',
-  'MICROSOFT_OAUTH_CLIENT_ID',
-] as const
 const EXCLUDED_DIRECTORY_NAMES = new Set([
   '.git', 'node_modules', 'dist', 'out', 'output', 'release', 'release-devhost', 'coverage', '.cache',
 ])
@@ -103,11 +97,6 @@ export function computeElectronBuildFingerprint(repoRoot = DEFAULT_REPO_ROOT): s
   const root = resolve(repoRoot)
   const hash = createHash('sha256')
   hash.update(`mortise-ui-build:${BUILD_SCHEMA_VERSION}\0${process.platform}\0${process.arch}\0${process.versions.bun ?? process.version}\0`)
-  for (const key of BUILD_ENV_KEYS) {
-    hash.update(`${key}\0`)
-    hash.update(createHash('sha256').update(process.env[key] ?? '').digest())
-  }
-
   const files = collectBuildInputFiles(root)
   for (const path of files) {
     const name = relative(root, path).replaceAll('\\', '/')
@@ -405,10 +394,21 @@ function reapStaleLeases(buildRoot: string): Set<string> {
 }
 
 function isLeaseActive(lease: MortiseUiBuildLeaseFile): boolean {
-  if (isPidAlive(lease.pid)) return true
+  if (matchesProcessIdentity({ pid: lease.pid, recordedAt: Date.parse(lease.createdAt) })) return true
   try {
-    const run = JSON.parse(readFileSync(join(lease.runDir, 'run.json'), 'utf8')) as { status?: string; launcherPid?: number; hostPid?: number }
-    return ACTIVE_RUN_STATUSES.has(run.status ?? '') && (isPidAlive(run.launcherPid) || isPidAlive(run.hostPid))
+    const run = JSON.parse(readFileSync(join(lease.runDir, 'run.json'), 'utf8')) as {
+      status?: string
+      createdAt?: string
+      launcherPid?: number
+      launcherStartedAt?: number
+      hostPid?: number
+      hostStartedAt?: number
+    }
+    const recordedAt = typeof run.createdAt === 'string' ? Date.parse(run.createdAt) : undefined
+    return ACTIVE_RUN_STATUSES.has(run.status ?? '') && (
+      matchesProcessIdentity({ pid: run.launcherPid, startedAt: run.launcherStartedAt, recordedAt })
+      || matchesProcessIdentity({ pid: run.hostPid, startedAt: run.hostStartedAt, recordedAt })
+    )
   } catch { return false }
 }
 
@@ -419,8 +419,8 @@ function activeBuildLocks(buildRoot: string): Set<string> {
   for (const entry of readdirSync(locksDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || !entry.name.endsWith('.lock')) continue
     try {
-      const owner = JSON.parse(readFileSync(join(locksDir, entry.name, 'owner.json'), 'utf8')) as { pid?: number }
-      if (isPidAlive(owner.pid)) active.add(entry.name.slice(0, -'.lock'.length))
+      const owner = JSON.parse(readFileSync(join(locksDir, entry.name, 'owner.json'), 'utf8')) as { pid?: number; recordedAt?: number }
+      if (matchesProcessIdentity({ pid: owner.pid, recordedAt: owner.recordedAt })) active.add(entry.name.slice(0, -'.lock'.length))
     } catch { /* A lock may be between directory creation and owner publication. */ }
   }
   return active
@@ -501,10 +501,6 @@ function runBuildCommand(repoRoot: string, args: string[], label: string): void 
 function electronFingerprintForSource(sourceId: string): string {
   const hash = createHash('sha256')
   hash.update(`mortise-ui-build:${BUILD_SCHEMA_VERSION}\0${process.platform}\0${process.arch}\0${process.versions.bun ?? process.version}\0${sourceId}\0`)
-  for (const key of BUILD_ENV_KEYS) {
-    hash.update(`${key}\0`)
-    hash.update(createHash('sha256').update(process.env[key] ?? '').digest())
-  }
   return hash.digest('hex')
 }
 
@@ -530,13 +526,6 @@ function renameDirectoryWithRetry(source: string, target: string): void {
 
 function removeDirectory(path: string): void {
   rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
-}
-
-function isPidAlive(pid: number | undefined): boolean {
-  if (!pid || !Number.isSafeInteger(pid) || pid <= 0) return false
-  try { process.kill(pid, 0); return true } catch (error) {
-    return errorCode(error) === 'EPERM' || errorCode(error) === 'EACCES'
-  }
 }
 
 function extension(path: string): string {

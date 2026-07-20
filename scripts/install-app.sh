@@ -363,10 +363,10 @@ if [ -z "$DISPLAY" ]; then
     export DISPLAY=:0.0
 fi
 
-# Clear stale cache referencing AppImage mount paths
-# AppImage creates a new /tmp/.mount_Craft-XXXX each launch, so any cached path is stale
+# Clear stale cache referencing AppImage mount paths. Mortise uses the current
+# prefix; retain Craft to clean caches produced by the former application name.
 for cache_dir in "$ELECTRON_CACHE" "$ELECTRON_CACHE_ALT"; do
-    if [ -d "$cache_dir" ] && grep -rq '/tmp/\.mount_Craft' "$cache_dir" 2>/dev/null; then
+    if [ -d "$cache_dir" ] && grep -rEq '/tmp/\.mount_(Mortise|Craft)' "$cache_dir" 2>/dev/null; then
         rm -rf "$cache_dir"
     fi
 done

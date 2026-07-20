@@ -5,7 +5,6 @@
  * Wraps the underlying ConfigWatcher with agent-focused callbacks.
  *
  * Used by agent backends for hot-reloading:
- * - Source config changes (add/update/delete)
  * - Skills config changes
  * - Permissions config changes
  * - Validation errors
@@ -16,7 +15,6 @@ import {
   createConfigWatcher,
   type ConfigWatcherCallbacks,
 } from '../../config/watcher.ts';
-import type { LoadedSource } from '../../sources/types.ts';
 import type { LoadedSkill } from '../../skills/types.ts';
 import type { ValidationResult } from '../../config/validators.ts';
 import { debug } from '../../utils/debug.ts';
@@ -29,19 +27,6 @@ import { debug } from '../../utils/debug.ts';
  * Callbacks for config changes - simplified for agent use
  */
 export interface ConfigWatcherManagerCallbacks {
-  /**
-   * Called when a source config changes.
-   * @param slug - Source slug
-   * @param source - Updated source or null if deleted
-   */
-  onSourceChange?: (slug: string, source: LoadedSource | null) => void;
-
-  /**
-   * Called when the sources list changes (add/remove folders).
-   * @param sources - All current sources
-   */
-  onSourcesListChange?: (sources: LoadedSource[]) => void;
-
   /**
    * Called when a skill config changes.
    * @param slug - Skill slug
@@ -60,12 +45,6 @@ export interface ConfigWatcherManagerCallbacks {
    * @param workspaceId - Workspace ID
    */
   onWorkspacePermissionsChange?: (workspaceId: string) => void;
-
-  /**
-   * Called when a source's permissions change.
-   * @param sourceSlug - Source slug
-   */
-  onSourcePermissionsChange?: (sourceSlug: string) => void;
 
   /**
    * Called when default (app-level) permissions change.
@@ -151,16 +130,6 @@ export class ConfigWatcherManager {
 
     // Create the underlying ConfigWatcher with our simplified callbacks
     const watcherCallbacks: ConfigWatcherCallbacks = {
-      onSourceChange: (slug, source) => {
-        this.debug(`Source changed: ${slug} ${source ? 'updated' : 'deleted'}`);
-        this.callbacks.onSourceChange?.(slug, source);
-      },
-
-      onSourcesListChange: (sources) => {
-        this.debug(`Sources list changed: ${sources.length} sources`);
-        this.callbacks.onSourcesListChange?.(sources);
-      },
-
       onSkillChange: (slug, skill) => {
         this.debug(`Skill changed: ${slug} ${skill ? 'updated' : 'deleted'}`);
         this.callbacks.onSkillChange?.(slug, skill);
@@ -174,11 +143,6 @@ export class ConfigWatcherManager {
       onWorkspacePermissionsChange: (workspaceId) => {
         this.debug(`Workspace permissions changed: ${workspaceId}`);
         this.callbacks.onWorkspacePermissionsChange?.(workspaceId);
-      },
-
-      onSourcePermissionsChange: (sourceSlug) => {
-        this.debug(`Source permissions changed: ${sourceSlug}`);
-        this.callbacks.onSourcePermissionsChange?.(sourceSlug);
       },
 
       onDefaultPermissionsChange: () => {

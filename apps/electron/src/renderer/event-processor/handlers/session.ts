@@ -1,7 +1,7 @@
 /**
  * Session Event Handlers
  *
- * Handles complete, error, sources_changed, etc.
+ * Handles complete, error, permission changes, and session metadata events.
  * Pure functions that return new state - no side effects.
  */
 
@@ -11,10 +11,8 @@ import type {
   CompleteEvent,
   ErrorEvent,
   TypedErrorEvent,
-  SourcesChangedEvent,
   NameChangedEvent,
   PermissionRequestEvent,
-  CredentialRequestEvent,
   PlanSubmittedEvent,
   PlanArtifactChangedEvent,
   PlanModeStateChangedEvent,
@@ -31,8 +29,6 @@ import type {
   MessageAnnotationsUpdatedEvent,
   SessionSharedEvent,
   SessionUnsharedEvent,
-  AuthRequestEvent,
-  AuthCompletedEvent,
   UsageUpdateEvent,
   Effect,
 } from '../types'
@@ -178,7 +174,6 @@ export function handleTypedError(
       label: a.label,
       action: a.action,
       url: a.url,
-      sourceSlug: a.sourceSlug,
     })),
   }
 
@@ -582,27 +577,6 @@ export function handleMessageAnnotationsUpdated(
 }
 
 /**
- * Handle sources_changed - update session's enabled sources
- */
-export function handleSourcesChanged(
-  state: SessionState,
-  event: SourcesChangedEvent
-): ProcessResult {
-  const { session, streaming } = state
-
-  return {
-    state: {
-      session: {
-        ...session,
-        enabledSourceSlugs: event.enabledSourceSlugs,
-      },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
  * Handle name_changed - update session name (external metadata change)
  */
 export function handleNameChanged(
@@ -638,19 +612,6 @@ export function handlePermissionRequest(
 /**
  * Handle credential_request - return effect for parent to handle
  */
-export function handleCredentialRequest(
-  state: SessionState,
-  event: CredentialRequestEvent
-): ProcessResult {
-  return {
-    state,
-    effects: [{
-      type: 'credential_request',
-      request: event.request,
-    }]
-  }
-}
-
 /**
  * Handle plan_submitted - add plan message to session
  */
@@ -751,71 +712,6 @@ export function handleSessionUnshared(
         ...session,
         sharedUrl: undefined,
         sharedId: undefined,
-      },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle auth_request - add auth-request message to session
- * This is the unified auth flow - execution is paused until auth completes
- */
-export function handleAuthRequest(
-  state: SessionState,
-  event: AuthRequestEvent
-): ProcessResult {
-  const { session, streaming } = state
-
-  // Add auth-request message to session
-  return {
-    state: {
-      session: {
-        ...appendMessage(session, event.message),
-        isProcessing: false,  // Agent execution is paused
-      },
-      streaming: null,  // Clear any streaming state
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle auth_completed - update auth-request message status
- * The agent will resume via a new user message (sent by session manager)
- */
-export function handleAuthCompleted(
-  state: SessionState,
-  event: AuthCompletedEvent
-): ProcessResult {
-  const { session, streaming } = state
-
-  // Update the auth-request message status
-  const updatedMessages = session.messages.map(m => {
-    if (
-      m.role === 'auth-request' &&
-      m.authRequestId === event.requestId &&
-      m.authStatus === 'pending'
-    ) {
-      return {
-        ...m,
-        authStatus: event.success
-          ? ('completed' as const)
-          : event.cancelled
-            ? ('cancelled' as const)
-            : ('failed' as const),
-        authError: event.error,
-      }
-    }
-    return m
-  })
-
-  return {
-    state: {
-      session: {
-        ...session,
-        messages: updatedMessages,
       },
       streaming,
     },

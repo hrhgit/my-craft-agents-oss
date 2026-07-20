@@ -1,6 +1,6 @@
 # Mortise Agent CLI Guide
 
-`mortise` is the preferred interface for managing workspace config domains such as labels, sources, skills, and automations.
+`mortise` is the preferred interface for managing workspace config domains such as labels, skills, and automations.
 
 ## Usage
 
@@ -63,70 +63,6 @@ mortise label auto-rule-validate linear-issue
 
 ---
 
-<!-- cli:source:start -->
-## Source
-
-Manage workspace sources stored under `sources/{slug}/`.
-
-### Commands
-- `mortise source list [--include-builtins true|false]`
-- `mortise source get <slug>`
-- `mortise source create` (see flags below)
-- `mortise source update <slug> --json '{...}'`
-- `mortise source delete <slug>`
-- `mortise source validate <slug>`
-- `mortise source test <slug>`
-- `mortise source init-guide <slug> [--template generic|mcp|api|local]`
-- `mortise source init-permissions <slug> [--mode read-only]`
-- `mortise source auth-help <slug>`
-
-### Flags for `source create`
-
-| Flag | Description |
-|------|-------------|
-| `--name "<name>"` | **(required)** Source display name |
-| `--provider "<provider>"` | **(required)** Provider identifier (e.g., `linear`, `github`) |
-| `--type mcp\|api\|local` | **(required)** Source type |
-| `--enabled true\|false` | Enable/disable source (default: `true`) |
-| `--icon "<url-or-emoji>"` | Icon URL (auto-downloaded) or emoji |
-| **MCP-specific** | |
-| `--url "<url>"` | MCP server URL |
-| `--transport http\|stdio` | MCP transport type |
-| `--auth-type oauth\|bearer\|none` | MCP authentication type |
-| **API-specific** | |
-| `--base-url "<url>"` | **(required for api)** API base URL (must have trailing slash) |
-| `--auth-type bearer\|header\|query\|basic\|none` | **(required for api)** API auth type |
-| **Local-specific** | |
-| `--path "<path>"` | **(required for local)** Filesystem path |
-
-### Examples
-
-```bash
-mortise source list
-mortise source get linear
-# MCP source with flat flags
-mortise source create --name "Linear" --provider "linear" --type mcp --url "https://mcp.linear.app/sse" --auth-type oauth
-# MCP source with --json for nested config
-mortise source create --name "Linear" --provider "linear" --type mcp --json '{"mcp":{"transport":"http","url":"https://mcp.linear.app/sse","authType":"oauth"}}'
-# API source
-mortise source create --name "Exa" --provider "exa" --type api --base-url "https://api.exa.ai/" --auth-type header
-# Local source
-mortise source create --name "Docs Folder" --provider "filesystem" --type local --path "~/Documents"
-mortise source update linear --json '{"enabled":false}'
-mortise source validate linear
-mortise source test linear
-mortise source init-guide linear --template mcp
-mortise source init-permissions linear --mode read-only
-mortise source auth-help linear
-```
-
-### Notes
-- Use flat flags for simple values or `--json` for type-specific nested config fields (`mcp`, `api`, `local`).
-- `init-guide` scaffolds a practical `guide.md` based on source type.
-- `init-permissions` scaffolds read-only `permissions.json` patterns for Explore mode.
-- `auth-help` returns the recommended in-session auth tool and mode.
-- `test` is lightweight CLI validation; for full in-session auth/connection probing use `source_test` MCP tool.
-<!-- cli:source:end -->
 
 ---
 
@@ -155,7 +91,6 @@ Manage project skills stored under `.pi/skills/{slug}/SKILL.md`.
 | `--icon "<url>"` | Icon URL (auto-downloaded to `icon.*`) |
 | `--globs "*.ts,*.tsx"` | Comma-separated glob patterns for auto-suggestion |
 | `--always-allow "Bash,Write"` | Comma-separated tool names to always allow |
-| `--required-sources "linear,github"` | Comma-separated source slugs to auto-enable |
 
 ### Examples
 
@@ -164,8 +99,8 @@ mortise skill list
 mortise skill list --workspace-only
 mortise skill where commit-helper
 mortise skill create --name "Commit Helper" --description "Generate conventional commits" --slug commit-helper
-mortise skill create --name "Code Review" --description "Review PRs" --globs "*.ts,*.tsx" --always-allow "Bash" --required-sources "github"
-mortise skill update commit-helper --json '{"requiredSources":["github"],"body":"Use concise, imperative commit messages."}'
+mortise skill create --name "Code Review" --description "Review PRs" --globs "*.ts,*.tsx" --always-allow "Bash"
+mortise skill update commit-helper --json '{"body":"Use concise, imperative commit messages."}'
 mortise skill validate commit-helper
 mortise skill validate commit-helper --source global
 mortise skill delete commit-helper
@@ -182,66 +117,38 @@ mortise skill delete commit-helper
 <!-- cli:automation:start -->
 ## Automation
 
-Manage workspace automations stored in `automations.json`.
+Manage canonical workspace automations through a running Mortise host. The CLI
+does not edit workspace files or run a separate scheduler.
 
 ### Commands
-- `mortise automation list`
-- `mortise automation get <id>`
-- `mortise automation create` (see flags below)
-- `mortise automation update <id>` (same flags as create, all optional)
-- `mortise automation delete <id>`
-- `mortise automation enable <id>`
-- `mortise automation disable <id>`
-- `mortise automation duplicate <id>`
-- `mortise automation history [<id>] [--limit <n>]`
-- `mortise automation last-executed <id>`
-- `mortise automation test <id> [--match "..."]`
-- `mortise automation lint`
-- `mortise automation validate`
-
-### Flags for `automation create` / `update`
-
-| Flag | Description |
-|------|-------------|
-| `--event <EventName>` | **(required for create)** Event trigger (e.g., `UserPromptSubmit`, `SchedulerTick`, `PreToolUse`) |
-| `--name "<name>"` | Display name for the automation |
-| `--matcher "<regex>"` | Regex pattern for event matching |
-| `--cron "<expression>"` | Cron expression (for `SchedulerTick` events) |
-| `--timezone "<tz>"` | IANA timezone (e.g., `Europe/Budapest`) |
-| `--permission-mode safe\|ask\|allow-all` | Permission level for created sessions |
-| `--enabled true\|false` | Enable/disable the automation |
-| `--prompt "..."` | Prompt text (creates a prompt action automatically) |
-| `--provider "<key>"` | Provider key for the created session |
-| `--model "<model-id>"` | Model ID for the created session |
+- `mortise-cli automation describe`
+- `mortise-cli automation list`
+- `mortise-cli automation get <id>`
+- `mortise-cli automation validate <json|@file>`
+- `mortise-cli automation create <json|@file> [--expected-revision <n|null>]`
+- `mortise-cli automation update <json|@file> --expected-revision <n>`
+- `mortise-cli automation delete <id> --expected-revision <n>`
+- `mortise-cli automation set-enabled <id> <true|false> --expected-revision <n>`
+- `mortise-cli automation run <id> [--trigger-id <id>]`
+- `mortise-cli automation get-run <run-id>`
+- `mortise-cli automation list-runs [--automation-id <id>] [--limit <n>]`
+- `mortise-cli automation emit-event <json|@file>`
+- `mortise-cli automation token path|rotate`
 
 ### Examples
 
 ```bash
-mortise automation list
-mortise automation validate
-# Simple prompt automation with flat flags
-mortise automation create --event UserPromptSubmit --prompt "Summarize this prompt"
-# Scheduled automation with flat flags
-mortise automation create --event SchedulerTick --cron "0 9 * * 1-5" --timezone "Europe/Budapest" --prompt "Give me a morning briefing" --labels "Scheduled" --permission-mode safe
-# Complex automation with --json
-mortise automation create --event SchedulerTick --json '{"cron":"0 9 * * 1-5","actions":[{"type":"prompt","prompt":"Daily summary"}]}'
-mortise automation update abc123 --name "Morning Report" --prompt "Updated prompt"
-mortise automation update abc123 --enabled false
-mortise automation enable abc123
-mortise automation duplicate abc123
-mortise automation history abc123 --limit 10
-mortise automation last-executed abc123
-mortise automation test abc123 --match "UserPromptSubmit"
-mortise automation lint
-mortise automation delete abc123
+mortise-cli --workspace ws-1 automation list
+mortise-cli --workspace ws-1 automation create @automation.json --expected-revision null
+mortise-cli --workspace ws-1 automation update @automation.json --expected-revision 3
+mortise-cli --workspace ws-1 automation emit-event @event.json
+mortise-cli --workspace ws-1 automation token path
 ```
 
 ### Notes
-- Use flat flags for simple automations or `--json` for complex matchers with multiple `actions`.
-- `--prompt` is a shortcut that auto-wraps the text as a prompt action. Use `--json` with `actions` for multi-action automations.
-- `lint` provides quick matcher/action hygiene checks (regex validity, missing actions, oversized prompt mention sets).
-- `history` and `last-executed` read from `automations-history.jsonl` when present.
-- `validate` runs full schema and semantic checks.
+- Definition JSON uses protocol document version 3. Event, cron, once, and interval triggers share one definition format.
+- Prompt and outbound webhook actions share the same run ledger and history.
+- External input uses the loopback CloudEvents endpoint. `token path` exposes only the owner-only file path, not the token. The default local producer token accepts sources under `urn:mortise:external:` and event types under `mortise.`.
 <!-- cli:automation:end -->
 
 ---
@@ -249,60 +156,51 @@ mortise automation delete abc123
 <!-- cli:permission:start -->
 ## Permission
 
-Manage Explore mode permissions stored in `permissions.json` (workspace-level and per-source).
+Manage workspace Explore mode permissions stored in `permissions.json`.
 
 ### Commands
 - `mortise permission list`
-- `mortise permission get [--source <slug>]`
-- `mortise permission set [--source <slug>] --json '{...}'`
-- `mortise permission add-mcp-pattern "<pattern>" [--comment "..."] [--source <slug>]`
-- `mortise permission add-api-endpoint --method GET|POST|... --path "<regex>" [--comment "..."] [--source <slug>]`
-- `mortise permission add-bash-pattern "<pattern>" [--comment "..."] [--source <slug>]`
-- `mortise permission add-write-path "<glob>" [--source <slug>]`
-- `mortise permission remove <index> --type mcp|api|bash|write-path|blocked [--source <slug>]`
-- `mortise permission validate [--source <slug>]`
-- `mortise permission reset [--source <slug>]`
+- `mortise permission get`
+- `mortise permission set --json '{...}'`
+- `mortise permission add-mcp-pattern "<pattern>" [--comment "..."]`
+- `mortise permission add-bash-pattern "<pattern>" [--comment "..."]`
+- `mortise permission add-write-path "<glob>"`
+- `mortise permission remove <index> --type mcp|api|bash|write-path|blocked`
+- `mortise permission validate`
+- `mortise permission reset`
 
 ### Scope
 
-Without `--source`: operates on workspace-level `permissions.json` (global rules).
-With `--source <slug>`: operates on that source's `permissions.json` (auto-scoped).
+Commands operate on the workspace-level `permissions.json`.
 
 ### Examples
 
 ```bash
-# List all permissions files (workspace + sources)
+# Read workspace permissions
 mortise permission list
 # Get workspace permissions
 mortise permission get
-# Get source-specific permissions
-mortise permission get --source linear
-# Add read-only MCP patterns for a source
-mortise permission add-mcp-pattern "list" --comment "List operations" --source linear
-mortise permission add-mcp-pattern "get" --comment "Get operations" --source linear
-mortise permission add-mcp-pattern "search" --comment "Search operations" --source linear
-# Add API endpoint rules
-mortise permission add-api-endpoint --method GET --path ".*" --comment "All GET requests" --source stripe
+# Add read-only MCP patterns
+mortise permission add-mcp-pattern "list" --comment "List operations"
+mortise permission add-mcp-pattern "get" --comment "Get operations"
+mortise permission add-mcp-pattern "search" --comment "Search operations"
 # Add bash patterns
 mortise permission add-bash-pattern "^ls\\s" --comment "Allow ls"
 # Add write path globs
 mortise permission add-write-path "/tmp/**"
 # Remove a rule by index and type
-mortise permission remove 1 --type mcp --source linear
+mortise permission remove 1 --type mcp
 # Replace entire config
-mortise permission set --source github --json '{"allowedMcpPatterns":[{"pattern":"list","comment":"List ops"}]}'
+mortise permission set --json '{"allowedMcpPatterns":[{"pattern":"list","comment":"List ops"}]}'
 # Validate all permissions
 mortise permission validate
-# Validate source-specific
-mortise permission validate --source linear
 # Delete permissions file (revert to defaults)
-mortise permission reset --source linear
+mortise permission reset
 ```
 
 ### Notes
-- Source-level MCP patterns are auto-scoped at runtime (e.g., `list` becomes `mcp__<slug>__.*list`).
 - `remove` uses 0-based index within the specified rule type array. Use `get` to see indices.
-- `validate` runs schema + regex validation. Without `--source`, validates workspace + all sources.
+- `validate` runs schema and regex validation for workspace permissions.
 - `reset` deletes the permissions file, reverting to defaults.
 <!-- cli:permission:end -->
 

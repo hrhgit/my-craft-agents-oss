@@ -2,7 +2,7 @@
  * AutomationInfoPage
  *
  * Detail view for a selected automation, using the Info_Page compound component system.
- * Follows SourceInfoPage pattern: Hero → Sections (When, Then, Settings, History, JSON).
+ * Presents automation details as sections for triggers, actions, settings, history, and JSON.
  */
 
 import * as React from 'react'
@@ -81,7 +81,6 @@ export function AutomationInfoPage({
     <EditPopover
       trigger={<EditButton />}
       {...getEditConfig('automation-config', workspace.rootPath)}
-      secondaryAction={{ label: t('automations.editFile'), filePath: `${workspace.rootPath}/automations.json` }}
     />
   ) : undefined
 

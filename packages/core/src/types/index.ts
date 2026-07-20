@@ -46,10 +46,6 @@ export type {
   TypedError,
   PermissionRequest,
   AgentEvent,
-  // Auth-related types
-  CredentialInputMode,
-  AuthRequestType,
-  AuthStatus,
 } from './message.ts';
 export { generateMessageId } from './message.ts';
 

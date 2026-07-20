@@ -7,7 +7,6 @@
  * Validates:
  * - config.json: Main app configuration
  * - preferences.json: User preferences
- * - sources/{slug}/config.json: Workspace-scoped source configs
  * - permissions.json: Permission rules for Explore mode
  * - tool-icons/tool-icons.json: CLI tool icon mappings
  */
@@ -256,20 +255,14 @@ export function validatePreferences(): ValidationResult {
 
 /**
  * Validate all config files
- * @param workspaceId - Optional workspace ID for source validation
  * @param workspaceRoot - Optional workspace root path for workspace validation
  */
-export function validateAll(workspaceId?: string, workspaceRoot?: string): ValidationResult {
+export function validateAll(workspaceRoot?: string): ValidationResult {
   const results: ValidationResult[] = [
     validateConfig(),
     validatePreferences(),
     validateToolIcons(),
   ];
-
-  // Include workspace-scoped validations if workspaceId is provided
-  if (workspaceId) {
-    results.push(validateAllSources(workspaceId));
-  }
 
   // Include workspace-scoped validation if workspaceRoot is provided
   if (workspaceRoot) {
@@ -287,95 +280,6 @@ export function validateAll(workspaceId?: string, workspaceRoot?: string): Valid
     warnings: allWarnings,
   };
 }
-
-// ============================================================
-// Source & Agent Validators (Folder-Based Architecture)
-// ============================================================
-
-import { getWorkspaceSourcesPath } from '../workspaces/storage.ts';
-
-// --- sources/{slug}/config.json ---
-
-const SourceTypeSchema = z.enum(['mcp', 'api', 'local']);
-
-// MCP source supports two transport types:
-// - HTTP/SSE: requires url and authType
-// - Stdio: requires command (and optional args, env)
-const McpSourceConfigSchema = z.object({
-  transport: z.enum(['http', 'sse', 'stdio']).optional(),
-  // HTTP/SSE fields
-  url: z.string().url().optional(),
-  authType: z.enum(['oauth', 'bearer', 'none']).optional(),
-  clientId: z.string().optional(),
-  // Stdio fields
-  command: z.string().optional(),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  // Custom headers for HTTP/SSE transport (e.g., API keys, custom auth)
-  headers: z.record(z.string(), z.string()).optional(),
-  // Header names for credential-store auth (values stored in credential store as JSON)
-  headerNames: z.array(z.string()).optional(),
-}).refine(
-  (data) => {
-    if (data.transport === 'stdio') {
-      // Stdio transport requires command
-      return !!data.command;
-    } else {
-      // HTTP/SSE transport (default) requires url and authType
-      return !!data.url && !!data.authType;
-    }
-  },
-  {
-    message: 'MCP config requires either (url + authType) for HTTP/SSE or (command) for stdio transport',
-  }
-);
-
-const ApiOAuthConfigSchema = z.object({
-  authorizationUrl: z.string().url(),
-  tokenUrl: z.string().url(),
-  clientId: z.string().min(1),
-  clientSecret: z.string().optional(),
-  scopes: z.array(z.string()).optional(),
-  audience: z.string().optional(),
-  extraParams: z.record(z.string(), z.string()).optional(),
-});
-
-const ApiSourceConfigSchema = z.object({
-  baseUrl: z.string().url(),
-  authType: z.enum(['bearer', 'header', 'query', 'basic', 'oauth', 'none']),
-  headerName: z.string().optional(),
-  headerNames: z.array(z.string()).optional(),
-  queryParam: z.string().optional(),
-  authScheme: z.string().optional(),
-  defaultHeaders: z.record(z.string(), z.string()).optional(),
-  testEndpoint: z
-    .object({
-      method: z.enum(['GET', 'POST']),
-      path: z.string(),
-      body: z.record(z.string(), z.unknown()).optional(),
-      headers: z.record(z.string(), z.string()).optional(),
-    })
-    .optional(),
-  googleService: z.enum(['gmail', 'calendar', 'drive', 'docs', 'sheets', 'youtube', 'searchconsole']).optional(),
-  googleScopes: z.array(z.string()).optional(),
-  googleOAuthClientId: z.string().optional(),
-  googleOAuthClientSecret: z.string().optional(),
-  slackService: z.enum(['messaging', 'channels', 'users', 'files', 'full']).optional(),
-  slackUserScopes: z.array(z.string()).optional(),
-  microsoftService: z.enum(['outlook', 'microsoft-calendar', 'onedrive', 'teams', 'sharepoint']).optional(),
-  microsoftScopes: z.array(z.string()).optional(),
-  oauth: ApiOAuthConfigSchema.optional(),
-});
-
-const LocalSourceConfigSchema = z.object({
-  path: z.string().min(1),
-  format: z.string().optional(),
-});
-
-// Source brand schema
-const SourceBrandSchema = z.object({
-  color: EntityColorSchema.optional(),
-});
 
 // ============================================================
 // Slug Validation
@@ -415,197 +319,6 @@ export function validateSlug(slug: string): ValidationResult {
   }
 
   return { valid: true, errors: [], warnings: [] };
-}
-
-export const FolderSourceConfigSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  slug: z.string().regex(SLUG_REGEX, 'Slug must be lowercase alphanumeric with hyphens'),
-  enabled: z.boolean(),
-  provider: z.string().min(1),
-  type: SourceTypeSchema,
-  mcp: McpSourceConfigSchema.optional(),
-  api: ApiSourceConfigSchema.optional(),
-  local: LocalSourceConfigSchema.optional(),
-  brand: SourceBrandSchema.optional(),
-  isAuthenticated: z.boolean().optional(),
-  lastTestedAt: z.number().int().min(0).optional(),
-  // Timestamps are optional - manually created configs may not have them
-  // Storage functions add these automatically when saving
-  createdAt: z.number().int().min(0).optional(),
-  updatedAt: z.number().int().min(0).optional(),
-}).refine(
-  (data) => {
-    // Ensure correct config block exists for type
-    switch (data.type) {
-      case 'mcp': return !!data.mcp;
-      case 'api': return !!data.api;
-      case 'local': return !!data.local;
-    }
-  },
-  { message: 'Config must include type-specific configuration (mcp, api, or local)' }
-);
-
-/**
- * Validate a source config object (in-memory, no disk reads)
- */
-export function validateSourceConfig(config: unknown): ValidationResult {
-  const result = FolderSourceConfigSchema.safeParse(config);
-
-  if (result.success) {
-    return { valid: true, errors: [], warnings: [] };
-  }
-
-  return {
-    valid: false,
-    errors: zodErrorToIssues(result.error, 'config.json'),
-    warnings: [],
-  };
-}
-
-/**
- * Validate source config from a JSON string.
- * Used by PreToolUse hook to validate before writing to disk.
- */
-export function validateSourceConfigContent(jsonString: string): ValidationResult {
-  let content: unknown;
-  try {
-    content = safeJsonParse(jsonString);
-  } catch (e) {
-    return {
-      valid: false,
-      errors: [{
-        file: 'config.json',
-        path: '',
-        message: `Invalid JSON: ${e instanceof Error ? e.message : 'Unknown error'}`,
-        severity: 'error',
-      }],
-      warnings: [],
-    };
-  }
-
-  return validateSourceConfig(content);
-}
-
-/**
- * Validate a source folder (workspace-scoped)
- */
-export function validateSource(workspaceId: string, slug: string): ValidationResult {
-  const sourcesDir = getWorkspaceSourcesPath(workspaceId);
-  const file = `sources/${slug}/config.json`;
-  const configPath = join(sourcesDir, slug, 'config.json');
-
-  if (!existsSync(join(sourcesDir, slug))) {
-    return {
-      valid: false,
-      errors: [{
-        file,
-        path: '',
-        message: `Source folder '${slug}' does not exist`,
-        severity: 'error',
-      }],
-      warnings: [],
-    };
-  }
-
-  if (!existsSync(configPath)) {
-    return {
-      valid: false,
-      errors: [{
-        file,
-        path: '',
-        message: 'config.json not found',
-        severity: 'error',
-        suggestion: 'Create a config.json file in the source folder',
-      }],
-      warnings: [],
-    };
-  }
-
-  let content: unknown;
-  try {
-    const raw = readFileSync(configPath, 'utf-8');
-    content = safeJsonParse(raw);
-  } catch (e) {
-    return {
-      valid: false,
-      errors: [{
-        file,
-        path: '',
-        message: `Invalid JSON: ${e instanceof Error ? e.message : 'Unknown error'}`,
-        severity: 'error',
-      }],
-      warnings: [],
-    };
-  }
-
-  const result = validateSourceConfig(content);
-
-  // Add warnings for missing guide.md
-  const guidePath = join(sourcesDir, slug, 'guide.md');
-  if (!existsSync(guidePath)) {
-    result.warnings.push({
-      file: `sources/${slug}/guide.md`,
-      path: '',
-      message: 'guide.md not found (recommended for usage guidelines)',
-      severity: 'warning',
-    });
-  }
-
-  return result;
-}
-
-/**
- * Validate all sources in a workspace
- */
-export function validateAllSources(workspaceId: string): ValidationResult {
-  const sourcesDir = getWorkspaceSourcesPath(workspaceId);
-  const errors: ValidationIssue[] = [];
-  const warnings: ValidationIssue[] = [];
-
-  if (!existsSync(sourcesDir)) {
-    return {
-      valid: true,
-      errors: [],
-      warnings: [{
-        file: 'sources/',
-        path: '',
-        message: 'Sources directory does not exist (no sources configured)',
-        severity: 'warning',
-      }],
-    };
-  }
-
-  const entries = readdirSync(sourcesDir);
-  const sourceFolders = entries.filter((entry) => {
-    const entryPath = join(sourcesDir, entry);
-    return statSync(entryPath).isDirectory();
-  });
-
-  if (sourceFolders.length === 0) {
-    return {
-      valid: true,
-      errors: [],
-      warnings: [{
-        file: 'sources/',
-        path: '',
-        message: 'No sources configured',
-        severity: 'warning',
-      }],
-    };
-  }
-
-  for (const folder of sourceFolders) {
-    const result = validateSource(workspaceId, folder);
-    errors.push(...result.errors);
-    warnings.push(...result.warnings);
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings,
-  };
 }
 
 // ============================================================
@@ -872,7 +585,6 @@ import { PermissionsConfigSchema } from '../agent/mode-types.ts';
 import {
   validatePermissionsConfig,
   getWorkspacePermissionsPath,
-  getSourcePermissionsPath,
   getAppPermissionsDir,
 } from '../agent/permissions-config.ts';
 import { validateAutomationsContent, validateAutomations, AUTOMATIONS_CONFIG_FILE } from '../automations/index.ts';
@@ -922,7 +634,7 @@ function validatePermissionsFile(filePath: string, displayFile: string): Validat
  * Runs Zod schema validation and regex pattern compilation checks.
  *
  * @param jsonString - The raw JSON content of the permissions file
- * @param displayFile - File name for error messages (e.g., 'permissions.json' or 'sources/github/permissions.json')
+ * @param displayFile - File name for error messages
  */
 export function validatePermissionsContent(jsonString: string, displayFile: string = 'permissions.json'): ValidationResult {
   const errors: ValidationIssue[] = [];
@@ -979,16 +691,6 @@ export function validateWorkspacePermissions(workspaceRoot: string): ValidationR
 }
 
 /**
- * Validate source-level permissions.json
- * @param workspaceRoot - Absolute path to workspace root folder
- * @param sourceSlug - Source slug
- */
-export function validateSourcePermissions(workspaceRoot: string, sourceSlug: string): ValidationResult {
-  const permissionsPath = getSourcePermissionsPath(workspaceRoot, sourceSlug);
-  return validatePermissionsFile(permissionsPath, `sources/${sourceSlug}/permissions.json`);
-}
-
-/**
  * Validate app-level default permissions
  */
 export function validateDefaultPermissions(): ValidationResult {
@@ -998,7 +700,7 @@ export function validateDefaultPermissions(): ValidationResult {
 
 /**
  * Validate all permissions files in a workspace
- * Includes: app-level default, workspace-level, and all source-level permissions
+ * Includes app-level default and workspace-level permissions.
  */
 export function validateAllPermissions(workspaceRoot: string): ValidationResult {
   const errors: ValidationIssue[] = [];
@@ -1013,20 +715,6 @@ export function validateAllPermissions(workspaceRoot: string): ValidationResult 
   const wsResult = validateWorkspacePermissions(workspaceRoot);
   errors.push(...wsResult.errors);
   warnings.push(...wsResult.warnings);
-
-  // Validate all source-level permissions
-  const sourcesDir = join(workspaceRoot, 'sources');
-  if (existsSync(sourcesDir)) {
-    const entries = readdirSync(sourcesDir);
-    for (const entry of entries) {
-      const entryPath = join(sourcesDir, entry);
-      if (statSync(entryPath).isDirectory()) {
-        const srcResult = validateSourcePermissions(workspaceRoot, entry);
-        errors.push(...srcResult.errors);
-        warnings.push(...srcResult.warnings);
-      }
-    }
-  }
 
   return {
     valid: errors.length === 0,
@@ -1484,8 +1172,8 @@ export function formatValidationResult(result: ValidationResult): string {
  * Result of detecting what type of config file a path corresponds to.
  */
 export interface ConfigFileDetection {
-  type: 'source' | 'skill' | 'permissions' | 'tool-icons' | 'automations';
-  /** Slug of the source or skill (if applicable) */
+  type: 'skill' | 'permissions' | 'tool-icons' | 'automations';
+  /** Slug of the skill (if applicable) */
   slug?: string;
   /** Display file path for error messages */
   displayFile: string;
@@ -1496,9 +1184,8 @@ export interface ConfigFileDetection {
  * Returns null if the path is not a recognized config file.
  *
  * Matches patterns:
- * - .../sources/{slug}/config.json → source config
  * - .../.pi/skills/{slug}/SKILL.md → skill definition
- * - .../permissions.json (workspace or source-level) → permission rules
+ * - .../permissions.json → permission rules
  */
 export function detectConfigFileType(filePath: string, workspaceRootPath: string): ConfigFileDetection | null {
   // Normalize to consistent forward slashes and ensure root ends with /
@@ -1514,12 +1201,6 @@ export function detectConfigFileType(filePath: string, workspaceRootPath: string
   // Get the relative path from workspace root (no leading slash since root ends with /)
   const relativePath = normalizedPath.slice(normalizedRoot.length);
 
-  // Match: sources/{slug}/config.json
-  const sourceMatch = relativePath.match(/^sources\/([^/]+)\/config\.json$/);
-  if (sourceMatch) {
-    return { type: 'source', slug: sourceMatch[1], displayFile: `sources/${sourceMatch[1]}/config.json` };
-  }
-
   // Match: .pi/skills/{slug}/SKILL.md
   const skillMatch = relativePath.match(/^\.pi\/skills\/([^/]+)\/SKILL\.md$/);
   if (skillMatch) {
@@ -1534,12 +1215,6 @@ export function detectConfigFileType(filePath: string, workspaceRootPath: string
   // Match: permissions.json (workspace-level)
   if (relativePath === 'permissions.json') {
     return { type: 'permissions', displayFile: 'permissions.json' };
-  }
-
-  // Match: sources/{slug}/permissions.json (source-level)
-  const sourcePermMatch = relativePath.match(/^sources\/([^/]+)\/permissions\.json$/);
-  if (sourcePermMatch) {
-    return { type: 'permissions', slug: sourcePermMatch[1], displayFile: `sources/${sourcePermMatch[1]}/permissions.json` };
   }
 
   return null;
@@ -1582,8 +1257,6 @@ export function validateConfigFileContent(
   content: string
 ): ValidationResult | null {
   switch (detection.type) {
-    case 'source':
-      return validateSourceConfigContent(content);
     case 'skill':
       return validateSkillContent(content, detection.slug || 'unknown');
     case 'automations':

@@ -20,3 +20,30 @@ export interface NetworkProxySettings {
   httpsProxy?: string;
   noProxy?: string;
 }
+
+export type DeveloperKitConfigurationSource = 'automatic' | 'manual';
+
+export interface DeveloperKitManifest {
+  schemaVersion: number;
+  name: string;
+  version: string;
+  hostVersion: string;
+  uiValidationProtocolVersion: number;
+  platform: string;
+  arch: string;
+  appId: string;
+}
+
+export interface DeveloperKitInstallation {
+  rootPath: string;
+  cliPath: string;
+  manifest: DeveloperKitManifest;
+}
+
+export interface DeveloperKitStatus {
+  state: 'not-configured' | 'ready' | 'invalid';
+  source?: DeveloperKitConfigurationSource;
+  configuredPath?: string;
+  installation?: DeveloperKitInstallation;
+  error?: string;
+}

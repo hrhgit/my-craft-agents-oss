@@ -10,8 +10,7 @@
  *
  * Pipeline steps:
  * 1. Permission mode check: Block tools disallowed by current mode
- * 2. Source blocking: Block tools from inactive MCP sources
- * 3. Prerequisite check: Block source tools until guide.md is read
+ * 2. Prerequisite check: selected skill instructions must be read
  * 4. spawn_session detection: Intercept the canonical spawn_session host tool
  * 5. Input transforms: Path expansion, config validation, skill qualification, metadata stripping
  * 6. Ask-mode prompt decision: Determine if user approval is needed
@@ -43,7 +42,6 @@ import { validateSkillSlug } from '../../skills/storage.ts';
 import { createPiSkillResolver } from '../../pi/pi-skill-resolver.ts';
 import {
   shouldAllowToolInMode,
-  isApiEndpointAllowed,
   isReadOnlyBashCommandWithConfig,
   getPermissionModeDiagnostics,
   PERMISSION_MODE_CONFIG,
@@ -324,7 +322,6 @@ export function stripToolMetadata(
  * invalid configs from ever reaching disk.
  *
  * Validates:
- * - sources/{slug}/config.json
  * - .pi/skills/{slug}/SKILL.md
  * - permissions.json
  * - theme.json
@@ -447,14 +444,12 @@ function matchesPathScope(relativePath: string, scope: string): boolean {
 
 function detectCliNamespaceFromConfigDetection(detection: ConfigFileDetection): CliDomainNamespace | null {
   if (detection.type === 'automations') return 'automation'
-  if (detection.type === 'source') return 'source'
   if (detection.type === 'skill') return 'skill'
   return null
 }
 
 /**
  * For selected config domains, enforce CLI usage instead of direct file operations.
- * - sources/{slug}/config.json: redirect on Write/Edit
  * - .pi/skills/{slug}/SKILL.md: redirect on Write/Edit
  * - automations.json: redirect on Write/Edit
  */
@@ -496,7 +491,7 @@ export function getConfigDomainBashRedirect(
   const command = typeof input.command === 'string' ? input.command.trim() : '';
   if (!command) return null;
 
-  if (/^mortise\s+(automation|source|skill)\b/.test(command)) {
+  if (/^mortise\s+(automation|skill)\b/.test(command)) {
     return null;
   }
 
@@ -548,7 +543,7 @@ export type PreToolUseCheckResult =
   | { type: 'block'; reason: string; source?: 'prerequisite' }
   | {
       type: 'prompt';
-      promptType: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
+      promptType: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval';
       description: string;
       command?: string;
       modifiedInput?: Record<string, unknown>;
@@ -560,7 +555,6 @@ export type PreToolUseCheckResult =
       commandHash?: string;
       approvalTtlSeconds?: number;
     }
-  | { type: 'source_activation_needed'; sourceSlug: string; sourceExists: boolean }
   | { type: 'spawn_session_intercept'; input: Record<string, unknown> };
 
 /**
@@ -586,14 +580,6 @@ export interface PreToolUseInput {
   dataFolderPath?: string;
   /** Working directory override (for skill resolution) */
   workingDirectory?: string;
-  /** Currently active source slugs */
-  activeSourceSlugs: string[];
-  /** All available sources (for source-exists check) */
-  allSourceSlugs: string[];
-  /** Whether the agent supports source activation (has onSourceActivationRequest callback) */
-  hasSourceActivation: boolean;
-  /** Whether the global data-source feature is enabled. */
-  dataSourcesEnabled: boolean;
   /** PermissionManager for session-scoped whitelists */
   permissionManager: PermissionManagerLike;
   /** PrerequisiteManager for guide.md checking */
@@ -626,45 +612,21 @@ export interface PrerequisiteManagerLike {
   trackBashSkillRead(input: Record<string, unknown>): boolean;
 }
 
-/** Built-in MCP servers that are always available (not user sources) */
-const BUILT_IN_MCP_SERVERS = new Set(['session', 'mortise-docs']);
-
-const DATA_SOURCE_SESSION_TOOLS = new Set([
-  'source_test',
-  'source_oauth_trigger',
-  'source_google_oauth_trigger',
-  'source_slack_oauth_trigger',
-  'source_microsoft_oauth_trigger',
-  'source_credential_prompt',
-]);
-
-/** Whether a tool belongs to the optional Mortise data-source feature. */
-export function isDataSourceToolName(toolName: string): boolean {
-  const sessionToolName = normalizeSessionToolName(toolName) ?? toolName;
-  if (DATA_SOURCE_SESSION_TOOLS.has(sessionToolName)) return true;
-  if (toolName.startsWith('api_')) return true;
-
-  if (!toolName.startsWith('mcp__')) return false;
-  const serverName = toolName.split('__')[1];
-  return !!serverName && !BUILT_IN_MCP_SERVERS.has(serverName);
-}
-
 /** File write tools that require permission in ask mode */
 const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
 /**
  * Centralized PreToolUse pipeline.
  *
- * Synchronous except for the final result — all async work (source activation,
- * user prompting) is handled by the calling agent based on the result type.
+ * Synchronous except for the final result; user prompting is handled by the
+ * calling agent based on the result type.
  *
  * Pipeline:
  * 1. Permission mode check (shouldAllowToolInMode)
- * 2. Source blocking (inactive MCP sources)
- * 3. Prerequisite check (guide.md before source tools)
- * 4. spawn_session interception
- * 5. Input transforms (paths, config validation, skills, metadata)
- * 6. Ask-mode prompt decision
+ * 2. Prerequisite check
+ * 3. spawn_session interception
+ * 4. Input transforms (paths, config validation, skills, metadata)
+ * 5. Ask-mode prompt decision
  *
  * @returns A discriminated union that the agent translates to its SDK format
  */
@@ -692,10 +654,6 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     plansFolderPath,
     dataFolderPath,
     workingDirectory,
-    activeSourceSlugs,
-    allSourceSlugs,
-    hasSourceActivation,
-    dataSourcesEnabled,
     permissionManager,
     prerequisiteManager,
     backendMetadata,
@@ -705,7 +663,6 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   // Build permissions context for custom permissions.json rules
   const permissionsContext: PermissionsContext = {
     workspaceRootPath,
-    activeSourceSlugs,
   };
 
   // Canonical mode source of truth for this session.
@@ -737,32 +694,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   }
 
   // ============================================================
-  // 2. SOURCE BLOCKING (inactive MCP sources)
-  // ============================================================
-  if (!dataSourcesEnabled && isDataSourceToolName(toolName)) {
-    onDebug?.(`Data-source feature disabled: blocking ${toolName}`);
-    return { type: 'block', reason: 'Data sources are disabled in Mortise settings.' };
-  }
-
-  if (toolName.startsWith('mcp__')) {
-    const parts = toolName.split('__');
-    const serverName = parts[1];
-    if (parts.length >= 3 && serverName && !BUILT_IN_MCP_SERVERS.has(serverName)) {
-      const isActive = activeSourceSlugs.includes(serverName);
-      if (!isActive) {
-        const sourceExists = allSourceSlugs.includes(serverName);
-        onDebug?.(`Source "${serverName}" not active (exists=${sourceExists}, hasActivation=${hasSourceActivation})`);
-        return {
-          type: 'source_activation_needed',
-          sourceSlug: serverName,
-          sourceExists,
-        };
-      }
-    }
-  }
-
-  // ============================================================
-  // 3. PREREQUISITE CHECK (guide.md before source tools)
+  // 2. PREREQUISITE CHECK
   // ============================================================
   if (prerequisiteManager) {
     // Allow Bash through if it's reading a pending skill file (clears the prerequisite)
@@ -777,14 +709,14 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   }
 
   // ============================================================
-  // 4. SPAWN_SESSION INTERCEPTION
+  // 3. SPAWN_SESSION INTERCEPTION
   // ============================================================
   if (normalizeSessionToolName(toolName) === 'spawn_session') {
     return { type: 'spawn_session_intercept', input };
   }
 
   // ============================================================
-  // 5. INPUT TRANSFORMS
+  // 4. INPUT TRANSFORMS
   // ============================================================
   let currentInput = input;
   let wasModified = false;
@@ -911,7 +843,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
 // ============================================================
 
 interface PromptInfo {
-  promptType: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
+  promptType: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval';
   description: string;
   command?: string;
   appName?: string;
@@ -1115,34 +1047,6 @@ export function shouldPromptInAskMode(
     }
     // Read-only MCP tool — no prompt needed
     return null;
-  }
-
-  // --- API mutations ---
-  if (toolName.startsWith('api_')) {
-    const method = ((input?.method as string) || 'GET').toUpperCase();
-    const path = input?.path as string | undefined;
-
-    if (method !== 'GET') {
-      const apiDescription = `${method} ${path || ''}`;
-
-      // Check permissions.json whitelist
-      if (isApiEndpointAllowed(method, path, permissionsContext)) {
-        onDebug?.(`Auto-allowing API "${apiDescription}" (whitelisted in permissions.json)`);
-        return null;
-      }
-
-      // Check session whitelist
-      if (permissionManager.isCommandWhitelisted(apiDescription)) {
-        onDebug?.(`Auto-allowing API "${apiDescription}" (previously approved)`);
-        return null;
-      }
-
-      return {
-        promptType: 'api_mutation',
-        description: `API: ${apiDescription}`,
-        command: apiDescription,
-      };
-    }
   }
 
   return null;

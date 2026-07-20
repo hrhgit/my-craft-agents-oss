@@ -1,5 +1,6 @@
 import type { CapabilityProvider } from '../types.ts'
 import { executeBrowserToolCommand, type BrowserPaneFns } from '@mortise/shared/agent'
+import { writeRuntimeLog } from '@mortise/shared/utils'
 
 export interface BrowserOpenInput { url: string; focus?: boolean }
 export interface BrowserOpenResult { instanceId: string; url: string; title: string }
@@ -107,6 +108,24 @@ export function createBrowserCommandProvider(
         command: parsed.command,
         fns,
         sessionId: context.request.sessionId,
+        onLifecycle: (event) => {
+          context.reportProgress({ kind: 'browser-command', ...event })
+          writeRuntimeLog(event.phase === 'failed' ? 'warn' : 'info', {
+            scope: 'browser-command',
+            event: event.phase,
+            correlation: {
+              sessionId: context.request.sessionId,
+              runtimeId: context.request.runtimeId,
+              requestId: context.request.requestId,
+            },
+            data: {
+              command: event.command,
+              index: event.index,
+              durationMs: event.durationMs,
+              reason: event.reason,
+            },
+          })
+        },
       })
       if (context.signal.aborted) throw context.signal.reason
       const output: BrowserCommandOutput = { text: result.output }

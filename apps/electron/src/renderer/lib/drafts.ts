@@ -22,6 +22,13 @@ import type { DraftAttachmentContent, DraftAttachmentRef } from '@mortise/shared
  *  shared readFileAttachment helper uses for file reads. */
 export const CONTENT_PERSIST_CAP = ATTACHMENT_SINGLE_FILE_LIMIT_BYTES
 
+export function hasDraftContent(draft: {
+  text?: string
+  attachments?: readonly unknown[]
+} | null | undefined): boolean {
+  return Boolean(draft?.text?.trim()) || Boolean(draft?.attachments?.length)
+}
+
 export function isAbsolutePath(p: string): boolean {
   if (!p) return false
   if (p.startsWith('/')) return true

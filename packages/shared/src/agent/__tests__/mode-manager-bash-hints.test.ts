@@ -38,7 +38,6 @@ function buildConfig(overrides?: Partial<ModeConfig>): ModeConfig {
       },
     ],
     readOnlyMcpPatterns: [],
-    allowedApiEndpoints: [],
     displayName: 'Explore',
     shortcutHint: 'SHIFT+TAB',
     ...overrides,

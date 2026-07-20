@@ -168,34 +168,6 @@ describe('ConversationProjector', () => {
     expect(projector.getEntity('block-1')?.payload).toEqual({ text: 'text-1' })
   })
 
-  it('reduces auth request and resolution onto one prompt entity', () => {
-    const projector = new ConversationProjector('session-1', 'runtime-1')
-    const request = event(1, {
-      entityId: 'prompt:auth-1', entityType: 'prompt_request', entityVersion: 1,
-      kind: 'auth_request', payload: {
-        requestId: 'auth-1', promptKind: 'credential', authType: 'credential',
-        sourceSlug: 'github', sourceName: 'GitHub', status: 'pending',
-      },
-    })
-    const resolution = event(2, {
-      entityId: 'prompt:auth-1', entityType: 'prompt_request', entityVersion: 2,
-      kind: 'prompt_resolved', payload: {
-        requestId: 'auth-1', promptKind: 'credential', authType: 'credential',
-        sourceSlug: 'github', sourceName: 'GitHub', status: 'resolved', resolution: 'completed',
-      },
-    })
-
-    expect(projector.apply(request).status).toBe('applied')
-    expect(projector.apply(resolution).status).toBe('applied')
-    expect(projector.createSnapshot().entities).toContainEqual(expect.objectContaining({
-      entityId: 'prompt:auth-1', entityType: 'prompt_request', entityVersion: 2,
-      kind: 'prompt_resolved', payload: {
-        requestId: 'auth-1', promptKind: 'credential', authType: 'credential',
-        sourceSlug: 'github', sourceName: 'GitHub', status: 'resolved', resolution: 'completed',
-      },
-    }))
-  })
-
   it('rejects events and snapshots for a different runtime identity', () => {
     const projector = new ConversationProjector('session-1', 'runtime-1')
 

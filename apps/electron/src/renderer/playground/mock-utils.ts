@@ -1,6 +1,5 @@
 import type {
   FileAttachment,
-  LoadedSource,
   PermissionMode,
   MessagingPlatformRuntimeInfo,
   WhatsAppUiEvent,
@@ -696,72 +695,6 @@ ensureMockElectronAPI()
 // Sample Data
 // ============================================================================
 
-export const mockSources: LoadedSource[] = [
-  {
-    config: {
-      id: 'github-api-1',
-      slug: 'github-api',
-      name: 'GitHub API',
-      provider: 'github',
-      type: 'api',
-      enabled: true,
-      api: {
-        baseUrl: 'https://api.github.com',
-        authType: 'bearer',
-      },
-      icon: 'https://www.google.com/s2/favicons?domain=github.com&sz=128',
-      tagline: 'Access repositories, issues, and pull requests',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    },
-    guide: null,
-    folderPath: '/mock/sources/github-api',
-    workspaceRootPath: '/mock/workspaces/playground-workspace',
-    workspaceId: 'playground-workspace',
-  },
-  {
-    config: {
-      id: 'linear-api-1',
-      slug: 'linear-api',
-      name: 'Linear',
-      provider: 'linear',
-      type: 'api',
-      enabled: true,
-      api: {
-        baseUrl: 'https://api.linear.app',
-        authType: 'bearer',
-      },
-      icon: 'https://www.google.com/s2/favicons?domain=linear.app&sz=128',
-      tagline: 'Issue tracking and project management',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    },
-    guide: null,
-    folderPath: '/mock/sources/linear-api',
-    workspaceRootPath: '/mock/workspaces/playground-workspace',
-    workspaceId: 'playground-workspace',
-  },
-  {
-    config: {
-      id: 'local-files-1',
-      slug: 'local-files',
-      name: 'Local Files',
-      provider: 'filesystem',
-      type: 'local',
-      enabled: true,
-      local: {
-        path: '/Users/demo/projects',
-      },
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    },
-    guide: null,
-    folderPath: '/mock/sources/local-files',
-    workspaceRootPath: '/mock/workspaces/playground-workspace',
-    workspaceId: 'playground-workspace',
-  },
-]
-
 export const sampleImageAttachment: FileAttachment = {
   type: 'image',
   path: '/Users/demo/screenshot.png',
@@ -806,10 +739,6 @@ export const mockInputCallbacks = {
 
   onPermissionModeChange: (mode: PermissionMode) => {
     console.log('[Playground] Permission mode changed:', mode)
-  },
-
-  onSourcesChange: (slugs: string[]) => {
-    console.log('[Playground] Sources changed:', slugs)
   },
 
   onWorkingDirectoryChange: (path: string) => {

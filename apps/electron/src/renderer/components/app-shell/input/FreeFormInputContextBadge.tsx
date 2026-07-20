@@ -32,7 +32,7 @@ export interface FreeFormInputContextBadgeProps {
 }
 
 /**
- * FreeFormInputContextBadge - Unified context badge for Sources, Files, and Folder selectors
+ * FreeFormInputContextBadge - Unified context badge for file and folder selectors
  *
  * Visual States:
  * - Expanded: Icon + Label + Chevron, no background, hover shows background

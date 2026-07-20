@@ -8,7 +8,6 @@ describe('ChatDisplay Pi-first turn ownership', () => {
   it('renders projection-derived turns through the established chat components', () => {
     expect(source).toContain('buildPiTurns(projectionEntities, projectionOverlay)')
     expect(source).toContain('<MemoizedMessageBubble')
-    expect(source).toContain('<MemoizedAuthRequestCard')
     expect(source).toContain('<TurnCard')
   })
 

@@ -29,7 +29,6 @@ export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.theme.GET_ALL_WORKSPACE_THEMES,
   RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME,
   RPC_CHANNELS.toolIcons.GET_MAPPINGS,
-  RPC_CHANNELS.logo.GET_URL,
 ] as const
 
 export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDeps): void {
@@ -75,7 +74,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   // Get workspace ID for the calling window
   server.handle(RPC_CHANNELS.window.GET_WORKSPACE, (ctx) => {
     const workspaceId = ctx.workspaceId ?? windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-    // Set up ConfigWatcher for live updates (labels, statuses, sources, themes)
+    // Set up ConfigWatcher for live workspace updates.
     if (workspaceId) {
       const workspace = getWorkspaceByNameOrId(workspaceId)
       if (workspace) {
@@ -128,6 +127,11 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     // redocked every auxiliary. A failed close handshake leaves both the
     // renderer and transport on the original workspace.
     await server.updateClientWorkspace?.(ctx.clientId, workspaceId)
+
+    // Keep the cold-start fallback aligned with the last successful in-window
+    // switch. Normal quits restore window-state.json first, but that snapshot
+    // can legitimately be empty after every window has already closed.
+    setActiveWorkspace(workspaceId)
 
     // Set up ConfigWatcher for the new workspace
     sessionManager.setupConfigWatcher(workspace.rootPath, workspaceId)
@@ -372,9 +376,4 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   })
 
   // Logo URL resolution (uses Node.js filesystem cache for provider domains)
-  server.handle(RPC_CHANNELS.logo.GET_URL, async (_ctx, serviceUrl: string, provider?: string) => {
-    const { getLogoUrl } = await import('@mortise/shared/utils/logo')
-    const result = getLogoUrl(serviceUrl, provider)
-    return result
-  })
 }

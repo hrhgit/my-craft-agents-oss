@@ -123,4 +123,20 @@ describe("AgentSession.registerHostTools", () => {
 
 		session.dispose();
 	});
+
+	it("appends and clears host system-prompt context without replacing Pi's prompt", async () => {
+		const session = await createSession();
+		const nativePrompt = session.systemPrompt;
+
+		await session.prompt("hello", { appendSystemPrompt: "DEVELOPER KIT CONTEXT" }).catch(() => {});
+		expect(session.systemPrompt).toBe(`${nativePrompt}\n\nDEVELOPER KIT CONTEXT`);
+
+		session.refreshSystemPrompt();
+		expect(session.systemPrompt).toBe(`${nativePrompt}\n\nDEVELOPER KIT CONTEXT`);
+
+		await session.prompt("hello again", { appendSystemPrompt: "" }).catch(() => {});
+		expect(session.systemPrompt).toBe(nativePrompt);
+
+		session.dispose();
+	});
 });

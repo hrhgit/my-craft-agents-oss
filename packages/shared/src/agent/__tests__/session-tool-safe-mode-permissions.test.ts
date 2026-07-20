@@ -23,8 +23,6 @@ describe('session tool safe-mode classification', () => {
 
   it('blocks mutating/auth session tools in safe mode', () => {
     const blockedTools = [
-      'source_oauth_trigger',
-      'source_credential_prompt',
       'spawn_session',
       'update_user_preferences',
     ] as const;

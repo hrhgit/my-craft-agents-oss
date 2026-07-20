@@ -78,7 +78,6 @@ function createDeps(): HandlerDeps {
   return {
     sessionManager,
     platform,
-    oauthFlowStore: {} as HandlerDeps['oauthFlowStore'],
   }
 }
 
@@ -96,7 +95,6 @@ const protectedCalls: Array<{ channel: string; args: unknown[] }> = [
   { channel: RPC_CHANNELS.sessions.CANCEL, args: ['session-1'] },
   { channel: RPC_CHANNELS.sessions.KILL_SHELL, args: ['session-1', 'shell-1'] },
   { channel: RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION, args: ['session-1', 'request-1', true, true] },
-  { channel: RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL, args: ['session-1', 'request-1', {}] },
   { channel: RPC_CHANNELS.extensions.REMOTEUI_RESPONSE, args: ['session-1', 'request-1', null] },
   { channel: RPC_CHANNELS.extensions.COMMAND_INVOKE, args: ['session-1', 'command-1', {}] },
   { channel: RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS, args: ['session-1'] },

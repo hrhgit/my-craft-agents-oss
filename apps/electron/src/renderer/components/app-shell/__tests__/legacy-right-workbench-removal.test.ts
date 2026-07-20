@@ -6,6 +6,10 @@ const pageNavigationSource = await Bun.file(new URL('../PageNavigationSurface.ts
 const topBarSource = await Bun.file(new URL('../TopBar.tsx', import.meta.url)).text()
 const unifiedDockSource = await Bun.file(new URL('../UnifiedDockWorkspace.tsx', import.meta.url)).text()
 const workbenchSource = await Bun.file(new URL('../../right-workbench/RightWorkbench.tsx', import.meta.url)).text()
+const dockEmptyPageSource = unifiedDockSource.slice(
+  unifiedDockSource.indexOf('function DockEmptyPage'),
+  unifiedDockSource.indexOf('function DockedToolPanel'),
+)
 
 describe('universal dock production ownership', () => {
   it('does not retain the fixed right-workbench runtime branch', () => {
@@ -34,5 +38,11 @@ describe('universal dock production ownership', () => {
     expect(topBarSource).not.toContain("t('workbench.toggle')")
     expect(topBarSource).not.toContain('isWorkbenchOpen')
     expect(topBarSource).not.toContain('isCanvasLayoutControl')
+  })
+
+  it('opens an unsaved conversation draft from a content-picker tab', () => {
+    expect(dockEmptyPageSource).toContain('routes.view.newConversation(createNewConversationDraftId())')
+    expect(dockEmptyPageSource).not.toContain('useAppShellContext()')
+    expect(dockEmptyPageSource).not.toContain('await onCreateSession(')
   })
 })

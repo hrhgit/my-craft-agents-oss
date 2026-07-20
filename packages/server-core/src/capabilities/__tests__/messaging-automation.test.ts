@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test'
 import { CapabilityRouter } from '../router.ts'
-import { createAutomationWorkspaceCapabilityProvider, createMessagingSessionCapabilityProvider, createScopedAutomationCapabilityProvider } from '../providers/messaging-automation.ts'
+import { createAutomationWorkspaceCapabilityProvider, createMessagingSessionCapabilityProvider } from '../providers/messaging-automation.ts'
 import type { CapabilityRequestV1 } from '../types.ts'
 
 function request(capability: string, operation: string, input: unknown = {}): CapabilityRequestV1 {
@@ -33,31 +33,52 @@ describe('messaging session capability', () => {
 })
 
 describe('automation workspace capability', () => {
-  it('toggles by stable ID in the Host-resolved session workspace', async () => {
-    const setEnabled = mock(async (_sessionId: string, id: string, enabled: boolean) => ({ id, enabled }))
+  it('parses the canonical DTO and derives extension source identity', async () => {
+    const execute = mock(async () => ({ schemaVersion: 1, status: 'ok', revision: 1, data: [] }))
     const router = new CapabilityRouter()
-    router.register(createAutomationWorkspaceCapabilityProvider({ status: async () => ({ automationCount: 1, schedulerRunning: true }), list: async () => [], setEnabled }))
-    expect(await router.invoke(request('automation.workspace', 'set-enabled', { id: 'auto-1', enabled: false }))).toMatchObject({ status: 'success', output: { id: 'auto-1', enabled: false } })
-    expect(setEnabled).toHaveBeenCalledWith('session-1', 'auto-1', false)
+    router.register(createAutomationWorkspaceCapabilityProvider({ execute }))
+    expect(await router.invoke(request('automation.workspace', 'list', { schemaVersion: 1 }))).toMatchObject({
+      status: 'success',
+      output: { schemaVersion: 1, status: 'ok', data: [] },
+    })
+    expect(execute).toHaveBeenCalledWith(
+      { operation: 'list', schemaVersion: 1 },
+      expect.objectContaining({
+        sessionId: 'session-1',
+        runtimeId: 'runtime-1',
+        extensionId: 'extension-1',
+        eventSourceKind: 'extension',
+      }),
+    )
   })
 
-  it('rejects execution, webhook, prompt, and file mutation inputs', async () => {
-    const setEnabled = mock(async () => ({ id: 'auto-1', enabled: true }))
+  it('classifies Pi runtime calls as agent events without trusting input fields', async () => {
+    const execute = mock(async (..._args: unknown[]) => ({ schemaVersion: 1, operationId: 'op-emit', status: 'accepted', data: {
+      eventId: 'event-identity-1234', runIds: [], persisted: true,
+    } }))
     const router = new CapabilityRouter()
-    router.register(createAutomationWorkspaceCapabilityProvider({ status: async () => ({ automationCount: 0, schedulerRunning: false }), list: async () => [], setEnabled }))
-    expect(await router.invoke(request('automation.workspace', 'replay', { id: 'auto-1' }))).toMatchObject({ status: 'failed' })
-    expect(await router.invoke({ ...request('automation.workspace', 'set-enabled', { id: 'auto-1', enabled: true, prompt: 'run this' }), requestId: 'extra' })).toMatchObject({ status: 'failed' })
-    expect(setEnabled).not.toHaveBeenCalled()
+    router.register(createAutomationWorkspaceCapabilityProvider({ execute }))
+    const event = {
+      specversion: '1.0', id: 'external-event-1', source: 'urn:test', type: 'tests.failed',
+      time: new Date().toISOString(), data: {},
+    }
+    const result = await router.invoke({
+      ...request('automation.workspace', 'emit-event', { schemaVersion: 1, operationId: 'op-emit', event }),
+      extensionId: 'pi-runtime',
+    })
+    expect(result).toMatchObject({ status: 'success', output: { status: 'accepted' } })
+    expect(execute.mock.calls[0]?.[1]).toMatchObject({ eventSourceKind: 'agent' })
   })
-})
 
-describe('scoped scheduler and webhook capabilities', () => {
-  it('use independent capability names without exposing execution operations', async () => {
-    const adapter = { status: async () => ({ automationCount: 1, schedulerRunning: true }), list: async () => [], setEnabled: async (_sessionId: string, id: string, enabled: boolean) => ({ id, enabled }) }
-    const router = new CapabilityRouter({ authorize: () => ({ allowed: true }) })
-    router.register(createScopedAutomationCapabilityProvider('scheduler', adapter))
-    router.register(createScopedAutomationCapabilityProvider('webhook', adapter))
-    expect(await router.invoke(request('scheduler.workspace', 'status'))).toMatchObject({ status: 'success' })
-    expect(await router.invoke({ ...request('webhook.workspace', 'execute'), requestId: 'webhook-execute' })).toMatchObject({ status: 'failed' })
+  it('rejects unsupported operations and extra DTO fields before dispatch', async () => {
+    const execute = mock(async () => ({ schemaVersion: 1, status: 'ok', data: [] }))
+    const router = new CapabilityRouter()
+    router.register(createAutomationWorkspaceCapabilityProvider({ execute }))
+    expect(await router.invoke(request('automation.workspace', 'status', { schemaVersion: 1 }))).toMatchObject({ status: 'failed' })
+    expect(await router.invoke({
+      ...request('automation.workspace', 'list', { schemaVersion: 1, sourceKind: 'mortise' }),
+      requestId: 'spoof-source',
+    })).toMatchObject({ status: 'failed' })
+    expect(execute).not.toHaveBeenCalled()
   })
 })

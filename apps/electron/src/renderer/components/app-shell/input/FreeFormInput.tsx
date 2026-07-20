@@ -8,7 +8,6 @@ import {
   ArrowUp,
   Square,
   Check,
-  DatabaseZap,
   ChevronDown,
   ChevronUp,
   AlertCircle,
@@ -62,15 +61,12 @@ import { ImageSupportWarningBanner } from './ImageSupportWarningBanner'
 import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, type ModelDefinition } from '@config/models'
 import { piProviderModelSupportsImages } from '@mortise/shared/config/pi-provider-models'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
-import { SourceAvatar } from '@/components/ui/source-avatar'
-import { SourceSelectorPopover } from '@/components/ui/SourceSelectorPopover'
-import { CompactSourceSelector } from '@/components/ui/CompactSourceSelector'
 import { CompactWorkingDirectorySelector } from '@/components/ui/CompactWorkingDirectorySelector'
 import { ProviderIcon } from '@/components/icons/ProviderIcon'
 import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
 import { derivePickerMode } from './picker-mode'
 import { matchExactExtensionCommand } from './extension-command-submit'
-import type { FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
+import type { FileAttachment, LoadedSkill } from '../../../../shared/types'
 import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import type { PermissionMode } from '@mortise/shared/agent/modes'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@mortise/shared/agent/thinking-levels'
@@ -273,13 +269,6 @@ export interface FreeFormInputProps {
   onHeightChange?: (height: number) => void
   /** Callback when focus state changes */
   onFocusChange?: (focused: boolean) => void
-  // Source selection
-  /** Available sources (enabled only) */
-  sources?: LoadedSource[]
-  /** Currently enabled source slugs for this session */
-  enabledSourceSlugs?: string[]
-  /** Callback when source selection changes */
-  onSourcesChange?: (slugs: string[]) => void
   // Skill selection (for @mentions)
   /** Available skills for @mention autocomplete */
   skills?: LoadedSkill[]
@@ -374,9 +363,6 @@ export function FreeFormInput({
   unstyled = false,
   onHeightChange,
   onFocusChange,
-  sources = [],
-  enabledSourceSlugs = [],
-  onSourcesChange,
   skills = [],
   workspaceId,
   workingDirectory,
@@ -586,23 +572,6 @@ export function FreeFormInput({
     onAttachmentsChangeRef.current?.(attachments)
   }, [attachments])
 
-  // Optimistic state for source selection - updates UI immediately before IPC round-trip completes
-  const [optimisticSourceSlugs, setOptimisticSourceSlugs] = React.useState(enabledSourceSlugs)
-
-  // Sync from prop when server state changes (reconciles after IPC or on external updates)
-  // Use content comparison (not reference) to avoid infinite loops with empty arrays
-  const prevEnabledSourceSlugsRef = React.useRef(enabledSourceSlugs)
-  React.useEffect(() => {
-    const prev = prevEnabledSourceSlugsRef.current
-    const changed = enabledSourceSlugs.length !== prev.length ||
-      enabledSourceSlugs.some((slug, i) => slug !== prev[i])
-
-    if (changed) {
-      setOptimisticSourceSlugs(enabledSourceSlugs)
-      prevEnabledSourceSlugsRef.current = enabledSourceSlugs
-    }
-  }, [enabledSourceSlugs])
-
   // Sync from parent when inputValue changes externally (e.g., switching sessions)
   const prevInputValueRef = React.useRef(coerceInputText(inputValue))
   React.useEffect(() => {
@@ -644,7 +613,6 @@ export function FreeFormInput({
 
   const [isDraggingOver, setIsDraggingOver] = React.useState(false)
   const [loadingCount, setLoadingCount] = React.useState(0)
-  const [sourceDropdownOpen, setSourceDropdownOpen] = React.useState(false)
   const [isFocused, setIsFocused] = React.useState(false)
   const [inputMaxHeight, setInputMaxHeight] = React.useState(540)
   const [modelDropdownOpen, setModelDropdownOpen] = React.useState(false)
@@ -690,7 +658,6 @@ export function FreeFormInput({
 
   const dragCounterRef = React.useRef(0)
   const containerRef = React.useRef<HTMLDivElement>(null)
-  const sourceButtonRef = React.useRef<HTMLButtonElement>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
   // Merge refs for RichTextInput
@@ -891,27 +858,13 @@ export function FreeFormInput({
     extraSections: extensionSections,
   })
 
-  // Handle mention selection (sources, skills, files)
-  const handleMentionSelect = React.useCallback((item: MentionItem) => {
-    // For sources: enable the source immediately
-    if (item.type === 'source' && item.source && onSourcesChange) {
-      const slug = item.source.config.slug
-      if (!optimisticSourceSlugs.includes(slug)) {
-        const newSlugs = [...optimisticSourceSlugs, slug]
-        setOptimisticSourceSlugs(newSlugs)
-        onSourcesChange(newSlugs)
-      }
-    }
+  // Files and skills need no special handling beyond text insertion.
+  const handleMentionSelect = React.useCallback((_item: MentionItem) => {}, [])
 
-    // Files via @ mention in text are sufficient context for the agent.
-    // Skills also don't need special handling beyond text insertion.
-  }, [optimisticSourceSlugs, onSourcesChange])
-
-  // Inline mention hook (for skills, sources, and files)
+  // Inline mention hook (for skills and files)
   const inlineMention = useInlineMention({
     inputRef: richInputRef,
     skills,
-    sources,
     basePath: workingDirectory,
     onSelect: handleMentionSelect,
     // Use workspace slug (not UUID) for SDK skill qualification
@@ -1173,19 +1126,9 @@ export function FreeFormInput({
       return true
     }
 
-    // Parse all @mentions (skills, sources, folders)
+    // Parse all @mentions (skills and folders)
     const skillSlugs = skills.map(s => s.slug)
-    const sourceSlugs = sources.map(s => s.config.slug)
-    const mentions = parseMentions(input, skillSlugs, sourceSlugs)
-
-    // Enable any mentioned sources that aren't already enabled
-    if (mentions.sources.length > 0 && onSourcesChange) {
-      const newSlugs = [...new Set([...optimisticSourceSlugs, ...mentions.sources])]
-      if (newSlugs.length > optimisticSourceSlugs.length) {
-        setOptimisticSourceSlugs(newSlugs)
-        onSourcesChange(newSlugs)
-      }
-    }
+    const mentions = parseMentions(input, skillSlugs)
 
     const attachmentSnapshot = attachments
 
@@ -1209,7 +1152,7 @@ export function FreeFormInput({
     })
 
     return true
-  }, [input, attachments, followUpItems, disabled, disableSend, extensionCommands, triggerExtensionCommand, onInputChange, onAttachmentsChange, onSubmit, skills, sources, optimisticSourceSlugs, onSourcesChange, onWorkingDirectoryChange, homeDir])
+  }, [input, attachments, followUpItems, disabled, disableSend, extensionCommands, triggerExtensionCommand, onInputChange, onAttachmentsChange, onSubmit, skills, onWorkingDirectoryChange, homeDir])
 
   // Listen for mortise:submit-input events (simulate pressing the Send button)
   React.useEffect(() => {
@@ -1291,29 +1234,9 @@ export function FreeFormInput({
   // Handle input changes from RichTextInput
   const handleInputChange = React.useCallback((value: string) => {
     const nextValue = coerceInputText(value)
-    // Get previous input value before updating state
-    const prevValue = inputRef.current
-
     setInput(nextValue)
     syncToParent(nextValue) // Debounced sync to parent for draft persistence
-
-    // Sync source selection when mentions are removed from input
-    if (onSourcesChange) {
-      const sourceSlugs = sources.map(s => s.config.slug)
-
-      // Parse mentions from previous and current input
-      const prevMentions = parseMentions(prevValue, [], sourceSlugs)
-      const currMentions = parseMentions(nextValue, [], sourceSlugs)
-
-      // Remove sources that were mentioned before but not anymore
-      const removedSources = prevMentions.sources.filter(slug => !currMentions.sources.includes(slug))
-      if (removedSources.length > 0) {
-        const newSlugs = optimisticSourceSlugs.filter(slug => !removedSources.includes(slug))
-        setOptimisticSourceSlugs(newSlugs)
-        onSourcesChange(newSlugs)
-      }
-    }
-  }, [syncToParent, sources, optimisticSourceSlugs, onSourcesChange])
+  }, [syncToParent])
 
   // Handle input with cursor position (for menu detection)
   const handleRichInput = React.useCallback((value: string, cursorPosition: number) => {
@@ -1327,7 +1250,7 @@ export function FreeFormInput({
     // Update inline slash command state
     inlineSlash.handleInputChange(nextValue, cursorPosition)
 
-    // Update inline mention state (for @mentions - skills, sources, folders)
+    // Update inline mention state (for @mentions - skills, files, folders)
     inlineMention.handleInputChange(nextValue, cursorPosition)
 
     // Auto-capitalize first letter (but not for slash commands or @mentions)
@@ -1479,7 +1402,7 @@ export function FreeFormInput({
           position={inlineSlash.position}
         />
 
-        {/* Inline Mention Autocomplete (skills, sources, files) */}
+        {/* Inline Mention Autocomplete (skills and files) */}
         <InlineMentionMenu
           open={inlineMention.isOpen}
           onOpenChange={(open) => !open && inlineMention.close()}
@@ -1618,7 +1541,6 @@ export function FreeFormInput({
           placeholder={effectivePlaceholder}
           disabled={disabled}
           skills={skills}
-          sources={sources}
           workspaceId={workspaceSlug}
           className="pl-5 pr-4 pt-4 pb-3 overflow-y-auto min-h-[88px]"
           style={{ maxHeight: inputMaxHeight }}
@@ -1683,77 +1605,6 @@ export function FreeFormInput({
               contextStatus={contextStatus}
             />
           )}
-          {onSourcesChange && (
-            <div className="relative shrink min-w-0">
-              <FreeFormInputContextBadge
-                buttonRef={sourceButtonRef}
-                icon={
-                  optimisticSourceSlugs.length === 0 ? (
-                    <DatabaseZap className="h-4 w-4" />
-                  ) : (
-                    <div className="flex items-center -ml-0.5">
-                      {(() => {
-                        const enabledSources = sources.filter(s => optimisticSourceSlugs.includes(s.config.slug))
-                        const displaySources = enabledSources.slice(0, 3)
-                        const remainingCount = enabledSources.length - 3
-                        return (
-                          <>
-                            {displaySources.map((source, index) => (
-                              <div
-                                key={source.config.slug}
-                                className={cn("relative h-5 w-5 rounded-[4px] bg-background shadow-minimal flex items-center justify-center", index > 0 && "-ml-1")}
-                                style={{ zIndex: index + 1 }}
-                              >
-                                <SourceAvatar source={source} size="xs" />
-                              </div>
-                            ))}
-                            {remainingCount > 0 && (
-                              <div
-                                className="-ml-1 h-5 w-5 rounded-[4px] bg-background shadow-minimal flex items-center justify-center text-[8px] font-medium text-muted-foreground"
-                                style={{ zIndex: displaySources.length + 1 }}
-                              >
-                                +{remainingCount}
-                              </div>
-                            )}
-                          </>
-                        )
-                      })()}
-                    </div>
-                  )
-                }
-                label={
-                  optimisticSourceSlugs.length === 0
-                    ? t("chat.sourcesTooltip")
-                    : (() => {
-                        const enabledSources = sources.filter(s => optimisticSourceSlugs.includes(s.config.slug))
-                        if (enabledSources.length === 1) return enabledSources[0].config.name
-                        return t("chat.sourcesCount", { count: enabledSources.length })
-                      })()
-                }
-                isExpanded={false}
-                hasSelection={optimisticSourceSlugs.length > 0}
-                showChevron={false}
-                isOpen={sourceDropdownOpen}
-                disabled={disabled}
-                onClick={() => setSourceDropdownOpen(prev => !prev)}
-                tooltip={t("chat.sourcesTooltip")}
-              />
-              <CompactSourceSelector
-                open={sourceDropdownOpen}
-                onOpenChange={setSourceDropdownOpen}
-                sources={sources}
-                selectedSlugs={optimisticSourceSlugs}
-                onToggleSlug={(slug) => {
-                  const isEnabled = optimisticSourceSlugs.includes(slug)
-                  const newSlugs = isEnabled
-                    ? optimisticSourceSlugs.filter(currentSlug => currentSlug !== slug)
-                    : [...optimisticSourceSlugs, slug]
-                  setOptimisticSourceSlugs(newSlugs)
-                  onSourcesChange?.(newSlugs)
-                }}
-              />
-            </div>
-          )}
           {onWorkingDirectoryChange && (
             <CompactWorkingDirectorySelector
               workingDirectory={workingDirectory}
@@ -1792,84 +1643,7 @@ export function FreeFormInput({
             />
           )}
 
-          {/* 3. Source Selector Badge - only show if onSourcesChange is provided */}
-          {onSourcesChange && (
-            <div className="relative shrink min-w-0 overflow-hidden">
-              <FreeFormInputContextBadge
-                buttonRef={sourceButtonRef}
-                icon={
-                  optimisticSourceSlugs.length === 0 ? (
-                    <DatabaseZap className="h-4 w-4" />
-                  ) : (
-                    <div className="flex items-center -ml-0.5">
-                      {(() => {
-                        const enabledSources = sources.filter(s => optimisticSourceSlugs.includes(s.config.slug))
-                        const displaySources = enabledSources.slice(0, 3)
-                        const remainingCount = enabledSources.length - 3
-                        return (
-                          <>
-                            {displaySources.map((source, index) => (
-                              <div
-                                key={source.config.slug}
-                                className={cn("relative h-5 w-5 rounded-[4px] bg-background shadow-minimal flex items-center justify-center", index > 0 && "-ml-1")}
-                                style={{ zIndex: index + 1 }}
-                              >
-                                <SourceAvatar source={source} size="xs" />
-                              </div>
-                            ))}
-                            {remainingCount > 0 && (
-                              <div
-                                className="-ml-1 h-5 w-5 rounded-[4px] bg-background shadow-minimal flex items-center justify-center text-[8px] font-medium text-muted-foreground"
-                                style={{ zIndex: displaySources.length + 1 }}
-                              >
-                                +{remainingCount}
-                              </div>
-                            )}
-                          </>
-                        )
-                      })()}
-                    </div>
-                  )
-                }
-                label={
-                  optimisticSourceSlugs.length === 0
-                    ? t("chat.chooseSources")
-                    : (() => {
-                        const enabledSources = sources.filter(s => optimisticSourceSlugs.includes(s.config.slug))
-                        if (enabledSources.length === 1) return enabledSources[0].config.name
-                        if (enabledSources.length === 2) return enabledSources.map(s => s.config.name).join(', ')
-                        return t("chat.sourcesCount", { count: enabledSources.length })
-                      })()
-                }
-                isExpanded={isEmptySession}
-                hasSelection={optimisticSourceSlugs.length > 0}
-                showChevron={true}
-                isOpen={sourceDropdownOpen}
-                disabled={disabled}
-                data-tutorial="source-selector-button"
-                onClick={() => setSourceDropdownOpen(prev => !prev)}
-                tooltip={t("chat.sourcesTooltip")}
-              />
-
-              <SourceSelectorPopover
-                open={sourceDropdownOpen}
-                onOpenChange={setSourceDropdownOpen}
-                anchorRef={sourceButtonRef}
-                sources={sources}
-                selectedSlugs={optimisticSourceSlugs}
-                onToggleSlug={(slug) => {
-                  const isEnabled = optimisticSourceSlugs.includes(slug)
-                  const newSlugs = isEnabled
-                    ? optimisticSourceSlugs.filter(currentSlug => currentSlug !== slug)
-                    : [...optimisticSourceSlugs, slug]
-                  setOptimisticSourceSlugs(newSlugs)
-                  onSourcesChange?.(newSlugs)
-                }}
-              />
-            </div>
-          )}
-
-          {/* 4. Working Directory Selector Badge */}
+          {/* 3. Working Directory Selector Badge */}
           {onWorkingDirectoryChange && (
             <WorkingDirectoryBadge
               workingDirectory={workingDirectory}

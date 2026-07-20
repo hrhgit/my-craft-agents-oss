@@ -27,7 +27,20 @@ export interface InitialWindowRendererQueryOptions extends WindowRendererRuntime
   workspaceId: string
   focused?: boolean
   initialSessionId?: string
+  initialRoute?: string
   layoutWindowId?: string
+}
+
+export function applyInitialWindowNavigation(
+  query: Readonly<Record<string, string>>,
+  initialRoute?: string,
+): Record<string, string> {
+  if (!initialRoute) return { ...query }
+  const next: Record<string, string> = { ...query, route: initialRoute }
+  delete next.panels
+  delete next.fi
+  delete next.sessionId
+  return next
 }
 
 export function applyWindowRendererRuntimeQuery(
@@ -48,6 +61,7 @@ export function buildInitialWindowRendererQuery(
     workspaceId: options.workspaceId,
     ...(options.focused ? { focused: 'true' } : {}),
     ...(options.initialSessionId ? { sessionId: options.initialSessionId } : {}),
+    ...(options.initialRoute ? { route: options.initialRoute } : {}),
     ...(options.layoutWindowId ? { layoutWindowId: options.layoutWindowId } : {}),
   }, options)
 }

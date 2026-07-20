@@ -58,10 +58,6 @@ export type { AuthState, SetupNeeds, AuthType };
 import type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType } from '@mortise/shared/credentials/types';
 export type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType };
 
-// Source types for session source selection
-import type { LoadedSource, FolderSourceConfig, SourceConnectionStatus } from '@mortise/shared/sources/types';
-export type { LoadedSource, FolderSourceConfig, SourceConnectionStatus };
-
 // Skill types
 import type { LoadedSkill, SkillMetadata } from '@mortise/shared/skills/types';
 export type { LoadedSkill, SkillMetadata };
@@ -71,8 +67,8 @@ import type { ExportResourcesOptions, ExportResult, ResourceImportMode, Resource
 export type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult };
 
 // provider types
-import type { NetworkProxySettings, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate, SubagentUpsert } from '@mortise/shared/config';
-export type { NetworkProxySettings, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate, SubagentUpsert };
+import type { NetworkProxySettings, DeveloperKitStatus, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate, SubagentUpsert } from '@mortise/shared/config';
+export type { NetworkProxySettings, DeveloperKitStatus, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate, SubagentUpsert };
 
 // =============================================================================
 // GUI-only types (not used by server/handler code)
@@ -169,11 +165,12 @@ import type {
   Session,
   UnreadSummary,
   CreateSessionOptions,
+  CreateAndSendFirstTurnRequest,
+  CreateAndSendFirstTurnResult,
   FileAttachment,
   SendMessageOptions,
   SessionEvent,
   PermissionResponseOptions,
-  CredentialResponse,
   SessionCommand,
   ShareResult,
   RefreshTitleResult,
@@ -182,7 +179,6 @@ import type {
   SkillFile,
   SessionFile,
   OAuthResult,
-  McpToolsResult,
   GitBashStatus,
   UpdateInfo,
   WorkspaceSettings,
@@ -217,13 +213,14 @@ export interface ElectronAPI {
   getSessionMessages(sessionId: string): Promise<Session | null>
   getPiProjectionSnapshot(sessionId: string): Promise<PiProjectionSnapshotV1 | null>
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
+  createAndSendFirstTurn(request: CreateAndSendFirstTurnRequest): Promise<CreateAndSendFirstTurnResult>
+  discardFirstTurnAttachmentStaging(workspaceId: string, stagingId: string): Promise<void>
   deleteSession(sessionId: string): Promise<void>
   sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>
   getTaskOutput(taskId: string): Promise<string | null>
   respondToPermission(sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean, options?: PermissionResponseOptions): Promise<boolean>
-  respondToCredential(sessionId: string, requestId: string, response: CredentialResponse): Promise<boolean>
 
   // Consolidated session command handler
   sessionCommand(sessionId: string, command: SessionCommand): Promise<void | ShareResult | RefreshTitleResult | { count: number }>
@@ -399,10 +396,6 @@ export interface ElectronAPI {
   onUpdateAvailable(callback: (info: UpdateInfo) => void): () => void
   onUpdateDownloadProgress(callback: (progress: number) => void): () => void
 
-  // Release notes
-  getReleaseNotes(): Promise<string>
-  getLatestReleaseVersion(): Promise<string | undefined>
-
   // System warnings (startup checks)
   getSystemWarnings(): Promise<{
     vcredistMissing: boolean
@@ -483,26 +476,11 @@ export interface ElectronAPI {
   unwatchSessionFiles(): Promise<void>
   onSessionFilesChanged(callback: (sessionId: string) => void): () => void
 
-  // Sources
-  getSources(workspaceId: string): Promise<LoadedSource[]>
-  createSource(workspaceId: string, config: Partial<FolderSourceConfig>): Promise<FolderSourceConfig>
-  deleteSource(workspaceId: string, sourceSlug: string): Promise<void>
-  startSourceOAuth(workspaceId: string, sourceSlug: string): Promise<{ success: boolean; error?: string }>
-  saveSourceCredentials(workspaceId: string, sourceSlug: string, credential: string): Promise<void>
-  getSourcePermissionsConfig(workspaceId: string, sourceSlug: string): Promise<import('@mortise/shared/agent').PermissionsConfigFile | null>
   getWorkspacePermissionsConfig(workspaceId: string): Promise<import('@mortise/shared/agent').PermissionsConfigFile | null>
   getDefaultPermissionsConfig(): Promise<{ config: import('@mortise/shared/agent').PermissionsConfigFile | null; path: string }>
-  getMcpTools(workspaceId: string, sourceSlug: string): Promise<McpToolsResult>
-
-  // OAuth (server-owned credentials, client-orchestrated flow)
-  performOAuth(args: { sourceSlug: string; sessionId?: string; authRequestId?: string }): Promise<{ success: boolean; error?: string; email?: string }>
-  oauthRevoke(sourceSlug: string): Promise<{ success: boolean }>
 
   // Session content search (full-text search via ripgrep)
   searchSessionContent(workspaceId: string, query: string, searchId?: string): Promise<SessionSearchResult[]>
-
-  // Sources change listener (live updates when sources are added/removed)
-  onSourcesChanged(callback: (workspaceId: string, sources: LoadedSource[]) => void): () => void
 
   // Default permissions change listener (live updates when default.json changes)
   onDefaultPermissionsChanged(callback: () => void): () => void
@@ -538,7 +516,6 @@ export interface ElectronAPI {
   onAppThemeChange(callback: (theme: import('@config/theme').ThemeOverrides | null) => void): () => void
 
   // Logo URL resolution
-  getLogoUrl(serviceUrl: string, provider?: string): Promise<string | null>
 
   // Notifications
   showNotification(title: string, body: string, workspaceId: string, sessionId: string): Promise<void>
@@ -560,8 +537,6 @@ export interface ElectronAPI {
   // Tools settings
   getBrowserToolEnabled(): Promise<boolean>
   setBrowserToolEnabled(enabled: boolean): Promise<void>
-  getDataSourcesEnabled(): Promise<boolean>
-  setDataSourcesEnabled(enabled: boolean): Promise<void>
 
   // Agent settings
   getAgentSettings(): Promise<AgentSettingsSnapshot>
@@ -570,8 +545,6 @@ export interface ElectronAPI {
   deleteSubagent(id: string): Promise<{ success: true }>
 
   // Pi Extensions 集成开关
-  getPiExtensionsDelegatePromptAutomation(): Promise<boolean>
-  setPiExtensionsDelegatePromptAutomation(delegate: boolean): Promise<void>
   getPiExtensionSettings(): Promise<PiExtensionSettings>
   setPiExtensionSettings(settings: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   updatePiExtensionSettings(patch: StoredPiExtensionSettings): Promise<PiExtensionSettings>
@@ -599,6 +572,11 @@ export interface ElectronAPI {
   // Network proxy settings
   getNetworkProxySettings(): Promise<NetworkProxySettings | undefined>
   setNetworkProxySettings(settings: NetworkProxySettings): Promise<void>
+
+  // Mortise Developer Kit
+  getDeveloperKitStatus(): Promise<DeveloperKitStatus>
+  discoverDeveloperKit(): Promise<DeveloperKitStatus>
+  setDeveloperKitPath(rootPath: string | null): Promise<DeveloperKitStatus>
 
   refreshBadge(): Promise<void>
   setDockIconWithBadge(dataUrl: string): Promise<void>
@@ -667,6 +645,7 @@ export interface ElectronAPI {
 
   // Automations
   getAutomations(workspaceId: string): Promise<unknown>
+  automationCommand(input: unknown): Promise<unknown>
 
   // Automation testing (manual trigger)
   testAutomation(payload: TestAutomationPayload): Promise<TestAutomationResult>
@@ -806,15 +785,10 @@ import { isValidSettingsSubpage, type SettingsSubpage } from './settings-registr
 export interface SessionsNavigationState {
   navigator: 'sessions'
   filter: SessionFilter
-  details: { type: 'session'; sessionId: string } | null
-}
-
-/**
- * Source type filter for sources navigation
- */
-export interface SourceFilter {
-  kind: 'type'
-  sourceType: 'api' | 'mcp' | 'local'
+  details:
+    | { type: 'session'; sessionId: string }
+    | { type: 'new'; draftId: string }
+    | null
 }
 
 /**
@@ -826,20 +800,11 @@ export interface AutomationFilter {
 }
 
 /**
- * Sources navigation state
- */
-export interface SourcesNavigationState {
-  navigator: 'sources'
-  filter?: SourceFilter
-  details: { type: 'source'; sourceSlug: string } | null
-}
-
-/**
  * Settings navigation state
  *
  * `subpage: null` means the bare `settings` route — navigator-only view in compact
  * mode. On desktop, the content panel falls back to the App page so it isn't empty.
- * Sources/Skills/Automations use `details: null` for the same purpose.
+ * Skills and Automations use `details: null` for the same purpose.
  */
 export interface SettingsNavigationState {
   navigator: 'settings'
@@ -868,7 +833,6 @@ export interface AutomationsNavigationState {
  */
 export type NavigationState =
   | SessionsNavigationState
-  | SourcesNavigationState
   | SettingsNavigationState
   | SkillsNavigationState
   | AutomationsNavigationState
@@ -876,10 +840,6 @@ export type NavigationState =
 export const isSessionsNavigation = (
   state: NavigationState
 ): state is SessionsNavigationState => state.navigator === 'sessions'
-
-export const isSourcesNavigation = (
-  state: NavigationState
-): state is SourcesNavigationState => state.navigator === 'sources'
 
 export const isSettingsNavigation = (
   state: NavigationState
@@ -900,12 +860,6 @@ export const DEFAULT_NAVIGATION_STATE: NavigationState = {
 }
 
 export const getNavigationStateKey = (state: NavigationState): string => {
-  if (state.navigator === 'sources') {
-    if (state.details) {
-      return `sources/source/${state.details.sourceSlug}`
-    }
-    return 'sources'
-  }
   if (state.navigator === 'skills') {
     if (state.details?.type === 'skill') {
       return `skills/skill/${state.details.skillSlug}`
@@ -924,23 +878,14 @@ export const getNavigationStateKey = (state: NavigationState): string => {
   }
   // Chats
   const base = 'allSessions'
-  if (state.details) {
+  if (state.details?.type === 'session') {
     return `${base}/chat/${state.details.sessionId}`
   }
+  if (state.details?.type === 'new') return `${base}/new/${state.details.draftId}`
   return base
 }
 
 export const parseNavigationStateKey = (key: string): NavigationState | null => {
-  // Handle sources
-  if (key === 'sources') return { navigator: 'sources', details: null }
-  if (key.startsWith('sources/source/')) {
-    const sourceSlug = key.slice(15)
-    if (sourceSlug) {
-      return { navigator: 'sources', details: { type: 'source', sourceSlug } }
-    }
-    return { navigator: 'sources', details: null }
-  }
-
   // Handle skills
   if (key === 'skills') return { navigator: 'skills', details: null }
   if (key.startsWith('skills/skill/')) {
@@ -991,6 +936,13 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
   if (key.includes('/session/')) {
     const [filterPart, , sessionId] = key.split('/')
     return parseSessionsKey(filterPart, sessionId)
+  }
+
+  if (key.startsWith('allSessions/new/')) {
+    const draftId = key.slice('allSessions/new/'.length)
+    return draftId
+      ? { navigator: 'sessions', filter: { kind: 'allSessions' }, details: { type: 'new', draftId } }
+      : null
   }
 
   // Simple filter key

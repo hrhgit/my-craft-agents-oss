@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { PiProjectionEntityV1 } from '@mortise/shared/protocol'
-import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, selectPendingPiCredential, selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from '../pi-timeline-model'
+import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from '../pi-timeline-model'
 
 function entity(overrides: Partial<PiProjectionEntityV1>): PiProjectionEntityV1 {
   return {
@@ -92,58 +92,6 @@ describe('buildPiTimelineItems', () => {
       sessionId: 'session-1', requestId: 'one', command: 'bun test', type: 'bash',
     })
     expect(selectPendingPiPermission([{ ...pending, kind: 'prompt_resolved', payload: { requestId: 'one', status: 'resolved' } }], 'session-1')).toBeUndefined()
-  })
-
-  it('maps only pending secret-free credential prompts', () => {
-    const pending = entity({
-      entityId: 'prompt:auth-one', entityType: 'prompt_request', kind: 'auth_request',
-      payload: {
-        requestId: 'auth-one', authType: 'credential', sourceSlug: 'github', sourceName: 'GitHub',
-        mode: 'basic', labels: { username: 'Account', password: 'Token' },
-        headerNames: ['X-API-Key', 42], passwordRequired: false, status: 'pending',
-        value: 'must-not-pass-through', sourceUrl: 'https://secret.example',
-      },
-    })
-
-    expect(selectPendingPiCredential([pending], 'session-1')).toEqual({
-      type: 'credential', sessionId: 'session-1', requestId: 'auth-one',
-      sourceSlug: 'github', sourceName: 'GitHub', mode: 'basic',
-      labels: { credential: undefined, username: 'Account', password: 'Token' },
-      headerNames: ['X-API-Key'], passwordRequired: false,
-    })
-    expect(selectPendingPiCredential([entity({
-      entityId: pending.entityId, entityType: 'prompt_request', kind: 'prompt_resolved',
-      payload: { requestId: 'auth-one', status: 'resolved' },
-    })], 'session-1')).toBeUndefined()
-    expect(selectPendingPiCredential([entity({
-      entityId: pending.entityId, entityType: 'prompt_request', kind: 'auth_request',
-      payload: { requestId: 'auth-two', authType: 'oauth', sourceSlug: 'github', sourceName: 'GitHub', status: 'pending' },
-    })], 'session-1')).toBeUndefined()
-  })
-
-  it('renders OAuth prompt lifecycle without constructing a Mortise message', () => {
-    const pending = buildPiTimelineItems([entity({
-      entityId: 'prompt:oauth-one', entityType: 'prompt_request', kind: 'auth_request', lastSeq: 4,
-      payload: {
-        requestId: 'oauth-one', authType: 'oauth-google', sourceSlug: 'google-drive',
-        sourceName: 'Google Drive', status: 'pending', accessToken: 'must-not-pass-through',
-      },
-    })])
-    expect(pending).toEqual([{
-      type: 'auth', id: 'prompt:oauth-one', seq: 4,
-      request: {
-        requestId: 'oauth-one', type: 'oauth-google', sourceSlug: 'google-drive',
-        sourceName: 'Google Drive', status: 'pending',
-      },
-    }])
-
-    expect(buildPiTimelineItems([entity({
-      entityId: 'prompt:oauth-one', entityType: 'prompt_request', kind: 'prompt_resolved', lastSeq: 5,
-      payload: {
-        requestId: 'oauth-one', authType: 'oauth-google', sourceSlug: 'google-drive',
-        sourceName: 'Google Drive', status: 'resolved', resolution: 'completed',
-      },
-    })])[0]).toMatchObject({ type: 'auth', request: { status: 'completed' } })
   })
 
   it('derives processing from the latest Pi lifecycle event and preserves errors', () => {

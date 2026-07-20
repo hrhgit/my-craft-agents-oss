@@ -16,10 +16,8 @@ import {
   Search,
   Plus,
   Trash2,
-  DatabaseZap,
   Zap,
   MessageSquare,
-  Cake,
   Calendar,
   Layers,
   ListTodo,
@@ -31,7 +29,6 @@ import {
   FolderOpen,
   FolderPlus,
 } from "lucide-react"
-import { SourceAvatar } from "@/components/ui/source-avatar"
 import { TopBar } from "./TopBar"
 import { WorkspaceCoordinationStatusPopover } from "./WorkspaceCoordinationStatusPopover"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
@@ -40,7 +37,7 @@ import { isMac } from "@/lib/platform"
 import { Button } from "@/components/ui/button"
 import { HeaderIconButton } from "@/components/ui/HeaderIconButton"
 import { Separator } from "@/components/ui/separator"
-import { Tooltip, TooltipTrigger, TooltipContent, DocumentFormattedMarkdownOverlay, Spinner } from "@mortise/ui"
+import { Tooltip, TooltipTrigger, TooltipContent, Spinner } from "@mortise/ui"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -87,10 +84,9 @@ import { useFocusZone } from "@/hooks/keyboard"
 import { useFocusContext } from "@/context/FocusContext"
 import { getSessionTitle } from "@/utils/session"
 import { useSetAtom } from "jotai"
-import type { Session, Workspace, FileAttachment, PermissionRequest, LoadedSource, LoadedSkill, PermissionMode, SourceFilter, AutomationFilter } from "../../../shared/types"
+import type { Session, Workspace, FileAttachment, PermissionRequest, LoadedSkill, PermissionMode, AutomationFilter } from "../../../shared/types"
 import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/atoms/sessions"
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
-import { dataSourcesEnabledAtom, sourcesAtom } from "@/atoms/sources"
 import { skillsAtom } from "@/atoms/skills"
 import { activeDockTabIdAtom, activeDockTabProtectionAtom, activeDockTabTypeAtom, emptyDockPageSessionRequestAtom, enterCompactDockDetailAtom, exitCompactDockDetailAtom, isEmptyDockPageTabId, panelStackAtom, panelCountAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, resetCompactDockViewIntentAtom, shouldReplaceActiveTabWithSession } from "@/atoms/panel-stack"
 import { useContainerWidth } from "@/hooks/useContainerWidth"
@@ -103,14 +99,12 @@ import {
   useNavigation,
   useNavigationState,
   isSessionsNavigation,
-  isSourcesNavigation,
   isSettingsNavigation,
   isSkillsNavigation,
   isAutomationsNavigation,
   type NavigationState,
 } from "@/contexts/NavigationContext"
 import type { SettingsSubpage } from "../../../shared/types"
-import { SourcesListPanel } from "./SourcesListPanel"
 import { SkillsListPanel } from "./SkillsListPanel"
 import { AutomationsListPanel } from "../automations/AutomationsListPanel"
 import { type AutomationFilterKind, AUTOMATION_TYPE_TO_FILTER_KIND } from "../automations/types"
@@ -122,7 +116,7 @@ import { FabNewChat } from "./FabNewChat"
 import { SendToWorkspaceDialog } from "./SendToWorkspaceDialog"
 import { MessagingDialogHost } from "@/components/messaging/MessagingDialogHost"
 import { useRemoteUIRequests } from "@/hooks/useRemoteUIRequests"
-import { EditPopover, getEditConfig, type EditContextKey } from "@/components/ui/EditPopover"
+import { EditPopover, getEditConfig } from "@/components/ui/EditPopover"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import {
   PANEL_GAP,
@@ -135,7 +129,6 @@ import {
   RADIUS_INNER,
 } from "./panel-constants"
 import { hasOpenOverlay } from "@/lib/overlay-detection"
-import { clearEntityIconCache } from "@/lib/icon-cache"
 import { dispatchFocusInputEvent } from "./input/focus-input-events"
 import { useWorkspaceNavigation } from "@/components/workspace/useWorkspaceNavigation"
 import { UnifiedDockWorkspace } from "./UnifiedDockWorkspace"
@@ -266,24 +259,12 @@ function AppShellContent({
 
   const isPrimarySidebarHidden = isFocusMode || isAutoCompact
 
-  const [showWhatsNew, setShowWhatsNew] = React.useState(false)
-  const [releaseNotesContent, setReleaseNotesContent] = React.useState('')
-  const [hasUnseenReleaseNotes, setHasUnseenReleaseNotes] = React.useState(false)
-
-  useEffect(() => {
-    void window.electronAPI.getLatestReleaseVersion().then((latestVersion) => {
-      if (!latestVersion) return
-      const lastSeen = storage.get(storage.KEYS.whatsNewLastSeenVersion, '')
-      setHasUnseenReleaseNotes(lastSeen !== latestVersion)
-    })
-  }, [])
-
   const [isResizing, setIsResizing] = React.useState<'sidebar' | null>(null)
   const [sidebarHandleY, setSidebarHandleY] = React.useState<number | null>(null)
   const resizeHandleRef = React.useRef<HTMLDivElement>(null)
   const { state: session, setState: setSession } = useSessionSelectionStore()
   const { resolvedMode, isDark, setMode } = useTheme()
-  const { canGoBack, canGoForward, goBack, goForward, navigateToSource, navigateToSession } = useNavigation()
+  const { canGoBack, canGoForward, goBack, goForward, navigateToSession } = useNavigation()
 
   // Double-Esc interrupt feature: first Esc shows warning, second Esc interrupts
   const { handleEscapePress } = useEscapeInterrupt()
@@ -320,16 +301,13 @@ function AppShellContent({
     if (isSessionsNavigation(navState)) {
       return {
         filter: navState.filter,
-        sessionId: navState.details?.sessionId ?? null,
+        sessionId: navState.details?.type === 'session' ? navState.details.sessionId : null,
       }
     }
     return null
   }, [navState])
 
   const sessionFilter = sessionsContext?.filter ?? null
-
-  // Derive source filter from navigation state (only when in sources navigator)
-  const sourceFilter: SourceFilter | null = isSourcesNavigation(navState) ? navState.filter ?? null : null
 
   // Derive automation filter from navigation state (only when in automations navigator)
   const automationFilter: AutomationFilter | null = isAutomationsNavigation(navState) ? navState.filter ?? null : null
@@ -412,40 +390,6 @@ function AppShellContent({
       [workspaceId]: (previous[workspaceId] ?? RECENT_WORKSPACE_SESSION_LIMIT) + 15,
     }))
   }, [])
-  // Sources state (workspace-scoped)
-  const [sources, setSources] = React.useState<LoadedSource[]>([])
-  const dataSourcesSetting = useAtomValue(dataSourcesEnabledAtom)
-  const dataSourcesEnabled = dataSourcesSetting === true
-  const setDataSourcesEnabled = useSetAtom(dataSourcesEnabledAtom)
-
-  React.useEffect(() => {
-    let cancelled = false
-    setDataSourcesEnabled(null)
-    window.electronAPI.getDataSourcesEnabled()
-      .then((enabled) => {
-        if (!cancelled) setDataSourcesEnabled(enabled)
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error('[Chat] Failed to load data-source setting:', error)
-          setDataSourcesEnabled(false)
-        }
-      })
-    return () => { cancelled = true }
-  }, [activeWorkspaceId, setDataSourcesEnabled])
-
-  React.useEffect(() => {
-    if (dataSourcesSetting === false && isSourcesNavigation(navState)) {
-      navigate(routes.view.allSessions())
-    }
-  }, [dataSourcesSetting, navState])
-
-  // Sync sources to atom for NavigationContext auto-selection
-  const setSourcesAtom = useSetAtom(sourcesAtom)
-  React.useEffect(() => {
-    setSourcesAtom(sources)
-  }, [sources, setSourcesAtom])
-
   // Skills state (workspace-scoped)
   const [skills, setSkills] = React.useState<LoadedSkill[]>([])
   // Sync skills to atom for NavigationContext auto-selection
@@ -469,19 +413,15 @@ function AppShellContent({
     getAutomationHistory, handleReplayAutomation,
   } = useAutomations(activeWorkspaceId)
 
-  // Whether local MCP servers are enabled (affects stdio source status)
-  const [localMcpEnabled, setLocalMcpEnabled] = React.useState(true)
-
   // Enabled permission modes for Shift+Tab cycling (min 2 modes)
   const [enabledModes, setEnabledModes] = React.useState<PermissionMode[]>(['safe', 'ask', 'allow-all'])
 
-  // Load workspace settings (for localMcpEnabled and cyclablePermissionModes) on workspace change
+  // Load workspace settings for cyclable permission modes.
   React.useEffect(() => {
     if (!activeWorkspaceId) return
     let cancelled = false
     window.electronAPI.getWorkspaceSettings(activeWorkspaceId).then((settings) => {
       if (!cancelled && settings) {
-        setLocalMcpEnabled(settings.localMcpEnabled ?? true)
         // Load cyclablePermissionModes from workspace settings
         if (settings.cyclablePermissionModes && settings.cyclablePermissionModes.length >= 2) {
           setEnabledModes(settings.cyclablePermissionModes)
@@ -522,33 +462,6 @@ function AppShellContent({
     previousWorkspaceRef.current = activeWorkspaceId
   }, [activeWorkspaceId])
 
-  // Load sources from backend on mount
-  React.useEffect(() => {
-    if (!activeWorkspaceId || !dataSourcesEnabled) {
-      setSources([])
-      return
-    }
-    let cancelled = false
-    setSources([])
-    window.electronAPI.getSources(activeWorkspaceId).then((loaded) => {
-      if (!cancelled) setSources(loaded || [])
-    }).catch(err => {
-      if (!cancelled) console.error('[Chat] Failed to load sources:', err)
-    })
-    return () => { cancelled = true }
-  }, [activeWorkspaceId, dataSourcesEnabled])
-
-  // Subscribe to live source updates (when sources are added/removed dynamically)
-  React.useEffect(() => {
-    const cleanup = window.electronAPI.onSourcesChanged((workspaceId, updatedSources) => {
-      if (workspaceId !== activeWorkspaceId || !dataSourcesEnabled) return
-      // Clear icon cache so updated source icons are re-fetched on render
-      clearEntityIconCache({ entityType: 'source' })
-      setSources(updatedSources || [])
-    })
-    return cleanup
-  }, [activeWorkspaceId, dataSourcesEnabled])
-
   // Subscribe to live skill updates (when skills are added/removed dynamically)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onSkillsChanged((workspaceId, updatedSkills) => {
@@ -558,26 +471,8 @@ function AppShellContent({
     return cleanup
   }, [activeWorkspaceId])
 
-  // Handle session source selection changes
-  const handleSessionSourcesChange = React.useCallback(async (sessionId: string, sourceSlugs: string[]) => {
-    if (!dataSourcesEnabled) return
-    try {
-      await window.electronAPI.sessionCommand(sessionId, { type: 'setSources', sourceSlugs })
-      // Session will emit a 'sources_changed' event that updates the session state
-    } catch (err) {
-      console.error('[Chat] Failed to set session sources:', err)
-    }
-  }, [dataSourcesEnabled])
-
   // Ensure session messages are loaded when selected
   const ensureMessagesLoaded = useSetAtom(ensureSessionMessagesLoadedAtom)
-
-  // Handle selecting a source from the list (preserves current filter type)
-  const handleSourceSelect = React.useCallback((source: LoadedSource) => {
-    if (!activeWorkspaceId) return
-    enterCompactDockDetail()
-    navigateToSource(source.config.slug)
-  }, [activeWorkspaceId, enterCompactDockDetail, navigateToSource])
 
   // Handle selecting a skill from the list
   const handleSkillSelect = React.useCallback((skill: LoadedSkill) => {
@@ -1097,13 +992,11 @@ function AppShellContent({
   const appShellContextValue = React.useMemo<AppShellContextType>(() => ({
     ...contextValue,
     onDeleteSession: handleDeleteSession,
-    enabledSources: sources,
     skills,
     activeSessionWorkingDirectory,
     enabledModes,
     remoteUIRequest,
     respondRemoteUI,
-    onSessionSourcesChange: dataSourcesEnabled ? handleSessionSourcesChange : undefined,
     panelHeaderTrailingAction: null,
     isCompactMode: isAutoCompact,
     // Search state for ChatDisplay highlighting
@@ -1118,7 +1011,8 @@ function AppShellContent({
     automationTestResults,
     getAutomationHistory,
     onReplayAutomation: handleReplayAutomation,
-  }), [contextValue, handleDeleteSession, sources, skills, activeSessionWorkingDirectory, enabledModes, remoteUIRequest, respondRemoteUI, dataSourcesEnabled, handleSessionSourcesChange, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
+    workspaceNavigation,
+  }), [contextValue, handleDeleteSession, skills, activeSessionWorkingDirectory, enabledModes, remoteUIRequest, respondRemoteUI, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation, workspaceNavigation])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
@@ -1157,13 +1051,6 @@ function AppShellContent({
     navigate(routes.view.allSessions())
   }, [exitCompactDockDetail])
 
-  // Handler for sources view (all sources)
-  const handleSourcesClick = useCallback(() => {
-    if (!dataSourcesEnabled) return
-    exitCompactDockDetail()
-    navigate(routes.view.sources())
-  }, [dataSourcesEnabled, exitCompactDockDetail])
-
   // Handler for skills view
   const handleSkillsClick = useCallback(() => {
     exitCompactDockDetail()
@@ -1185,23 +1072,13 @@ function AppShellContent({
     navigate(routes.view.settings(subpage))
   }, [enterCompactDockDetail, exitCompactDockDetail])
 
-  const handleWhatsNewClick = useCallback(async () => {
-    const content = await window.electronAPI.getReleaseNotes()
-    setReleaseNotesContent(content)
-    setShowWhatsNew(true)
-    setHasUnseenReleaseNotes(false)
-    const latestVersion = await window.electronAPI.getLatestReleaseVersion()
-    if (latestVersion) storage.set(storage.KEYS.whatsNewLastSeenVersion, latestVersion)
-  }, [])
-
   // ============================================================================
   // EDIT POPOVER STATE
   // ============================================================================
   // State to control which EditPopover is open (triggered from context menus).
   // We use controlled popovers instead of deep links so the user can type
   // their request in the popover UI before opening a new chat window.
-  // add-source variants: add-source (generic), add-source-api, add-source-mcp, add-source-local
-  const [editPopoverOpen, setEditPopoverOpen] = useState<'add-source' | 'add-source-api' | 'add-source-mcp' | 'add-source-local' | 'add-skill' | 'automation-config' | null>(null)
+  const [editPopoverOpen, setEditPopoverOpen] = useState<'add-skill' | 'automation-config' | null>(null)
 
   // Stores the Y position of the last right-clicked sidebar item so the EditPopover
   // appears near it rather than at a fixed location. Updated synchronously before
@@ -1239,15 +1116,6 @@ function AppShellContent({
       editPopoverTriggerRef.current = null
     }
   }, [editPopoverOpen])
-
-  // Handler for "Add Source" context menu action
-  // Opens the EditPopover for adding a new source
-  // Optional sourceType param allows filter-aware context (from subcategory menus or filtered views)
-  const openAddSource = useCallback((sourceType?: 'api' | 'mcp' | 'local') => {
-    captureContextMenuPosition()
-    const key = sourceType ? `add-source-${sourceType}` as const : 'add-source' as const
-    setTimeout(() => setEditPopoverOpen(key), 50)
-  }, [captureContextMenuPosition])
 
   // Handler for "Add Skill" context menu action
   // Opens the EditPopover for adding a new skill
@@ -1296,18 +1164,6 @@ function AppShellContent({
     }
   }, [activeWorkspace])
 
-  // Delete Source - simplified since agents system is removed
-  const handleDeleteSource = useCallback(async (sourceSlug: string) => {
-    if (!activeWorkspace) return
-    try {
-      await window.electronAPI.deleteSource(activeWorkspace.id, sourceSlug)
-      toast.success(t('toast.deletedSource'))
-    } catch (error) {
-      console.error('[Chat] Failed to delete source:', error)
-      toast.error(t('toast.failedToDeleteSource'))
-    }
-  }, [activeWorkspace])
-
   // Respond to menu bar "New Chat" trigger
   const menuTriggerRef = useRef(menuNewChatTrigger)
   useEffect(() => {
@@ -1325,7 +1181,9 @@ function AppShellContent({
   }
 
   const selectedSidebarSessionId = focusedSessionId
-    ?? (isSessionsNavigation(navState) ? navState.details?.sessionId : null)
+    ?? (isSessionsNavigation(navState) && navState.details?.type === 'session'
+      ? navState.details.sessionId
+      : null)
   const hasRemoteWorkspaces = workspaces.some(workspace => Boolean(workspace.remoteServer))
 
   const workspaceSidebarItems = React.useMemo<LeftSidebarLinkItem[]>(() => [
@@ -1424,16 +1282,6 @@ function AppShellContent({
   ], [collapsedWorkspaceIds, handleAllSessionsClick, handleSidebarSessionDelete, handleSidebarSessionMarkUnread, hasRemoteWorkspaces, navState, navigateToSessionInPanel, openSidebarSessionRename, selectedSidebarSessionId, setSendToWorkspaceIds, showMoreWorkspaceSessions, t, toggleWorkspaceExpanded, workspaceNavigation, workspaceSessionLimits, workspaceSessionSummaries])
 
   const bottomSidebarItems = React.useMemo<LeftSidebarLinkItem[]>(() => [
-    ...(dataSourcesEnabled ? [{
-      id: 'nav:sources',
-      title: t('sidebar.sources'),
-      label: String(sources.length),
-      icon: DatabaseZap,
-      variant: isSourcesNavigation(navState) ? 'default' as const : 'ghost' as const,
-      onClick: handleSourcesClick,
-      dataTutorial: 'sources-nav',
-      contextMenu: { type: 'sources' as const, onAddSource: () => openAddSource() },
-    }] : []),
     {
       id: 'nav:skills',
       title: t('sidebar.skills'),
@@ -1459,19 +1307,7 @@ function AppShellContent({
       variant: isSettingsNavigation(navState) ? 'default' as const : 'ghost' as const,
       onClick: () => handleSettingsClick(),
     },
-    {
-      id: 'nav:whats-new',
-      title: t('sidebar.whatsNew'),
-      icon: hasUnseenReleaseNotes ? (
-        <span className="relative">
-          <Cake className="h-3.5 w-3.5" />
-          <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent" />
-        </span>
-      ) : Cake,
-      variant: 'ghost' as const,
-      onClick: handleWhatsNewClick,
-    },
-  ], [automations.length, dataSourcesEnabled, handleAutomationsClick, handleSettingsClick, handleSkillsClick, handleSourcesClick, handleWhatsNewClick, hasUnseenReleaseNotes, navState, openAddAutomation, openAddSkill, openAddSource, sources.length, skills.length, t])
+  ], [automations.length, handleAutomationsClick, handleSettingsClick, handleSkillsClick, navState, openAddAutomation, openAddSkill, skills.length, t])
 
   const unifiedSidebarItems = React.useMemo((): SidebarItem[] => {
     const result: SidebarItem[] = []
@@ -1501,14 +1337,11 @@ function AppShellContent({
         }
       }
     }
-    if (dataSourcesEnabled) result.push({ id: 'nav:sources', type: 'nav', action: handleSourcesClick })
     result.push({ id: 'nav:skills', type: 'nav', action: handleSkillsClick })
     result.push({ id: 'nav:automations', type: 'nav', action: handleAutomationsClick })
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick() })
-    result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
-
     return result
-  }, [collapsedWorkspaceIds, dataSourcesEnabled, handleAutomationsClick, handleSettingsClick, handleSkillsClick, handleSourcesClick, handleWhatsNewClick, navigateToSessionInPanel, showMoreWorkspaceSessions, workspaceNavigation, workspaceSessionLimits, workspaceSessionSummaries])
+  }, [collapsedWorkspaceIds, handleAutomationsClick, handleSettingsClick, handleSkillsClick, navigateToSessionInPanel, showMoreWorkspaceSessions, workspaceNavigation, workspaceSessionLimits, workspaceSessionSummaries])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -1616,11 +1449,6 @@ function AppShellContent({
 
   // Get title based on navigation state
   const listTitle = React.useMemo(() => {
-    // Sources navigator
-    if (isSourcesNavigation(navState)) {
-      return t("sidebar.sources")
-    }
-
     // Skills navigator
     if (isSkillsNavigation(navState)) {
       return t("sidebar.allSkills")
@@ -1813,22 +1641,6 @@ function AppShellContent({
                       onClick={(event) => handleNewChat(event.metaKey || event.ctrlKey)}
                     />
                   )}
-                  {/* Add Source button (only for sources mode) - uses filter-aware edit config */}
-                  {dataSourcesEnabled && isSourcesNavigation(navState) && activeWorkspace && (
-                    <EditPopover
-                      trigger={
-                        <HeaderIconButton
-                          icon={<Plus className="h-4 w-4" />}
-                          tooltip={t("sidebarMenu.addSource")}
-                          data-tutorial="add-source-button"
-                        />
-                      }
-                      {...getEditConfig(
-                        sourceFilter?.kind === 'type' ? `add-source-${sourceFilter.sourceType}` as EditContextKey : 'add-source',
-                        activeWorkspace.rootPath
-                      )}
-                    />
-                  )}
                   {/* Add Skill button (only for skills mode) */}
                   {isSkillsNavigation(navState) && activeWorkspace && (
                     <EditPopover
@@ -1857,19 +1669,7 @@ function AppShellContent({
                 </>
               }
             />
-            {/* Content: SessionList, SourcesListPanel, or SettingsNavigator based on navigation state */}
-            {dataSourcesEnabled && isSourcesNavigation(navState) && (
-              /* Sources List - filtered by type if sourceFilter is active */
-              <SourcesListPanel
-                sources={sources}
-                sourceFilter={sourceFilter}
-                workspaceRootPath={activeWorkspace?.rootPath}
-                onDeleteSource={handleDeleteSource}
-                onSourceClick={handleSourceSelect}
-                selectedSourceSlug={isSourcesNavigation(navState) && navState.details ? navState.details.sourceSlug : null}
-                localMcpEnabled={localMcpEnabled}
-              />
-            )}
+            {/* Content depends on the active navigation state. */}
             {isSkillsNavigation(navState) && activeWorkspaceId && (
               /* Skills List */
               <SkillsListPanel
@@ -2023,27 +1823,6 @@ function AppShellContent({
        */}
       {activeWorkspace && (
         <>
-          {/* Add Source EditPopovers - one for each variant (generic + filter-specific)
-           * editPopoverOpen can be: 'add-source', 'add-source-api', 'add-source-mcp', 'add-source-local'
-           * Each variant uses its corresponding EditContextKey for filter-aware agent context */}
-          {(['add-source', 'add-source-api', 'add-source-mcp', 'add-source-local'] as const).map((variant) => (
-            <EditPopover
-              key={variant}
-              open={editPopoverOpen === variant}
-              onOpenChange={(isOpen) => setEditPopoverOpen(isOpen ? variant : null)}
-              modal={true}
-              trigger={
-                <div
-                  className="fixed w-0 h-0 pointer-events-none"
-                  style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
-                  aria-hidden="true"
-                />
-              }
-              side="bottom"
-              align="start"
-              {...getEditConfig(variant, activeWorkspace.rootPath)}
-            />
-          ))}
           {/* Add Skill EditPopover */}
           <EditPopover
             open={editPopoverOpen === 'add-skill'}
@@ -2080,13 +1859,6 @@ function AppShellContent({
       )}
 
       {workspaceNavigation.overlay}
-
-      <DocumentFormattedMarkdownOverlay
-        isOpen={showWhatsNew}
-        onClose={() => setShowWhatsNew(false)}
-        content={releaseNotesContent}
-        onOpenUrl={(url) => window.electronAPI.openUrl(url)}
-      />
 
       <RenameDialog
         open={sidebarRenameTarget !== null}

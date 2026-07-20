@@ -28,10 +28,6 @@ export function resolveUiValidationRoute(input: unknown, windowId?: string): UiV
     rejectKeys(raw, ['surface', 'workspaceId', 'section'])
     if (section && !isValidSettingsSubpage(section)) throw invalid(`Unknown settings section ${section}.`)
     deepLinkRoute = section && isValidSettingsSubpage(section) ? routes.view.settings(section) : routes.view.settings()
-  } else if (surface === 'sources') {
-    rejectKeys(raw, ['surface', 'workspaceId', 'section'])
-    if (section && !['api', 'mcp', 'local'].includes(section)) throw invalid('Sources section must be api, mcp, or local.')
-    deepLinkRoute = routes.view.sources(section ? { type: section as 'api' | 'mcp' | 'local' } : undefined)
   } else if (surface === 'skills') {
     rejectKeys(raw, ['surface', 'workspaceId', 'section'])
     deepLinkRoute = routes.view.skills(section)

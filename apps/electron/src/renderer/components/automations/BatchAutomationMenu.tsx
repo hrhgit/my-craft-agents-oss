@@ -55,12 +55,8 @@ export function BatchAutomationMenu() {
     const count = selectedAutomations.length
     clearMultiSelect()
     for (const a of selectedAutomations) {
-      await window.electronAPI.setAutomationEnabled(
-        activeWorkspaceId,
-        a.event,
-        a.matcherIndex,
-        targetEnabled,
-      ).catch(() => {})
+      const listed = await window.electronAPI.automationCommand({ schemaVersion: 1, operation: 'list' }) as { revision?: number }
+      await window.electronAPI.automationCommand({ schemaVersion: 1, operation: 'set-enabled', operationId: crypto.randomUUID(), expectedRevision: listed.revision ?? null, automationId: a.id, enabled: targetEnabled }).catch(() => {})
     }
     toast(targetEnabled
       ? t('automations.batchEnabled', { count })
@@ -73,13 +69,9 @@ export function BatchAutomationMenu() {
     if (!activeWorkspaceId) return
     const count = selectedIds.size
     clearMultiSelect()
-    const sorted = [...selectedAutomations].sort((a, b) => b.matcherIndex - a.matcherIndex)
-    for (const a of sorted) {
-      await window.electronAPI.deleteAutomation(
-        activeWorkspaceId,
-        a.event,
-        a.matcherIndex,
-      ).catch(() => {})
+    for (const a of selectedAutomations) {
+      const listed = await window.electronAPI.automationCommand({ schemaVersion: 1, operation: 'list' }) as { revision?: number }
+      await window.electronAPI.automationCommand({ schemaVersion: 1, operation: 'delete', operationId: crypto.randomUUID(), expectedRevision: listed.revision ?? null, automationId: a.id }).catch(() => {})
     }
     toast(t('automations.batchDeleted', { count }))
   }, [activeWorkspaceId, selectedIds.size, selectedAutomations, clearMultiSelect, t])

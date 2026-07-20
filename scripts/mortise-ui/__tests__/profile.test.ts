@@ -35,6 +35,7 @@ describe('mortise-ui profiles', () => {
       expect(workspace.rootPath).toStartWith(profile.root)
       expect(existsSync(join(workspace.rootPath, 'config.json'))).toBe(true)
       expect(existsSync(join(workspace.rootPath, 'README.md'))).toBe(true)
+      expect(existsSync(join(workspace.rootPath, 'sources'))).toBe(false)
     }
     const productRoot = config.workspaces.find((workspace: { id: string }) => workspace.id === 'product-launch').rootPath as string
     const researchRoot = config.workspaces.find((workspace: { id: string }) => workspace.id === 'customer-research').rootPath as string

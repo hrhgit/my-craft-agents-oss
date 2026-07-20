@@ -38,16 +38,14 @@ describe('agent settings storage', () => {
         isMortisePrompt: snapshot.mainAgent.systemPrompt.includes('Mortise'),
         tools: snapshot.mainAgent.tools.map((tool) => tool.name),
         browserSource: snapshot.mainAgent.tools.find((tool) => tool.name === 'browser_tool')?.source,
-        sourceTestSource: snapshot.mainAgent.tools.find((tool) => tool.name === 'source_test')?.source,
       }));
     `)
     expect(JSON.parse(output)).toEqual({
       systemSource: 'default',
       compactionSource: 'default',
       isMortisePrompt: true,
-      tools: expect.arrayContaining(['read', 'edit', 'write', 'grep', 'find', 'ls', 'web_fetch', 'source_test', 'spawn_session']),
+      tools: expect.arrayContaining(['read', 'edit', 'write', 'grep', 'find', 'ls', 'web_fetch', 'config_validate', 'spawn_session']),
       browserSource: 'extension',
-      sourceTestSource: 'host',
     })
     expect(existsSync(join(piAgentDir, 'SYSTEM.md'))).toBe(false)
     expect(existsSync(join(piAgentDir, 'COMPACTION.md'))).toBe(false)
@@ -85,14 +83,14 @@ describe('agent settings storage', () => {
         schemaVersion: 1,
         systemPrompt: null,
         compactionPrompt: null,
-        disabledTools: ['mcp__session__source_test'],
+        disabledTools: ['mcp__session__config_validate'],
       });
       const snapshot = settings.getAgentSettingsSnapshot();
       console.log(JSON.stringify(snapshot.mainAgent.tools
         .filter((tool) => !tool.enabled)
         .map((tool) => tool.name)));
     `)
-    expect(JSON.parse(output)).toEqual(['source_test'])
+    expect(JSON.parse(output)).toEqual(['config_validate'])
   })
 
   it('uses the native Pi markdown format for subagents', () => {
@@ -130,13 +128,13 @@ describe('agent settings storage', () => {
           name: 'Legacy Tools',
           description: 'Migration fixture',
           systemPrompt: 'Use the configured tools.',
-          tools: ['read', 'mcp__session__source_test'],
+          tools: ['read', 'mcp__session__config_validate'],
         },
       });
       console.log(JSON.stringify(saved.tools));
     `)
-    expect(JSON.parse(output)).toEqual(['read', 'source_test'])
-    expect(readFileSync(join(piAgentDir, 'agents', 'legacy-tools.md'), 'utf8')).toContain('tools: "read, source_test"')
+    expect(JSON.parse(output)).toEqual(['read', 'config_validate'])
+    expect(readFileSync(join(piAgentDir, 'agents', 'legacy-tools.md'), 'utf8')).toContain('tools: "read, config_validate"')
   })
 
   it('rejects a rename that would overwrite another subagent', () => {

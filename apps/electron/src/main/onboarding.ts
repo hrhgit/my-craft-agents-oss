@@ -44,8 +44,8 @@ export function registerOnboardingHandlers(server: RpcServer, deps: HandlerDeps)
 
   // Prepare MCP server OAuth (server-side only — no browser open).
   // Returns authUrl for the client to open locally.
-  // NOTE: Currently unused in renderer. If re-enabled, needs client-side
-  // orchestration (callback server + browser open) like performOAuth().
+  // NOTE: Currently unused in renderer. If re-enabled, it needs client-side
+  // orchestration for the callback server and browser launch.
   server.handle(RPC_CHANNELS.onboarding.START_MCP_OAUTH, async (_ctx, mcpUrl: string, callbackPort?: number) => {
     log.info('[Onboarding:Main] ONBOARDING_START_MCP_OAUTH received')
     try {

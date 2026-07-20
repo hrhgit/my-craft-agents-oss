@@ -13,12 +13,10 @@
  *
  * 保留字段均为 mortise GUI 专属概念，pi settings.json 无对应项：
  * - `enabled`：控制 pi 扩展相关 UI 组件的可见性（不影响子进程扩展加载）
- * - `delegatePromptAutomation`：automation 委托开关
  * - `managedAgentDir`：测试覆盖用的 agentDir
  * - `subagent.reviewEnabled` / `subagent.reviewModel`：mortise 专属 review 流
  * - `traceAudit.reviewSubagentEnabled` / `traceAudit.showStatusBadge`：mortise GUI 状态展示
  * - `yourself.showStatusBadge` / `repoMemory.showStatusBadge`：mortise GUI 状态展示
- * - `promptAutomation.*`：mortise GUI 控件可见性
  */
 
 export type PiExtensionCategory =
@@ -162,8 +160,6 @@ export type PiExtensionReloadResult =
 export interface PiExtensionSettings {
   /** 全局 pi 扩展 UI 可见性总开关。不影响子进程扩展加载（子进程始终加载全局 pi 扩展）。 */
   enabled: boolean;
-  /** 是否将 automation 的 prompt 触发执行委托给 pi prompt-automation 扩展。 */
-  delegatePromptAutomation: boolean;
   /** 测试覆盖用的 agentDir；生产路径永不传入。 */
   managedAgentDir?: string;
   subagent: {
@@ -183,10 +179,6 @@ export interface PiExtensionSettings {
   repoMemory: {
     showStatusBadge: boolean;
   };
-  promptAutomation: {
-    widgetVisible: boolean;
-    defaultJobScope: 'session' | 'workdir';
-  };
 }
 
 /**
@@ -194,18 +186,15 @@ export interface PiExtensionSettings {
  */
 export type StoredPiExtensionSettings = {
   enabled?: boolean;
-  delegatePromptAutomation?: boolean;
   managedAgentDir?: string;
   subagent?: Partial<PiExtensionSettings['subagent']>;
   traceAudit?: Partial<PiExtensionSettings['traceAudit']>;
   yourself?: Partial<PiExtensionSettings['yourself']>;
   repoMemory?: Partial<PiExtensionSettings['repoMemory']>;
-  promptAutomation?: Partial<PiExtensionSettings['promptAutomation']>;
 };
 
 export const DEFAULT_PI_EXTENSION_SETTINGS: PiExtensionSettings = {
   enabled: true,
-  delegatePromptAutomation: false,
   subagent: {
     reviewEnabled: true,
     reviewModel: 'stepfun/step-3.7-flash',
@@ -220,10 +209,6 @@ export const DEFAULT_PI_EXTENSION_SETTINGS: PiExtensionSettings = {
   repoMemory: {
     showStatusBadge: true,
   },
-  promptAutomation: {
-    widgetVisible: true,
-    defaultJobScope: 'session',
-  },
 };
 
 function cloneSettings(settings: PiExtensionSettings): PiExtensionSettings {
@@ -233,7 +218,6 @@ function cloneSettings(settings: PiExtensionSettings): PiExtensionSettings {
     traceAudit: { ...settings.traceAudit },
     yourself: { ...settings.yourself },
     repoMemory: { ...settings.repoMemory },
-    promptAutomation: { ...settings.promptAutomation },
   };
 }
 
@@ -258,11 +242,8 @@ export function normalizePiExtensionSettings(
     return defaults;
   }
 
-  const promptAutomationScope = raw.promptAutomation?.defaultJobScope;
-
   return {
     enabled: bool(raw.enabled, defaults.enabled),
-    delegatePromptAutomation: bool(raw.delegatePromptAutomation, defaults.delegatePromptAutomation),
     managedAgentDir: typeof raw.managedAgentDir === 'string' && raw.managedAgentDir.trim()
       ? raw.managedAgentDir.trim()
       : defaults.managedAgentDir,
@@ -280,12 +261,6 @@ export function normalizePiExtensionSettings(
     repoMemory: {
       showStatusBadge: bool(raw.repoMemory?.showStatusBadge, defaults.repoMemory.showStatusBadge),
     },
-    promptAutomation: {
-      widgetVisible: bool(raw.promptAutomation?.widgetVisible, defaults.promptAutomation.widgetVisible),
-      defaultJobScope: promptAutomationScope === 'workdir' || promptAutomationScope === 'session'
-        ? promptAutomationScope
-        : defaults.promptAutomation.defaultJobScope,
-    },
   };
 }
 
@@ -300,7 +275,6 @@ export function mergePiExtensionSettings(
     traceAudit: { ...current.traceAudit, ...(patch.traceAudit ?? {}) },
     yourself: { ...current.yourself, ...(patch.yourself ?? {}) },
     repoMemory: { ...current.repoMemory, ...(patch.repoMemory ?? {}) },
-    promptAutomation: { ...current.promptAutomation, ...(patch.promptAutomation ?? {}) },
   };
   return normalizePiExtensionSettings(merged, current);
 }

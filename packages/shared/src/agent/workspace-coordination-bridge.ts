@@ -119,7 +119,6 @@ export class WorkspaceCoordinationBridge {
       const command = typeof effectiveInput.command === 'string' ? effectiveInput.command : ''
       const permissions = permissionsConfigCache.getMergedConfig({
         workspaceRootPath: this.options.workspaceRoot,
-        activeSourceSlugs: [],
       })
       const isReadOnly = this.options.isReadOnlyShellCommand
         ? this.options.isReadOnlyShellCommand(command)

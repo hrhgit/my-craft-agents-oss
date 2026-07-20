@@ -1,120 +1,202 @@
-import { readFile } from 'fs/promises'
-import { join } from 'path'
+import { randomUUID } from 'node:crypto'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import { appendAutomationHistoryEntry } from '@mortise/shared/automations/history-store'
-import { AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER } from '@mortise/shared/automations/constants'
-import { withFileLock } from '@mortise/shared/storage'
-import { atomicWriteFileSync } from '@mortise/shared/utils'
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
-import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
+import { resolveWorkspaceId } from '../utils'
+import { CapabilityReadOnlyError } from '@mortise/shared/storage'
+import {
+  AutomationDefinitionV3Schema,
+  AutomationV3Runtime,
+  AutomationV3Store,
+  automationIdentity,
+  CloudEventV1Schema,
+  evaluateConditions,
+  type AutomationCapabilityResultV1,
+  type AutomationExecutionCallbacksV1,
+  type AutomationRunV1,
+  type AutomationWorkspaceHostV3,
+  type CloudEventV1,
+} from '@mortise/shared/automations'
+import {
+  parseAutomationWorkspaceCommandV1,
+  type AutomationWorkspaceCommandV1,
+} from '@mortise/shared/protocol'
 
-// History file name — matches AUTOMATIONS_HISTORY_FILE from @mortise/shared/automations/constants
-const HISTORY_FILE = 'automations-history.jsonl'
-interface HistoryEntry { id: string; ts: number; ok: boolean; sessionId?: string; prompt?: string; error?: string; webhook?: { method: string; url: string; statusCode: number; durationMs: number; attempts?: number; error?: string; responseBody?: string } }
-
-// Per-workspace config mutex: serializes read-modify-write cycles on automations.json
-// to prevent concurrent IPC calls from clobbering each other's changes.
-const configMutexes = new Map<string, Promise<void>>()
-function withConfigMutex<T>(workspaceRoot: string, fn: () => Promise<T>): Promise<T> {
-  const prev = configMutexes.get(workspaceRoot) ?? Promise.resolve()
-  const next = prev.then(fn, fn) // run fn regardless of previous result
-  configMutexes.set(workspaceRoot, next.then(() => {}, () => {}))
-  return next
+export interface AutomationWorkspaceCapabilityContextV1 {
+  workspaceId: string
+  workspaceRootPath: string
+  writerId?: string
+  /** Trusted source assigned from the authenticated capability caller. */
+  eventSourceKind: 'mortise' | 'agent' | 'extension' | 'external'
+  callbacks?: AutomationExecutionCallbacksV1
+  host?: AutomationWorkspaceHostV3
+  validateSession?: (sessionId: string, workspaceId: string) => boolean
 }
 
-// Shared helper: resolve workspace, read automations.json, validate matcher, mutate, write back
-interface AutomationsConfigJson { automations?: Record<string, Record<string, unknown>[]>; [key: string]: unknown }
-
-export interface AutomationCapabilityListItem {
-  id: string
-  event: string
-  name?: string
-  enabled: boolean
-  actionTypes: string[]
-}
-
-export async function listWorkspaceAutomationsForCapability(workspaceRoot: string): Promise<AutomationCapabilityListItem[]> {
-  const { resolveAutomationsConfigPath } = await import('@mortise/shared/automations/resolve-config-path')
+/**
+ * Host-owned implementation of automation.workspace/v1. Transport layers only
+ * authenticate/authorize and forward typed requests to this dispatcher.
+ */
+export async function executeAutomationWorkspaceOperationV1(
+  context: AutomationWorkspaceCapabilityContextV1,
+  input: AutomationWorkspaceCommandV1 | unknown,
+): Promise<AutomationCapabilityResultV1<unknown>> {
+  let request: AutomationWorkspaceCommandV1
   try {
-    const config = JSON.parse(await readFile(resolveAutomationsConfigPath(workspaceRoot), 'utf-8')) as AutomationsConfigJson
-    const result: AutomationCapabilityListItem[] = []
-    for (const [event, matchers] of Object.entries(config.automations ?? {})) {
-      if (!Array.isArray(matchers)) continue
-      for (const matcher of matchers) {
-        if (typeof matcher.id !== 'string' || !matcher.id) continue
-        const actions = Array.isArray(matcher.actions) ? matcher.actions : []
-        const actionTypes = [...new Set(actions.flatMap(action =>
-          action && typeof action === 'object' && typeof (action as Record<string, unknown>).type === 'string'
-            ? [(action as Record<string, unknown>).type as string]
-            : []))]
-        result.push({
-          id: matcher.id,
-          event,
-          ...(typeof matcher.name === 'string' ? { name: matcher.name } : {}),
-          enabled: matcher.enabled !== false,
-          actionTypes,
+    request = parseAutomationWorkspaceCommandV1(input)
+  } catch (error) {
+    return {
+      schemaVersion: 1,
+      status: 'invalid',
+      error: { code: 'invalid_automation_command', message: error instanceof Error ? error.message : String(error), retryable: false },
+    }
+  }
+  const ownsStore = !context.host
+  const store = context.host?.store ?? new AutomationV3Store(context)
+  const finalizeMutation = <T>(result: AutomationCapabilityResultV1<T>): AutomationCapabilityResultV1<T> => {
+    if (result.status === 'ok' || result.status === 'duplicate') context.host?.refresh()
+    return result
+  }
+  try {
+    const document = store.initializeOrMigrate().document
+    switch (request.operation) {
+      case 'describe':
+        return {
+          schemaVersion: 1,
+          status: 'ok',
+          revision: document.revision,
+          data: {
+            capability: 'automation.workspace',
+            schemaVersion: 1,
+            capabilities: {
+              'automations.definitions': { minRead: 3, maxRead: 3, minWrite: 3, maxWrite: 3 },
+              'automations.ingress': { minRead: 1, maxRead: 1, minWrite: 1, maxWrite: 1 },
+              'automations.runs': { minRead: 1, maxRead: 1, minWrite: 1, maxWrite: 1 },
+              'automations.history': { minRead: 1, maxRead: 1, minWrite: 1, maxWrite: 1 },
+            },
+            triggerKinds: ['event', 'cron', 'once', 'interval'],
+            actionKinds: ['prompt', 'webhook'],
+            targetKinds: ['new-session', 'session', 'isolated-agent'],
+            limits: { maxEventBytes: 1_048_576, maxConditionDepth: 8, maxMatcherLength: 500, maxEventTypeLength: 255, maxRunListLimit: 500 },
+            permissionScopes: ['automations.read', 'automations.history.read', 'automations.write', 'automations.run', 'automations.events.emit'],
+          },
+        }
+      case 'list':
+        return { schemaVersion: 1, status: 'ok', revision: document.revision, data: document.definitions }
+      case 'get': {
+        const definition = document.definitions.find(item => item.id === request.automationId)
+        return definition
+          ? { schemaVersion: 1, status: 'ok', revision: document.revision, data: definition }
+          : { schemaVersion: 1, status: 'invalid', revision: document.revision, error: { code: 'automation_not_found', message: 'Automation not found', retryable: false } }
+      }
+      case 'validate': {
+        const parsed = AutomationDefinitionV3Schema.safeParse(request.definition)
+        return parsed.success
+          ? { schemaVersion: 1, status: 'ok', data: parsed.data }
+          : { schemaVersion: 1, status: 'invalid', error: { code: 'invalid_definition', message: parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; '), retryable: false } }
+      }
+      case 'simulate': {
+        const parsed = CloudEventV1Schema.safeParse(request.event)
+        if (!parsed.success) return { schemaVersion: 1, status: 'invalid', error: { code: 'invalid_cloudevent', message: parsed.error.message, retryable: false } }
+        const payload = parsed.data.data && typeof parsed.data.data === 'object' && !Array.isArray(parsed.data.data)
+          ? { ...parsed.data, ...(parsed.data.data as Record<string, unknown>), data: parsed.data.data }
+          : { ...parsed.data, data: parsed.data.data }
+        const plans = document.definitions.flatMap(definition => {
+          if (!definition.enabled || (definition.conditions && !evaluateConditions(definition.conditions, { payload }))) return []
+          const triggerIds = definition.triggers.filter(trigger => trigger.type === 'event'
+            && trigger.source === request.sourceKind
+            && trigger.eventType === parsed.data.type
+            && (!trigger.matcher || new RegExp(trigger.matcher).test(request.matchValue ?? ''))).map(trigger => trigger.id)
+          return triggerIds.length ? [{
+            automationId: definition.id,
+            triggerIds,
+            conditionsMatched: true,
+            actions: definition.actions.map((action, ordinal) => ({ id: action.id, type: action.type, ordinal })),
+          }] : []
         })
+        return { schemaVersion: 1, status: 'ok', revision: document.revision, data: plans }
+      }
+      case 'create': {
+        const existing = document.definitions.find(item => item.id === request.definition.id)
+        if (existing) {
+          if (request.expectedRevision !== null && document.revision === request.expectedRevision + 1 && JSON.stringify(existing) === JSON.stringify(request.definition)) {
+            return store.mutateDocument({ operationId: request.operationId, expectedRevision: request.expectedRevision, document })
+          }
+          return { schemaVersion: 1, operationId: request.operationId, status: 'conflict', revision: document.revision, error: { code: 'automation_exists', message: 'Automation ID already exists', retryable: false } }
+        }
+        return finalizeMutation(store.mutateDocument({ operationId: request.operationId, expectedRevision: request.expectedRevision, document: { ...document, definitions: [...document.definitions, request.definition] } }))
+      }
+      case 'update': {
+        const index = document.definitions.findIndex(item => item.id === request.definition.id)
+        if (index < 0) return { schemaVersion: 1, operationId: request.operationId, status: 'invalid', revision: document.revision, error: { code: 'automation_not_found', message: 'Automation not found', retryable: false } }
+        if (request.expectedRevision !== null && document.revision === request.expectedRevision + 1 && JSON.stringify(document.definitions[index]) === JSON.stringify(request.definition)) {
+          return store.mutateDocument({ operationId: request.operationId, expectedRevision: request.expectedRevision, document })
+        }
+        const definitions = document.definitions.map((item, position) => position === index ? request.definition : item)
+        return finalizeMutation(store.mutateDocument({ operationId: request.operationId, expectedRevision: request.expectedRevision, document: { ...document, definitions } }))
+      }
+      case 'delete': {
+        if (!document.definitions.some(item => item.id === request.automationId)) {
+          if (request.expectedRevision !== null && document.revision === request.expectedRevision + 1) return store.mutateDocument({ operationId: request.operationId, expectedRevision: request.expectedRevision, document })
+          return { schemaVersion: 1, operationId: request.operationId, status: 'invalid', revision: document.revision, error: { code: 'automation_not_found', message: 'Automation not found', retryable: false } }
+        }
+        return finalizeMutation(store.mutateDocument({ operationId: request.operationId, expectedRevision: request.expectedRevision, document: { ...document, definitions: document.definitions.filter(item => item.id !== request.automationId) } }))
+      }
+      case 'set-enabled': {
+        if (!document.definitions.some(item => item.id === request.automationId)) return { schemaVersion: 1, operationId: request.operationId, status: 'invalid', revision: document.revision, error: { code: 'automation_not_found', message: 'Automation not found', retryable: false } }
+        if (request.expectedRevision !== null && document.revision === request.expectedRevision + 1 && document.definitions.find(item => item.id === request.automationId)?.enabled === request.enabled) {
+          return store.mutateDocument({ operationId: request.operationId, expectedRevision: request.expectedRevision, document })
+        }
+        const updatedAt = new Date().toISOString()
+        return finalizeMutation(store.mutateDocument({ operationId: request.operationId, expectedRevision: request.expectedRevision, document: { ...document, definitions: document.definitions.map(item => item.id === request.automationId ? { ...item, enabled: request.enabled, updatedAt } : item) } }))
+      }
+      case 'get-run': {
+        const run = store.getRun(request.runId)
+        return run ? { schemaVersion: 1, status: 'ok', data: run } : { schemaVersion: 1, status: 'invalid', error: { code: 'run_not_found', message: 'Automation run not found', retryable: false } }
+      }
+      case 'list-runs':
+        return { schemaVersion: 1, status: 'ok', data: store.listRuns({ ...(request.automationId ? { automationId: request.automationId } : {}), ...(request.limit ? { limit: request.limit } : {}) }) }
+      case 'run': {
+        if (context.host) {
+          const result = context.host.acceptManual(request.automationId, request.operationId, request.triggerId)
+          return { schemaVersion: 1, operationId: request.operationId, status: result.duplicate ? 'duplicate' : 'accepted', data: { runId: result.run.runId } }
+        }
+        if (!context.callbacks) return { schemaVersion: 1, operationId: request.operationId, status: 'unsupported', error: { code: 'execution_callbacks_unavailable', message: 'The host has not mounted automation execution callbacks', retryable: true } }
+        const runtime = new AutomationV3Runtime({ workspaceId: context.workspaceId, store, callbacks: context.callbacks })
+        const result = await runtime.runManual(request.automationId, request.operationId, request.triggerId)
+        return { schemaVersion: 1, operationId: request.operationId, status: result.duplicate ? 'duplicate' : 'accepted', data: { runId: result.run.runId } }
+      }
+      case 'emit-event': {
+        if (!context.host && !context.callbacks) return { schemaVersion: 1, operationId: request.operationId, status: 'unsupported', error: { code: 'execution_callbacks_unavailable', message: 'The host has not mounted automation execution callbacks', retryable: true } }
+        const parsed = CloudEventV1Schema.safeParse(request.event)
+        if (!parsed.success) return { schemaVersion: 1, operationId: request.operationId, status: 'invalid', error: { code: 'invalid_cloudevent', message: parsed.error.message, retryable: false } }
+        const result = context.host
+          ? await context.host.acceptEvent(parsed.data as CloudEventV1, { sourceKind: context.eventSourceKind, ...(request.matchValue ? { matchValue: request.matchValue } : {}) })
+          : await new AutomationV3Runtime({ workspaceId: context.workspaceId, store, callbacks: context.callbacks! }).emitEvent(parsed.data as CloudEventV1, { sourceKind: context.eventSourceKind, ...(request.matchValue ? { matchValue: request.matchValue } : {}), ...(context.validateSession ? { validateSession: context.validateSession } : {}) })
+        if (result.status !== 'accepted' && result.status !== 'duplicate') {
+          return { schemaVersion: 1, operationId: request.operationId, status: result.status, error: result.error }
+        }
+        return { schemaVersion: 1, operationId: request.operationId, status: result.duplicate ? 'duplicate' : 'accepted', data: { eventId: result.event!.eventId, runIds: result.runs.map((run: AutomationRunV1) => run.runId), persisted: true } }
       }
     }
-    return result
   } catch (error) {
-    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    if (error instanceof CapabilityReadOnlyError) {
+      return {
+        schemaVersion: 1,
+        ...('operationId' in request ? { operationId: request.operationId } : {}),
+        status: 'unsupported',
+        error: { code: 'automation_storage_read_only', message: error.message, retryable: false },
+      }
+    }
     throw error
+  } finally {
+    if (ownsStore) store.close()
   }
-}
-
-export async function setWorkspaceAutomationEnabledById(workspaceRoot: string, id: string, enabled: boolean): Promise<void> {
-  await withConfigMutex(workspaceRoot, async () => {
-    const { resolveAutomationsConfigPath } = await import('@mortise/shared/automations/resolve-config-path')
-    const configPath = resolveAutomationsConfigPath(workspaceRoot)
-    await withFileLock(configPath, async () => {
-      const config = JSON.parse(await readFile(configPath, 'utf-8')) as AutomationsConfigJson
-      let found = false
-      for (const matchers of Object.values(config.automations ?? {})) {
-        if (!Array.isArray(matchers)) continue
-        const matcher = matchers.find(candidate => candidate.id === id)
-        if (!matcher) continue
-        if (found) throw new Error('Automation ID is not unique')
-        found = true
-        if (enabled) delete matcher.enabled
-        else matcher.enabled = false
-      }
-      if (!found) throw new Error('Automation not found')
-      atomicWriteFileSync(configPath, JSON.stringify(config, null, 2) + '\n')
-    })
-  })
-}
-async function withAutomationMatcher(workspaceId: string, eventName: string, matcherIndex: number, mutate: (matchers: Record<string, unknown>[], index: number, config: AutomationsConfigJson, genId: () => string) => void) {
-  const workspace = getWorkspaceOrThrow(workspaceId)
-
-  await withConfigMutex(workspace.rootPath, async () => {
-    const { resolveAutomationsConfigPath, generateShortId } = await import('@mortise/shared/automations/resolve-config-path')
-    const configPath = resolveAutomationsConfigPath(workspace.rootPath)
-
-    await withFileLock(configPath, async () => {
-      const raw = await readFile(configPath, 'utf-8')
-      const config = JSON.parse(raw)
-
-      const eventMap = config.automations ?? {}
-      const matchers = eventMap[eventName]
-      if (!Array.isArray(matchers) || matcherIndex < 0 || matcherIndex >= matchers.length) {
-        throw new Error(`Invalid automation reference: ${eventName}[${matcherIndex}]`)
-      }
-
-      mutate(matchers, matcherIndex, config, generateShortId)
-
-      // Backfill missing IDs on all matchers before writing
-      for (const eventMatchers of Object.values(eventMap)) {
-        if (!Array.isArray(eventMatchers)) continue
-        for (const m of eventMatchers as Record<string, unknown>[]) {
-          if (!m.id) m.id = generateShortId()
-        }
-      }
-
-      atomicWriteFileSync(configPath, JSON.stringify(config, null, 2) + '\n')
-    })
-  })
+  return {
+    schemaVersion: 1,
+    status: 'invalid',
+    error: { code: 'unsupported_automation_operation', message: 'Unsupported automation operation', retryable: false },
+  }
 }
 
 export const HANDLED_CHANNELS = [
@@ -131,250 +213,114 @@ export const HANDLED_CHANNELS = [
 export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const log = deps.platform.logger
 
-  // Get automations config for a workspace (read-only, resolves path server-side)
+  // Bounded V2 client adapter. All reads project the canonical V3 store and
+  // every mutation writes it with revision CAS; no V2 file runtime is mounted.
+  const resolveHost = (contextWorkspaceId: string | null | undefined, requestedWorkspaceId: string) => {
+    const workspaceId = resolveWorkspaceId(contextWorkspaceId, requestedWorkspaceId)!
+    const host = deps.sessionManager.getAutomationHost(workspaceId)
+    if (!host) throw new Error(`Canonical Automations host is unavailable for ${workspaceId}`)
+    return { workspaceId, host }
+  }
+  const legacyEvent = (definition: import('@mortise/shared/automations').AutomationDefinitionV3): string => {
+    const trigger = definition.triggers[0]
+    return trigger?.type === 'time' ? 'SchedulerTick' : trigger?.eventType ?? 'ExternalEvent'
+  }
+  const definitionsForLegacy = (host: import('@mortise/shared/automations').AutomationWorkspaceHostV3, eventName: string) =>
+    host.store.initializeOrMigrate().document.definitions.filter(definition => legacyEvent(definition) === eventName)
+
   server.handle(RPC_CHANNELS.automations.GET, async (ctx, workspaceId: string) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
-    if (!wid) return null
-    log.info(`AUTOMATIONS_GET: Loading automations for workspace: ${wid}`)
-    const workspace = getWorkspaceOrNull(wid, log, 'AUTOMATIONS_GET')
-    if (!workspace) return null
-    try {
-      const { resolveAutomationsConfigPath } = await import('@mortise/shared/automations/resolve-config-path')
-      const configPath = resolveAutomationsConfigPath(workspace.rootPath)
-      log.info(`AUTOMATIONS_GET: Reading config from: ${configPath}`)
-      const content = await readFile(configPath, 'utf-8')
-      const parsed = JSON.parse(content)
-      const eventCount = parsed?.automations ? Object.keys(parsed.automations).length : 0
-      log.info(`AUTOMATIONS_GET: Loaded ${eventCount} event type(s) from ${configPath}`)
-      return parsed
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
-        log.info(`AUTOMATIONS_GET: No automations.json found for workspace ${wid}`)
-        return null // No automations configured yet
-      }
-      log.error(`AUTOMATIONS_GET: Error loading automations:`, error)
-      throw error
-    }
-  })
-
-  server.handle(RPC_CHANNELS.automations.TEST, async (ctx, payload: import('@mortise/shared/protocol').TestAutomationPayload) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, payload.workspaceId)!
-    payload.workspaceId = wid
-    const workspace = getWorkspaceOrThrow(wid)
-
-    const results: import('@mortise/shared/protocol').TestAutomationActionResult[] = []
-    const { parsePromptReferences } = await import('@mortise/shared/automations')
-    const { executeWebhookRequest, createWebhookHistoryEntry, createPromptHistoryEntry } = await import('@mortise/shared/automations/webhook-utils')
-
-    for (const action of payload.actions) {
-      const start = Date.now()
-
-      if (action.type === 'webhook') {
-        // Execute webhook action using shared utility (no env expansion for test — raw URLs)
-        // Cast needed: protocol DTO uses loose `method?: string`, WebhookAction uses strict union
-        const result = await executeWebhookRequest(action as import('@mortise/shared/automations').WebhookAction)
-        const method = action.method ?? 'POST'
-
-        results.push({
-          ...result,
-          duration: Date.now() - start,
-        })
-
-        if (payload.automationId) {
-          const entry = createWebhookHistoryEntry({
-            matcherId: payload.automationId,
-            ok: result.success,
-            method,
-            url: action.url as string,
-            statusCode: result.statusCode,
-            durationMs: result.durationMs ?? 0,
-            error: result.error,
-            responseBody: result.responseBody,
-          })
-          try {
-            await appendAutomationHistoryEntry(workspace.rootPath, entry)
-          } catch (e) {
-            log.warn('[Automations] Failed to write history:', e)
-          }
-        }
-        continue
-      }
-
-      // Prompt action
-      // Parse @mentions from the prompt to resolve source/skill references
-      const references = parsePromptReferences(action.prompt)
-
-      try {
-        const { sessionId } = await deps.sessionManager.executePromptAutomation({
-          workspaceId: payload.workspaceId,
-          workspaceRootPath: workspace.rootPath,
-          prompt: action.prompt,
-          permissionMode: payload.permissionMode,
-          mentions: references.mentions,
-          provider: action.provider,
-          model: action.model,
-          thinkingLevel: action.thinkingLevel,
-          automationName: payload.automationName,
-          telegramTopic: payload.telegramTopic,
-        })
-        results.push({
-          type: 'prompt',
-          success: true,
-          sessionId,
-          duration: Date.now() - start,
-        })
-
-        // Write history entry for test runs
-        if (payload.automationId) {
-          const entry = createPromptHistoryEntry({ matcherId: payload.automationId, ok: true, sessionId, prompt: action.prompt })
-          try {
-            await appendAutomationHistoryEntry(workspace.rootPath, entry)
-          } catch (e) {
-            log.warn('[Automations] Failed to write history:', e)
-          }
-        }
-      } catch (err: unknown) {
-        results.push({
-          type: 'prompt',
-          success: false,
-          stderr: (err as Error).message,
-          duration: Date.now() - start,
-        })
-
-        // Write failed history entry
-        if (payload.automationId) {
-          const entry = createPromptHistoryEntry({ matcherId: payload.automationId, ok: false, error: (err as Error).message, prompt: action.prompt })
-          try {
-            await appendAutomationHistoryEntry(workspace.rootPath, entry)
-          } catch (e) {
-            log.warn('[Automations] Failed to write history:', e)
-          }
-        }
-      }
-    }
-
-    return { actions: results } satisfies import('@mortise/shared/protocol').TestAutomationResult
-  })
-
-  // Automation enabled state management (toggle enabled/disabled in automations.json)
-  server.handle(RPC_CHANNELS.automations.SET_ENABLED, async (ctx, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
-    await withAutomationMatcher(wid, eventName, matcherIndex, (matchers, idx) => {
-      if (enabled) {
-        delete matchers[idx].enabled
-      } else {
-        matchers[idx].enabled = false
-      }
-    })
-  })
-
-  // Duplicate an automation matcher
-  server.handle(RPC_CHANNELS.automations.DUPLICATE, async (ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
-    await withAutomationMatcher(wid, eventName, matcherIndex, (matchers, idx, _config, genId) => {
-      const clone = JSON.parse(JSON.stringify(matchers[idx]))
-      clone.id = genId()
-      clone.name = clone.name ? `${clone.name} Copy` : 'Untitled Copy'
-      matchers.splice(idx + 1, 0, clone)
-    })
-  })
-
-  // Delete an automation matcher
-  server.handle(RPC_CHANNELS.automations.DELETE, async (ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
-    await withAutomationMatcher(wid, eventName, matcherIndex, (matchers, idx, config) => {
-      matchers.splice(idx, 1)
-      if (matchers.length === 0) {
-        const eventMap = config.automations
-        if (eventMap) delete eventMap[eventName]
-      }
-    })
-  })
-
-  // Read execution history for a specific automation
-  server.handle(RPC_CHANNELS.automations.GET_HISTORY, async (ctx, workspaceId: string, automationId: string, limit = AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
-    const workspace = getWorkspaceOrThrow(wid)
-
-    const clampedLimit = Math.max(1, Math.min(limit, AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER))
-    const historyPath = join(workspace.rootPath, HISTORY_FILE)
-    try {
-      const content = await readFile(historyPath, 'utf-8')
-      const lines = content.trim().split('\n').filter(Boolean)
-
-      return lines
-        .map(line => { try { return JSON.parse(line) } catch { return null } })
-        .filter((e): e is HistoryEntry => e?.id === automationId)
-        .slice(-clampedLimit)
-        .reverse()
-    } catch {
-      return [] // File doesn't exist yet
-    }
-  })
-
-  // Replay webhook actions for a specific automation matcher
-  server.handle(RPC_CHANNELS.automations.REPLAY, async (ctx, workspaceId: string, automationId: string, eventName: string) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
-    const workspace = getWorkspaceOrThrow(wid)
-
-    const { resolveAutomationsConfigPath } = await import('@mortise/shared/automations/resolve-config-path')
-    const configPath = resolveAutomationsConfigPath(workspace.rootPath)
-    const raw = await readFile(configPath, 'utf-8')
-    const config = JSON.parse(raw) as { automations?: Record<string, Array<{ id?: string; actions?: Array<{ type: string; [key: string]: unknown }> }>> }
-
-    const matchers = config.automations?.[eventName] ?? []
-    const matcher = matchers.find(m => m.id === automationId)
-    if (!matcher) throw new Error('Automation not found')
-
-    const webhookActions = (matcher.actions ?? []).filter(a => a.type === 'webhook')
-    if (webhookActions.length === 0) throw new Error('No webhook actions to replay')
-
-    const { executeWebhookRequest, createWebhookHistoryEntry } = await import('@mortise/shared/automations/webhook-utils')
-    const results = await Promise.all(
-      webhookActions.map(a => executeWebhookRequest(a as unknown as import('@mortise/shared/automations').WebhookAction))
-    )
-
-    // Write history entries for replay — use index to correctly attribute method per action
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i]!
-      const action = webhookActions[i]!
-      const entry = createWebhookHistoryEntry({
-        matcherId: automationId,
-        ok: result.success,
-        method: (action as { method?: string }).method,
-        url: result.url,
-        statusCode: result.statusCode,
-        durationMs: result.durationMs ?? 0,
-        error: result.error,
+    const { host } = resolveHost(ctx.workspaceId, workspaceId)
+    const document = host.store.initializeOrMigrate().document
+    const automations: Record<string, unknown[]> = {}
+    for (const definition of document.definitions) {
+      const event = legacyEvent(definition)
+      const trigger = definition.triggers[0]
+      const schedule = trigger?.type === 'time' ? trigger.schedule : undefined
+      ;(automations[event] ??= []).push({
+        id: definition.id,
+        name: definition.name,
+        enabled: definition.enabled,
+        ...(trigger?.type === 'event' && trigger.matcher ? { matcher: trigger.matcher } : {}),
+        ...(schedule?.kind === 'cron' ? { cron: schedule.expression, timezone: schedule.timezone } : {}),
+        conditions: definition.conditions,
+        actions: definition.actions,
       })
-      try {
-        await appendAutomationHistoryEntry(workspace.rootPath, entry)
-      } catch (e) {
-        log.warn('[Automations] Failed to write replay history:', e)
-      }
     }
-
-    return { results: results.map(r => ({ ...r, duration: r.durationMs ?? 0 })) }
+    return { version: 3, revision: document.revision, automations }
   })
 
-  // Return last execution timestamp for all automations
+  server.handle(RPC_CHANNELS.automations.TEST, async () => {
+    throw new Error(`Legacy automations:test is retired; use ${RPC_CHANNELS.automations.COMMAND} run and get-run`)
+  })
+
+  server.handle(RPC_CHANNELS.automations.SET_ENABLED, async (ctx, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
+    const { host } = resolveHost(ctx.workspaceId, workspaceId)
+    const document = host.store.initializeOrMigrate().document
+    const definition = definitionsForLegacy(host, eventName)[matcherIndex]
+    if (!definition) throw new Error('Automation not found')
+    const result = host.store.mutateDocument({
+      operationId: randomUUID(), expectedRevision: document.revision,
+      document: { ...document, definitions: document.definitions.map(item => item.id === definition.id ? { ...item, enabled, updatedAt: new Date().toISOString() } : item) },
+    })
+    if (result.status !== 'ok') throw new Error(`Automation update failed: ${result.status}`)
+    host.refresh()
+  })
+
+  server.handle(RPC_CHANNELS.automations.DUPLICATE, async (ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
+    const { host } = resolveHost(ctx.workspaceId, workspaceId)
+    const document = host.store.initializeOrMigrate().document
+    const definition = definitionsForLegacy(host, eventName)[matcherIndex]
+    if (!definition) throw new Error('Automation not found')
+    const now = new Date().toISOString()
+    const clone = {
+      ...definition,
+      id: automationIdentity('aut_copy', definition.id, randomUUID()),
+      name: `${definition.name} Copy`,
+      triggers: definition.triggers.map(trigger => ({ ...trigger, id: automationIdentity('trg_copy', trigger.id, randomUUID()) })),
+      actions: definition.actions.map(action => ({ ...action, id: automationIdentity('act_copy', action.id, randomUUID()) })),
+      createdAt: now,
+      updatedAt: now,
+    }
+    const result = host.store.mutateDocument({ operationId: randomUUID(), expectedRevision: document.revision, document: { ...document, definitions: [...document.definitions, clone] } })
+    if (result.status !== 'ok') throw new Error(`Automation duplicate failed: ${result.status}`)
+    host.refresh()
+  })
+
+  server.handle(RPC_CHANNELS.automations.DELETE, async (ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
+    const { host } = resolveHost(ctx.workspaceId, workspaceId)
+    const document = host.store.initializeOrMigrate().document
+    const definition = definitionsForLegacy(host, eventName)[matcherIndex]
+    if (!definition) throw new Error('Automation not found')
+    const result = host.store.mutateDocument({ operationId: randomUUID(), expectedRevision: document.revision, document: { ...document, definitions: document.definitions.filter(item => item.id !== definition.id) } })
+    if (result.status !== 'ok') throw new Error(`Automation delete failed: ${result.status}`)
+    host.refresh()
+  })
+
+  server.handle(RPC_CHANNELS.automations.GET_HISTORY, async (ctx, workspaceId: string, automationId: string, limit = 20) => {
+    const { host } = resolveHost(ctx.workspaceId, workspaceId)
+    return host.store.listRuns({ automationId, limit }).map(run => ({
+      id: run.automationId,
+      ts: Date.parse(run.completedAt ?? run.startedAt ?? run.createdAt),
+      ok: run.state === 'succeeded' || run.state === 'partial',
+      sessionId: run.actions.find(action => action.sessionId)?.sessionId,
+      error: run.actions.find(action => action.error)?.error?.message ?? run.reason,
+    }))
+  })
+
+  server.handle(RPC_CHANNELS.automations.REPLAY, async (ctx, workspaceId: string, automationId: string) => {
+    const { host } = resolveHost(ctx.workspaceId, workspaceId)
+    const accepted = host.acceptManual(automationId, randomUUID())
+    return { runId: accepted.run.runId, accepted: true }
+  })
+
   server.handle(RPC_CHANNELS.automations.GET_LAST_EXECUTED, async (ctx, workspaceId: string) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
-    const workspace = getWorkspaceOrThrow(wid)
-
-    const historyPath = join(workspace.rootPath, HISTORY_FILE)
-    try {
-      const content = await readFile(historyPath, 'utf-8')
-      const result: Record<string, number> = {}
-      for (const line of content.trim().split('\n')) {
-        try {
-          const entry = JSON.parse(line)
-          if (entry.id && entry.ts) result[entry.id] = entry.ts
-        } catch { /* skip malformed lines */ }
-      }
-      return result
-    } catch {
-      return {}
+    const { host } = resolveHost(ctx.workspaceId, workspaceId)
+    const result: Record<string, number> = {}
+    for (const run of host.store.listRuns({ limit: 500 })) {
+      const timestamp = Date.parse(run.completedAt ?? run.startedAt ?? run.createdAt)
+      if (timestamp > (result[run.automationId] ?? 0)) result[run.automationId] = timestamp
     }
+    return result
   })
+  return
 }

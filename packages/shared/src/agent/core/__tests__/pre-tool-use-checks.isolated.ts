@@ -15,10 +15,6 @@ let mockShouldAllowToolInMode = mock(
     ({ allowed: true, reason: '' })
 );
 
-let mockIsApiEndpointAllowed = mock(
-  (_method: string, _path: string | undefined, _ctx: any) => false
-);
-
 let mockIsReadOnlyBashCommandWithConfig = mock(
   (_command: string, _config: any) => false
 );
@@ -28,7 +24,6 @@ let mockEffectivePermissionMode: 'safe' | 'ask' | 'allow-all' = 'safe';
 // Paths resolve from THIS file's location (core/__tests__/)
 mock.module('../../mode-manager.ts', () => ({
   shouldAllowToolInMode: (a: any, b: any, c: any, d?: any) => mockShouldAllowToolInMode(a, b, c, d),
-  isApiEndpointAllowed: (a: any, b: any, c?: any) => mockIsApiEndpointAllowed(a, b, c),
   isReadOnlyBashCommandWithConfig: (a: any, b: any) => mockIsReadOnlyBashCommandWithConfig(a, b),
   getPermissionModeDiagnostics: () => ({
     permissionMode: mockEffectivePermissionMode,
@@ -146,10 +141,6 @@ function createInput(overrides?: Partial<PreToolUseInput>): PreToolUseInput {
     permissionMode: 'allow-all',
     workspaceRootPath: '/test/workspace',
     workspaceId: 'test-ws',
-    activeSourceSlugs: [],
-    allSourceSlugs: [],
-    hasSourceActivation: true,
-    dataSourcesEnabled: true,
     permissionManager: createMockPermissionManager(),
     ...overrides,
   };
@@ -164,8 +155,6 @@ describe('runPreToolUseChecks', () => {
     mockEffectivePermissionMode = 'safe';
     mockShouldAllowToolInMode.mockReset();
     mockShouldAllowToolInMode.mockImplementation(() => ({ allowed: true, reason: '' }));
-    mockIsApiEndpointAllowed.mockReset();
-    mockIsApiEndpointAllowed.mockImplementation(() => false);
     mockIsReadOnlyBashCommandWithConfig.mockReset();
     mockIsReadOnlyBashCommandWithConfig.mockImplementation(() => false);
     mockDetectConfigFileType.mockReset();
@@ -222,7 +211,6 @@ describe('runPreToolUseChecks', () => {
         plansFolderPath: '/test/plans',
         dataFolderPath: '/test/data',
         workspaceRootPath: '/test/workspace',
-        activeSourceSlugs: ['linear'],
       }));
 
       expect(mockShouldAllowToolInMode).toHaveBeenCalledWith(
@@ -234,7 +222,6 @@ describe('runPreToolUseChecks', () => {
           dataFolderPath: '/test/data',
           permissionsContext: {
             workspaceRootPath: '/test/workspace',
-            activeSourceSlugs: ['linear'],
           },
         }
       );
@@ -258,129 +245,6 @@ describe('runPreToolUseChecks', () => {
   });
 
   // ============================================================
-  // Step 2: Source blocking
-  // ============================================================
-
-  describe('step 2: source blocking', () => {
-    it('blocks external source tools when the feature is disabled', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__linear__createIssue',
-        input: {},
-        activeSourceSlugs: ['linear'],
-        allSourceSlugs: ['linear'],
-        dataSourcesEnabled: false,
-      }));
-
-      expect(result).toEqual({
-        type: 'block',
-        reason: 'Data sources are disabled in Mortise settings.',
-      });
-    });
-
-    it('blocks source-management session tools when the feature is disabled', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'source_test',
-        input: {},
-        dataSourcesEnabled: false,
-      }));
-
-      expect(result.type).toBe('block');
-    });
-
-    it('blocks direct API source tools when the feature is disabled', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'api_github',
-        input: { method: 'GET', path: '/repos' },
-        dataSourcesEnabled: false,
-      }));
-
-      expect(result.type).toBe('block');
-    });
-
-    it('keeps unrelated built-in session tools available when the feature is disabled', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'spawn_session',
-        input: {},
-        dataSourcesEnabled: false,
-      }));
-
-      expect(result.type).toBe('spawn_session_intercept');
-    });
-
-    it('returns source_activation_needed for inactive MCP source (exists)', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__linear__createIssue',
-        input: {},
-        activeSourceSlugs: [],
-        allSourceSlugs: ['linear'],
-      }));
-
-      expect(result.type).toBe('source_activation_needed');
-      if (result.type === 'source_activation_needed') {
-        expect(result.sourceSlug).toBe('linear');
-        expect(result.sourceExists).toBe(true);
-      }
-    });
-
-    it('returns source_activation_needed for inactive MCP source (not exists)', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__notion__search',
-        input: {},
-        activeSourceSlugs: [],
-        allSourceSlugs: [],
-      }));
-
-      expect(result.type).toBe('source_activation_needed');
-      if (result.type === 'source_activation_needed') {
-        expect(result.sourceSlug).toBe('notion');
-        expect(result.sourceExists).toBe(false);
-      }
-    });
-
-    it('allows active MCP source tools', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__linear__createIssue',
-        input: {},
-        activeSourceSlugs: ['linear'],
-        allSourceSlugs: ['linear'],
-      }));
-
-      expect(result.type).toBe('allow');
-    });
-
-    it('skips source check for built-in MCP servers (session)', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'spawn_session',
-        input: {},
-        activeSourceSlugs: [],
-      }));
-
-      // Should reach step 4 (spawn_session intercept), not blocked at step 2
-      expect(result.type).toBe('spawn_session_intercept');
-    });
-
-    it('skips source check for built-in MCP servers (mortise-docs)', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__mortise-docs__search',
-        input: {},
-        activeSourceSlugs: [],
-      }));
-
-      // Should pass through (not source_activation_needed)
-      expect(result.type).toBe('allow');
-    });
-
-    it('skips source check for non-MCP tools', () => {
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'Bash',
-        input: { command: 'ls' },
-      }));
-
-      expect(result.type).toBe('allow');
-    });
-  });
-
-  // ============================================================
   // Step 3: Prerequisite check
   // ============================================================
 
@@ -394,10 +258,8 @@ describe('runPreToolUseChecks', () => {
       });
 
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__linear__createIssue',
+        toolName: 'WebSearch',
         input: {},
-        activeSourceSlugs: ['linear'],
-        allSourceSlugs: ['linear'],
         prerequisiteManager: prereqManager,
       }));
 
@@ -413,10 +275,8 @@ describe('runPreToolUseChecks', () => {
       });
 
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__linear__createIssue',
+        toolName: 'WebSearch',
         input: {},
-        activeSourceSlugs: ['linear'],
-        allSourceSlugs: ['linear'],
         prerequisiteManager: prereqManager,
       }));
 
@@ -425,10 +285,8 @@ describe('runPreToolUseChecks', () => {
 
     it('skips when no prerequisiteManager provided', () => {
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__linear__createIssue',
+        toolName: 'WebSearch',
         input: {},
-        activeSourceSlugs: ['linear'],
-        allSourceSlugs: ['linear'],
         // No prerequisiteManager
       }));
 
@@ -506,8 +364,6 @@ describe('runPreToolUseChecks', () => {
       const result = runPreToolUseChecks(createInput({
         toolName: 'mcp__linear__createIssue',
         input: { title: 'Bug fix', _intent: 'create issue', _displayName: 'Create Issue' },
-        activeSourceSlugs: ['linear'],
-        allSourceSlugs: ['linear'],
       }));
 
       expect(result.type).toBe('modify');
@@ -571,30 +427,6 @@ describe('runPreToolUseChecks', () => {
       if (result.type === 'block') {
         expect(result.reason).toContain('mortise automation');
         expect(result.reason).toContain('automations.json');
-      }
-    });
-
-    it('blocks direct source config edits and suggests mortise source commands when feature is enabled', () => {
-      mockMortiseCliFlag = true;
-      mockDetectConfigFileType.mockImplementation(() => ({
-        type: 'source',
-        slug: 'linear',
-        displayFile: 'sources/linear/config.json',
-      }));
-
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'Edit',
-        input: {
-          file_path: '/test/workspace/sources/linear/config.json',
-          old_string: 'A',
-          new_string: 'B',
-        },
-      }));
-
-      expect(result.type).toBe('block');
-      if (result.type === 'block') {
-        expect(result.reason).toContain('mortise source');
-        expect(result.reason).toContain('sources/linear/config.json');
       }
     });
 
@@ -773,18 +605,15 @@ describe('runPreToolUseChecks', () => {
   // ============================================================
 
   describe('pipeline ordering', () => {
-    it('permission check runs before source blocking', () => {
-      // If tool is blocked by mode, source blocking should not run
+    it('permission check runs before prerequisite checks', () => {
       mockShouldAllowToolInMode.mockImplementation(() => ({
         allowed: false,
         reason: 'Not allowed',
       }));
 
       const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__linear__createIssue',
+        toolName: 'mcp__calendar__createEvent',
         input: {},
-        activeSourceSlugs: [],
-        allSourceSlugs: ['linear'],
         permissionMode: 'safe',
       }));
 
@@ -793,26 +622,6 @@ describe('runPreToolUseChecks', () => {
         expect(result.reason).toContain('Not allowed');
         expect(result.reason).toContain('Effective mode: Explore');
       }
-    });
-
-    it('source blocking runs before prerequisite check', () => {
-      // Inactive source → source_activation_needed (not prerequisite block)
-      const prereqManager = createMockPrerequisiteManager({
-        checkPrerequisites: () => ({
-          allowed: false,
-          blockReason: 'Read guide.md first',
-        }),
-      });
-
-      const result = runPreToolUseChecks(createInput({
-        toolName: 'mcp__linear__createIssue',
-        input: {},
-        activeSourceSlugs: [],
-        allSourceSlugs: ['linear'],
-        prerequisiteManager: prereqManager,
-      }));
-
-      expect(result.type).toBe('source_activation_needed');
     });
 
     it('prerequisite check runs before spawn_session interception', () => {
@@ -830,8 +639,6 @@ describe('runPreToolUseChecks', () => {
       const result = runPreToolUseChecks(createInput({
         toolName: 'mcp__custom__some_tool',
         input: {},
-        activeSourceSlugs: ['custom'],
-        allSourceSlugs: ['custom'],
         prerequisiteManager: prereqManager,
       }));
 
@@ -877,19 +684,6 @@ describe('runPreToolUseChecks', () => {
       expect(debugMessages[0]).toContain('Bash');
     });
 
-    it('calls onDebug for source activation', () => {
-      const debugMessages: string[] = [];
-
-      runPreToolUseChecks(createInput({
-        toolName: 'mcp__linear__createIssue',
-        input: {},
-        activeSourceSlugs: [],
-        allSourceSlugs: ['linear'],
-        onDebug: (msg) => debugMessages.push(msg),
-      }));
-
-      expect(debugMessages.some(m => m.includes('linear'))).toBe(true);
-    });
   });
 });
 
@@ -903,8 +697,6 @@ describe('shouldPromptInAskMode', () => {
   beforeEach(() => {
     pm = createMockPermissionManager();
     mockShouldAllowToolInMode.mockReset();
-    mockIsApiEndpointAllowed.mockReset();
-    mockIsApiEndpointAllowed.mockImplementation(() => false);
     mockIsReadOnlyBashCommandWithConfig.mockReset();
     mockIsReadOnlyBashCommandWithConfig.mockImplementation(() => false);
     mockDetectConfigFileType.mockReset();
@@ -923,7 +715,6 @@ describe('shouldPromptInAskMode', () => {
     it('prompts for Write tool', () => {
       const result = shouldPromptInAskMode('Write', { file_path: '/test/file.ts', content: 'x' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).not.toBeNull();
@@ -934,7 +725,6 @@ describe('shouldPromptInAskMode', () => {
     it('prompts for Edit tool', () => {
       const result = shouldPromptInAskMode('Edit', { file_path: '/test/a.ts' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).not.toBeNull();
@@ -944,7 +734,6 @@ describe('shouldPromptInAskMode', () => {
     it('prompts for MultiEdit tool', () => {
       const result = shouldPromptInAskMode('MultiEdit', { file_path: '/test/a.ts' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).not.toBeNull();
@@ -954,7 +743,6 @@ describe('shouldPromptInAskMode', () => {
     it('prompts for NotebookEdit with notebook_path', () => {
       const result = shouldPromptInAskMode('NotebookEdit', { notebook_path: '/test/nb.ipynb' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).not.toBeNull();
@@ -969,7 +757,6 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('Write', { file_path: '/test/a.ts' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).toBeNull();
@@ -982,7 +769,6 @@ describe('shouldPromptInAskMode', () => {
     it('prompts for bash commands', () => {
       const result = shouldPromptInAskMode('Bash', { command: 'npm install express' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).not.toBeNull();
@@ -995,7 +781,6 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('Bash', { command: 'ls -la' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).toBeNull();
@@ -1007,7 +792,6 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('Bash', { command: 'cat /etc/hosts > /tmp/test' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).not.toBeNull();
@@ -1024,7 +808,6 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('Bash', { command: 'npm test' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).toBeNull();
@@ -1039,7 +822,6 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('Bash', { command: 'rm -rf /important' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).not.toBeNull();
@@ -1055,7 +837,6 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('Bash', { command: 'curl https://api.example.com/data' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).toBeNull();
@@ -1070,7 +851,6 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('Bash', { command: 'curl https://evil.com/data' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).not.toBeNull();
@@ -1081,21 +861,9 @@ describe('shouldPromptInAskMode', () => {
   // --- Mortise host-tool mutations ---
 
   describe('Mortise host-tool mutations', () => {
-    it('prompts for canonical mutating session tools', () => {
-      const result = shouldPromptInAskMode('source_oauth_trigger', { sourceSlug: 'linear' }, pm, {
-        workspaceRootPath: '/test',
-        activeSourceSlugs: ['linear'],
-      });
-
-      expect(result).not.toBeNull();
-      expect(result!.promptType).toBe('tool_mutation');
-      expect(result!.description).toContain('Source OAuth Trigger');
-    });
-
     it('auto-allows canonical read-only session tools', () => {
       const result = shouldPromptInAskMode('config_validate', {}, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).toBeNull();
@@ -1113,7 +881,6 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('mcp__linear__createIssue', { title: 'Bug' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: ['linear'],
       });
 
       expect(result).not.toBeNull();
@@ -1126,7 +893,6 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('mcp__linear__listIssues', {}, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: ['linear'],
       });
 
       expect(result).toBeNull();
@@ -1144,67 +910,8 @@ describe('shouldPromptInAskMode', () => {
 
       const result = shouldPromptInAskMode('mcp__linear__createIssue', { title: 'Bug' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: ['linear'],
       });
 
-      expect(result).toBeNull();
-    });
-  });
-
-  // --- API mutations ---
-
-  describe('API mutations', () => {
-    it('prompts for non-GET API calls', () => {
-      const result = shouldPromptInAskMode('api_github', { method: 'POST', path: '/repos' }, pm, {
-        workspaceRootPath: '/test',
-        activeSourceSlugs: ['github'],
-      });
-
-      expect(result).not.toBeNull();
-      expect(result!.promptType).toBe('api_mutation');
-      expect(result!.description).toContain('POST');
-    });
-
-    it('auto-allows GET API calls', () => {
-      const result = shouldPromptInAskMode('api_github', { method: 'GET', path: '/repos' }, pm, {
-        workspaceRootPath: '/test',
-        activeSourceSlugs: ['github'],
-      });
-
-      expect(result).toBeNull();
-    });
-
-    it('auto-allows API mutations whitelisted in permissions.json', () => {
-      mockIsApiEndpointAllowed.mockImplementation(() => true);
-
-      const result = shouldPromptInAskMode('api_github', { method: 'POST', path: '/repos' }, pm, {
-        workspaceRootPath: '/test',
-        activeSourceSlugs: ['github'],
-      });
-
-      expect(result).toBeNull();
-    });
-
-    it('auto-allows API mutations whitelisted in session', () => {
-      pm = createMockPermissionManager({
-        isCommandWhitelisted: (cmd) => cmd === 'POST /repos',
-      });
-
-      const result = shouldPromptInAskMode('api_github', { method: 'POST', path: '/repos' }, pm, {
-        workspaceRootPath: '/test',
-        activeSourceSlugs: ['github'],
-      });
-
-      expect(result).toBeNull();
-    });
-
-    it('defaults to GET for missing method', () => {
-      const result = shouldPromptInAskMode('api_github', { path: '/repos' }, pm, {
-        workspaceRootPath: '/test',
-        activeSourceSlugs: ['github'],
-      });
-
-      // GET → no prompt
       expect(result).toBeNull();
     });
   });
@@ -1215,7 +922,6 @@ describe('shouldPromptInAskMode', () => {
     it('returns null for Read tool', () => {
       const result = shouldPromptInAskMode('Read', { file_path: '/test/file.ts' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).toBeNull();
@@ -1224,7 +930,6 @@ describe('shouldPromptInAskMode', () => {
     it('returns null for Glob tool', () => {
       const result = shouldPromptInAskMode('Glob', { pattern: '**/*.ts' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).toBeNull();
@@ -1233,7 +938,6 @@ describe('shouldPromptInAskMode', () => {
     it('returns null for Grep tool', () => {
       const result = shouldPromptInAskMode('Grep', { pattern: 'TODO' }, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).toBeNull();
@@ -1242,7 +946,6 @@ describe('shouldPromptInAskMode', () => {
     it('returns null for Task tool', () => {
       const result = shouldPromptInAskMode('Task', {}, pm, {
         workspaceRootPath: '/test',
-        activeSourceSlugs: [],
       });
 
       expect(result).toBeNull();

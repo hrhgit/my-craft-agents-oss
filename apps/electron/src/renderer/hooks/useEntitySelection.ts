@@ -1,7 +1,7 @@
 /**
  * useEntitySelection — Generic atom-backed selection factory.
  *
- * Creates a Jotai atom + hooks for any entity type (sessions, sources, skills).
+ * Creates a Jotai atom + hooks for any entity type (sessions, skills, automations).
  * Each call to createEntitySelection() produces an independent atom and hook set.
  *
  * Hooks returned:

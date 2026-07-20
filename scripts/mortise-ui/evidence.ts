@@ -5,8 +5,9 @@ import { redactText } from './redaction.ts'
 import type { MortiseUiRunManifest } from './protocol.ts'
 
 export function registerReturnedArtifacts(manifest: MortiseUiRunManifest, result: unknown): void {
-  if (!result || typeof result !== 'object' || !Array.isArray((result as { artifacts?: unknown }).artifacts)) return
-  for (const artifact of (result as { artifacts: Array<Record<string, unknown>> }).artifacts) {
+  const artifacts = returnedArtifacts(result)
+  if (artifacts.length === 0) return
+  for (const artifact of artifacts) {
     if (typeof artifact.path !== 'string') continue
     const sourceKind = String(artifact.kind ?? 'other')
     const kind = sourceKind === 'screenshot' || sourceKind.endsWith('-screenshot') ? 'screenshot'
@@ -28,13 +29,13 @@ export function registerReturnedArtifacts(manifest: MortiseUiRunManifest, result
           ...(typeof artifact.sizeBytes === 'number' ? { sizeBytes: artifact.sizeBytes } : {}),
         },
       },
-      secrets: [readFileSync(manifest.tokenPath, 'utf8').trim()],
+      secrets: [readToken(manifest)],
     })
   }
 }
 
 export function collectLocalEvidence(manifest: MortiseUiRunManifest): ReturnType<typeof readArtifactManifest> {
-  const token = readFileSync(manifest.tokenPath, 'utf8').trim()
+  const token = readToken(manifest)
   for (const [sourcePath, targetName, description] of [
     [manifest.stdoutPath, 'host.stdout.redacted.log', 'Redacted host standard output'],
     [manifest.stderrPath, 'host.stderr.redacted.log', 'Redacted host standard error'],
@@ -54,4 +55,19 @@ export function collectLocalEvidence(manifest: MortiseUiRunManifest): ReturnType
     }
   }
   return readArtifactManifest(join(manifest.artifactsDir, 'manifest.json'), manifest.runId)
+}
+
+function returnedArtifacts(value: unknown, seen = new Set<unknown>()): Array<Record<string, unknown>> {
+  if (!value || typeof value !== 'object' || seen.has(value)) return []
+  seen.add(value)
+  if (Array.isArray(value)) return value.flatMap(item => returnedArtifacts(item, seen))
+  const record = value as Record<string, unknown>
+  const direct = Array.isArray(record.artifacts)
+    ? record.artifacts.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
+    : []
+  return [...direct, ...Object.entries(record).filter(([key]) => key !== 'artifacts').flatMap(([, item]) => returnedArtifacts(item, seen))]
+}
+
+function readToken(manifest: MortiseUiRunManifest): string {
+  try { return readFileSync(manifest.tokenPath, 'utf8').trim() } catch { return '' }
 }

@@ -3,7 +3,6 @@ import { execFileSync } from 'node:child_process'
 import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { uptime as osUptime } from 'node:os'
 import { isAbsolute, join } from 'node:path'
-import { OAuthFlowStore } from '@mortise/shared/auth'
 import { ensureConfigDir, getWorkspaceByNameOrId, loadStoredConfig, saveConfig } from '@mortise/shared/config'
 import { CONFIG_DIR } from '@mortise/shared/config/paths'
 import { setBundledAssetsRoot } from '@mortise/shared/utils'
@@ -29,7 +28,6 @@ export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   createHandlerDeps: (ctx: {
     sessionManager: TSessionManager
     platform: PlatformServices
-    oauthFlowStore: OAuthFlowStore
   }) => THandlerDeps
   registerAllRpcHandlers: (server: RpcServer, deps: THandlerDeps, serverCtx: ServerHandlerContext) => void
   initializeSessionManager: (sessionManager: TSessionManager) => Promise<void>
@@ -75,7 +73,6 @@ export interface ServerInstance<TSessionManager> {
   platform: PlatformServices
   sessionManager: TSessionManager
   wsServer: WsRpcServer
-  oauthFlowStore: OAuthFlowStore
   host: string
   port: number
   protocol: 'ws' | 'wss'
@@ -440,12 +437,9 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
 
   options.bindRpcServer?.(sessionManager, wsServer)
 
-  const oauthFlowStore = new OAuthFlowStore()
-
   const deps = options.createHandlerDeps({
     sessionManager,
     platform,
-    oauthFlowStore,
   })
 
   const startedAt = Date.now()
@@ -503,12 +497,6 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
       platform.logger.error('[bootstrap] Failed to close WS server:', error)
     }
 
-    try {
-      oauthFlowStore.dispose()
-    } catch (error) {
-      platform.logger.error('[bootstrap] Failed to dispose OAuth flow store:', error)
-    }
-
     releaseServerLock(serverLockFile)
   }
 
@@ -516,7 +504,6 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
     platform,
     sessionManager,
     wsServer,
-    oauthFlowStore,
     host: rpcHost,
     port: wsServer.port,
     protocol: wsServer.protocol,

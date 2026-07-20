@@ -358,7 +358,6 @@ async function openRoute(params: Record<string, unknown>): Promise<unknown> {
   } else if (route.surface !== 'chat') {
     const semanticIds: Record<string, string> = {
       settings: 'navigation.nav_settings',
-      sources: 'navigation.nav_sources',
       skills: 'navigation.nav_skills',
       automations: 'navigation.nav_automations',
     }
@@ -368,9 +367,8 @@ async function openRoute(params: Record<string, unknown>): Promise<unknown> {
     await nav.click({ timeout: boundedTimeout(params.timeoutMs) })
     if (route.section) {
       const sectionId = route.surface === 'settings' ? `settings.${route.section}`
-        : route.surface === 'sources' ? `navigation.nav_sources_${route.section}`
-          : route.surface === 'automations' ? `navigation.nav_automations_${route.section}`
-            : undefined
+        : route.surface === 'automations' ? `navigation.nav_automations_${route.section}`
+          : undefined
       if (!sectionId) throw new UiValidationError('UNSUPPORTED', `Route section is not supported for ${route.surface}.`)
       const section = browserPage.locator(`[data-mortise-semantic-id=${JSON.stringify(sectionId)}]`)
       if (await section.count() !== 1) throw new UiValidationError('TARGET_NOT_FOUND', `Route section ${route.section} is unavailable.`)

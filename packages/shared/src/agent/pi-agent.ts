@@ -2,8 +2,8 @@
  * Pi Backend (Pi RpcClient)
  *
  * Thin host-side adapter for the Pi coding agent. Uses Pi's public RpcClient
- * API and keeps Mortise-specific scaffolding (permission gating, source/tool
- * proxying, UI event translation) on the host side.
+ * API and keeps Mortise-specific scaffolding (permission gating and UI event
+ * translation) on the host side.
  *
  * Pi owns agent runtime, session storage, provider/model registry, and native
  * extension execution. Mortise talks to it through RpcClient only.
@@ -35,15 +35,12 @@ import type {
   BackendRuntimeUpdate,
   ChatOptions,
   ExtensionBridgeEvent,
-  AuthProjectionPromptRequest,
   HostQueuedUserProjection,
   HostRuntimeErrorProjection,
   PiExtensionCommand,
-  SdkMcpServerConfig,
 } from './backend/types.ts';
 import { AbortReason } from './backend/types.ts';
 import { getBackendRuntime } from './backend/internal/driver-types.ts';
-import { SourceActivationDrainController } from './source-activation-drain.ts';
 import type { ExtensionContributionV1 } from '../protocol/extension-contributions.ts';
 import type { ExtensionUIValidationDeltaV1 } from '../protocol/extension-ui-validation.ts';
 import {
@@ -75,7 +72,7 @@ import { getCoAuthorPreference } from '../config/preferences.ts';
 // Credential manager for token storage
 import { getCredentialManager } from '../credentials/manager.ts';
 
-// Session-scoped tool callbacks (for source auth, etc.)
+// Session-scoped tool callbacks.
 import {
   registerSessionScopedToolCallbacks,
   mergeSessionScopedToolCallbacks,
@@ -102,9 +99,6 @@ import {
 import { createSessionToolContext, type SessionToolContext } from './session-tool-context.ts';
 import { getPermissionModeDiagnostics } from './mode-manager.ts';
 
-// McpClientPool for source tool proxying (centralized pool from main process)
-import type { McpClientPool } from '../mcp/mcp-pool.ts';
-
 import { homedir } from 'os';
 
 // Session storage (plans folder path)
@@ -114,9 +108,9 @@ import { getSessionDataPath, getSessionPath, getSessionPlansPath, getPiNativeSes
 import { parseError, type AgentError } from './errors.ts';
 
 // Centralized PreToolUse pipeline
-import { isDataSourceToolName, runPreToolUseChecks, type PreToolUseCheckResult } from './core/pre-tool-use.ts';
+import { runPreToolUseChecks, type PreToolUseCheckResult } from './core/pre-tool-use.ts';
 import { getRtkPath } from './core/rtk-detector.ts';
-import { getDataSourcesEnabled, getRtkEnabled, getPiShellFullPassthrough } from '../config/storage.ts';
+import { getRtkEnabled, getPiShellFullPassthrough } from '../config/storage.ts';
 import {
   getCustomCompactionPrompt,
   getDisabledAgentTools,
@@ -271,7 +265,6 @@ export interface PiSpawnChildSessionOptions {
   prompt?: string;
   connection?: string;
   model?: string;
-  enabledSources?: string[];
   permissionMode?: PermissionMode;
   thinkingLevel?: ThinkingLevel;
   name?: string;
@@ -298,7 +291,6 @@ export interface PiChildSessionInfo {
   spawnConfig?: {
     connection?: string;
     model?: string;
-    enabledSources?: string[];
     permissionMode?: string;
     thinkingLevel?: string;
   };
@@ -307,8 +299,8 @@ export interface PiChildSessionInfo {
 /**
  * Backend implementation using the Pi coding agent SDK via RpcClient.
  *
- * Extends BaseAgent for common functionality (permission mode, source management,
- * planning heuristics, config watching, usage tracking).
+ * Extends BaseAgent for common functionality (permission mode, planning
+ * heuristics, config watching, and usage tracking).
  */
 export class PiAgent extends BaseAgent {
   protected backendName = 'Mortise Backend';
@@ -408,9 +400,6 @@ export class PiAgent extends BaseAgent {
 
   // Current user message (for context in summarization)
   private currentUserMessage: string = '';
-
-  // Pool reference for convenience (from this.config.mcpPool)
-  private get mcpPool(): McpClientPool | undefined { return this.config.mcpPool; }
 
   // Cached session tool context (lazy-created on first session tool call)
   private _sessionToolContext: SessionToolContext | null = null;
@@ -822,7 +811,7 @@ export class PiAgent extends BaseAgent {
     await coordinationClient.setToolResultHandler(request => this.handleCoordinatedToolResult(request));
 
     // Register canonical session-scoped host tools in Pi.
-    // These tools (config_validate, source auth, spawn_session, etc.)
+    // These tools (config_validate, spawn_session, etc.)
     // are executed in the main process when the LLM calls them.
     this.assertBackendSessionToolParity();
     let sessionToolDefs = getSessionHostToolDefs();
@@ -832,8 +821,6 @@ export class PiAgent extends BaseAgent {
 
     await rpcClient.registerTools(sessionToolDefs as PiRpcHostToolDefinition[], (request) => this.executeHostTool(request));
     this.debug(`Registered ${sessionToolDefs.length} session tools with Pi RpcClient`);
-
-    await this.registerPoolToolsWithRpcClient();
 
     const profile = await rpcClient.getState();
     const disabledTools = new Set(getDisabledAgentTools());
@@ -849,19 +836,6 @@ export class PiAgent extends BaseAgent {
       activeTools: state.activeTools,
       tools: state.tools,
     };
-  }
-
-  /**
-   * Send pool's proxy tool defs to Pi for model visibility.
-   */
-  private async registerPoolToolsWithRpcClient(): Promise<void> {
-    const client = this.rpcClient;
-    if (!this.mcpPool || !client) return;
-    const proxyDefs = this.mcpPool.getProxyToolDefs();
-    if (proxyDefs.length > 0) {
-      await client.registerTools(proxyDefs as PiRpcHostToolDefinition[], (request) => this.executeHostTool(request));
-      this.debug(`Registered ${proxyDefs.length} MCP source tools from pool with Pi RpcClient`);
-    }
   }
 
   /**
@@ -1136,9 +1110,31 @@ export class PiAgent extends BaseAgent {
       return;
     }
 
+    if (event.type === 'extension_host_capability_route_rejected') {
+      writeRuntimeLog('warn', {
+        scope: 'capability',
+        event: 'route_rejected',
+        correlation: {
+          sessionId: event.sessionId,
+          runtimeId: event.runtimeId,
+          clientId: event.clientId,
+          requestId: event.id,
+        },
+        data: {
+          phase: event.phase,
+          reason: event.reason,
+          expected: event.expected,
+          actual: event.actual,
+        },
+      });
+      return;
+    }
+
     if (event.type === 'extension_host_capability_declaration') {
       const sessionId = this.config.session?.mortiseId ?? this._sessionId;
-      const runtimeId = this.currentRpcRuntimeId() ?? `legacy:${sessionId}`;
+      // Host-bound clients own the runtime identity. Legacy clients do not expose
+      // one, so preserve the Pi wire envelope's runtimeId (usually "default").
+      const runtimeId = this.currentRpcRuntimeId() ?? event.runtimeId ?? `legacy:${sessionId}`;
       this.config.onHostCapabilityDeclaration?.({
         version: 1,
         sessionId,
@@ -1150,7 +1146,12 @@ export class PiAgent extends BaseAgent {
     }
 
     if (event.type === 'extension_host_capability_cancel') {
-      this.config.onHostCapabilityCancel?.(event.id, this.currentRpcRuntimeId() ?? `legacy:${this.config.session?.mortiseId ?? this._sessionId}`);
+      this.config.onHostCapabilityCancel?.(
+        event.id,
+        this.currentRpcRuntimeId()
+          ?? event.runtimeId
+          ?? `legacy:${this.config.session?.mortiseId ?? this._sessionId}`,
+      );
       return;
     }
 
@@ -1222,7 +1223,18 @@ export class PiAgent extends BaseAgent {
     // route value here: capability authorization and cleanup depend on this boundary.
     const runtimeId = 'runtimeId' in client && typeof client.runtimeId === 'string'
       ? client.runtimeId
-      : `legacy:${sessionId}`;
+      : event.runtimeId ?? `legacy:${sessionId}`;
+    const responseRoute = {
+      runtimeId,
+      sessionId: event.sessionId ?? sessionId,
+      ...(event.clientId ? { clientId: event.clientId } : {}),
+    };
+    const startedAt = Date.now();
+    const correlation = { sessionId, runtimeId, clientId: event.clientId, requestId: event.id };
+    writeRuntimeLog('info', {
+      scope: 'capability-bridge', event: 'requested', correlation,
+      data: { capability: event.capability, operation: event.operation, extensionId: event.extensionId, timeoutMs: event.timeoutMs },
+    });
     let response: PiRpcExtensionHostCapabilityResponse;
     try {
       const result = this.config.onHostCapabilityRequest
@@ -1244,6 +1256,11 @@ export class PiAgent extends BaseAgent {
                 id: event.id,
                 sequence: progress.sequence,
                 progress: progress.progress,
+                ...responseRoute,
+              });
+              writeRuntimeLog('debug', {
+                scope: 'capability-bridge', event: 'progress', correlation,
+                data: { sequence: progress.sequence },
               });
             } catch (error) {
               this.debug(`Failed to report host capability progress ${event.id}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1255,9 +1272,10 @@ export class PiAgent extends BaseAgent {
             error: { code: 'HOST_CAPABILITIES_UNAVAILABLE', message: 'Host capabilities are unavailable.' },
           };
       response = result.status === 'success'
-        ? { type: 'extension_host_capability_response', version: 1, id: event.id, status: 'success', output: result.output }
+        ? { type: 'extension_host_capability_response', version: 1, id: event.id, status: 'success', output: result.output, ...responseRoute }
         : {
             type: 'extension_host_capability_response', version: 1, id: event.id, status: result.status,
+            ...responseRoute,
             error: result.error ? {
               code: result.error.code,
               message: result.error.message,
@@ -1267,13 +1285,22 @@ export class PiAgent extends BaseAgent {
     } catch (error) {
       response = {
         type: 'extension_host_capability_response', version: 1, id: event.id, status: 'failed',
+        ...responseRoute,
         error: { code: 'HOST_CAPABILITY_BRIDGE_ERROR', message: error instanceof Error ? error.message : String(error) },
       };
     }
     try {
       client.respondToExtensionHostCapability(response);
+      writeRuntimeLog(response.status === 'success' ? 'info' : 'warn', {
+        scope: 'capability-bridge', event: 'responded', correlation,
+        data: { status: response.status, errorCode: response.status === 'success' ? undefined : response.error?.code, durationMs: Date.now() - startedAt },
+      });
     } catch (error) {
       this.debug(`Failed to respond to extension host capability ${event.id}: ${error instanceof Error ? error.message : String(error)}`);
+      writeRuntimeLog('error', {
+        scope: 'capability-bridge', event: 'response_failed', correlation,
+        data: { error, durationMs: Date.now() - startedAt },
+      });
     }
   }
 
@@ -1677,10 +1704,6 @@ export class PiAgent extends BaseAgent {
       plansFolderPath,
       dataFolderPath,
       workingDirectory: this.config.session?.workingDirectory,
-      activeSourceSlugs: Array.from(this.sourceManager.getActiveSlugs()),
-      allSourceSlugs: this.sourceManager.getAllSources().map(s => s.config.slug),
-      hasSourceActivation: !!this.onSourceActivationRequest,
-      dataSourcesEnabled: getDataSourcesEnabled(),
       permissionManager: this.permissionManager,
       prerequisiteManager: this.prerequisiteManager,
       rtkContext,
@@ -1706,62 +1729,6 @@ export class PiAgent extends BaseAgent {
           reason: checkResult.reason,
         })}`);
         return { action: 'block', reason: checkResult.reason };
-      }
-
-      case 'source_activation_needed': {
-        const { sourceSlug, sourceExists } = checkResult;
-        this.debug(`PreToolUse(sessionId=${sessionId}): Source "${sourceSlug}" not active, attempting activation...`);
-
-        if (this.onSourceActivationRequest) {
-          try {
-            const activated = await this.onSourceActivationRequest(sourceSlug);
-            if (!activated) {
-              const reason = sourceExists
-                ? `Source "${sourceSlug}" is not active. Activate it by @mentioning it in your message or via the source icon at the bottom of the input field.`
-                : `Source "${sourceSlug}" is not available yet. It needs to be created and configured first.`;
-              return { action: 'block', reason };
-            }
-            this.debug(`PreToolUse(sessionId=${sessionId}): Source "${sourceSlug}" activated successfully`);
-            this.eventQueue.enqueue({
-              type: 'source_activated' as const,
-              sourceSlug,
-              originalMessage: this.getCurrentTurnUserMessage() ?? '',
-            });
-          } catch (err) {
-            const reason = sourceExists
-              ? `Source "${sourceSlug}" could not be activated: ${err}`
-              : `Source "${sourceSlug}" is not available yet. It needs to be created and configured first.`;
-            return { action: 'block', reason };
-          }
-        }
-
-        // Re-run pipeline after activation
-        const postResult = runPreToolUseChecks({
-          toolName,
-          input,
-          sessionId,
-          permissionMode: this.permissionManager.getPermissionMode(),
-          workspaceRootPath: rootPath,
-          workspaceId: workspaceSlug,
-          plansFolderPath,
-          dataFolderPath,
-          workingDirectory: this.config.session?.workingDirectory,
-          activeSourceSlugs: Array.from(this.sourceManager.getActiveSlugs()),
-          allSourceSlugs: this.sourceManager.getAllSources().map(s => s.config.slug),
-          hasSourceActivation: !!this.onSourceActivationRequest,
-          dataSourcesEnabled: getDataSourcesEnabled(),
-          permissionManager: this.permissionManager,
-          prerequisiteManager: this.prerequisiteManager,
-          rtkContext,
-          onDebug: (msg) => this.debug(`PreToolUse(sessionId=${sessionId}): ${msg}`),
-        });
-
-        if (postResult.type === 'modify') {
-          return { action: 'modify', input: postResult.input };
-        } else if (postResult.type === 'block') {
-          return { action: 'block', reason: postResult.reason };
-        }
-        return { action: 'allow' };
       }
 
       case 'spawn_session_intercept':
@@ -1843,11 +1810,7 @@ export class PiAgent extends BaseAgent {
    * Execute a host proxy tool requested by Pi RpcClient.
    */
   private async executeHostTool(request: PiRpcToolExecuteRequest): Promise<PiRpcHostToolResult> {
-    if (!getDataSourcesEnabled() && isDataSourceToolName(request.toolName)) {
-      return { content: 'Data sources are disabled in Mortise settings.', isError: true };
-    }
-
-    // Prerequisite check: block source tools until guide.md is read
+    // Prerequisite check: block tools until selected skill instructions are read.
     const prereqResult = this.prerequisiteManager.checkPrerequisites(request.toolName);
     if (!prereqResult.allowed) {
       return { content: prereqResult.blockReason!, isError: true };
@@ -1867,7 +1830,6 @@ export class PiAgent extends BaseAgent {
    * Route a proxy tool call to the appropriate handler based on tool name.
    *
    * - Session tools (config_validate, etc.) -> session-tools-core handlers.
-   * - MCP/API source tools -> centralized source pool proxy.
    *
    * Returns text-result shorthand accepted by Pi's host-tool RPC protocol.
    */
@@ -1880,11 +1842,6 @@ export class PiAgent extends BaseAgent {
 
     if (SESSION_TOOL_NAMES.has(strippedName)) {
       return this.executeSessionTool(strippedName, args);
-    }
-
-    // MCP source tools — route through centralized pool
-    if (this.mcpPool?.isProxyTool(toolName)) {
-      return this.mcpPool.callTool(toolName, args);
     }
 
     // Unknown tool
@@ -1903,19 +1860,13 @@ export class PiAgent extends BaseAgent {
 
     const sessionId = this.config.session?.mortiseId || '';
     const workspacePath = this.config.workspace.rootPath;
-    const workspaceId = this.config.workspace.id;
-
     this._sessionToolContext = createSessionToolContext({
       sessionId,
       workspacePath,
-      workspaceId,
       getWorkingDirectory: () => this.config.session?.workingDirectory ?? this.workingDirectory,
       onPlanSubmitted: (planPath: string) => {
         setLastPlanFilePath(sessionId, planPath);
         this.onPlanSubmitted?.(planPath);
-      },
-      onAuthRequest: (request: unknown) => {
-        this.onAuthRequest?.(request as any);
       },
     });
 
@@ -2046,18 +1997,6 @@ export class PiAgent extends BaseAgent {
     const emit = this.config.onPiProjectionEvent;
     if (!builder || !emit) return;
     for (const projectionEvent of builder.accept(event)) emit(projectionEvent);
-  }
-
-  projectAuthPromptRequest(request: AuthProjectionPromptRequest): void {
-    for (const event of this.getProjectionBuilder()?.acceptAuthPromptRequest(request) ?? []) {
-      this.config.onPiProjectionEvent?.(event);
-    }
-  }
-
-  projectAuthPromptResolution(requestId: string, resolution: 'completed' | 'failed' | 'cancelled'): void {
-    for (const event of this.getProjectionBuilder()?.acceptAuthPromptResolution(requestId, resolution) ?? []) {
-      this.config.onPiProjectionEvent?.(event);
-    }
   }
 
   projectQueuedUser(message: HostQueuedUserProjection): void {
@@ -2372,12 +2311,11 @@ export class PiAgent extends BaseAgent {
       prompt: message,
     });
 
-    // Refresh session-scoped callbacks used by source auth and plan review.
+    // Refresh session-scoped callbacks used by plan review.
     const sessionId = this.config.session?.mortiseId;
     if (sessionId) {
       mergeSessionScopedToolCallbacks(sessionId, {
         onPlanSubmitted: (planPath) => this.onPlanSubmitted?.(planPath),
-        onAuthRequest: (request) => this.onAuthRequest?.(request),
       });
     }
 
@@ -2446,9 +2384,6 @@ export class PiAgent extends BaseAgent {
             )
           );
 
-      // Build context from sources
-      const sourceContext = this.sourceManager.formatSourceState();
-
       const promptModeDiagnostics = getPermissionModeDiagnostics(this._sessionId)
       this.debug(
         `[ModeSnapshot] sessionId=${this._sessionId} chatPrompt mode=${promptModeDiagnostics.permissionMode} ` +
@@ -2458,15 +2393,14 @@ export class PiAgent extends BaseAgent {
       // Build context parts using centralized PromptBuilder, split into stable
       // vs volatile (issue #862). Stable blocks (workspace capabilities, working
       // directory) stay in the cached system prefix; volatile blocks (date/time,
-      // session_state, source state) ride the user-message tail so a per-turn
+      // session_state) ride the user-message tail so a per-turn
       // re-stamp doesn't invalidate the prompt cache. buildVolatileContextParts
       // consumes the one-shot mode-change signal, so it is called exactly once.
       const plansFolderPath = getSessionPlansPath(this.config.workspace.rootPath, this._sessionId);
       const stableParts = this.promptBuilder.buildStableContextParts();
-      const volatileParts = this.promptBuilder.buildVolatileContextParts(
-        { plansFolderPath },
-        sourceContext
-      );
+      const { formatDeveloperKitSystemPrompt } = await import('../config/developer-kit.ts');
+      const developerKitSystemPrompt = formatDeveloperKitSystemPrompt();
+      const volatileParts = this.promptBuilder.buildVolatileContextParts({ plansFolderPath });
 
       // Process attachments
       const attachmentParts: string[] = [];
@@ -2523,56 +2457,20 @@ export class PiAgent extends BaseAgent {
         images.length > 0 ? images as any : undefined,
         {
           systemPrompt: fullSystemPrompt || undefined,
+          clearSystemPrompt: piShellPassthrough,
+          appendSystemPrompt: developerKitSystemPrompt ?? '',
           clientMutationId: options?.clientMutationId,
           attachments: options?.attachmentRefs,
         },
       );
 
-      // Yield events as they arrive. The source-activation drain controller
-      // captures a pending restart on the first triggering tool_result and
-      // drains sibling tool_results from the same parallel-tool batch before
-      // firing `source_activated` + `forceAbort` — Pi only picks
-      // up new proxy tools on the next handlePrompt, so the restart is needed
-      // here too. Without the drain, sibling tool_results from parallel
-      // source_test calls are lost (#790).
-      const sourceActivationDrain = new SourceActivationDrainController('fire-on-non-tool-result');
       for await (const event of this.eventQueue.drain()) {
         if (event.type === 'queue_overflow') this.emitPiProjectionEvents(event);
-        // Pre-yield check: when we're past capture and the incoming event is
-        // not a tool_result, fire BEFORE yielding it (the event belongs to
-        // the about-to-be-aborted next turn — letting it through would leak
-        // a fragment of the cancelled response into the session journal).
-        const preFire = sourceActivationDrain.shouldFireBeforeEvent(event);
-        if (preFire) {
-          this.debug(`source_test activated "${preFire.sourceSlug}", drained sibling tool_results, restarting turn`);
-          yield preFire;
-          this.forceAbort(AbortReason.SourceActivated);
-          return;
-        }
-
-        if (sourceActivationDrain.observe(event, () => this.consumePendingSourceActivationRestart())) {
-          yield event;
-          continue;
-        }
-
         yield event;
-      }
-
-      // Stream-end fallback: queue drained naturally with a captured restart
-      // still pending. Fire and return (no further events expected).
-      const sourceActivationFireAtEnd = sourceActivationDrain.shouldFireAtBoundary();
-      if (sourceActivationFireAtEnd) {
-        this.debug(`source_test activated "${sourceActivationFireAtEnd.sourceSlug}", stream ended with pending restart, restarting turn`);
-        yield sourceActivationFireAtEnd;
-        this.forceAbort(AbortReason.SourceActivated);
-        return;
       }
     } catch (error) {
       if (error instanceof Error && error.message.includes('abort')) {
         if (this.abortReason === AbortReason.PlanSubmitted) {
-          return;
-        }
-        if (this.abortReason === AbortReason.AuthRequest) {
           return;
         }
         return;
@@ -2672,24 +2570,6 @@ export class PiAgent extends BaseAgent {
   }
 
   // ============================================================
-  // Source / MCP Integration
-  // ============================================================
-
-  override async setSourceServers(
-    mcpServers: Record<string, SdkMcpServerConfig>,
-    apiServers: Record<string, unknown>,
-    intendedSlugs?: string[]
-  ): Promise<void> {
-    // BaseAgent.setSourceServers() handles:
-    //   1. SourceManager state tracking (active slugs)
-    //   2. McpClientPool sync (connecting/disconnecting MCP + API sources)
-    await super.setSourceServers(mcpServers, apiServers, intendedSlugs);
-
-    // Register pool's proxy tool defs with Pi so the model can call them.
-    await this.registerPoolToolsWithRpcClient();
-  }
-
-  // ============================================================
   // Lifecycle
   // ============================================================
 
@@ -2764,8 +2644,8 @@ export class PiAgent extends BaseAgent {
     // Clear bridge cache for aborted turn.
     this.preToolMetadataByCallId.clear();
 
-    // For PlanSubmitted and AuthRequest, just interrupt the turn
-    if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
+    // Plan review hands control back to the host UI.
+    if (reason === AbortReason.PlanSubmitted) {
       return;
     }
 
@@ -2912,6 +2792,67 @@ export class PiAgent extends BaseAgent {
     } catch (error) {
       this.debug(`[runMiniCompletion] Failed: ${error instanceof Error ? error.message : String(error)}`);
       return null;
+    }
+  }
+
+  async runIsolatedAgent(request: import('./backend/types.ts').IsolatedAgentRequest): Promise<string | null> {
+    await this.ensureRpcClient();
+    const host = this.rpcHostLease?.client;
+    if (!host) throw new Error('Pi multi-runtime host is unavailable for isolated Agent execution');
+    if (request.signal?.aborted) throw request.signal.reason ?? new Error('Isolated Agent execution cancelled');
+
+    const runtime = await host.openRuntime({
+      runtimeId: `automation-isolated-${randomUUID()}`,
+      cwd: this.resolvedCwd(),
+      agentDir: PI_AGENT_DIR,
+      extensionTarget: 'mortise',
+      inMemory: true,
+      persistInitialState: false,
+      uiCapabilities: {
+        kind: 'none',
+        dialogs: false,
+        widgets: false,
+        editorControl: false,
+        contributions: false,
+        interactionSchemas: [],
+      },
+    });
+    const abort = () => { void runtime.abort().catch(() => undefined); };
+    request.signal?.addEventListener('abort', abort, { once: true });
+    try {
+      const provider = getBackendRuntime(this.config).piAuthProvider;
+      const model = request.model ?? this._model;
+      if (provider && model) await runtime.setModel(provider, model);
+      const thinkingLevel = request.thinkingLevel ?? this._thinkingLevel;
+      if (thinkingLevel) await runtime.setThinkingLevel(thinkingLevel);
+
+      await runtime.setToolPermissionHandler(async permissionRequest => {
+        const decision = await this.handleToolPermissionRequest(permissionRequest);
+        return this.getCoordinationBridge().afterPermission({
+          toolName: permissionRequest.toolName,
+          toolCallId: permissionRequest.toolCallId,
+          input: permissionRequest.input,
+          assistantTimestamp: Date.now(),
+        }, decision);
+      });
+      await runtime.setToolResultHandler(result => this.handleCoordinatedToolResult(result));
+      this.assertBackendSessionToolParity();
+      const sessionToolDefs = getSessionHostToolDefs()
+        .filter(definition => !PI_EXTENSION_OWNED_SESSION_TOOL_NAMES.has(definition.name));
+      await runtime.registerTools(
+        sessionToolDefs as PiRpcHostToolDefinition[],
+        toolRequest => this.executeHostTool(toolRequest),
+      );
+      const profile = await runtime.getState();
+      const disabledTools = new Set(getDisabledAgentTools());
+      await runtime.setActiveTools(profile.activeTools.filter(name => !disabledTools.has(name)));
+      await runtime.setCompactionPrompt(getCustomCompactionPrompt());
+      await runtime.prompt(request.prompt);
+      if (request.signal?.aborted) throw request.signal.reason ?? new Error('Isolated Agent execution cancelled');
+      return runtime.getLastAssistantText();
+    } finally {
+      request.signal?.removeEventListener('abort', abort);
+      await runtime.close();
     }
   }
 

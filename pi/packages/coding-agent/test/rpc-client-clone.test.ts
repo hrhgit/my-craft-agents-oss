@@ -21,6 +21,7 @@ describe("RpcClient clone", () => {
 
 		await client.prompt("hello", undefined, {
 			systemPrompt: "host prompt",
+			clearSystemPrompt: false,
 			clientMutationId: "mutation-1",
 			attachments: [{ id: "att-1", name: "photo.png", mediaType: "image/png", size: 42 }],
 		});
@@ -30,6 +31,7 @@ describe("RpcClient clone", () => {
 			message: "hello",
 			images: undefined,
 			systemPrompt: "host prompt",
+			clearSystemPrompt: false,
 			clientMutationId: "mutation-1",
 			attachments: [{ id: "att-1", name: "photo.png", mediaType: "image/png", size: 42 }],
 		});
@@ -320,6 +322,7 @@ describe("PiRuntimeHandle", () => {
 			status: "success",
 			output: { shown: true },
 			runtimeId: "runtime-a",
+			sessionId: "session-a",
 		});
 	});
 
@@ -338,7 +341,7 @@ describe("PiRuntimeHandle", () => {
 		privateClient.send = send;
 		privateClient.getData = <T>(response: unknown): T => (response as { data: T }).data;
 
-		const handle = await client.openRuntime({ runtimeId: "runtime-a", cwd: "E:/project", extensionTarget: "pi" });
+		const handle = await client.openRuntime({ runtimeId: "runtime-a", cwd: "E:/project", extensionTarget: "pi", inMemory: true });
 		await handle.getState();
 
 		expect(handle.runtimeId).toBe("runtime-a");
@@ -347,6 +350,7 @@ describe("PiRuntimeHandle", () => {
 			runtimeId: "runtime-a",
 			cwd: "E:/project",
 			extensionTarget: "pi",
+			inMemory: true,
 		});
 		expect(send).toHaveBeenNthCalledWith(2, { type: "get_state", runtimeId: "runtime-a" }, undefined);
 	});

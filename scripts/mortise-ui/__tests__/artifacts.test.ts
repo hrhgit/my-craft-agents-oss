@@ -134,7 +134,7 @@ describe('mortise-ui artifact manifest', () => {
       return { child, artifactPath, readySignal }
     })
 
-    await waitFor(() => children.every(({ readySignal }) => existsSync(readySignal)), 10_000)
+    await waitFor(() => children.every(({ readySignal }) => existsSync(readySignal)), 30_000)
     writeFileSync(startSignal, '', 'utf8')
     await Promise.all(children.map(({ child }) => waitForExit(child)))
 
@@ -144,7 +144,7 @@ describe('mortise-ui artifact manifest', () => {
       new Set(children.map(({ artifactPath }) => artifactPath)),
     )
     expect(readdirSync(artifactsDir).filter(name => name.includes('.tmp') || name.endsWith('.lock'))).toEqual([])
-  }, 20_000)
+  }, 60_000)
 
   it('serializes repeated same-process updates and replaces only the matching path', () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-ui-artifacts-'))

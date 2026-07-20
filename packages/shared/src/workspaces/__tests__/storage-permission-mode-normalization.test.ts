@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadWorkspaceConfig } from '../storage.ts';
+import { createWorkspaceAtPath, loadWorkspaceConfig, saveWorkspaceConfig } from '../storage.ts';
 
 const tempDirs: string[] = [];
 
@@ -17,6 +17,18 @@ afterEach(() => {
 });
 
 describe('workspace storage: config normalization', () => {
+  it('does not create retired data-source settings or directories for new workspaces', () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-no-sources-'));
+    tempDirs.push(workspaceRoot);
+
+    createWorkspaceAtPath(workspaceRoot, 'No Sources');
+
+    const persisted = JSON.parse(readFileSync(join(workspaceRoot, 'config.json'), 'utf-8'));
+    expect(persisted.defaults).not.toHaveProperty('enabledSourceSlugs');
+    expect(persisted).not.toHaveProperty('localMcpServers');
+    expect(existsSync(join(workspaceRoot, 'sources'))).toBe(false);
+  });
+
   it('removes legacy workspace AI defaults from memory and disk', () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-global-ai-defaults-'));
     tempDirs.push(workspaceRoot);
@@ -115,6 +127,41 @@ describe('workspace storage: config normalization', () => {
     expect(existsSync(join(workspaceRoot, 'views.json'))).toBe(false);
 
     expect(loadWorkspaceConfig(workspaceRoot)).not.toBeNull();
+  });
+
+  it('preserves legacy data-source fields and directories as opaque workspace data', () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-legacy-sources-'));
+    tempDirs.push(workspaceRoot);
+
+    const configPath = join(workspaceRoot, 'config.json');
+    const legacyConfig = {
+      id: 'ws_legacy_sources',
+      name: 'Legacy Sources',
+      slug: 'legacy-sources',
+      defaults: {
+        permissionMode: 'safe',
+        enabledSourceSlugs: ['example-source'],
+      },
+      localMcpServers: { enabled: false },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    writeFileSync(configPath, JSON.stringify(legacyConfig, null, 2), 'utf-8');
+    mkdirSync(join(workspaceRoot, 'sources', 'example-source'), { recursive: true });
+    writeFileSync(
+      join(workspaceRoot, 'sources', 'example-source', 'config.json'),
+      '{"type":"mcp"}',
+      'utf-8',
+    );
+
+    const loaded = loadWorkspaceConfig(workspaceRoot);
+    expect(loaded).not.toBeNull();
+    saveWorkspaceConfig(workspaceRoot, loaded!);
+
+    const persisted = JSON.parse(readFileSync(configPath, 'utf-8'));
+    expect(persisted.defaults.enabledSourceSlugs).toEqual(['example-source']);
+    expect(persisted.localMcpServers).toEqual({ enabled: false });
+    expect(existsSync(join(workspaceRoot, 'sources', 'example-source', 'config.json'))).toBe(true);
   });
 
 });

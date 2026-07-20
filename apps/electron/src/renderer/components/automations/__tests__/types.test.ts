@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { parseAutomationsConfig } from '../types'
+import { parseAutomationDefinitionsV3, parseAutomationsConfig } from '../types'
 
 describe('parseAutomationsConfig', () => {
   it('returns [] for null input', () => {
@@ -207,5 +207,22 @@ describe('parseAutomationsConfig', () => {
     const items = parseAutomationsConfig(config)
     expect(items[0].matcher).toBe('urgent')
     expect(items[0].permissionMode).toBe('ask')
+  })
+})
+
+describe('parseAutomationDefinitionsV3', () => {
+  it('projects interval, prompt target, and canonical definition identity', () => {
+    const now = '2026-07-20T00:00:00.000Z'
+    const [item] = parseAutomationDefinitionsV3([{
+      id: 'automation-v3-test', name: 'Interval review', enabled: true,
+      triggers: [{ id: 'trigger-v3-test', type: 'time', schedule: { kind: 'interval', everyMs: 60_000, anchorAt: now } }],
+      actions: [{ id: 'action-v3-test', type: 'prompt', prompt: 'review', target: { kind: 'isolated-agent', model: 'test-model' } }],
+      createdAt: now, updatedAt: now,
+    }])
+    expect(item).toMatchObject({
+      id: 'automation-v3-test', event: 'SchedulerTick', summary: 'Every 60 seconds',
+      actions: [{ type: 'prompt', prompt: 'review', model: 'test-model' }],
+      definition: { id: 'automation-v3-test' },
+    })
   })
 })

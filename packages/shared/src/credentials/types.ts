@@ -2,15 +2,13 @@
  * Credential Storage Types
  *
  * Defines the types for credential storage using pi auth.json.
- * Supports global and source-scoped credentials.
+ * Supports provider, workspace, and messaging credentials.
  *
  * Credential key format: "{type}::{scope...}"
  *
  * Examples:
  *   - llm_api_key::{providerKey}
  *   - llm_oauth::{providerKey}
- *   - source_oauth::{workspaceId}::{sourceId}
- *   - source_bearer::{workspaceId}::{sourceId}
  *
  * Note: Using "::" as delimiter to avoid conflicts with "/" in URLs or paths.
  */
@@ -24,11 +22,7 @@ export type CredentialType =
   | 'llm_service_account' // GCP service account JSON
   // Workspace credentials
   | 'workspace_oauth'    // Workspace MCP OAuth token
-  // Source credentials (stored at ~/.mortise/workspaces/{ws}/sources/{slug}/)
-  | 'source_oauth'       // OAuth tokens for MCP/API sources
-  | 'source_bearer'      // Bearer tokens
-  | 'source_apikey'      // API keys
-  | 'source_basic'       // Basic auth (base64 encoded user:pass)
+  | 'automation_secret'  // Workspace-scoped outbound automation secret
   // Messaging gateway credentials (keyed by workspaceId + platform)
   | 'messaging_bearer';  // Platform tokens (e.g., Telegram bot token)
 
@@ -39,10 +33,7 @@ const VALID_CREDENTIAL_TYPES: readonly CredentialType[] = [
   'llm_iam',
   'llm_service_account',
   'workspace_oauth',
-  'source_oauth',
-  'source_bearer',
-  'source_apikey',
-  'source_basic',
+  'automation_secret',
   'messaging_bearer',
 ] as const;
 
@@ -62,8 +53,6 @@ export interface CredentialId {
   // Workspace-scoped format
   /** Workspace ID for workspace-scoped credentials */
   workspaceId?: string;
-  /** Source ID for source credentials */
-  sourceId?: string;
   /** Server name or API name */
   name?: string;
 }
@@ -126,14 +115,6 @@ export interface StoredCredential {
 // could contain "/" (e.g., URLs like "https://api.example.com")
 const CREDENTIAL_DELIMITER = '::';
 
-/** Source credential types */
-export const SOURCE_CREDENTIAL_TYPES = [
-  'source_oauth',
-  'source_bearer',
-  'source_apikey',
-  'source_basic',
-] as const;
-
 /** Messaging credential types */
 const MESSAGING_CREDENTIAL_TYPES = [
   'messaging_bearer',
@@ -151,11 +132,6 @@ const LLM_CREDENTIAL_TYPES = [
   'llm_iam',
   'llm_service_account',
 ] as const;
-
-/** Check if type is a source credential */
-function isSourceCredential(type: CredentialType): boolean {
-  return (SOURCE_CREDENTIAL_TYPES as readonly string[]).includes(type);
-}
 
 /** Check if type is an legacy provider credential */
 function isLlmCredential(type: CredentialType): boolean {
@@ -181,11 +157,8 @@ export function credentialIdToAccount(id: CredentialId): string {
     return parts.join(CREDENTIAL_DELIMITER);
   }
 
-  // Source-scoped format:
-  // Source credentials: source_oauth::{workspaceId}::{sourceId}
-  if (isSourceCredential(id.type) && id.workspaceId && id.sourceId) {
-    parts.push(id.workspaceId);
-    parts.push(id.sourceId);
+  if (id.type === 'automation_secret' && id.workspaceId && id.name) {
+    parts.push(id.workspaceId, id.name);
     return parts.join(CREDENTIAL_DELIMITER);
   }
 
@@ -253,10 +226,8 @@ export function accountToCredentialId(account: string): CredentialId | null {
     return { type, workspaceId: parts[1] };
   }
 
-  // Source-scoped format:
-  // Source credentials: source_oauth::{workspaceId}::{sourceId}
-  if (isSourceCredential(type) && parts.length === 3) {
-    return { type, workspaceId: parts[1], sourceId: parts[2] };
+  if (type === 'automation_secret' && parts.length === 3) {
+    return { type, workspaceId: parts[1], name: parts[2] };
   }
 
   // Messaging-scoped format:

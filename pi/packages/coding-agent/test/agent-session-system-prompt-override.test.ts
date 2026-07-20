@@ -97,4 +97,19 @@ describe("PromptOptions.systemPrompt host override", () => {
 
 		session.dispose();
 	});
+
+	it("clears a persisted host override when explicitly requested", async () => {
+		const session = await createSession();
+		const nativePrompt = session.systemPrompt;
+
+		await session.prompt("a", { systemPrompt: "HOST PROMPT" }).catch(() => {});
+		expect(session.systemPrompt).toBe("HOST PROMPT");
+
+		await session.prompt("b", { clearSystemPrompt: true }).catch(() => {});
+		expect(session.systemPrompt).toBe(nativePrompt);
+
+		session.refreshSystemPrompt();
+		expect(session.systemPrompt).toBe(nativePrompt);
+		session.dispose();
+	});
 });

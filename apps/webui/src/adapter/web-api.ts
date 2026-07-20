@@ -169,10 +169,6 @@ export function createWebApi(options: WebApiOptions): {
     getDismissedUpdateVersion: () => Promise.resolve(null),
     onUpdateAvailable: () => () => {},
     onUpdateDownloadProgress: () => () => {},
-    // Release notes — serve from server via RPC (same content as Electron)
-    getReleaseNotes: () => client.invoke('releaseNotes:get') as Promise<string>,
-    getLatestReleaseVersion: () => client.invoke('releaseNotes:getLatestVersion') as Promise<string | undefined>,
-
     // Menu events — register as keyboard shortcuts
     onMenuNewChat: () => () => {},
     onMenuOpenSettings: () => () => {},
@@ -241,70 +237,7 @@ export function createWebApi(options: WebApiOptions): {
     invokeOnServer: () => Promise.reject(new Error('Cross-server RPC not available in web UI')),
   }
 
-  // OAuth overrides — web-compatible browser opening
-  // The Electron preload uses shell.openExternal() which isn't available in browsers.
-  const oauthOverrides: Partial<ElectronAPI> = {
-    // Generic source OAuth — server prepares the flow, we open the auth URL in a new tab.
-    // The OAuth provider redirects through the relay to our server's /api/oauth/callback,
-    // which completes the token exchange and pushes status via WebSocket.
-    performOAuth: async (args: {
-      sourceSlug: string
-      sessionId?: string
-      authRequestId?: string
-    }) => {
-      // iOS Safari (and any strict mobile pop-up blocker) requires
-      // `window.open()` to be called *synchronously* inside the click event
-      // — any preceding `await` loses the user-gesture and the call is
-      // silently blocked. We pre-open a blank tab here as the first thing
-      // in this async function (which still runs on the click tick, before
-      // the first await) and rewrite its `location.href` once the auth URL
-      // arrives. Same-window fallback covers users who blocked popups
-      // entirely. NOTE: dropped `noopener` because the spec returns null
-      // for `noopener` opens in some browsers, defeating the pre-open.
-      const popup = window.open('about:blank', '_blank')
-
-      try {
-        const callbackUrl = `${window.location.origin}/api/oauth/callback`
-        const result = await client.invoke('oauth:start', {
-          sourceSlug: args.sourceSlug,
-          callbackUrl,
-          sessionId: args.sessionId,
-          authRequestId: args.authRequestId,
-        })
-
-        if (popup && !popup.closed) {
-          // Happy path — pre-opened popup is still open, redirect it.
-          popup.location.href = result.authUrl
-        } else if (popup === null) {
-          // Popup blocked entirely (popup === null) — fall back to a
-          // same-window redirect. The OAuth callback lands back on the
-          // WebUI; cookie-based session means the user picks up where
-          // they left off after auth.
-          window.location.href = result.authUrl
-        } else {
-          // Popup was opened but the user closed it while we waited for
-          // the RPC. Abort rather than redirecting their main tab.
-          return {
-            success: false,
-            error: 'Sign-in window was closed before authentication started.',
-          }
-        }
-
-        // The server completes the flow when the callback arrives and pushes
-        // auth status via WebSocket — the AuthRequestCard updates automatically.
-        return { success: true }
-      } catch (err) {
-        if (popup && !popup.closed) popup.close()
-        return {
-          success: false,
-          error: err instanceof Error ? err.message : 'OAuth flow failed',
-        }
-      }
-    },
-
-  }
-
-  const api = { ...baseApi, ...webOverrides, ...oauthOverrides } as ElectronAPI
+  const api = { ...baseApi, ...webOverrides } as ElectronAPI
 
   return { api, client }
 }

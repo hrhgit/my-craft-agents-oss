@@ -33,6 +33,7 @@ describe('mortise-ui web adapter semantics', () => {
 
   it('only accepts registered route surfaces', () => {
     expect(routeFromParams({ route: { surface: 'chat', sessionId: 's1' } }).query.get('session')).toBe('s1')
+    expect(() => routeFromParams({ route: { surface: 'sources' } })).toThrow(UiValidationError)
     expect(() => routeFromParams({ route: { surface: 'raw-dom' } })).toThrow(UiValidationError)
   })
 

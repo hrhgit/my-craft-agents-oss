@@ -11,6 +11,7 @@ import { resolve } from 'path'
 import { resolveCustomEndpointSetup } from '@mortise/server-core/domain'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import { CliRpcClient } from './client.ts'
+import { invokeAutomationIngressToken, invokeAutomationWorkspace } from './automation-client.ts'
 import { subscribeToConversationStream } from './conversation-stream.ts'
 import {
   asExtensionInteractionRequest,
@@ -37,7 +38,6 @@ export interface CliArgs {
   command: string
   rest: string[]
   // run-specific flags
-  sources: string[]
   mode: string
   outputFormat: string
   noCleanup: boolean
@@ -65,7 +65,6 @@ export function parseArgs(argv: string[]): CliArgs {
   let sendTimeout = 300_000 // 5 min
   const rest: string[] = []
   let command = ''
-  const sources: string[] = []
   let mode = ''
   let outputFormat = 'text'
   let noCleanup = false
@@ -102,9 +101,6 @@ export function parseArgs(argv: string[]): CliArgs {
         break
       case '--send-timeout':
         sendTimeout = parseInt(args[++i] ?? '300000', 10)
-        break
-      case '--source':
-        sources.push(args[++i] ?? '')
         break
       case '--mode':
         mode = args[++i] ?? ''
@@ -172,7 +168,7 @@ export function parseArgs(argv: string[]): CliArgs {
   if (!apiKey) apiKey = process.env.LLM_API_KEY ?? ''
   if (!baseUrl) baseUrl = process.env.LLM_BASE_URL ?? ''
 
-  return { url, token, workspace, timeout, json, tlsCa, sendTimeout, command, rest, sources, mode, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl, interactive }
+  return { url, token, workspace, timeout, json, tlsCa, sendTimeout, command, rest, mode, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl, interactive }
 }
 
 // ---------------------------------------------------------------------------
@@ -332,17 +328,6 @@ async function cmdProviders(client: CliRpcClient, args: CliArgs): Promise<void> 
   out(result, args.json)
 }
 
-async function cmdSources(client: CliRpcClient, args: CliArgs): Promise<void> {
-  await client.connect()
-  const workspaceId = await resolveWorkspace(client, args.workspace)
-  if (!workspaceId) {
-    err('No workspace available. Use --workspace <id>')
-    process.exit(1)
-  }
-  const result = await client.invoke('sources:get', workspaceId)
-  out(result, args.json)
-}
-
 async function cmdSessionCreate(client: CliRpcClient, args: CliArgs): Promise<void> {
   await client.connect()
   const workspaceId = await resolveWorkspace(client, args.workspace)
@@ -357,11 +342,29 @@ async function cmdSessionCreate(client: CliRpcClient, args: CliArgs): Promise<vo
     if (args.rest[i] === '--name') name = args.rest[++i]
   }
 
+  const promptParts: string[] = []
   const opts: Record<string, unknown> = {}
   if (name) opts.name = name
   if (args.mode) opts.permissionMode = args.mode
 
-  const result = await client.invoke('sessions:create', workspaceId, opts)
+  for (let i = 0; i < args.rest.length; i++) {
+    if (args.rest[i] === '--name') {
+      i++
+      continue
+    }
+    promptParts.push(args.rest[i]!)
+  }
+  const message = await readPrompt(promptParts)
+  if (!message.trim()) {
+    err('Usage: session create [--name <name>] <first prompt>')
+    process.exit(1)
+  }
+
+  const result = await client.invoke('sessions:createAndSendFirstTurn', {
+    workspaceId,
+    message,
+    createOptions: opts,
+  })
   out(result, args.json)
 }
 
@@ -540,6 +543,146 @@ async function cmdSend(client: CliRpcClient, args: CliArgs): Promise<void> {
   const exitCode = await sendAndStream(client, sessionId, message, args)
   client.destroy()
   process.exit(exitCode)
+}
+
+function automationFlag(tokens: string[], name: string): string | undefined {
+  const index = tokens.indexOf(name)
+  if (index < 0) return undefined
+  const value = tokens[index + 1]
+  if (!value || value.startsWith('--')) throw new Error(`${name} requires a value`)
+  return value
+}
+
+function automationPositionals(tokens: string[], valueFlags: string[]): string[] {
+  const values = new Set(valueFlags)
+  const result: string[] = []
+  for (let index = 0; index < tokens.length; index++) {
+    if (values.has(tokens[index]!)) {
+      index += 1
+      continue
+    }
+    if (!tokens[index]!.startsWith('--')) result.push(tokens[index]!)
+  }
+  return result
+}
+
+async function readAutomationJson(value: string | undefined, file: string | undefined): Promise<unknown> {
+  const source = file ?? value
+  if (!source) throw new Error('A JSON value or --file <path> is required')
+  if (source === '-') {
+    const chunks: Uint8Array[] = []
+    for await (const chunk of Bun.stdin.stream()) chunks.push(chunk)
+    return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)))
+  }
+  if (file || source.startsWith('@')) {
+    const { readFile } = await import('node:fs/promises')
+    return JSON.parse(await readFile(file ?? source.slice(1), 'utf8'))
+  }
+  return JSON.parse(source)
+}
+
+function expectedRevision(tokens: string[], required: boolean): number | null {
+  const value = automationFlag(tokens, '--expected-revision')
+  if (value === undefined) {
+    if (required) throw new Error('--expected-revision <number|null> is required')
+    return null
+  }
+  if (value === 'null') return null
+  const revision = Number(value)
+  if (!Number.isInteger(revision) || revision < 1) throw new Error('--expected-revision must be a positive integer or null')
+  return revision
+}
+
+function operationId(tokens: string[]): string {
+  return automationFlag(tokens, '--operation-id') ?? crypto.randomUUID()
+}
+
+export async function cmdAutomation(client: CliRpcClient, args: CliArgs): Promise<void> {
+  await client.connect()
+  const workspaceId = await resolveWorkspace(client, args.workspace)
+  if (!workspaceId) throw new Error('No workspace available')
+  const [subcommand, ...tokens] = args.rest
+  const flags = ['--file', '--expected-revision', '--operation-id', '--trigger-id', '--automation-id', '--limit', '--match']
+  const positionals = automationPositionals(tokens, flags)
+  let result: unknown
+
+  switch (subcommand) {
+    case 'describe':
+    case 'list':
+      result = await invokeAutomationWorkspace(client, { schemaVersion: 1, operation: subcommand })
+      break
+    case 'get':
+      result = await invokeAutomationWorkspace(client, { schemaVersion: 1, operation: 'get', automationId: positionals[0] })
+      break
+    case 'validate': {
+      const definition = await readAutomationJson(positionals[0], automationFlag(tokens, '--file'))
+      result = await invokeAutomationWorkspace(client, { schemaVersion: 1, operation: 'validate', definition })
+      break
+    }
+    case 'create':
+    case 'update': {
+      const definition = await readAutomationJson(positionals[0], automationFlag(tokens, '--file'))
+      result = await invokeAutomationWorkspace(client, {
+        schemaVersion: 1,
+        operation: subcommand,
+        operationId: operationId(tokens),
+        expectedRevision: expectedRevision(tokens, subcommand === 'update'),
+        definition,
+      })
+      break
+    }
+    case 'delete':
+      result = await invokeAutomationWorkspace(client, {
+        schemaVersion: 1, operation: 'delete', operationId: operationId(tokens),
+        expectedRevision: expectedRevision(tokens, true), automationId: positionals[0],
+      })
+      break
+    case 'set-enabled': {
+      if (positionals[1] !== 'true' && positionals[1] !== 'false') throw new Error('set-enabled requires <id> <true|false>')
+      result = await invokeAutomationWorkspace(client, {
+        schemaVersion: 1, operation: 'set-enabled', operationId: operationId(tokens),
+        expectedRevision: expectedRevision(tokens, true), automationId: positionals[0], enabled: positionals[1] === 'true',
+      })
+      break
+    }
+    case 'run':
+      result = await invokeAutomationWorkspace(client, {
+        schemaVersion: 1, operation: 'run', operationId: operationId(tokens), automationId: positionals[0],
+        ...(automationFlag(tokens, '--trigger-id') ? { triggerId: automationFlag(tokens, '--trigger-id') } : {}),
+      })
+      break
+    case 'get-run':
+      result = await invokeAutomationWorkspace(client, { schemaVersion: 1, operation: 'get-run', runId: positionals[0] })
+      break
+    case 'list-runs': {
+      const limitValue = automationFlag(tokens, '--limit')
+      const limit = limitValue === undefined ? undefined : Number(limitValue)
+      if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 500)) throw new Error('--limit must be an integer from 1 to 500')
+      result = await invokeAutomationWorkspace(client, {
+        schemaVersion: 1, operation: 'list-runs',
+        ...(automationFlag(tokens, '--automation-id') ? { automationId: automationFlag(tokens, '--automation-id') } : {}),
+        ...(limit ? { limit } : {}),
+      })
+      break
+    }
+    case 'emit-event': {
+      const event = await readAutomationJson(positionals[0], automationFlag(tokens, '--file'))
+      result = await invokeAutomationWorkspace(client, {
+        schemaVersion: 1, operation: 'emit-event', operationId: operationId(tokens), event,
+        ...(automationFlag(tokens, '--match') ? { matchValue: automationFlag(tokens, '--match') } : {}),
+      })
+      break
+    }
+    case 'token': {
+      const tokenOperation = positionals[0]
+      if (tokenOperation !== 'path' && tokenOperation !== 'rotate') throw new Error('token requires path or rotate')
+      result = await invokeAutomationIngressToken(client, tokenOperation === 'path' ? 'show-path' : 'rotate')
+      break
+    }
+    default:
+      throw new Error(`Unknown automation subcommand: ${subcommand ?? '(missing)'}`)
+  }
+  out(result, args.json)
 }
 
 interface LocalServer {
@@ -807,19 +950,19 @@ async function cmdRun(args: CliArgs): Promise<void> {
       process.exit(1)
     }
 
-    const session = (await client.invoke('sessions:create', workspaceId, {
-      permissionMode: args.mode || 'allow-all',
-      enabledSourceSlugs: args.sources.length > 0 ? args.sources : undefined,
-    })) as { id: string }
-    sessionId = session.id
-
-    if (args.model) {
-      await client.invoke('session:setModel', sessionId, workspaceId, args.model, selectedProvider)
-    }
-
-    const exitCode = await sendAndStream(client, sessionId, message, args)
+    const firstTurn = (await client.invoke('sessions:createAndSendFirstTurn', {
+      workspaceId,
+      message,
+      createOptions: {
+        permissionMode: args.mode || 'allow-all',
+        ...(args.model ? { model: args.model } : {}),
+        ...(selectedProvider ? { provider: selectedProvider } : {}),
+      },
+    })) as { session: { id: string } }
+    sessionId = firstTurn.session.id
+    out(firstTurn, args.json)
     await cleanup()
-    process.exit(exitCode)
+    process.exit(0)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     err(msg)
@@ -835,8 +978,7 @@ async function cmdValidate(args: CliArgs): Promise<void> {
   let server: LocalServer | undefined
   let client: CliRpcClient
 
-  // Use a generous timeout for validation steps — source creation and MCP
-  // server startup can be slow on Windows.
+  // Use a generous timeout because cold server startup can be slow on Windows.
   const validateArgs = { ...args, timeout: Math.max(args.timeout, 30_000) }
 
   if (args.url) {
@@ -943,7 +1085,6 @@ export interface ValidateContext {
   workspaceRootPath?: string
   createdWorkspace?: boolean
   createdSessionId?: string
-  createdSourceSlug?: string
   createdSkillSlug?: string
   branchedSessionId?: string
   onEvent?: (ev: { type: string; [key: string]: unknown }) => void
@@ -1109,23 +1250,16 @@ export function getValidateSteps(): ValidateStep[] {
       },
     },
     {
-      name: 'sources:get',
-      fn: async (client, ctx) => {
-        if (!ctx.workspaceId) return 'skipped (no workspace)'
-        const r = (await client.invoke('sources:get', ctx.workspaceId)) as any[]
-        return `${r?.length ?? 0} sources`
-      },
-    },
-    {
-      name: 'sessions:create',
+      name: 'sessions:createAndSendFirstTurn',
       fn: async (client, ctx) => {
         if (!ctx.workspaceId) return 'skipped (no workspace)'
         const name = `__cli-validate-${Date.now()}`
-        const r = (await client.invoke('sessions:create', ctx.workspaceId, {
-          name,
-          permissionMode: 'allow-all',
+        const r = (await client.invoke('sessions:createAndSendFirstTurn', {
+          workspaceId: ctx.workspaceId,
+          message: 'Reply with exactly: SESSION_CREATED',
+          createOptions: { name, permissionMode: 'allow-all' },
         })) as any
-        ctx.createdSessionId = r?.id
+        ctx.createdSessionId = r?.session?.id
         return ctx.createdSessionId ?? 'created'
       },
     },
@@ -1214,77 +1348,12 @@ export function getValidateSteps(): ValidateStep[] {
           'Reply with exactly: BRANCH_OK', 60_000, false, undefined, ctx.onEvent)
       },
     },
-    // ----- Source lifecycle -----
-    {
-      name: 'sources:create',
-      fn: async (client, ctx) => {
-        if (!ctx.workspaceId) return 'skipped (no workspace)'
-        const r = (await client.invoke('sources:create', ctx.workspaceId, {
-          name: 'Cat Facts',
-          provider: 'catfact',
-          type: 'api',
-          api: { baseUrl: 'https://catfact.ninja', authType: 'none' },
-          icon: '🐱',
-        })) as any
-        ctx.createdSourceSlug = r?.slug
-        return ctx.createdSourceSlug ? `slug=${ctx.createdSourceSlug}` : JSON.stringify(r)
-      },
-    },
-    {
-      name: 'send + source mention',
-      fn: async (client, ctx) => {
-        if (!ctx.createdSessionId || !ctx.createdSourceSlug) return 'skipped (no session or source)'
-        // Enable the source on the session
-        await client.invoke('sessions:command', ctx.createdSessionId, {
-          type: 'setSources',
-          sourceSlugs: [ctx.createdSourceSlug],
-        })
-        return await waitForSendEvents(client, ctx.createdSessionId,
-          `[source:${ctx.createdSourceSlug}] Get me a cat fact`, 90_000, false, undefined, ctx.onEvent)
-      },
-    },
-    // ----- MCP source validation (pre-committed in .github/agents/sources/) -----
-    {
-      name: 'mcp:mortise-public (auth:none)',
-      fn: async (client, ctx) => {
-        if (!ctx.createdSessionId) return 'skipped (no session)'
-        // Enable the pre-committed mortise-public MCP source on the session
-        const enableSlugs = [ctx.createdSourceSlug, 'mortise-public'].filter(Boolean) as string[]
-        await client.invoke('sessions:command', ctx.createdSessionId, {
-          type: 'setSources',
-          sourceSlugs: enableSlugs,
-        })
-        return await waitForSendEvents(client, ctx.createdSessionId,
-          `[source:mortise-public] List the documents under the "Mortise E2E Test" folder inside the "Mortise" folder. Just list their names.`,
-          180_000, false, undefined, ctx.onEvent)
-      },
-    },
-    {
-      name: 'mcp:stitch-mcp (header-auth)',
-      fn: async (client, ctx) => {
-        if (!ctx.createdSessionId) return 'skipped (no session)'
-        const apiKey = process.env.STITCH_API_KEY
-        if (!apiKey) return 'skipped (no STITCH_API_KEY)'
-        // Inject credential into store (multi-header JSON format, same as API headerNames)
-        await client.invoke('sources:saveCredentials', ctx.workspaceId, 'stitch-mcp', JSON.stringify({ 'X-Goog-Api-Key': apiKey }))
-        // Enable stitch-mcp + existing sources on session
-        const enableSlugs = [ctx.createdSourceSlug, 'mortise-public', 'stitch-mcp'].filter(Boolean) as string[]
-        await client.invoke('sessions:command', ctx.createdSessionId, {
-          type: 'setSources',
-          sourceSlugs: enableSlugs,
-        })
-        return await waitForSendEvents(client, ctx.createdSessionId,
-          `Use the source_test tool to test the stitch-mcp source. Report the result.`,
-          90_000, false, undefined, ctx.onEvent)
-      },
-    },
     // ----- Skill lifecycle -----
     {
       name: 'send + skill create',
       fn: async (client, ctx) => {
         if (!ctx.createdSessionId || !ctx.workspaceRootPath) return 'skipped (no session or workspace)'
         ctx.createdSkillSlug = '__cli-validate-skill'
-        const sourceSlug = ctx.createdSourceSlug ?? 'cat-facts'
         const skillDir = `${ctx.workspaceRootPath}/.pi/skills/${ctx.createdSkillSlug}`
         // Use bash to create the skill file deterministically
         return await waitForSendEvents(client, ctx.createdSessionId,
@@ -1293,15 +1362,9 @@ mkdir -p "${skillDir}" && cat > "${skillDir}/SKILL.md" << 'SKILLEOF'
 ---
 name: "CLI Validate Skill"
 description: "Validation skill created by mortise-cli"
-requiredSources:
-  - "${sourceSlug}"
 ---
 
-This skill does two things:
-1. Check the current water temperature of Lake Balaton (search the web or estimate based on the season)
-2. Use the Cat Facts source to get a random cat fact
-
-Always perform both steps when this skill is invoked.
+Check the current water temperature of Lake Balaton by searching the web or estimating it from the season.
 SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
       },
     },
@@ -1408,6 +1471,13 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
       },
     },
     {
+      name: 'automation:cleanup',
+      fn: async (client) => {
+        const result = await client.invoke(RPC_CHANNELS.automations.COMMAND, { schemaVersion: 1, operation: 'list' }) as { data?: unknown[] }
+        return `canonical automations checked: ${Array.isArray(result?.data) ? result.data.length : 0}`
+      },
+    },
+    {
       name: 'sessions:branch delete',
       fn: async (client, ctx) => {
         if (!ctx.branchedSessionId) return 'skipped (no branch)'
@@ -1415,14 +1485,6 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
         const id = ctx.branchedSessionId
         ctx.branchedSessionId = undefined
         return `deleted branch session: ${id}`
-      },
-    },
-    {
-      name: 'sources:delete',
-      fn: async (client, ctx) => {
-        if (!ctx.workspaceId || !ctx.createdSourceSlug) return 'skipped (no source)'
-        await client.invoke('sources:delete', ctx.workspaceId, ctx.createdSourceSlug)
-        return `deleted source: ${ctx.createdSourceSlug}`
       },
     },
     {
@@ -1658,7 +1720,6 @@ LLM Configuration (for 'run' command):
 Commands:
   run <message>          Spawn server, send message, stream response, exit
                          --workspace-dir <path>  Use directory as workspace (creates if needed)
-                         --source <slug>     Enable source (repeatable)
                          --mode <mode>       Permission mode (default: allow-all)
                          --output-format     text or stream-json (default: text)
                          --no-cleanup        Keep session after completion
@@ -1672,12 +1733,19 @@ Commands:
   workspaces             List workspaces
   sessions               List sessions in workspace
   providers              List AI providers
-  sources                List configured sources
-  session create         Create a session (--name, --mode)
+  session create <prompt>  Start and send the first turn (--name, --mode)
   session messages <id>  Print session message history
   session delete <id>    Delete a session
   send <id> <message>    Send message and stream AI response
   cancel <id>            Cancel in-progress processing
+  automation <command>   Manage canonical workspace automations
+    describe | list | get <id> | validate <json|@file>
+    create <json|@file> [--expected-revision <n|null>]
+    update <json|@file> --expected-revision <n>
+    delete <id> --expected-revision <n>
+    set-enabled <id> <true|false> --expected-revision <n>
+    run <id> [--trigger-id <id>] | get-run <id> | list-runs
+    emit-event <json|@file> | token path | token rotate
   invoke <channel> [...] Raw RPC call with JSON args
   listen <channel>       Subscribe to push events (Ctrl+C to stop)
   --validate-server      Multi-step server integration test
@@ -1685,8 +1753,6 @@ Commands:
 
 Examples:
   mortise-cli run "What files are in the current directory?"
-  mortise-cli run --source mortise-kb "Summarize today's daily note"
-  mortise-cli run --workspace-dir .github/agents --source mortise-public "Read the doc"
   mortise-cli run --provider openai --model gpt-4o "Summarize this repo"
   OPENAI_API_KEY=sk-... mortise-cli run --provider openai "Hello"
   GOOGLE_API_KEY=... mortise-cli run --provider google --model gemini-2.0-flash "Hello"
@@ -1695,6 +1761,9 @@ Examples:
   mortise-cli ping
   mortise-cli sessions
   mortise-cli send abc-123 "What files are in the current directory?"
+  mortise-cli --workspace ws-1 automation list
+  mortise-cli --workspace ws-1 automation emit-event @event.json
+  mortise-cli --workspace ws-1 automation token path
   echo "Summarize this" | mortise-cli send abc-123
   mortise-cli --validate-server
   mortise-cli invoke system:homeDir
@@ -1774,9 +1843,6 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       case 'providers':
         await cmdProviders(client, args)
         break
-      case 'sources':
-        await cmdSources(client, args)
-        break
       case 'session': {
         const subCmd = args.rest.shift()
         switch (subCmd) {
@@ -1800,6 +1866,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         break // cmdSend calls process.exit
       case 'cancel':
         await cmdCancel(client, args)
+        break
+      case 'automation':
+        await cmdAutomation(client, args)
         break
       case 'invoke':
         await cmdInvoke(client, args)

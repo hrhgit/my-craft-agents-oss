@@ -486,7 +486,10 @@ function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
                   workspaceId={PLAYGROUND_WORKSPACE.id}
                   workspaceSlug={PLAYGROUND_WORKSPACE.slug}
                   onSwitchWorkspaceBySlug={async () => undefined}
-                  onCreateSession={async () => session}
+                  onCreateAndSendFirstTurn={async () => ({
+                    session,
+                    messageId: 'scenario-first-turn',
+                  })}
                   onInputChange={() => undefined}
                   getDraft={() => ''}
                   onAutoDeleteEmptySession={async () => undefined}

@@ -8,10 +8,6 @@ import { MORTISE_REPOSITORY_URL } from '../branding'
 const DOC_BASE_URL = `${MORTISE_REPOSITORY_URL}/blob/main`
 
 export type DocFeature =
-  | 'sources'
-  | 'sources-api'
-  | 'sources-mcp'
-  | 'sources-local'
   | 'skills'
   | 'permissions'
   | 'workspaces'
@@ -31,30 +27,6 @@ export interface DocInfo {
 }
 
 export const DOCS: Record<DocFeature, DocInfo> = {
-  sources: {
-    path: '/apps/electron/resources/docs/sources.md',
-    title: 'Sources',
-    summary:
-      'Connect external data like MCP servers, REST APIs, and local filesystems. Sources give your agent tools to access services like GitHub, Linear, or your Obsidian vault.',
-  },
-  'sources-api': {
-    path: '/apps/electron/resources/docs/sources.md',
-    title: 'APIs',
-    summary:
-      'Connect to any REST API with flexible authentication. Make HTTP requests to external services directly from your conversations.',
-  },
-  'sources-mcp': {
-    path: '/apps/electron/resources/docs/sources.md',
-    title: 'MCP Servers',
-    summary:
-      'Connect to Model Context Protocol servers for rich tool integrations. MCP servers provide structured access to services like GitHub, Linear, and Notion.',
-  },
-  'sources-local': {
-    path: '/apps/electron/resources/docs/sources.md',
-    title: 'Local Folders',
-    summary:
-      'Give your agent access to local directories like Obsidian vaults, code repositories, or data folders on your machine.',
-  },
   skills: {
     path: '/apps/electron/resources/docs/skills.md',
     title: 'Skills',
@@ -71,7 +43,7 @@ export const DOCS: Record<DocFeature, DocInfo> = {
     path: '/README.md',
     title: 'Workspaces',
     summary:
-      'Separate configurations for different contexts like personal projects or work. Each workspace has its own sources, skills, and session history.',
+      'Separate contexts for personal projects or work. Each workspace has its own files, skills, and session history.',
   },
   themes: {
     path: '/apps/electron/resources/docs/themes.md',

@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync, readdirSync } from 'fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join, dirname, basename } from 'path';
-import { clearAllCraftCredentials, getCredentialManager } from '../credentials/index.ts';
+import { clearAllCraftCredentials } from '../credentials/index.ts';
 import {
   readCraftLlmConnections as readLegacyProviderEntries,
   writeCraftLlmConnections,
@@ -203,7 +203,6 @@ export interface StoredConfig {
   // Deprecated local mirrors retained for config compatibility; Pi settings are authoritative.
   // Tools
   browserToolEnabled?: boolean;  // Enable built-in browser tool (default: true). Disable for Playwright/Puppeteer.
-  dataSourcesEnabled?: boolean;  // Show data sources and expose their tools to sessions (default: false).
   allowRemoteEvaluate?: boolean;  // Allow remote agents to call `browser_tool evaluate` on local browser (default: true).
   // Pi 扩展集成开关：控制全局 pi 扩展加载与 prompt 自动化委托
   piExtensions?: StoredPiExtensionSettings;
@@ -213,6 +212,11 @@ export interface StoredConfig {
   };
   // Network proxy
   networkProxy?: import('./types.ts').NetworkProxySettings;
+  // Optional globally configured Mortise Developer Kit.
+  developerKit?: {
+    rootPath: string;
+    source: import('./types.ts').DeveloperKitConfigurationSource;
+  };
   // Windows: path to Git Bash (bash.exe) for the SDK subprocess
   gitBashPath?: string;
   // User chose "Setup later" during onboarding — skip showing onboarding on next launch
@@ -392,7 +396,6 @@ const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
     keepAwakeWhileRunning: false,
     richToolDescriptions: true,
     browserToolEnabled: true,
-    dataSourcesEnabled: false,
     allowRemoteEvaluate: true,
     piExtensions: createDefaultPiExtensionSettings(),
     piShell: {
@@ -403,7 +406,6 @@ const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
     thinkingLevel: 'medium',
     permissionMode: 'allow-all',
     cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
-    localMcpServers: { enabled: true },
   },
 };
 
@@ -549,7 +551,7 @@ export function ensureConfigDir(): void {
   // Snapshot an existing config.json (dated, keep last 3) before anything can
   // mutate or — in a failure path — overwrite the workspace registry.
   backupConfigFile();
-  // Initialize bundled docs (creates ~/.mortise/docs/ with sources.md, agents.md, permissions.md)
+  // Initialize bundled docs under ~/.mortise/docs/.
   initializeDocs();
 
   // Initialize config defaults
@@ -923,26 +925,6 @@ export async function setBrowserToolEnabled(enabled: boolean): Promise<void> {
 }
 
 /**
- * Get whether Mortise data sources are available in the UI and agent runtime.
- * Uses the bundled default when the user has not explicitly chosen a value.
- */
-export function getDataSourcesEnabled(): boolean {
-  const config = loadStoredConfig();
-  if (config?.dataSourcesEnabled !== undefined) {
-    return config.dataSourcesEnabled;
-  }
-  return loadConfigDefaults().defaults.dataSourcesEnabled;
-}
-
-/** Persist the global data-source feature toggle. */
-export function setDataSourcesEnabled(enabled: boolean): void {
-  const config = loadStoredConfig();
-  if (!config) return;
-  config.dataSourcesEnabled = enabled;
-  saveConfig(config);
-}
-
-/**
  * Whether remote agents may call `browser_tool evaluate <expression>` against this
  * desktop client's local browser. The check is enforced inside the local capability
  * dispatcher; the remote server cannot override it.
@@ -967,8 +949,7 @@ export function setAllowRemoteEvaluate(allowed: boolean): void {
 }
 
 // ============================================================
-// Pi Extensions 集成开关
-// 默认值来自 config-defaults.json (piExtensions.delegatePromptAutomation)
+// Pi Extensions settings
 // ============================================================
 
 function getDefaultPiExtensionSettings(): PiExtensionSettings {
@@ -1009,29 +990,6 @@ export function updatePiExtensionSettings(patch: StoredPiExtensionSettings): PiE
   config.piExtensions = next;
   saveConfig(config);
   return next;
-}
-
-/**
- * 是否将 automation 的 prompt 触发执行路径委托给 pi prompt-automation 扩展。
- * 默认 false。
- */
-export function getPiExtensionsDelegatePromptAutomation(): boolean {
-  const config = loadStoredConfig();
-  if (config?.piExtensions?.delegatePromptAutomation !== undefined) {
-    return Boolean(config.piExtensions.delegatePromptAutomation);
-  }
-  // 透传（壳）模式下默认委托给 Pi 扩展；否则默认 false
-  if (getPiShellFullPassthrough()) {
-    return true;
-  }
-  return getPiExtensionSettings().delegatePromptAutomation;
-}
-
-/**
- * 设置是否委托 automation prompt 给 pi prompt-automation 扩展。
- */
-export function setPiExtensionsDelegatePromptAutomation(delegate: boolean): void {
-  updatePiExtensionSettings({ delegatePromptAutomation: delegate });
 }
 
 // ============================================================
@@ -1372,10 +1330,6 @@ export async function removeWorkspace(workspaceId: string): Promise<boolean> {
   }
 
   saveConfig(config);
-
-  // Clean up credential store credentials for this workspace
-  const manager = getCredentialManager();
-  await manager.deleteWorkspaceCredentials(workspaceId);
 
   // Delete workspace data directory (sessions, plans, etc.)
   const workspaceDataDir = join(WORKSPACES_DIR, workspaceId);

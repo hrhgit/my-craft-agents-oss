@@ -1,3 +1,10 @@
+import {
+  parseAutomationWorkspaceCapabilityRequestV1,
+  parseAutomationWorkspaceOperationResultV1,
+  type AutomationWorkspaceCommandV1,
+  type AutomationWorkspaceOperationV1,
+} from '@mortise/shared/protocol'
+import type { AutomationEventSourceV3 } from '@mortise/shared/automations'
 import type { CapabilityProvider } from '../types.ts'
 
 function requireObject(input: unknown): Record<string, unknown> {
@@ -70,23 +77,24 @@ export function createMessagingSessionCapabilityProvider(adapter: MessagingSessi
   }
 }
 
-export interface AutomationSummary {
-  id: string
-  event: string
-  name?: string
-  enabled: boolean
-  actionTypes: string[]
-}
-
-export interface AutomationWorkspaceStatus {
-  automationCount: number
-  schedulerRunning: boolean
-}
-
 export interface AutomationWorkspaceCapabilityAdapter {
-  status(sessionId: string): Promise<AutomationWorkspaceStatus>
-  list(sessionId: string): Promise<AutomationSummary[]>
-  setEnabled(sessionId: string, automationId: string, enabled: boolean): Promise<{ id: string; enabled: boolean }>
+  execute(
+    command: AutomationWorkspaceCommandV1,
+    context: {
+      sessionId: string
+      runtimeId: string
+      extensionId: string
+      eventSourceKind: Extract<AutomationEventSourceV3, 'agent' | 'extension'>
+      signal: AbortSignal
+    },
+  ): Promise<unknown>
+}
+
+/** Capability requests originate either from Pi itself or a loaded extension. */
+export function automationEventSourceKindForCapabilityCaller(
+  extensionId: string,
+): Extract<AutomationEventSourceV3, 'agent' | 'extension'> {
+  return extensionId === 'pi-runtime' ? 'agent' : 'extension'
 }
 
 export function createAutomationWorkspaceCapabilityProvider(adapter: AutomationWorkspaceCapabilityAdapter): CapabilityProvider {
@@ -94,33 +102,26 @@ export function createAutomationWorkspaceCapabilityProvider(adapter: AutomationW
     capability: 'automation.workspace',
     async invoke(operation, input, context) {
       if (context.signal.aborted) throw context.signal.reason ?? new Error('Capability request cancelled')
-      const sessionId = context.request.sessionId
-      if (operation === 'status') {
-        requireEmpty(input)
-        return adapter.status(sessionId)
-      }
-      if (operation === 'list') {
-        requireEmpty(input)
-        return adapter.list(sessionId)
-      }
-      if (operation === 'set-enabled') {
-        const value = requireObject(input)
-        if (Object.keys(value).some(key => key !== 'id' && key !== 'enabled')) throw new Error('input contains unsupported automation fields')
-        if (typeof value.enabled !== 'boolean') throw new Error('enabled must be a boolean')
-        return adapter.setEnabled(sessionId, requireString(value.id, 'id', 100), value.enabled)
-      }
-      throw new Error(`Unsupported automation.workspace operation: ${operation}`)
+      const request = parseAutomationWorkspaceCapabilityRequestV1({
+        ...context.request,
+        operation,
+        input,
+      })
+      const command = {
+        operation: request.operation,
+        ...request.input,
+      } as AutomationWorkspaceCommandV1
+      const output = await adapter.execute(command, {
+        sessionId: request.sessionId,
+        runtimeId: request.runtimeId,
+        extensionId: request.extensionId,
+        eventSourceKind: automationEventSourceKindForCapabilityCaller(request.extensionId),
+        signal: context.signal,
+      })
+      return parseAutomationWorkspaceOperationResultV1(
+        request.operation as AutomationWorkspaceOperationV1,
+        output,
+      )
     },
   }
-}
-
-export type ScopedAutomationKind = 'scheduler' | 'webhook'
-
-/** Separate named surfaces keep scheduler/webhook grants narrower than general automation access. */
-export function createScopedAutomationCapabilityProvider(
-  kind: ScopedAutomationKind,
-  adapter: AutomationWorkspaceCapabilityAdapter,
-): CapabilityProvider {
-  const base = createAutomationWorkspaceCapabilityProvider(adapter)
-  return { ...base, capability: `${kind}.workspace` }
 }

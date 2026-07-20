@@ -3,7 +3,6 @@
  *
  * Renders content based on the unified NavigationState:
  * - Chats navigator: ChatPage for selected session, or empty state
- * - Sources navigator: SourceInfoPage for selected source, or empty state
  * - Settings navigator: Settings, Preferences, or Shortcuts page
  *
  * The NavigationState is the single source of truth for what to display.
@@ -26,14 +25,13 @@ import { StoplightProvider } from '@/context/StoplightContext'
 import {
   useNavigationState,
   isSessionsNavigation,
-  isSourcesNavigation,
   isSettingsNavigation,
   isSkillsNavigation,
   isAutomationsNavigation,
 } from '@/contexts/NavigationContext'
 import { useSessionSelection, useIsMultiSelectActive, useSelectedIds, useSelectionCount } from '@/hooks/useSession'
-import { sourceSelection, skillSelection, automationSelection } from '@/hooks/useEntitySelection'
-import { SourceInfoPage, ChatPage } from '@/pages'
+import { skillSelection, automationSelection } from '@/hooks/useEntitySelection'
+import { ChatPage, NewConversationPage } from '@/pages'
 import SkillInfoPage from '@/pages/SkillInfoPage'
 import { getSettingsPageComponent } from '@/pages/settings/settings-pages'
 import { AutomationInfoPage } from '../automations/AutomationInfoPage'
@@ -110,12 +108,6 @@ export function MainContentPanel({
     return () => { stale = true; cleanup() }
   }, [selectedAutomationId, getAutomationHistory])
 
-  // Source multi-select state
-  const isSourceMultiSelectActive = sourceSelection.useIsMultiSelectActive()
-  const sourceSelectionCount = sourceSelection.useSelectionCount()
-  const selectedSourceIds = sourceSelection.useSelectedIds()
-  const { clearMultiSelect: clearSourceSelection } = sourceSelection.useSelection()
-
   // Skill multi-select state
   const isSkillMultiSelectActive = skillSelection.useIsMultiSelectActive()
   const skillSelectionCount = skillSelection.useSelectionCount()
@@ -130,7 +122,7 @@ export function MainContentPanel({
 
   // Send to Workspace dialog state (shared across resource types)
   const [sendDialogOpen, setSendDialogOpen] = useState(false)
-  const [sendResourceType, setSendResourceType] = useState<SendResourceType>('source')
+  const [sendResourceType, setSendResourceType] = useState<SendResourceType>('skill')
   const [sendResourceIds, setSendResourceIds] = useState<string[]>([])
   const [sendResourceLabel, setSendResourceLabel] = useState('')
   const hasOtherWorkspaces = workspaces.length > 1
@@ -171,40 +163,6 @@ export function MainContentPanel({
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
         <SettingsPageComponent />
-      </Panel>
-    )
-  }
-
-  // Sources navigator - show source info, multi-select panel, or empty state
-  if (isSourcesNavigation(navState)) {
-    if (isSourceMultiSelectActive) {
-      return wrapWithStoplight(
-        <Panel variant="grow" className={className}>
-          <MultiSelectPanel
-            count={sourceSelectionCount}
-            entityType="source"
-            onSendToWorkspace={hasOtherWorkspaces ? () => openSendDialog('source', selectedSourceIds) : undefined}
-            onClearSelection={clearSourceSelection}
-          />
-        </Panel>
-      )
-    }
-    if (navState.details) {
-      return wrapWithStoplight(
-        <Panel variant="grow" className={className}>
-          <SourceInfoPage
-            sourceSlug={navState.details.sourceSlug}
-            workspaceId={activeWorkspaceId || ''}
-          />
-        </Panel>
-      )
-    }
-    // No source selected - empty state
-    return wrapWithStoplight(
-      <Panel variant="grow" className={className}>
-        <div className="flex items-center justify-center h-full text-muted-foreground">
-          <p className="text-sm">{t("sourcesList.noSourcesConfigured")}</p>
-        </div>
       </Panel>
     )
   }
@@ -300,7 +258,15 @@ export function MainContentPanel({
       )
     }
 
-    if (navState.details) {
+    if (navState.details?.type === 'new') {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <NewConversationPage draftId={navState.details.draftId} />
+        </Panel>
+      )
+    }
+
+    if (navState.details?.type === 'session') {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>
           <ChatPage sessionId={navState.details.sessionId} />

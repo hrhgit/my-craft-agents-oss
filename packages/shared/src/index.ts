@@ -10,7 +10,6 @@
  *   import { getCredentialManager } from '@mortise/shared/credentials';
  *   import { MortiseMcpClient } from '@mortise/shared/mcp';
  *   import { debug } from '@mortise/shared/utils';
- *   import { loadSource, createSource, getSourceCredentialManager } from '@mortise/shared/sources';
  *   import { createWorkspace, loadWorkspace } from '@mortise/shared/workspaces';
  *
  * Available modules:
@@ -21,7 +20,6 @@
  *   - credentials: Pi auth.json-backed credential storage
  *   - mcp: MCP client, connection validation
  *   - prompts: System prompt generation
- *   - sources: Workspace-scoped source management (MCP, API, local)
  *   - utils: Debug logging, file handling, summarization
  *   - validation: URL validation
  *   - version: Version and installation management

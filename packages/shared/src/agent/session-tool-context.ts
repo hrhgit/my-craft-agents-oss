@@ -9,56 +9,24 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from 'fs';
-import { join, basename } from 'path';
+import { join } from 'path';
 import { CONFIG_DIR } from '../config/paths.ts';
 import type {
   SessionToolContext,
   SessionToolCallbacks,
   FileSystemInterface,
-  CredentialManagerInterface,
   ValidatorInterface,
-  LoadedSource,
-  StdioMcpConfig,
-  StdioValidationResult,
-  HttpMcpConfig,
-  McpValidationResult,
-  ApiTestResult,
-  SourceConfig,
   DeveloperFeedback,
 } from '@mortise/session-tools-core';
 import {
   validateConfig,
-  validateSource,
-  validateAllSources,
   validatePreferences,
   validateAll,
   validateSkill,
-  validateWorkspacePermissions,
-  validateSourcePermissions,
   validateAllPermissions,
   validateToolIcons,
 } from '../config/validators.ts';
 import { validateAutomations } from '../automations/index.ts';
-import {
-  validateMcpConnection as validateMcpConnectionImpl,
-  validateStdioMcpConnection as validateStdioMcpConnectionImpl,
-} from '../mcp/validation.ts';
-import {
-  loadSourceConfig as loadSourceConfigImpl,
-  saveSourceConfig as saveSourceConfigImpl,
-  getSourcePath,
-} from '../sources/storage.ts';
-import type { FolderSourceConfig, LoadedSource as SharedLoadedSource } from '../sources/types.ts';
-import { getSourceCredentialManager } from '../sources/index.ts';
-import {
-  inferGoogleServiceFromUrl,
-  inferSlackServiceFromUrl,
-  inferMicrosoftServiceFromUrl,
-  type GoogleService,
-  type SlackService,
-  type MicrosoftService,
-} from '../sources/types.ts';
-import { isGoogleOAuthConfigured as isGoogleOAuthConfiguredImpl } from '../auth/google-oauth.ts';
 import { debug } from '../utils/debug.ts';
 import { getSessionPlansPath, getSessionPath, getSessionDataPath } from '../sessions/storage.ts';
 import { updatePreferences as updatePreferencesImpl } from '../config/preferences.ts';
@@ -73,11 +41,9 @@ export type { SessionToolContext, SessionToolCallbacks } from '@mortise/session-
 export interface SessionToolContextOptions {
   sessionId: string;
   workspacePath: string;
-  workspaceId: string;
   workingDirectory?: string;
   getWorkingDirectory?: () => string | undefined;
   onPlanSubmitted: (planPath: string) => void;
-  onAuthRequest: (request: unknown) => void;
 }
 
 /**
@@ -86,10 +52,10 @@ export interface SessionToolContextOptions {
  * This provides:
  * - Full file system access
  * - Full Zod validators
- * - Credential manager with keychain access
+ * - Workspace-aware validators and preferences
  */
 export function createSessionToolContext(options: SessionToolContextOptions): SessionToolContext {
-  const { sessionId, workspacePath, workspaceId, onPlanSubmitted, onAuthRequest } = options;
+  const { sessionId, workspacePath, onPlanSubmitted } = options;
 
   // File system implementation
   const fs: FileSystemInterface = {
@@ -111,110 +77,23 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
   // Callbacks implementation
   const callbacks: SessionToolCallbacks = {
     onPlanSubmitted,
-    onAuthRequest: (request) => onAuthRequest(request),
   };
 
   // Validators implementation
   const validators: ValidatorInterface = {
     validateConfig: () => validateConfig(),
-    validateSource: (wsPath: string, slug: string) => validateSource(wsPath, slug),
-    validateAllSources: (wsPath: string) => validateAllSources(wsPath),
     validatePreferences: () => validatePreferences(),
-    validatePermissions: (wsPath: string, sourceSlug?: string) => {
-      if (sourceSlug) {
-        return validateSourcePermissions(wsPath, sourceSlug);
-      }
-      return validateAllPermissions(wsPath);
-    },
+    validatePermissions: (wsPath: string) => validateAllPermissions(wsPath),
     validateAutomations: (wsPath: string) => validateAutomations(wsPath),
     validateToolIcons: () => validateToolIcons(),
     validateAll: (wsPath: string) => validateAll(wsPath),
     validateSkill: (wsPath: string, slug: string) => validateSkill(wsPath, slug),
   };
 
-  // Credential manager adapter
-  const credentialManager: CredentialManagerInterface = {
-    hasValidCredentials: async (source: LoadedSource): Promise<boolean> => {
-      const mgr = getSourceCredentialManager();
-      // Convert to shared type (guide not needed for credential operations)
-      const sharedSource: SharedLoadedSource = {
-        config: source.config as unknown as FolderSourceConfig,
-        guide: null,
-        folderPath: source.folderPath,
-        workspaceRootPath: source.workspaceRootPath,
-        workspaceId: source.workspaceId,
-      };
-      const token = await mgr.getToken(sharedSource);
-      return !!token;
-    },
-    getToken: async (source: LoadedSource): Promise<string | null> => {
-      const mgr = getSourceCredentialManager();
-      const sharedSource: SharedLoadedSource = {
-        config: source.config as unknown as FolderSourceConfig,
-        guide: null,
-        folderPath: source.folderPath,
-        workspaceRootPath: source.workspaceRootPath,
-        workspaceId: source.workspaceId,
-      };
-      return mgr.getToken(sharedSource);
-    },
-    refresh: async (source: LoadedSource): Promise<string | null> => {
-      const mgr = getSourceCredentialManager();
-      const sharedSource: SharedLoadedSource = {
-        config: source.config as unknown as FolderSourceConfig,
-        guide: null,
-        folderPath: source.folderPath,
-        workspaceRootPath: source.workspaceRootPath,
-        workspaceId: source.workspaceId,
-      };
-      return mgr.refresh(sharedSource);
-    },
-  };
-
-  // MCP validation
-  const validateStdioMcpConnection = async (config: StdioMcpConfig): Promise<StdioValidationResult> => {
-    try {
-      const result = await validateStdioMcpConnectionImpl(config);
-      return {
-        success: result.success,
-        error: result.error,
-        toolCount: result.tools?.length,
-        toolNames: result.tools,
-        serverName: result.serverInfo?.name,
-        serverVersion: result.serverInfo?.version,
-      };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Validation failed' };
-    }
-  };
-
-  const validateMcpConnection = async (config: HttpMcpConfig): Promise<McpValidationResult> => {
-    try {
-      const result = await validateMcpConnectionImpl({
-        mcpUrl: config.url,
-        mcpTransport: config.transport,
-        mcpHeaders: config.headers,
-        mcpAccessToken: config.accessToken,
-      });
-      return {
-        success: result.success,
-        error: result.error,
-        needsAuth: result.errorType === 'needs-auth',
-        toolCount: result.tools?.length,
-        toolNames: result.tools,
-        serverName: result.serverInfo?.name,
-        serverVersion: result.serverInfo?.version,
-      };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Validation failed' };
-    }
-  };
-
   // Build context
   const context: SessionToolContext = {
     sessionId,
     workspacePath,
-    get sourcesPath() { return join(workspacePath, 'sources'); },
     get workingDirectory() { return options.getWorkingDirectory?.() ?? options.workingDirectory; },
     get skillPaths() { return createPiSkillResolver(this.workingDirectory).getSkillPaths().map(e => e.dir); },
     get skillsPath() { return this.skillPaths?.[0] ?? ''; },
@@ -224,7 +103,6 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
     callbacks,
     fs,
     validators,
-    credentialManager,
     updatePreferences: (updates: Record<string, unknown>) => {
       updatePreferencesImpl(updates as any);
     },
@@ -235,65 +113,6 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
       writeFileSync(filePath, JSON.stringify(feedback, null, 2), 'utf-8');
       debug('session-tool-context', `Developer feedback written to ${filePath}`);
     },
-    // Source management
-    loadSourceConfig: (sourceSlug: string): SourceConfig | null => {
-      const config = loadSourceConfigImpl(workspacePath, sourceSlug);
-      return config as unknown as SourceConfig | null;
-    },
-    saveSourceConfig: (source: SourceConfig) => {
-      saveSourceConfigImpl(workspacePath, source as unknown as FolderSourceConfig);
-    },
-
-    // Service inference
-    inferGoogleService: (url?: string): GoogleService | undefined => {
-      return inferGoogleServiceFromUrl(url);
-    },
-    inferSlackService: (url?: string): SlackService | undefined => {
-      return inferSlackServiceFromUrl(url);
-    },
-    inferMicrosoftService: (url?: string): MicrosoftService | undefined => {
-      return inferMicrosoftServiceFromUrl(url);
-    },
-
-    // OAuth config check
-    isGoogleOAuthConfigured: (clientId?: string, clientSecret?: string): boolean => {
-      return isGoogleOAuthConfiguredImpl(clientId, clientSecret);
-    },
-
-    // MCP validation
-    validateStdioMcpConnection,
-    validateMcpConnection,
-
-    // Icon helpers (simplified - full implementation would use logo.ts)
-    isIconUrl: (value: string): boolean => {
-      try {
-        const url = new URL(value);
-        return url.protocol === 'http:' || url.protocol === 'https:';
-      } catch {
-        return false;
-      }
-    },
-
-    deriveServiceUrl: (source: SourceConfig): string | null => {
-      if (source.type === 'api' && source.api?.baseUrl) {
-        try {
-          const url = new URL(source.api.baseUrl);
-          return `${url.protocol}//${url.hostname}`;
-        } catch {
-          return null;
-        }
-      }
-      if (source.type === 'mcp' && source.mcp?.url) {
-        try {
-          const url = new URL(source.mcp.url);
-          return `${url.protocol}//${url.hostname}`;
-        } catch {
-          return null;
-        }
-      }
-      return null;
-    },
-
     // Session self-management bindings are attached externally via
     // attachSessionSelfManagementBindings() — not part of the factory.
   };

@@ -384,6 +384,7 @@ const SETTINGS_ICONS: Record<SettingsSubpage, string> = {
   ai: 'Sparkles',
   agents: 'Bot',
   extensions: 'Puzzle',
+  developer: 'Wrench',
   appearance: 'Palette',
   input: 'Keyboard',
   workspace: 'Building2',

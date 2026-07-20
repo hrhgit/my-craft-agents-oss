@@ -65,7 +65,6 @@ function createTestHarness(options?: {
         }] : []),
       ],
     } as HandlerDeps['sessionManager'],
-    oauthFlowStore: {} as HandlerDeps['oauthFlowStore'],
     platform: {
       appRootPath: '/',
       resourcesPath: '/',
@@ -916,7 +915,6 @@ describe('registerFilesHandlers READ', () => {
         }
         const deps = {
           sessionManager: {},
-          oauthFlowStore: {},
           platform: {
             appRootPath: '/',
             resourcesPath: '/',
@@ -1013,7 +1011,6 @@ describe('registerFilesHandlers STORE_ATTACHMENT', () => {
         }
         const deps = {
           sessionManager: {},
-          oauthFlowStore: {},
           platform: {
             appRootPath: '/',
             resourcesPath: '/',

@@ -12,7 +12,6 @@
  * - Format user preferences for prompt injection
  */
 
-import { isLocalMcpEnabled } from '../../workspaces/storage.ts';
 import { formatPreferencesForPrompt } from '../../config/preferences.ts';
 import { formatSessionState } from '../mode-manager.ts';
 import { getDateTimeContext, getWorkingDirectoryContext } from '../../prompts/system.ts';
@@ -69,15 +68,11 @@ export class PromptBuilder {
    * the two halves directly instead of this method.
    *
    * @param options - Context building options
-   * @param sourceStateBlock - Pre-formatted source state (from SourceManager)
    * @returns Array of context strings
    */
-  buildContextParts(
-    options: ContextBlockOptions,
-    sourceStateBlock?: string
-  ): string[] {
+  buildContextParts(options: ContextBlockOptions): string[] {
     return [
-      ...this.buildVolatileContextParts(options, sourceStateBlock),
+      ...this.buildVolatileContextParts(options),
       ...this.buildStableContextParts(),
     ];
   }
@@ -93,19 +88,14 @@ export class PromptBuilder {
    *  2. session_state (permission mode + plans/data paths; carries
    *     modeChangedAt/modeVersion and **consumes** the one-shot mode-change user
    *     signal — see {@link formatSessionState})
-   *  3. source state (auth/connection status), when provided
    *
    * MUST be called exactly once per turn, because it consumes one-shot mode
    * state. Never call it a second time to compute a cache-debug hash — hash the
    * already-produced string instead.
    *
    * @param options - Context building options
-   * @param sourceStateBlock - Pre-formatted source state (from SourceManager)
    */
-  buildVolatileContextParts(
-    options: ContextBlockOptions,
-    sourceStateBlock?: string
-  ): string[] {
+  buildVolatileContextParts(options: ContextBlockOptions): string[] {
     const parts: string[] = [];
 
     // Date/time first (kept on the user tail to preserve prompt caching)
@@ -124,11 +114,6 @@ export class PromptBuilder {
       consumeModeChangeUserSignal: true,
     }));
 
-    // Source state if provided
-    if (sourceStateBlock) {
-      parts.push(sourceStateBlock);
-    }
-
     return parts;
   }
 
@@ -146,9 +131,6 @@ export class PromptBuilder {
   buildStableContextParts(): string[] {
     const parts: string[] = [];
 
-    // Workspace capabilities
-    parts.push(this.formatWorkspaceCapabilities());
-
     // Working directory context
     const workingDirContext = this.getWorkingDirectoryContext();
     if (workingDirContext) {
@@ -156,24 +138,6 @@ export class PromptBuilder {
     }
 
     return parts;
-  }
-
-  /**
-   * Format workspace capabilities for prompt injection.
-   * Informs the agent about what features are available in this workspace.
-   */
-  formatWorkspaceCapabilities(): string {
-    const capabilities: string[] = [];
-
-    // Check local MCP server capability
-    const localMcpEnabled = isLocalMcpEnabled(this.workspaceRootPath);
-    if (localMcpEnabled) {
-      capabilities.push('local-mcp: enabled (stdio subprocess servers supported)');
-    } else {
-      capabilities.push('local-mcp: disabled (only HTTP/SSE servers)');
-    }
-
-    return `<workspace_capabilities>\n${capabilities.join('\n')}\n</workspace_capabilities>`;
   }
 
   /**

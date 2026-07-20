@@ -68,7 +68,7 @@ describe('icon-cache null handling', () => {
 
       // Verify the mock doesn't throw
       await expect(
-        mockReadWorkspaceImage('workspace-id', 'sources/test/icon.svg')
+        mockReadWorkspaceImage('workspace-id', '.pi/skills/test/icon.svg')
       ).resolves.toBeNull()
     })
   })

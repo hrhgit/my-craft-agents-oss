@@ -28,7 +28,6 @@ describe('ensureDefaultPermissions migration', () => {
           { pattern: '^bun\\s+run\\s+typecheck\\b$', comment: 'Typecheck' },
         ],
         allowedMcpPatterns: ['search'],
-        allowedApiEndpoints: [],
         allowedWritePaths: [],
         blockedCommandHints: [
           { command: 'printf', reason: 'printf blocked by default' },
@@ -47,7 +46,6 @@ describe('ensureDefaultPermissions migration', () => {
           { pattern: '^custom-review\\b', comment: 'User customization' },
         ],
         allowedMcpPatterns: ['list'],
-        allowedApiEndpoints: [],
         allowedWritePaths: [],
         blockedCommandHints: [
           { command: 'sed', reason: 'sed print-only policy', whenNotMatching: '^sed\\s+-n\\b' },

@@ -217,6 +217,21 @@ export interface AutomationListItem {
   telegramTopic?: string
   /** Timestamp of last execution (ms since epoch) */
   lastExecutedAt?: number
+  /** Canonical V3 definition used for revisioned CRUD operations. */
+  definition?: AutomationDefinitionV3UI
+}
+
+export interface AutomationDefinitionV3UI {
+  id: string
+  name: string
+  description?: string
+  enabled: boolean
+  triggers: Array<Record<string, unknown> & { id: string; type: 'event' | 'time' }>
+  conditions?: AutomationConditionUI[]
+  actions: Array<Record<string, unknown> & { id: string; type: 'prompt' | 'webhook' }>
+  runPolicy?: { overlap?: 'skip' | 'queue-one'; actionFailure?: 'continue' | 'stop' }
+  createdAt: string
+  updatedAt: string
 }
 
 // ============================================================================
@@ -460,6 +475,54 @@ export function parseAutomationsConfig(json: unknown): AutomationListItem[] {
   }
 
   return items
+}
+
+export function parseAutomationDefinitionsV3(json: unknown): AutomationListItem[] {
+  if (!Array.isArray(json)) return []
+  return json.flatMap((value): AutomationListItem[] => {
+    if (!value || typeof value !== 'object') return []
+    const definition = value as AutomationDefinitionV3UI
+    if (typeof definition.id !== 'string' || typeof definition.name !== 'string'
+      || !Array.isArray(definition.triggers) || !Array.isArray(definition.actions)) return []
+    const trigger = definition.triggers[0]
+    if (!trigger) return []
+    const schedule = trigger.type === 'time' && trigger.schedule && typeof trigger.schedule === 'object'
+      ? trigger.schedule as Record<string, unknown>
+      : undefined
+    const event = trigger.type === 'time' ? 'SchedulerTick' : String(trigger.eventType ?? 'ExternalEvent')
+    const cron = schedule?.kind === 'cron' && typeof schedule.expression === 'string' ? schedule.expression : undefined
+    const timezone = schedule?.kind === 'cron' && typeof schedule.timezone === 'string' ? schedule.timezone : undefined
+    const matcher = trigger.type === 'event' && typeof trigger.matcher === 'string' ? trigger.matcher : undefined
+    const actions: AutomationAction[] = definition.actions.map(action => {
+      if (action.type === 'webhook') return action as unknown as WebhookAction
+      const target = action.target && typeof action.target === 'object' ? action.target as Record<string, unknown> : {}
+      return {
+        type: 'prompt',
+        prompt: typeof action.prompt === 'string' ? action.prompt : '',
+        ...(typeof target.provider === 'string' ? { provider: target.provider } : {}),
+        ...(typeof target.model === 'string' ? { model: target.model } : {}),
+        ...(typeof target.thinkingLevel === 'string' ? { thinkingLevel: target.thinkingLevel as ThinkingLevel } : {}),
+      }
+    })
+    let summary = definition.description?.trim() || `On ${getEventDisplayName(event as AutomationTrigger)}`
+    if (schedule?.kind === 'once' && typeof schedule.at === 'string') summary = `Once at ${new Date(schedule.at).toLocaleString()}`
+    if (schedule?.kind === 'interval' && typeof schedule.everyMs === 'number') summary = `Every ${Math.round(schedule.everyMs / 1000)} seconds`
+    if (cron) summary = deriveAutomationSummary('SchedulerTick', { cron, timezone, actions: [] })
+    return [{
+      id: definition.id,
+      event: event as AutomationTrigger,
+      matcherIndex: 0,
+      name: definition.name,
+      summary,
+      enabled: definition.enabled,
+      matcher,
+      cron,
+      timezone,
+      conditions: definition.conditions,
+      actions,
+      definition,
+    }]
+  })
 }
 
 export function getEventCategory(event: AutomationTrigger): EventCategory {

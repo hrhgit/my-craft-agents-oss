@@ -106,7 +106,7 @@ Send a prompt to Mortise Agent (creates a new session for scheduled prompts).
 | `model` | string | Workspace default | Model ID for the created session |
 
 **Features:**
-- Use `@mentions` to reference sources or skills
+- Use `@mentions` to reference skills
 - Environment variables are expanded (e.g., `$MORTISE_LABEL`)
 
 **Provider & Model:** Optionally specify which AI provider and model to use for the created session. If omitted, the global defaults are used.
@@ -122,17 +122,9 @@ Send a prompt to Mortise Agent (creates a new session for scheduled prompts).
 
 The `provider` value is a Pi provider key configured in AI Settings. The `model` value is a model ID supported by that provider. If either is invalid or unavailable, Mortise falls back to the global default. Both can be used independently or together.
 
-#### Pi Prompt Automation 委托
+#### Prompt Delivery
 
-默认情况下，prompt action 由 mortise 的 `AutomationSystem` 自行处理（创建新的 agent 会话）。
-
-启用配置项 `piExtensions.delegatePromptAutomation`（默认 `false`）后，prompt action 的执行会委托给 [pi prompt-automation 扩展](https://github.com/hrhgit/mortise) 处理，而不是由 mortise 创建会话。启用后：
-
-- `PromptHandler` 收集到待执行的 prompts 时，会通过 `extension_command_invoke` RPC 触发 pi prompt-automation 扩展的命令（如 `/schedule-prompt`），由扩展负责实际执行。
-- mortise 的 `AutomationSystem` 仍保留为 workspace 级 UI/RPC/配置层（automations.json 配置、历史、测试、调度），仅 prompt 执行路径发生切换。
-- 该选项默认关闭，不影响现有行为。回滚时将其设回 `false` 即可恢复 mortise 自行处理。
-
-> **Note:** 该委托路径依赖 pi 扩展加载与桥接层。若 pi 扩展未加载或桥接层未就绪，启用该选项后 prompts 将不会被执行。详见 [Pi 扩展集成](./pi-extensions.md)（若存在）。
+Mortise Automations is the only automation runtime. Prompt actions explicitly target a new Session, a fixed or event Session using `followUp` or `steer`, or an isolated Agent run. Extensions and external programs submit typed operations or CloudEvents to the Host; they do not own another scheduler, store, or history.
 
 ### Webhook Actions
 
@@ -777,7 +769,7 @@ When a limit is hit, further events of that type are **silently dropped** for th
 ### Prompt not creating session
 
 1. Check that the prompt is not empty
-2. Verify @mentions reference valid sources/skills
+2. Verify skill mentions reference valid skills
 
 ### Webhook not working
 

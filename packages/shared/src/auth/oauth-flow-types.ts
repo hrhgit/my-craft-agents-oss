@@ -8,7 +8,7 @@
  * The client's only job is to open the browser and forward the code.
  */
 
-export type OAuthProvider = 'mcp' | 'google' | 'slack' | 'microsoft' | 'generic'
+export type OAuthProvider = 'mcp'
 
 /**
  * Everything the server produces during the "prepare" phase.
@@ -20,7 +20,7 @@ export interface PreparedOAuthFlow {
   codeVerifier: string       // PKCE verifier (empty string for providers that don't use PKCE)
   tokenEndpoint: string
   clientId: string
-  clientSecret?: string      // Google requires client_secret for Desktop apps
+  clientSecret?: string
   redirectUri: string        // provider-specific redirect URI used in auth URL + token exchange
   provider: OAuthProvider
 }
@@ -47,11 +47,11 @@ export interface OAuthExchangeResult {
   accessToken?: string
   refreshToken?: string
   expiresAt?: number
-  /** Identifier for the authenticated user/workspace (Google email, Slack teamName, Microsoft UPN) */
+  /** Identifier for the authenticated account, when provided */
   email?: string
   /** OAuth client_id for storage (MCP dynamic registration) */
   oauthClientId?: string
-  /** OAuth client_secret for storage (Google needs it for refresh) */
+  /** OAuth client_secret for storage */
   oauthClientSecret?: string
   error?: string
 }

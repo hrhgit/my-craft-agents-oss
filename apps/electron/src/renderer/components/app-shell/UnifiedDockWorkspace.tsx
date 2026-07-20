@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   Actions,
   DockLocation,
@@ -87,6 +87,8 @@ import {
   type WorkbenchTool,
 } from '@/components/right-workbench/RightWorkbench'
 import { createDockGeometryStorage } from '@/lib/dock-geometry-storage'
+import { createNewConversationDraftId } from '@/lib/new-conversation'
+import { createInitialConversationRouteConsumer, resolveLivePanelRoute } from './initial-conversation-route'
 import {
   isWorkspaceLayoutTransitioning,
   registerWorkspaceLayoutFlusher,
@@ -98,6 +100,7 @@ import {
   APP_LAYOUT_VERSION,
   PRIMARY_LAYOUT_WINDOW_ID,
   createDefaultAppLayout,
+  focusConversationRoute,
   type AppLayout,
   type ContentKind,
   type ContentTab,
@@ -151,6 +154,7 @@ export function UnifiedDockWorkspace({
 }: UnifiedDockWorkspaceProps) {
   const { t } = useTranslation()
   const { isCompactMode } = useAppShellContext()
+  const store = useStore()
   const panelStack = useAtomValue(panelStackAtom)
   const focusedPanelId = useAtomValue(focusedPanelIdAtom)
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
@@ -188,6 +192,7 @@ export function UnifiedDockWorkspace({
   const savedGeometry = React.useRef(geometryStorage.read(null))
   const geometryRestored = React.useRef(savedGeometry.current == null || initialPanelStack.current.length > 0)
   const pendingRestoredModel = React.useRef<Model | null>(null)
+  const initialConversationRoute = React.useRef(createInitialConversationRouteConsumer(window.location.search))
 
   const [model, setModel] = React.useState(() => {
     const fallback = createDockModel(initialPanelStack.current, serverId, activeWorkspaceId)
@@ -228,14 +233,23 @@ export function UnifiedDockWorkspace({
     if (workspaceLayoutTransitioning) return
     if (snapshot.workspaceId !== (activeWorkspaceId ?? '')) return
     if (!shouldApplyCoordinatorRevision(coordinatorRevision.current, snapshot.revision)) return
-    coordinatorRevision.current = snapshot.revision
+    const currentPanelStack = store.get(panelStackAtom)
+    const currentFocusedPanelId = store.get(focusedPanelIdAtom)
+    const currentActiveDockTabId = store.get(activeDockTabIdAtom)
+    const focusedRoute = initialConversationRoute.current.consume()
+      ?? resolveLivePanelRoute(currentPanelStack, currentActiveDockTabId, currentFocusedPanelId)
+    const focusedState = focusedRoute ? parseRouteToNavigationState(focusedRoute) : null
+    const effectiveSnapshot = focusedState?.navigator === 'sessions' && focusedState.details?.type === 'new'
+      ? focusConversationRoute(snapshot, focusedRoute!)
+      : snapshot
+    coordinatorRevision.current = effectiveSnapshot.revision
     coordinatorReady.current = true
-    const nextEntries = panelEntriesForWindow(snapshot, layoutWindowId)
+    const nextEntries = panelEntriesForWindow(effectiveSnapshot, layoutWindowId)
     if (
       layoutWindowId === PRIMARY_LAYOUT_WINDOW_ID
       && snapshot.geometry == null
       && nextEntries.length === 0
-      && panelStack.length > 0
+      && currentPanelStack.length > 0
     ) {
       const protections = buildDockTabProtections(model, sessionMetaMap, dynamicProtections)
       const seed = buildAppLayoutSnapshot(
@@ -243,14 +257,14 @@ export function UnifiedDockWorkspace({
         sessionMetaMap,
         serverId,
         activeWorkspaceId ?? '',
-        snapshot.revision,
+        effectiveSnapshot.revision,
         protections,
       )
       const seedScope = coordinatorScope
       void layoutSaveQueue.current.enqueue(async () => {
         const expectedRevision = coordinatorScopeRef.current === seedScope
-          ? coordinatorRevision.current ?? snapshot.revision
-          : snapshot.revision
+          ? coordinatorRevision.current ?? effectiveSnapshot.revision
+          : effectiveSnapshot.revision
         const saved = await window.electronAPI.saveAppLayout(
           { ...seed, revision: expectedRevision },
           expectedRevision,
@@ -264,15 +278,15 @@ export function UnifiedDockWorkspace({
         .catch(error => console.warn('[UnifiedDockWorkspace] Failed to seed coordinated layout:', error))
       return
     }
-    const panelEntriesEqual = nextEntries.length === panelStack.length
-      && nextEntries.every((entry, index) => entry.id === panelStack[index]?.id && entry.route === panelStack[index]?.route)
+    const panelEntriesEqual = nextEntries.length === currentPanelStack.length
+      && nextEntries.every((entry, index) => entry.id === currentPanelStack[index]?.id && entry.route === currentPanelStack[index]?.route)
     if (!panelEntriesEqual) setPanelStack(nextEntries)
     const panelIds = nextEntries.map(entry => entry.id)
-    const focusedId = snapshot.focusedTabId && panelIds.includes(snapshot.focusedTabId)
-      ? snapshot.focusedTabId
+    const focusedId = effectiveSnapshot.focusedTabId && panelIds.includes(effectiveSnapshot.focusedTabId)
+      ? effectiveSnapshot.focusedTabId
       : panelIds[0] ?? null
     setFocusedPanelId(focusedId)
-    const nextModel = createDockModelFromSnapshot(snapshot, layoutWindowId)
+    const nextModel = createDockModelFromSnapshot(effectiveSnapshot, layoutWindowId)
     const nextFingerprint = dockModelFingerprint(nextModel)
     if (dockModelFingerprint(model) === nextFingerprint) return
 
@@ -281,7 +295,7 @@ export function UnifiedDockWorkspace({
     onCanvasLayoutFocusChange(Boolean(nextModel.getMaximizedTabset()))
     setModel(nextModel)
     queueMicrotask(() => { syncingFromAtoms.current = false })
-  }, [activeWorkspaceId, coordinatorScope, dynamicProtections, layoutWindowId, model, onCanvasLayoutFocusChange, panelStack, serverId, sessionMetaMap, setFocusedPanelId, setPanelStack, workspaceLayoutTransitioning])
+  }, [activeWorkspaceId, coordinatorScope, dynamicProtections, layoutWindowId, model, onCanvasLayoutFocusChange, serverId, sessionMetaMap, setFocusedPanelId, setPanelStack, store, workspaceLayoutTransitioning])
   const applyCoordinatorSnapshotRef = React.useRef(applyCoordinatorSnapshot)
   React.useLayoutEffect(() => {
     applyCoordinatorSnapshotRef.current = applyCoordinatorSnapshot
@@ -360,7 +374,7 @@ export function UnifiedDockWorkspace({
     ))
   }, [activeWorkspaceId, enterCompactDockDetail, model, t])
 
-  const replaceEmptyPageWithSession = React.useCallback((tabId: string, sessionId: string): boolean => {
+  const replaceEmptyPageWithRoute = React.useCallback((tabId: string, route: PanelStackEntry['route']): boolean => {
     enterCompactDockDetail()
     const node = model.getNodeById(tabId)
     const config = node instanceof TabNode ? node.getConfig() as DockTabConfig : undefined
@@ -368,7 +382,6 @@ export function UnifiedDockWorkspace({
     const parent = node.getParent()
     if (!(parent instanceof TabSetNode)) return false
 
-    const route = routes.view.allSessions(sessionId) as PanelStackEntry['route']
     const entry = createPanelStackEntry(route, 1)
     const index = parent.getChildren().indexOf(node)
     model.doAction(Actions.deleteTab(tabId))
@@ -382,6 +395,10 @@ export function UnifiedDockWorkspace({
     setActiveDockTabId(entry.id)
     return true
   }, [activeWorkspaceId, enterCompactDockDetail, model, serverId, sessionMetaMap, setActiveDockTabId, t])
+
+  const replaceEmptyPageWithSession = React.useCallback((tabId: string, sessionId: string): boolean => (
+    replaceEmptyPageWithRoute(tabId, routes.view.allSessions(sessionId) as PanelStackEntry['route'])
+  ), [replaceEmptyPageWithRoute])
 
   React.useEffect(() => {
     if (!emptyPageSessionRequest) return
@@ -851,7 +868,7 @@ export function UnifiedDockWorkspace({
           tabId={node.getId()}
           tools={workbenchTools}
           onSelect={openToolTab}
-          onOpenSession={replaceEmptyPageWithSession}
+          onOpenRoute={replaceEmptyPageWithRoute}
         />
       )
     }
@@ -881,7 +898,7 @@ export function UnifiedDockWorkspace({
         focused={node.getId() === focusedPanelId}
       />
     )
-  }, [activeWorkspaceId, focusedPanelId, handleProtectionChange, isLeadingChromeHidden, openToolTab, replaceEmptyPageWithSession, serverId, sessionId, workbenchTools])
+  }, [activeWorkspaceId, focusedPanelId, handleProtectionChange, isLeadingChromeHidden, openToolTab, replaceEmptyPageWithRoute, serverId, sessionId, workbenchTools])
 
   return (
     <div
@@ -972,20 +989,20 @@ function DockEmptyPage({
   tabId,
   tools,
   onSelect,
-  onOpenSession,
+  onOpenRoute,
 }: {
   tabId: string
   tools: WorkbenchTool[]
   onSelect: (tool: WorkbenchTool) => void
-  onOpenSession: (tabId: string, sessionId: string) => boolean
+  onOpenRoute: (tabId: string, route: PanelStackEntry['route']) => boolean
 }) {
   const { t } = useTranslation()
-  const { activeWorkspaceId, onCreateSession } = useAppShellContext()
-  const createSession = React.useCallback(async () => {
-    if (!activeWorkspaceId) return
-    const session = await onCreateSession(activeWorkspaceId)
-    onOpenSession(tabId, session.id)
-  }, [activeWorkspaceId, onCreateSession, onOpenSession, tabId])
+  const openNewConversation = React.useCallback(() => {
+    onOpenRoute(
+      tabId,
+      routes.view.newConversation(createNewConversationDraftId()) as PanelStackEntry['route'],
+    )
+  }, [onOpenRoute, tabId])
 
   return (
     <WorkbenchToolPicker
@@ -994,7 +1011,7 @@ function DockEmptyPage({
       label={t('workbench.emptyPage')}
       semanticId="workspace.empty-page"
       semanticScope={tabId}
-      onCreateSession={createSession}
+      onCreateSession={openNewConversation}
     />
   )
 }
@@ -1661,7 +1678,7 @@ function buildAppLayoutSnapshot(
 function contentKindForRoute(route: PanelStackEntry['route']): ContentKind {
   const type = getPanelTypeFromRoute(route)
   if (type === 'session') return 'conversation'
-  if (type === 'source' || type === 'skills') return 'navigation'
+  if (type === 'skills') return 'navigation'
   return 'tool'
 }
 
@@ -1682,7 +1699,6 @@ function resolvePanelTitle(
   const state = parseRouteToNavigationState(entry.route)
   if (!state) return t('chat.titlePlaceholder')
   if (state.navigator === 'settings') return t('sidebar.settings')
-  if (state.navigator === 'sources') return t('sidebar.sources')
   if (state.navigator === 'skills') return t('sidebar.skills')
   if (state.navigator === 'automations') return t('sidebar.automations')
   return t('sidebar.allSessions')

@@ -4,7 +4,6 @@
 
 export type {
   ResourceBundle,
-  SourceBundleEntry,
   SkillBundleEntry,
   AutomationBundleEntry,
   ResourceImportMode,
@@ -12,7 +11,6 @@ export type {
   ExportResult,
   ImportBucketResult,
   ResourceImportResult,
-  ResourceImportDeps,
 } from './types.ts'
 
 export {

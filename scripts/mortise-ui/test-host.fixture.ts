@@ -46,9 +46,35 @@ server = Bun.serve({
       ok: true,
       result: { command: body.method, params: body.params, surface },
     }
+    if (body.method === 'ui.action') {
+      response.result = {
+        command: body.method,
+        params: body.params,
+        surface,
+        actionId: `fixture-action-${seq}`,
+        beforeRevision: Math.max(1, seq - 1),
+        afterRevision: seq,
+        targetResolved: { ref: `fixture:${seq}`, role: 'button', name: 'Reload extensions' },
+        settledBy: ['fixture'],
+        warnings: [],
+        mode: 'semantic',
+      }
+    }
     if (body.method === 'ui.snapshot' || body.method === 'evidence.capture') {
       const name = body.method === 'ui.snapshot' ? 'snapshot' : 'evidence'
       const path = join(artifactsDir, `${name}.json`)
+      if (body.method === 'ui.snapshot') {
+        response.result = {
+          ...(response.result as object),
+          revision: seq,
+          window: { webContentsId: 1, workspaceId: 'fixture-workspace', role: 'main', title: 'Mortise Fixture', url: 'fixture://mortise', bounds: { x: 0, y: 0, width: 1280, height: 800 } },
+          regions: {
+            navigation: [], sidebar: [], dialog: [], notification: [],
+            main: [{ ref: `fixture:${seq}:reload`, semanticId: 'settings.extensions.reload', role: 'button', name: 'Reload extensions', state: {}, actions: ['click'] }],
+          },
+          truncated: false,
+        }
+      }
       writeFileSync(path, JSON.stringify(response.result), 'utf8')
       response.result = { ...(response.result as object), artifacts: [{
         kind: 'semantic-snapshot',

@@ -54,7 +54,7 @@ function createDeps(sessions: Session[]): HandlerDeps {
       async process() { return Buffer.alloc(0) },
     },
   }
-  return { sessionManager, platform, oauthFlowStore: {} as HandlerDeps['oauthFlowStore'] }
+  return { sessionManager, platform }
 }
 
 function handlerFor(deps: HandlerDeps, channel: string): HandlerFn {
@@ -66,6 +66,40 @@ function handlerFor(deps: HandlerDeps, channel: string): HandlerFn {
 }
 
 describe('Pi-first session visibility', () => {
+  it('rejects ordinary empty sessions that bypass the first-turn publication transaction', async () => {
+    const handler = handlerFor(createDeps([]), RPC_CHANNELS.sessions.CREATE)
+
+    await expect(handler(ctx, 'workspace-a')).rejects.toThrow(
+      'Ordinary sessions must use sessions:createAndSendFirstTurn',
+    )
+  })
+
+  it('keeps hidden and branch session creation available for internal callers', async () => {
+    const calls: Array<{ workspaceId: string; options: unknown }> = []
+    const deps = createDeps([])
+    ;(deps.sessionManager as unknown as {
+      createSession: (workspaceId: string, options: unknown) => Promise<Session>
+    }).createSession = async (workspaceId, options) => {
+      calls.push({ workspaceId, options })
+      return session(`created-${calls.length}`)
+    }
+    const handler = handlerFor(deps, RPC_CHANNELS.sessions.CREATE)
+
+    await expect(handler(ctx, 'workspace-a', { hidden: true })).resolves.toMatchObject({ id: 'created-1' })
+    await expect(handler(ctx, 'workspace-a', {
+      branchFromSessionId: 'source-session',
+      branchFromMessageId: 'source-message',
+    })).resolves.toMatchObject({ id: 'created-2' })
+
+    expect(calls).toEqual([
+      { workspaceId: 'workspace-a', options: { hidden: true } },
+      {
+        workspaceId: 'workspace-a',
+        options: { branchFromSessionId: 'source-session', branchFromMessageId: 'source-message' },
+      },
+    ])
+  })
+
   it('returns all managed sessions to the renderer session list', async () => {
     const first = session('session-a')
     const second = session('session-b')

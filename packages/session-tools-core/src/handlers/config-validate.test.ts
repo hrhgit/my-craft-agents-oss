@@ -9,12 +9,10 @@ function createCtx(workspacePath: string) {
   return {
     sessionId: 'test-session',
     workspacePath,
-    get sourcesPath() { return join(workspacePath, 'sources'); },
     get skillsPath() { return join(workspacePath, 'skills'); },
     plansFolderPath: join(workspacePath, 'plans'),
     callbacks: {
       onPlanSubmitted: () => {},
-      onAuthRequest: () => {},
     },
     fs: {
       exists: (path: string) => existsSync(path),
@@ -29,7 +27,6 @@ function createCtx(workspacePath: string) {
       },
     },
     validators: undefined,
-    loadSourceConfig: () => null,
   } as const;
 }
 

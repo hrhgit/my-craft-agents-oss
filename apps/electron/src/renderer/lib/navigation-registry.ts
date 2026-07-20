@@ -47,8 +47,6 @@ export interface DetailsProps {
 export interface NavigationData {
   /** All sessions in the current filter */
   sessions: Array<{ id: string }>
-  /** All sources */
-  sources: Array<{ slug: string }>
   /** Current session filter (if in sessions mode) */
   sessionFilter?: SessionFilter
 }
@@ -74,7 +72,7 @@ export interface NavigatorConfig<TDetailsPages extends Record<string, ComponentT
 /**
  * All navigator types in the app
  */
-export type NavigatorType = 'sessions' | 'sources' | 'settings'
+export type NavigatorType = 'sessions' | 'settings'
 
 /**
  * Session filter kinds that map to sidebar routes
@@ -128,15 +126,6 @@ export const NavigationRegistry = {
     },
   },
 
-  sources: {
-    displayName: 'Sources',
-    detailsPages: {
-      source: PlaceholderComponent, // Will be: SourceInfoPage
-    },
-    defaultDetails: null, // Empty state when no sources
-    getFirstItem: (ctx: NavigationData) => ctx.sources[0]?.slug ?? null,
-  },
-
   settings: {
     displayName: 'Settings',
     detailsPages: {
@@ -167,7 +156,7 @@ export type DetailsType<N extends NavigatorType> = keyof (typeof NavigationRegis
 /**
  * All possible details types across all navigators
  */
-export type AnyDetailsType = DetailsType<'sessions'> | DetailsType<'sources'> | DetailsType<'settings'>
+export type AnyDetailsType = DetailsType<'sessions'> | DetailsType<'settings'>
 
 // =============================================================================
 // Navigation State Types
@@ -178,6 +167,5 @@ export type AnyDetailsType = DetailsType<'sessions'> | DetailsType<'sources'> | 
  */
 export type NavigationState =
   | { navigator: 'sessions'; sessionFilter: SessionFilter; details: { type: 'session'; id: string } | null }
-  | { navigator: 'sources'; details: { type: 'source'; id: string } | null }
   | { navigator: 'settings'; details: { type: DetailsType<'settings'>; id: string } }
 

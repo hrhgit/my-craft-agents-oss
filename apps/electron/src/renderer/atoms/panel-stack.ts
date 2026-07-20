@@ -24,7 +24,7 @@ export function isEmptyDockPageTabId(tabId: string | null | undefined): tabId is
   return typeof tabId === 'string' && tabId.startsWith(EMPTY_DOCK_PAGE_TAB_ID_PREFIX)
 }
 
-export type PanelType = 'session' | 'source' | 'settings' | 'skills' | 'other'
+export type PanelType = 'session' | 'settings' | 'skills' | 'other'
 export type OpenIntent = 'implicit' | 'explicit'
 
 export interface PanelStackEntry {
@@ -143,8 +143,6 @@ export function getPanelTypeFromRoute(route: ViewRoute): PanelType {
   switch (navState.navigator) {
     case 'sessions':
       return 'session'
-    case 'sources':
-      return 'source'
     case 'settings':
       return 'settings'
     case 'skills':

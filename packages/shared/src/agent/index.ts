@@ -27,16 +27,6 @@ export {
   // Types
   type SessionScopedToolCallbacks,
   type BrowserPaneFns,
-  // Auth request types (unified auth flow)
-  type AuthRequest,
-  type AuthRequestType,
-  type AuthResult,
-  type CredentialAuthRequest,
-  type McpOAuthAuthRequest,
-  type GoogleOAuthAuthRequest,
-  type SlackOAuthAuthRequest,
-  type MicrosoftOAuthAuthRequest,
-  type CredentialInputMode,
 } from './session-scoped-tools.ts';
 
 export { executeBrowserToolCommand, getBrowserToolHelp } from './browser-tool-runtime.ts';
@@ -89,24 +79,19 @@ export {
   isValidThinkingLevel,
 } from './thinking-levels.ts';
 
-// Export permissions-config - customizable permissions per workspace/source (permissions.json)
+// Export permissions-config - customizable permissions per workspace (permissions.json)
 export {
   // Parser and validation
   parsePermissionsJson,
   validatePermissionsConfig,
   PermissionsConfigSchema,
   // API endpoint checking
-  isApiEndpointAllowed,
   // Storage functions
   loadWorkspacePermissionsConfig,
-  loadSourcePermissionsConfig,
   getWorkspacePermissionsPath,
-  getSourcePermissionsPath,
   // Raw load/save (for CLI CRUD)
   loadRawWorkspacePermissions,
-  loadRawSourcePermissions,
   saveWorkspacePermissions,
-  saveSourcePermissions,
   // App-level default permissions (at ~/.mortise/permissions/)
   getAppPermissionsDir,
   ensureDefaultPermissions,
@@ -114,8 +99,6 @@ export {
   // Cache singleton
   permissionsConfigCache,
   // Types
-  type ApiEndpointRule,
-  type CompiledApiEndpointRule,
   type PermissionsCustomConfig,
   type PermissionsConfigFile,
   type MergedPermissionsConfig,
@@ -141,12 +124,8 @@ export {
   type BackendConfig,
   type PermissionCallback,
   type PlanCallback,
-  type AuthCallback,
-  type SourceChangeCallback,
-  type SourceActivationCallback,
   type ChatOptions,
   type RecoveryMessage,
-  type SdkMcpServerConfig as BackendMcpServerConfig,
   type PiExtensionCommand,
   // Enums
   AbortReason as BackendAbortReason,

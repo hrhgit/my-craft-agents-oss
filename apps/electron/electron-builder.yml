@@ -16,18 +16,20 @@ directories:
 
 files:
   - dist/**/*
+  # The offline Developer Kit is staged under dist only as an intermediate
+  # source for the dedicated extraResources entry below. Do not embed it in
+  # resources/app/dist as a second copy.
+  - "!dist/installer-developer-kit/**/*"
   - "!dist/renderer/src/**"
   - "!**/*.map"
   # Runtime subprocess assets are staged once through extraResources on each
   # platform. Keeping them in files as well duplicates the installer payload.
   - "!dist/resources/pi-runtime/**/*"
-  - "!dist/resources/bridge-mcp-server/**/*"
   - "!dist/resources/session-mcp-server/**/*"
   - "!dist/resources/scripts/**/*"
   - "!dist/resources/bin/**/*"
   - package.json
-  # Include bundled MCP servers (bridge + session) for Codex sessions
-  - resources/bridge-mcp-server/**/*
+  # Include the bundled session MCP server for session-scoped tools.
   - resources/session-mcp-server/**/*
   # Note: Bundled assets (docs, themes, permissions, tool-icons) are in resources/
   # and copied to dist/resources/ by build:copy. They're included via dist/**/* above.
@@ -155,6 +157,7 @@ win:
     # positive matchers here schedules concurrent copies to the same target.
     # This non-overlapping anchor also prevents an implicit **/* matcher.
     - resources/icon.ico
+    - "!dist/installer-developer-kit/**/*"
     # Exclude binaries for other platforms
     - "!**/resources/bin/darwin-*/**"
     - "!**/resources/bin/linux-*/**"
@@ -181,6 +184,12 @@ win:
     # WhatsApp worker subprocess (self-contained; Baileys bundled in).
     - from: ../../packages/messaging-whatsapp-worker/dist/worker.cjs
       to: messaging-whatsapp-worker/worker.cjs
+    # The offline installer carries a version-matched Developer Kit. The NSIS
+    # component page removes this directory when the optional component is off.
+    - from: dist/installer-developer-kit
+      to: developer-kit
+      filter:
+        - "**/*"
 
 nsis:
   # Assisted installer shows the directory picker; auto-updates still run
@@ -191,6 +200,7 @@ nsis:
   # a versioned user-data cache, so custom protected install directories work too.
   perMachine: false
   deleteAppDataOnUninstall: true
+  include: resources/installer.nsh
 
 linux:
   icon: resources/icon.png

@@ -129,46 +129,6 @@ export class PiProjectionBuilder {
     })]
   }
 
-  acceptAuthPromptRequest(request: {
-    requestId: string
-    authType: 'credential' | 'oauth' | 'oauth-google' | 'oauth-slack' | 'oauth-microsoft'
-    sourceSlug: string
-    sourceName: string
-    mode?: 'bearer' | 'basic' | 'header' | 'query' | 'multi-header'
-    labels?: { credential?: string; username?: string; password?: string }
-    headerNames?: string[]
-    passwordRequired?: boolean
-    service?: string
-  }): PiProjectionEventV1[] {
-    const entityId = `prompt:${request.requestId}`
-    const state = this.nextEntity(entityId)
-    const promptKind = request.authType === 'credential' ? 'credential' : 'oauth'
-    state.payload = {
-      requestId: request.requestId,
-      promptKind,
-      authType: request.authType,
-      sourceSlug: request.sourceSlug,
-      sourceName: request.sourceName,
-      mode: request.mode,
-      labels: request.labels,
-      headerNames: request.headerNames,
-      passwordRequired: request.passwordRequired,
-      service: request.service,
-      status: 'pending',
-    }
-    return [this.createEvent(entityId, 'prompt_request', state.version, 'auth_request', state.payload)]
-  }
-
-  acceptAuthPromptResolution(
-    requestId: string,
-    resolution: 'completed' | 'failed' | 'cancelled',
-  ): PiProjectionEventV1[] {
-    const entityId = `prompt:${requestId}`
-    const state = this.nextEntity(entityId)
-    state.payload = { ...state.payload, requestId, status: 'resolved', resolution }
-    return [this.createEvent(entityId, 'prompt_request', state.version, 'prompt_resolved', state.payload)]
-  }
-
   accept(event: AgentEvent): PiProjectionEventV1[] {
     if (!this.isProjectable(event)) return []
 
@@ -340,6 +300,7 @@ export class PiProjectionBuilder {
       display?: unknown
       clientMutationId?: unknown
       attachments?: unknown
+      usage?: unknown
     }
     if (value.role === 'custom') return this.acceptCustomMessage(value)
     if (value.role === 'assistant') return this.acceptAssistantMessageEnd(value)
@@ -497,12 +458,14 @@ export class PiProjectionBuilder {
     timestamp?: unknown
     content?: unknown
     stopReason?: unknown
+    usage?: unknown
   }): PiProjectionEventV1[] {
     const content = typeof message.content === 'string'
       ? [{ type: 'text', text: message.content }]
       : message.content
     if (!Array.isArray(content)) return []
     const messageId = this.messageIdentity(message)
+    const usage = this.sanitizeAssistantUsage(message.usage)
     const events: PiProjectionEventV1[] = []
 
     for (const [contentIndex, candidate] of content.entries()) {
@@ -528,6 +491,7 @@ export class PiProjectionBuilder {
         isIntermediate,
         isFinal: !isIntermediate,
         timestamp: this.messageTimestamp(message),
+        usage,
       }
       events.push(this.createEvent(
         entityId,
@@ -541,6 +505,25 @@ export class PiProjectionBuilder {
     }
 
     return events
+  }
+
+  private sanitizeAssistantUsage(value: unknown): { inputTokens: number; outputTokens: number } | undefined {
+    const usage = this.asRecord(value)
+    if (!usage) return undefined
+
+    const tokenCount = (candidate: unknown): number | undefined =>
+      typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0
+        ? Math.floor(candidate)
+        : undefined
+    const uncachedInput = tokenCount(usage.input) ?? tokenCount(usage.inputTokens)
+    const cacheRead = tokenCount(usage.cacheRead) ?? tokenCount(usage.cacheReadTokens) ?? 0
+    const outputTokens = tokenCount(usage.output) ?? tokenCount(usage.outputTokens)
+    if (uncachedInput === undefined && outputTokens === undefined) return undefined
+
+    return {
+      inputTokens: (uncachedInput ?? 0) + cacheRead,
+      outputTokens: outputTokens ?? 0,
+    }
   }
 
   private isProjectable(event: AgentEvent): event is ProjectableAgentEvent {

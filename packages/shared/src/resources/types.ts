@@ -2,13 +2,12 @@
  * Resource Bundle Types
  *
  * Portable format for exporting/importing workspace resources
- * (sources, skills, automations) between workspaces.
+ * (skills and automations) between workspaces.
  *
  * Follows the same bundle pattern as session export/import.
  */
 
 import type { BundleFile } from '../utils/bundle-files.ts'
-import type { FolderSourceConfig } from '../sources/types.ts'
 import type { AutomationMatcher } from '../automations/types.ts'
 
 // ============================================================
@@ -28,25 +27,10 @@ export interface ResourceBundle {
   sourceWorkspace?: string
   /** The exported resources */
   resources: {
-    sources?: SourceBundleEntry[]
     skills?: SkillBundleEntry[]
     /** Per-automation entries (sanitized — webhook auth stripped) */
     automations?: AutomationBundleEntry[]
   }
-}
-
-/**
- * A source in the bundle.
- * Config is sanitized (no secrets, no runtime state).
- * Files include everything in the source folder EXCEPT config.json.
- */
-export interface SourceBundleEntry {
-  /** Source slug (folder name) */
-  slug: string
-  /** Sanitized source config — no credentials, auth state reset */
-  config: FolderSourceConfig
-  /** All non-hidden regular files except config.json (guide.md, icons, permissions, docs, etc.) */
-  files: BundleFile[]
 }
 
 /**
@@ -91,8 +75,6 @@ export type ResourceImportMode = 'skip' | 'overwrite'
  * Options for resource export.
  */
 export interface ExportResourcesOptions {
-  /** Source slugs to export, or 'all' for every source */
-  sources?: string[] | 'all'
   /** Skill slugs to export, or 'all' for every skill */
   skills?: string[] | 'all'
   /** Automation IDs/names to export, 'all' for every automation, or true (= 'all') */
@@ -112,7 +94,7 @@ export interface ExportResult {
  * Per-resource-type import result with room for partial failures.
  */
 export interface ImportBucketResult {
-  /** Identifiers that were successfully imported (slugs for sources/skills, IDs for automations) */
+  /** Identifiers that were successfully imported (slugs for skills, IDs for automations) */
   imported: string[]
   /** Identifiers that were skipped (already exist + mode='skip') */
   skipped: string[]
@@ -126,23 +108,6 @@ export interface ImportBucketResult {
  * Result of a resource import.
  */
 export interface ResourceImportResult {
-  sources: ImportBucketResult
   skills: ImportBucketResult
   automations: ImportBucketResult
-}
-
-// ============================================================
-// Dependency injection for import
-// ============================================================
-
-/**
- * Dependencies injected into importResources for credential cleanup.
- * This avoids the resource module depending on the credential store directly.
- */
-export interface ResourceImportDeps {
-  /**
-   * Clear all stored credentials for a source slug in a workspace.
-   * Called on source overwrite to prevent stale credential leakage.
-   */
-  clearSourceCredentials: (workspaceId: string, sourceSlug: string) => Promise<void>
 }

@@ -36,7 +36,6 @@ describe('extension reload RPC boundary', () => {
     registerSettingsHandlers(server, {
       sessionManager: { requestExtensionReload } as unknown as ISessionManager,
       platform: {} as HandlerDeps['platform'],
-      oauthFlowStore: {} as HandlerDeps['oauthFlowStore'],
     })
 
     const handler = server.handlers.get(RPC_CHANNELS.piExtensions.RELOAD)
@@ -60,7 +59,6 @@ describe('extension reload RPC boundary', () => {
     registerSettingsHandlers(server, {
       sessionManager: { requestExtensionReload } as unknown as ISessionManager,
       platform: {} as HandlerDeps['platform'],
-      oauthFlowStore: {} as HandlerDeps['oauthFlowStore'],
     })
 
     const handler = server.handlers.get(RPC_CHANNELS.piExtensions.RELOAD)

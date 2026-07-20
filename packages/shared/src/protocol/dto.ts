@@ -14,15 +14,12 @@ import type {
   AnnotationV1,
   PermissionRequest as BasePermissionRequest,
   Session as CoreSession,
+  StoredAttachment,
   PlanModeStateV1,
 } from '@mortise/core/types'
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
-import type {
-  AuthRequest as SharedAuthRequest,
-  CredentialInputMode as SharedCredentialInputMode,
-  CredentialAuthRequest as SharedCredentialAuthRequest,
-} from '../agent/index'
+import type { FileAttachment } from '../utils/files'
 
 // Re-export generateMessageId for handler convenience
 export { generateMessageId } from '@mortise/core/types'
@@ -56,7 +53,6 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
    * Set to false when user views the session (and not processing).
    */
   hasUnread?: boolean
-  enabledSourceSlugs?: string[]
   workingDirectory?: string
   sessionFolderPath?: string
   sharedUrl?: string
@@ -113,9 +109,6 @@ export interface CreateSessionOptions {
   provider?: string
   systemPromptPreset?: 'default' | 'mini' | string
   hidden?: boolean
-  /** Keep a user-created session out of lists until its first message is durably accepted. */
-  deferListUntilFirstMessage?: boolean
-  enabledSourceSlugs?: string[]
   /**
    * Message ID to branch from. This is a hard context cutoff:
    * the new session must not include model context from later parent messages.
@@ -123,6 +116,26 @@ export interface CreateSessionOptions {
   branchFromMessageId?: string
   /** Parent session ID used together with branchFromMessageId. */
   branchFromSessionId?: string
+}
+
+/**
+ * One server-owned first-turn transaction for an ordinary new conversation.
+ * The staging identity is attachment-only storage and is never a Session.
+ */
+export interface CreateAndSendFirstTurnRequest {
+  workspaceId: string
+  message: string
+  attachments?: FileAttachment[]
+  storedAttachments?: StoredAttachment[]
+  attachmentStagingId?: string
+  createOptions?: CreateSessionOptions
+  sendOptions?: SendMessageOptions
+}
+
+export interface CreateAndSendFirstTurnResult {
+  session: Session
+  /** Host identity of the first user message accepted by the published turn. */
+  messageId: string
 }
 
 export interface RemoteSessionTransferPayload {
@@ -165,12 +178,10 @@ export type SessionEvent =
   | { type: 'async_operation'; sessionId: string; isOngoing: boolean }
   | { type: 'working_directory_changed'; sessionId: string; workingDirectory: string }
   | { type: 'permission_request'; sessionId: string; request: PermissionRequest }
-  | { type: 'credential_request'; sessionId: string; request: CredentialRequest }
   | { type: 'permission_mode_changed'; sessionId: string; permissionMode: PermissionMode; previousPermissionMode?: PermissionMode; transitionDisplay?: string; modeVersion?: number; changedAt?: string; changedBy?: PermissionModeState['changedBy'] }
   | { type: 'plan_submitted'; sessionId: string; message: Message }
   | { type: 'plan_artifact_changed'; sessionId: string; message: Message; supersededArtifactIds?: string[] }
   | { type: 'plan_mode_state_changed'; sessionId: string; state: PlanModeStateV1 }
-  | { type: 'sources_changed'; sessionId: string; enabledSourceSlugs: string[] }
   | { type: 'provider_changed'; sessionId: string; provider?: string; supportsBranching?: boolean }
   | { type: 'task_backgrounded'; sessionId: string; toolUseId: string; taskId: string; intent?: string; turnId?: string }
   | { type: 'shell_backgrounded'; sessionId: string; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
@@ -184,9 +195,7 @@ export type SessionEvent =
   | { type: 'session_created'; sessionId: string }
   | { type: 'session_shared'; sessionId: string; sharedUrl: string }
   | { type: 'session_unshared'; sessionId: string }
-  | { type: 'auth_request'; sessionId: string; message: Message; request: SharedAuthRequest }
   | { type: 'auth_completed'; sessionId: string; requestId: string; success: boolean; cancelled?: boolean; error?: string }
-  | { type: 'source_activated'; sessionId: string; sourceSlug: string; originalMessage: string }
   | { type: 'usage_update'; sessionId: string; tokenUsage: { inputTokens: number; contextWindow?: number } }
   | { type: 'message_annotations_updated'; sessionId: string; messageId: string; annotations: AnnotationV1[] }
   | { type: 'working_directory_error'; sessionId: string; error: string }
@@ -213,7 +222,6 @@ export type SessionCommand =
   | { type: 'setPermissionMode'; mode: PermissionMode }
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   | { type: 'updateWorkingDirectory'; dir: string }
-  | { type: 'setSources'; sourceSlugs: string[] }
   | { type: 'showInFinder' }
   | { type: 'copyPath' }
   | { type: 'shareToViewer' }
@@ -252,18 +260,6 @@ export interface PermissionResponseOptions {
 }
 
 // Re-export for handler convenience
-export type { SharedCredentialInputMode as CredentialInputMode }
-export type CredentialRequest = SharedCredentialAuthRequest
-export type { SharedAuthRequest as AuthRequest }
-
-export interface CredentialResponse {
-  type: 'credential'
-  value?: string
-  username?: string
-  password?: string
-  headers?: Record<string, string>
-  cancelled: boolean
-}
 
 // ---------------------------------------------------------------------------
 // Directory browsing types (remote mode)
@@ -382,7 +378,7 @@ export interface ClaudeOAuthIdentityDto {
 }
 
 // ---------------------------------------------------------------------------
-// Source / skill types
+// Skill types
 // ---------------------------------------------------------------------------
 
 export interface SkillFile {
@@ -401,18 +397,6 @@ export interface McpValidationResult {
   success: boolean
   error?: string
   tools?: string[]
-}
-
-export interface McpToolWithPermission {
-  name: string
-  description?: string
-  allowed: boolean
-}
-
-export interface McpToolsResult {
-  success: boolean
-  error?: string
-  tools?: McpToolWithPermission[]
 }
 
 // ---------------------------------------------------------------------------
@@ -505,8 +489,6 @@ export interface WorkspaceSettings {
   permissionMode?: PermissionMode
   cyclablePermissionModes?: PermissionMode[]
   workingDirectory?: string
-  localMcpEnabled?: boolean
-  enabledSourceSlugs?: string[]
 }
 
 // ---------------------------------------------------------------------------

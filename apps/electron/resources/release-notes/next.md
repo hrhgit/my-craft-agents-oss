@@ -11,6 +11,7 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 ## Improvements
 
 - **Actionable extension diagnostics** - Settings now shows extension versions, authors, compatibility warnings, and blocking dependency or conflict errors before extension code runs.
+- **Developer Kit discovery** - A new global Developer settings page can automatically discover or manually select a compatible Developer Kit, then makes its validated path and invocation contract available to Agents at runtime.
 
 
 ## Bug Fixes

@@ -83,9 +83,6 @@ function createTestHarness(sessionPaths: Map<string, string>) {
       logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
       imageProcessor: { getMetadata: async () => null, process: async () => Buffer.from('') },
     } as unknown as HandlerDeps['platform'],
-    oauthFlowStore: {
-      store: () => {}, getByState: () => null, remove: () => {}, cleanup: () => {}, dispose: () => {}, size: 0,
-    } as unknown as HandlerDeps['oauthFlowStore'],
   }
 
   return { server, deps, handlers, pushCalls }

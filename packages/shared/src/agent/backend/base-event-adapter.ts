@@ -16,8 +16,6 @@
 import type { AgentEvent } from '@mortise/core/types';
 import { parseReadCommand, type ReadCommandInfo } from './read-patterns.ts';
 import { createLogger } from '../../utils/debug.ts';
-/** MCP server name used by the pool server */
-const POOL_SERVER_MCP_NAME = 'sources';
 
 export { type ReadCommandInfo } from './read-patterns.ts';
 
@@ -154,19 +152,8 @@ export abstract class BaseEventAdapter {
   // MCP Tool Name Helpers
   // ============================================================
 
-  /**
-   * Build the canonical proxy tool name for an MCP tool call.
-   *
-   * Pool server tools already include the source slug in their name
-   * (e.g., "mortise__search_spaces") because the pool strips the `mcp__` prefix.
-   * We just need to re-add `mcp__` to produce "mcp__mortise__search_spaces".
-   * Without this, we'd get "mcp__sources__mortise__search_spaces" which breaks
-   * source lookup in resolveToolDisplayMeta().
-   */
+  /** Build the canonical proxy tool name for an MCP tool call. */
   protected buildMcpToolName(serverName: string, toolName: string): string {
-    if (serverName === POOL_SERVER_MCP_NAME && toolName.includes('__')) {
-      return `mcp__${toolName}`;
-    }
     return `mcp__${serverName}__${toolName}`;
   }
 

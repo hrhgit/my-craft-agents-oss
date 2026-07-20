@@ -2,6 +2,33 @@ import { describe, expect, it } from 'bun:test'
 import { PiProjectionBuilder } from './projection-builder.ts'
 
 describe('PiProjectionBuilder', () => {
+  it('normalizes assistant usage for the renderer without retaining cost data', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    builder.acceptRuntimeEvent({ type: 'turn_start' })
+
+    const projected = builder.acceptRuntimeEvent({
+      type: 'message_end',
+      message: {
+        id: 'assistant-usage',
+        role: 'assistant',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'done' }],
+        usage: {
+          input: 1_200,
+          output: 345,
+          cacheRead: 800,
+          cacheWrite: 10,
+          cost: { total: 0.25 },
+        },
+      },
+    })
+
+    expect(projected[0]?.payload).toMatchObject({
+      usage: { inputTokens: 2_000, outputTokens: 345 },
+    })
+    expect(JSON.stringify(projected[0]?.payload)).not.toContain('cost')
+  })
+
   it('uses clientMutationId as the stable user entity identity', () => {
     const builder = new PiProjectionBuilder('session-1', 'runtime-1')
     const projected = builder.acceptRuntimeEvent({
@@ -184,10 +211,6 @@ sessionId: session-1
 permissionMode: execute
 </session_state>
 
-<sources>
-Active: none
-</sources>
-
 Ask me a question`,
       },
     })[0]!
@@ -297,44 +320,6 @@ sessionId: session-1
       payload: { status: 'resolved', resolution: 'allowed' },
     })
     expect(JSON.stringify(pending.payload)).not.toContain('input')
-  })
-
-  it('projects auth prompts on a stable entity with a secret-free payload', () => {
-    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
-    const pending = builder.acceptAuthPromptRequest({
-      requestId: 'auth-1', authType: 'credential', sourceSlug: 'github', sourceName: 'GitHub',
-      mode: 'bearer', labels: { credential: 'API token' }, passwordRequired: false,
-      ...({ credential: 'secret-token', oauthCode: 'secret-code', sourceUrl: 'https://example.test/?token=secret' } as object),
-    })[0]!
-    const resolved = builder.acceptAuthPromptResolution('auth-1', 'completed')[0]!
-    expect(pending).toMatchObject({
-      entityId: 'prompt:auth-1', entityType: 'prompt_request', entityVersion: 1,
-      kind: 'auth_request', payload: {
-        requestId: 'auth-1', promptKind: 'credential', authType: 'credential',
-        sourceSlug: 'github', sourceName: 'GitHub', status: 'pending',
-      },
-    })
-    expect(resolved).toMatchObject({
-      entityId: pending.entityId, entityVersion: 2, kind: 'prompt_resolved',
-      payload: { requestId: 'auth-1', status: 'resolved', resolution: 'completed' },
-    })
-    expect(JSON.stringify(pending.payload)).not.toMatch(/secret-token|secret-code|oauthCode|sourceUrl/)
-  })
-
-  it('projects oauth prompt display metadata without tokens or callback data', () => {
-    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
-    const pending = builder.acceptAuthPromptRequest({
-      requestId: 'oauth-1', authType: 'oauth-google', sourceSlug: 'google-drive',
-      sourceName: 'Google Drive', service: 'drive',
-      ...({ accessToken: 'secret', refreshToken: 'secret', codeVerifier: 'secret' } as object),
-    })[0]!
-    expect(pending.payload).toEqual({
-      requestId: 'oauth-1', promptKind: 'oauth', authType: 'oauth-google',
-      sourceSlug: 'google-drive', sourceName: 'Google Drive', mode: undefined,
-      labels: undefined, headerNames: undefined, passwordRequired: undefined,
-      service: 'drive', status: 'pending',
-    })
-    expect(JSON.stringify(pending.payload)).not.toMatch(/accessToken|refreshToken|codeVerifier|secret/)
   })
 
   it('seeds sequence, entity versions, payload state, and the next turn index from a snapshot', () => {

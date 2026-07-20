@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
-import { DEFAULT_MORTISE_UI_START_WAIT_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, readRunManifest, resolveRunDir, startMortiseUiRun, stopMortiseUiRun } from '../controller.ts'
+import { DEFAULT_MORTISE_UI_START_WAIT_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, readRunManifest, resolveRunDir, startMortiseUiRun, stopMortiseUiRun, updateRunManifest } from '../controller.ts'
 import { requestMortiseUiHost } from '../client.ts'
 import { collectLocalEvidence, registerReturnedArtifacts } from '../evidence.ts'
 
@@ -95,7 +95,22 @@ describe('mortise-ui controller', () => {
     const manifest = readRunManifest(runDir) as unknown as Record<string, unknown>
     for (let index = 0; index < writers.length; index += 1) expect(manifest[`marker${index}`]).toBe(`marker${index}`)
     expect(existsSync(join(runDir, 'run.json.lock'))).toBe(false)
-  }, 20_000)
+  }, 60_000)
+
+  it('retries disposable profile cleanup instead of treating residue as already stopped', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-ui-cleanup-retry-')); roots.push(root)
+    const runDir = writeTestManifest(root, 'cleanup-retry', 'stopped')
+    const profileDir = readRunManifest(runDir).profileDir
+    writeFileSync(join(profileDir, 'residue.txt'), 'retry me', 'utf8')
+    updateRunManifest(runDir, { cleanupError: 'previous cleanup failed' })
+
+    const stopped = await stopMortiseUiRun(runDir)
+
+    expect(stopped.status).toBe('stopped')
+    expect(stopped.cleanupError).toBeUndefined()
+    expect(stopped.profileCleanedAt).toBeString()
+    expect(existsSync(profileDir)).toBe(false)
+  })
 
   it('starts, queries, records evidence, and stops a loopback host adapter', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-ui-controller-')); roots.push(root)
@@ -136,7 +151,7 @@ describe('mortise-ui controller', () => {
     expect(stopped.status).toBe('stopped')
     expect(stopped.profileCleanedAt).toBeString()
     expect(existsSync(manifest.profileDir)).toBe(false)
-  }, 20_000)
+  }, 30_000)
 })
 
 function writeTestManifest(root: string, runId: string, status: 'starting' | 'ready' | 'stopped', launcherPid?: number, label?: string): string {

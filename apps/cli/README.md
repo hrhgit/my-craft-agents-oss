@@ -7,7 +7,7 @@ real-time streaming, and validating server health.
 
 > **Not to be confused** with the `mortise` CLI documented in
 > [`apps/electron/resources/docs/mortise-cli.md`](../../apps/electron/resources/docs/mortise-cli.md),
-> which manages workspace config domains (labels / sources / skills / automations).
+> which manages workspace config domains such as skills and automations.
 > This `mortise-cli` is the WebSocket client that drives a running server.
 
 ## Quick start
@@ -29,7 +29,6 @@ mortise-cli run <message> [options]
 | Flag | Description |
 |------|-------------|
 | `--workspace-dir <path>` | Use directory as workspace (creates if needed) |
-| `--source <slug>` | Enable source (repeatable) |
 | `--mode <mode>` | Permission mode (default: `allow-all`) |
 | `--output-format` | `text` or `stream-json` (default: `text`) |
 | `--no-cleanup` | Keep session after completion |
@@ -120,7 +119,6 @@ versions               Show server runtime versions
 workspaces             List workspaces
 sessions               List sessions in workspace
 providers              List AI providers
-sources                List configured sources
 session create         Create a session (--name, --mode)
 session messages <id>  Print session message history
 session delete <id>    Delete a session

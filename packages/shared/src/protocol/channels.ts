@@ -19,6 +19,8 @@ export const RPC_CHANNELS = {
     MARK_ALL_READ: 'sessions:markAllRead',
     UNREAD_SUMMARY_CHANGED: 'sessions:unreadSummaryChanged',
     CREATE: 'sessions:create',
+    CREATE_AND_SEND_FIRST_TURN: 'sessions:createAndSendFirstTurn',
+    DISCARD_FIRST_TURN_ATTACHMENT_STAGING: 'sessions:discardFirstTurnAttachmentStaging',
     DELETE: 'sessions:delete',
     GET_MESSAGES: 'sessions:getMessages',
     GET_PI_PROJECTION_SNAPSHOT: 'sessions:getPiProjectionSnapshot',
@@ -26,7 +28,6 @@ export const RPC_CHANNELS = {
     CANCEL: 'sessions:cancel',
     KILL_SHELL: 'sessions:killShell',
     RESPOND_TO_PERMISSION: 'sessions:respondToPermission',
-    RESPOND_TO_CREDENTIAL: 'sessions:respondToCredential',
     COMMAND: 'sessions:command',
     GET_PENDING_PLAN_EXECUTION: 'sessions:getPendingPlanExecution',
     GET_PERMISSION_MODE_STATE: 'sessions:getPermissionModeState',
@@ -195,6 +196,9 @@ export const RPC_CHANNELS = {
     SET_MID_STREAM_BEHAVIOR: 'settings:setMidStreamBehavior',
     GET_NETWORK_PROXY: 'settings:getNetworkProxy',
     SET_NETWORK_PROXY: 'settings:setNetworkProxy',
+    GET_DEVELOPER_KIT: 'settings:getDeveloperKit',
+    DISCOVER_DEVELOPER_KIT: 'settings:discoverDeveloperKit',
+    SET_DEVELOPER_KIT: 'settings:setDeveloperKit',
     GET_SERVER_CONFIG: 'settings:getServerConfig',
     SET_SERVER_CONFIG: 'settings:setServerConfig',
     GET_SERVER_STATUS: 'settings:getServerStatus',
@@ -236,22 +240,6 @@ export const RPC_CHANNELS = {
     DELETE: 'drafts:delete',
     GET_ALL: 'drafts:getAll',
   },
-  sources: {
-    GET: 'sources:get',
-    CREATE: 'sources:create',
-    DELETE: 'sources:delete',
-    START_OAUTH: 'sources:startOAuth',
-    SAVE_CREDENTIALS: 'sources:saveCredentials',
-    CHANGED: 'sources:changed',
-    GET_PERMISSIONS: 'sources:getPermissions',
-    GET_MCP_TOOLS: 'sources:getMcpTools',
-  },
-  oauth: {
-    START: 'oauth:start',
-    COMPLETE: 'oauth:complete',
-    CANCEL: 'oauth:cancel',
-    REVOKE: 'oauth:revoke',
-  },
   workspace: {
     GET_PERMISSIONS: 'workspace:getPermissions',
     READ_IMAGE: 'workspace:readImage',
@@ -273,9 +261,6 @@ export const RPC_CHANNELS = {
   },
   toolIcons: {
     GET_MAPPINGS: 'toolIcons:getMappings',
-  },
-  logo: {
-    GET_URL: 'logo:getUrl',
   },
   notification: {
     SHOW: 'notification:show',
@@ -302,12 +287,8 @@ export const RPC_CHANNELS = {
   tools: {
     GET_BROWSER_TOOL_ENABLED: 'tools:getBrowserToolEnabled',
     SET_BROWSER_TOOL_ENABLED: 'tools:setBrowserToolEnabled',
-    GET_DATA_SOURCES_ENABLED: 'tools:getDataSourcesEnabled',
-    SET_DATA_SOURCES_ENABLED: 'tools:setDataSourcesEnabled',
   },
   piExtensions: {
-    GET_DELEGATE_PROMPT_AUTOMATION: 'piExtensions:getDelegatePromptAutomation',
-    SET_DELEGATE_PROMPT_AUTOMATION: 'piExtensions:setDelegatePromptAutomation',
     GET_SETTINGS: 'piExtensions:getSettings',
     SET_SETTINGS: 'piExtensions:setSettings',
     UPDATE_SETTINGS: 'piExtensions:updateSettings',
@@ -330,10 +311,6 @@ export const RPC_CHANNELS = {
     SET_ICON: 'badge:setIcon',
     DRAW: 'badge:draw',
     DRAW_WINDOWS: 'badge:draw-windows',
-  },
-  releaseNotes: {
-    GET: 'releaseNotes:get',
-    GET_LATEST_VERSION: 'releaseNotes:getLatestVersion',
   },
   git: {
     GET_BRANCH: 'git:getBranch',
@@ -369,6 +346,8 @@ export const RPC_CHANNELS = {
     HOST_DOCK_NAVIGATION: 'browser-pane:host-dock-navigation',
   },
   automations: {
+    /** Canonical versioned Automations command surface. */
+    COMMAND: 'automations:command',
     GET: 'automations:get',
     TEST: 'automations:test',
     SET_ENABLED: 'automations:setEnabled',

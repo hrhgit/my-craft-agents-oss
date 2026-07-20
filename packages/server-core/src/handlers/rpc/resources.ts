@@ -1,12 +1,11 @@
 /**
  * Resources RPC Handlers
  *
- * Handles workspace resource export/import (sources, skills, automations).
+ * Handles workspace resource export/import (skills and automations).
  */
 
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import { getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
-import { getCredentialManager, SOURCE_CREDENTIAL_TYPES } from '@mortise/shared/credentials'
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import type {
@@ -33,7 +32,6 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
 
       deps.platform.logger?.info(
         `RESOURCES_EXPORT: Exported from ${resolvedWorkspaceId}: ` +
-        `${result.bundle.resources.sources?.length ?? 0} sources, ` +
         `${result.bundle.resources.skills?.length ?? 0} skills, ` +
         `${result.bundle.resources.automations?.length ?? 0} automations` +
         (result.warnings.length > 0 ? ` (${result.warnings.length} warnings)` : ''),
@@ -51,28 +49,10 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
       const { importResources } = await import('@mortise/shared/resources')
-      const credManager = getCredentialManager()
-
-      const result = await importResources(workspace.rootPath, bundle, mode, {
-        // Clear all credential types for a source slug on overwrite
-        clearSourceCredentials: async (wsId: string, sourceSlug: string) => {
-          for (const credType of SOURCE_CREDENTIAL_TYPES) {
-            try {
-              await credManager.delete({
-                type: credType,
-                workspaceId: wsId,
-                sourceId: sourceSlug,
-              })
-            } catch {
-              // Ignore errors for credential types that don't exist
-            }
-          }
-        },
-      })
+      const result = await importResources(workspace.rootPath, bundle, mode)
 
       deps.platform.logger?.info(
         `RESOURCES_IMPORT: Imported into ${resolvedWorkspaceId} (mode=${mode}): ` +
-        `sources=${result.sources.imported.length} imported, ${result.sources.skipped.length} skipped, ${result.sources.failed.length} failed; ` +
         `skills=${result.skills.imported.length} imported, ${result.skills.skipped.length} skipped, ${result.skills.failed.length} failed; ` +
         `automations=${result.automations.imported.length} imported, ${result.automations.skipped.length} skipped, ${result.automations.failed.length} failed`,
       )
@@ -81,9 +61,6 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       // (Bun's fs.watch doesn't reliably detect atomic renames)
       if (result.automations.imported.length > 0 || result.automations.skipped.length === 0 && bundle.resources.automations?.length) {
         deps.sessionManager.notifyConfigFileChange(workspace.rootPath, 'automations.json')
-      }
-      for (const slug of result.sources.imported) {
-        deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `sources/${slug}/config.json`)
       }
       for (const slug of result.skills.imported) {
         deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `.pi/skills/${slug}/SKILL.md`)

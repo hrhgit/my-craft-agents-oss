@@ -116,21 +116,6 @@ function buildMainProcess(config: BuildConfig): void {
     '--alias:@mortise/shared/protocol=./packages/shared/src/protocol/production.ts',
   ];
 
-  // Add OAuth defines if env vars are set
-  const oauthDefines = [
-    ['GOOGLE_OAUTH_CLIENT_ID', process.env.GOOGLE_OAUTH_CLIENT_ID],
-    ['GOOGLE_OAUTH_CLIENT_SECRET', process.env.GOOGLE_OAUTH_CLIENT_SECRET],
-    ['SLACK_OAUTH_CLIENT_ID', process.env.SLACK_OAUTH_CLIENT_ID],
-    ['SLACK_OAUTH_CLIENT_SECRET', process.env.SLACK_OAUTH_CLIENT_SECRET],
-    ['MICROSOFT_OAUTH_CLIENT_ID', process.env.MICROSOFT_OAUTH_CLIENT_ID],
-  ];
-
-  for (const [key, value] of oauthDefines) {
-    if (value) {
-      mainArgs.push(`--define:process.env.${key}="'${value}'"`);
-    }
-  }
-
   // Use node to run esbuild directly
   run(`node ./node_modules/esbuild/bin/esbuild ${mainArgs.join(' ')}`, rootDir);
   try {
@@ -222,9 +207,14 @@ export async function buildElectronAppWindows(config: BuildConfig): Promise<void
  * Package the Windows app with electron-builder (with retry logic)
  */
 export async function packageWindows(config: BuildConfig): Promise<string> {
-  const { electronDir } = config;
+  const { electronDir, rootDir } = config;
 
   console.log('Packaging app with electron-builder...');
+
+  // The kit remains independently built, but every offline Windows installer
+  // carries the current matching artifact as a user-selectable component.
+  console.log('Staging offline Developer Kit...');
+  run('bun run scripts/stage-developer-kit-for-installer.ts', rootDir);
 
   // Kill any lingering processes first
   await killLockingProcesses();

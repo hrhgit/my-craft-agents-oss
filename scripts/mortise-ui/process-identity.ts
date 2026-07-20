@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 
-const WINDOWS_EPOCH_TICKS = 116444736000000000
+const UNIX_EPOCH_DOTNET_TICKS = 621355968000000000
 const PROCESS_START_TIME_TOLERANCE_MS = 2_000
 
 export interface MortiseUiProcessIdentity {
@@ -19,8 +19,8 @@ export function getProcessStartTime(pid: number | undefined): number | undefined
       `$process = Get-Process -Id ${pid} -ErrorAction Stop; $process.StartTime.ToUniversalTime().Ticks`,
     ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim()
     const ticks = Number(output)
-    if (!Number.isFinite(ticks) || ticks <= WINDOWS_EPOCH_TICKS) return undefined
-    return (ticks - WINDOWS_EPOCH_TICKS) / 10_000
+    if (!Number.isFinite(ticks) || ticks <= UNIX_EPOCH_DOTNET_TICKS) return undefined
+    return (ticks - UNIX_EPOCH_DOTNET_TICKS) / 10_000
   } catch {
     return undefined
   }
@@ -36,11 +36,17 @@ export function isProcessAlive(pid: number | undefined): boolean {
 
 export function matchesProcessIdentity(identity: MortiseUiProcessIdentity): boolean {
   if (!isProcessAlive(identity.pid)) return false
+  if (identity.pid === process.pid) return true
   const observed = getProcessStartTime(identity.pid)
   if (observed === undefined) return true
-  if (identity.startedAt !== undefined) return Math.abs(observed - identity.startedAt) <= PROCESS_START_TIME_TOLERANCE_MS
-  if (identity.recordedAt !== undefined) return observed <= identity.recordedAt + PROCESS_START_TIME_TOLERANCE_MS
-  return true
+  return !isProcessIdentityMismatch(identity, observed)
+}
+
+export function isProcessIdentityMismatch(identity: Omit<MortiseUiProcessIdentity, 'pid'>, observed: number | undefined): boolean {
+  if (observed === undefined) return false
+  if (identity.startedAt !== undefined) return Math.abs(observed - identity.startedAt) > PROCESS_START_TIME_TOLERANCE_MS
+  if (identity.recordedAt !== undefined) return observed > identity.recordedAt + PROCESS_START_TIME_TOLERANCE_MS
+  return false
 }
 
 function validPid(pid: number | undefined): pid is number {

@@ -4,103 +4,14 @@
  */
 import { describe, it, expect } from 'bun:test';
 import {
-  validateSourceConfigContent,
   validateSkillContent,
   validatePermissionsContent,
+  validateToolIconsContent,
   detectConfigFileType,
+  detectAppConfigFileType,
   validateConfigFileContent,
 } from '../src/config/validators.ts';
-
-// ============================================================
-// validateSourceConfigContent
-// ============================================================
-
-describe('validateSourceConfigContent', () => {
-  it('passes for valid MCP source config', () => {
-    const config = JSON.stringify({
-      id: 'test-source',
-      name: 'Test Source',
-      slug: 'test-source',
-      enabled: true,
-      provider: 'custom',
-      type: 'mcp',
-      mcp: { url: 'https://example.com/mcp', authType: 'bearer' },
-    });
-    const result = validateSourceConfigContent(config);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
-
-  it('passes for valid API source config', () => {
-    const config = JSON.stringify({
-      id: 'api-source',
-      name: 'API Source',
-      slug: 'api-source',
-      enabled: true,
-      provider: 'github',
-      type: 'api',
-      api: { baseUrl: 'https://api.github.com', authType: 'bearer' },
-    });
-    const result = validateSourceConfigContent(config);
-    expect(result.valid).toBe(true);
-  });
-
-  it('passes for valid stdio MCP source config', () => {
-    const config = JSON.stringify({
-      id: 'stdio-source',
-      name: 'Stdio Source',
-      slug: 'stdio-source',
-      enabled: true,
-      provider: 'custom',
-      type: 'mcp',
-      mcp: { transport: 'stdio', command: '/usr/local/bin/my-server' },
-    });
-    const result = validateSourceConfigContent(config);
-    expect(result.valid).toBe(true);
-  });
-
-  it('fails for invalid JSON', () => {
-    const result = validateSourceConfigContent('{ invalid json }');
-    expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toContain('Invalid JSON');
-  });
-
-  it('fails when required fields are missing', () => {
-    const config = JSON.stringify({ id: 'x' });
-    const result = validateSourceConfigContent(config);
-    expect(result.valid).toBe(false);
-    expect(result.errors.length).toBeGreaterThan(0);
-  });
-
-  it('fails when slug has invalid characters', () => {
-    const config = JSON.stringify({
-      id: 'test',
-      name: 'Test',
-      slug: 'Invalid_Slug!',
-      enabled: true,
-      provider: 'custom',
-      type: 'mcp',
-      mcp: { url: 'https://example.com', authType: 'bearer' },
-    });
-    const result = validateSourceConfigContent(config);
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.message.includes('Slug'))).toBe(true);
-  });
-
-  it('fails when type-specific config block is missing', () => {
-    const config = JSON.stringify({
-      id: 'test',
-      name: 'Test',
-      slug: 'test',
-      enabled: true,
-      provider: 'custom',
-      type: 'mcp',
-      // Missing mcp block
-    });
-    const result = validateSourceConfigContent(config);
-    expect(result.valid).toBe(false);
-  });
-});
+import { CONFIG_DIR } from '../src/config/paths.ts';
 
 // ============================================================
 // validateSkillContent
@@ -246,8 +157,29 @@ describe('validatePermissionsContent', () => {
   });
 
   it('uses custom displayFile for error messages', () => {
-    const result = validatePermissionsContent('bad', 'sources/github/permissions.json');
-    expect(result.errors[0].file).toBe('sources/github/permissions.json');
+    const result = validatePermissionsContent('bad', 'workspace/permissions.json');
+    expect(result.errors[0].file).toBe('workspace/permissions.json');
+  });
+});
+
+// ============================================================
+// validateToolIconsContent
+// ============================================================
+
+describe('validateToolIconsContent', () => {
+  it('passes for valid tool icon mappings', () => {
+    const config = JSON.stringify({
+      version: 1,
+      tools: [{
+        id: 'git-tool',
+        displayName: 'Git',
+        icon: 'git.svg',
+        commands: ['git'],
+      }],
+    });
+    const result = validateToolIconsContent(config);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
   });
 });
 
@@ -257,17 +189,6 @@ describe('validatePermissionsContent', () => {
 
 describe('detectConfigFileType', () => {
   const workspaceRoot = '/Users/test/.mortise/workspaces/ws-123';
-
-  it('detects source config files', () => {
-    const result = detectConfigFileType(
-      `${workspaceRoot}/sources/github/config.json`,
-      workspaceRoot
-    );
-    expect(result).not.toBeNull();
-    expect(result!.type).toBe('source');
-    expect(result!.slug).toBe('github');
-    expect(result!.displayFile).toBe('sources/github/config.json');
-  });
 
   it('detects skill SKILL.md files', () => {
     const result = detectConfigFileType(
@@ -290,15 +211,14 @@ describe('detectConfigFileType', () => {
     expect(result!.displayFile).toBe('permissions.json');
   });
 
-  it('detects source-level permissions.json', () => {
+  it('detects workspace-level automations.json', () => {
     const result = detectConfigFileType(
-      `${workspaceRoot}/sources/linear/permissions.json`,
+      `${workspaceRoot}/automations.json`,
       workspaceRoot
     );
     expect(result).not.toBeNull();
-    expect(result!.type).toBe('permissions');
-    expect(result!.slug).toBe('linear');
-    expect(result!.displayFile).toBe('sources/linear/permissions.json');
+    expect(result!.type).toBe('automations');
+    expect(result!.displayFile).toBe('automations.json');
   });
 
   it('returns null for files outside workspace root', () => {
@@ -311,7 +231,7 @@ describe('detectConfigFileType', () => {
 
   it('returns null for non-config files in workspace', () => {
     const result = detectConfigFileType(
-      `${workspaceRoot}/sources/github/guide.md`,
+      `${workspaceRoot}/notes/guide.md`,
       workspaceRoot
     );
     expect(result).toBeNull();
@@ -319,10 +239,23 @@ describe('detectConfigFileType', () => {
 
   it('returns null for nested non-matching paths', () => {
     const result = detectConfigFileType(
-      `${workspaceRoot}/sources/github/deep/config.json`,
+      `${workspaceRoot}/nested/deep/config.json`,
       workspaceRoot
     );
     expect(result).toBeNull();
+  });
+});
+
+// ============================================================
+// detectAppConfigFileType
+// ============================================================
+
+describe('detectAppConfigFileType', () => {
+  it('detects app-level tool icon mappings', () => {
+    const result = detectAppConfigFileType(`${CONFIG_DIR}/tool-icons/tool-icons.json`);
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('tool-icons');
+    expect(result!.displayFile).toBe('tool-icons/tool-icons.json');
   });
 });
 
@@ -331,18 +264,6 @@ describe('detectConfigFileType', () => {
 // ============================================================
 
 describe('validateConfigFileContent', () => {
-  it('dispatches to source validator', () => {
-    const detection = { type: 'source' as const, slug: 'test', displayFile: 'sources/test/config.json' };
-    const validConfig = JSON.stringify({
-      id: 'test', name: 'Test', slug: 'test', enabled: true,
-      provider: 'custom', type: 'mcp',
-      mcp: { url: 'https://example.com', authType: 'none' },
-    });
-    const result = validateConfigFileContent(detection, validConfig);
-    expect(result).not.toBeNull();
-    expect(result!.valid).toBe(true);
-  });
-
   it('dispatches to skill validator', () => {
     const detection = { type: 'skill' as const, slug: 'my-skill', displayFile: '.pi/skills/my-skill/SKILL.md' };
     const content = `---
@@ -364,8 +285,28 @@ Content here.
     expect(result!.valid).toBe(true);
   });
 
+  it('dispatches to automations validator', () => {
+    const detection = { type: 'automations' as const, displayFile: 'automations.json' };
+    const result = validateConfigFileContent(detection, JSON.stringify({
+      version: 1,
+      automations: {},
+    }));
+    expect(result).not.toBeNull();
+    expect(result!.valid).toBe(true);
+  });
+
+  it('dispatches to tool icon validator', () => {
+    const detection = { type: 'tool-icons' as const, displayFile: 'tool-icons/tool-icons.json' };
+    const result = validateConfigFileContent(detection, JSON.stringify({
+      version: 1,
+      tools: [],
+    }));
+    expect(result).not.toBeNull();
+    expect(result!.valid).toBe(true);
+  });
+
   it('returns validation errors for invalid content', () => {
-    const detection = { type: 'source' as const, slug: 'bad', displayFile: 'sources/bad/config.json' };
+    const detection = { type: 'permissions' as const, displayFile: 'permissions.json' };
     const result = validateConfigFileContent(detection, '{ not valid json }');
     expect(result).not.toBeNull();
     expect(result!.valid).toBe(false);

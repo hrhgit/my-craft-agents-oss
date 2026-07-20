@@ -15,10 +15,7 @@ import type {
   Workspace,
   FileAttachment,
   PermissionRequest,
-  CredentialRequest,
-  CredentialResponse,
   PermissionMode,
-  LoadedSource,
   LoadedSkill,
   NewChatActionParams,
   PiGlobalProviderForDisplay,
@@ -26,7 +23,11 @@ import type {
   TestAutomationResult,
 } from '../../shared/types'
 import type { SessionOptions, SessionOptionUpdates } from '../hooks/useSessionOptions'
-import type { MidStreamSendIntent } from '@mortise/shared/protocol'
+import type {
+  CreateAndSendFirstTurnRequest,
+  CreateAndSendFirstTurnResult,
+  MidStreamSendIntent,
+} from '@mortise/shared/protocol'
 import { defaultSessionOptions } from '../hooks/useSessionOptions'
 import { sessionAtomFamily } from '../atoms/sessions'
 import type {
@@ -34,6 +35,7 @@ import type {
 } from '@/components/extensions/RemoteUIModal'
 import type { ExtensionUIRequest, ExtensionUIResponse } from '@/hooks/useRemoteUIRequests'
 import type { WorkspaceSelectHandler } from '@/components/workspace/useWorkspaceNavigation'
+import type { WorkspaceNavigationModel } from '@/components/workspace/useWorkspaceNavigation'
 import type { WorkspaceTransitionState } from '@/lib/workspace-transition'
 
 export interface AppShellContextType {
@@ -54,15 +56,12 @@ export interface AppShellContextType {
   piGlobalSettings: PiGlobalSettings
   refreshPiGlobalConfig: () => Promise<void>
   pendingPermissions: Map<string, PermissionRequest[]>
-  pendingCredentials: Map<string, CredentialRequest[]>
   /** Get draft input text for a session - reads from ref without triggering re-renders */
   getDraft: (sessionId: string) => string
   /** Get persisted attachment refs (path + name) for a session's draft - no file IO */
   getDraftAttachmentRefs: (sessionId: string) => import('@mortise/shared/config').DraftAttachmentRef[]
   /** Hydrate persisted attachment refs into full FileAttachment objects (async, reads files) */
   hydrateDraftAttachments: (sessionId: string) => Promise<FileAttachment[]>
-  /** All enabled sources for this workspace - provided by AppShell component */
-  enabledSources?: LoadedSource[]
   /** All skills for this workspace - provided by AppShell component (for @mentions) */
   skills?: LoadedSkill[]
   /** Working directory of the active session — needed for project-level skill resolution */
@@ -80,7 +79,10 @@ export interface AppShellContextType {
 
   // Session callbacks
   onCreateSession: (workspaceId: string, options?: import('../../shared/types').CreateSessionOptions) => Promise<Session>
-  onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@mortise/core').ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => void
+  onCreateAndSendFirstTurn: (
+    input: Omit<CreateAndSendFirstTurnRequest, 'storedAttachments' | 'attachmentStagingId'>,
+  ) => Promise<CreateAndSendFirstTurnResult>
+  onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@mortise/core').ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => Promise<boolean>
   onRenameSession: (sessionId: string, name: string) => void
   onMarkSessionRead: (sessionId: string) => void
   onMarkSessionUnread: (sessionId: string) => void
@@ -97,19 +99,13 @@ export interface AppShellContextType {
     options?: import('../../shared/types').PermissionResponseOptions
   ) => void
 
-  // Credential handling
-  onRespondToCredential?: (
-    sessionId: string,
-    requestId: string,
-    response: CredentialResponse
-  ) => void
-
   // File/URL handlers - these can open in tabs or external apps
   onOpenFile: (path: string) => void
   onOpenUrl: (url: string) => void
 
   // Workspace
   onSelectWorkspace: WorkspaceSelectHandler
+  workspaceNavigation?: WorkspaceNavigationModel
   onRefreshWorkspaces?: () => void | Promise<void>
 
   // App actions
@@ -125,9 +121,6 @@ export interface AppShellContextType {
 
   // Attachment draft callback — persists attachment refs per session
   onAttachmentsChange: (sessionId: string, attachments: FileAttachment[]) => void
-
-  // Source selection callback (per-session) - provided by AppShell component
-  onSessionSourcesChange?: (sessionId: string, sourceSlugs: string[]) => void
 
   // Open a new chat with optional agent, name, and pre-filled input
   openNewChat?: (params?: NewChatActionParams) => Promise<void>
@@ -223,14 +216,6 @@ export function useActiveWorkspace(): Workspace | null {
 export function usePendingPermission(sessionId: string): PermissionRequest | undefined {
   const { pendingPermissions } = useAppShellContext()
   return pendingPermissions.get(sessionId)?.[0]
-}
-
-/**
- * Get pending credential request for a session (first in queue)
- */
-export function usePendingCredential(sessionId: string): CredentialRequest | undefined {
-  const { pendingCredentials } = useAppShellContext()
-  return pendingCredentials.get(sessionId)?.[0]
 }
 
 /**

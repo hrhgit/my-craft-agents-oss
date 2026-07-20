@@ -6,7 +6,6 @@
  *
  * Mention types:
  * - Skills:  [skill:slug] or [skill:workspaceId:slug]
- * - Sources: [source:slug]
  * - Files:   [file:path]
  * - Folders: [folder:path]
  */
@@ -35,8 +34,6 @@ export interface ParsedMentions {
   skills: string[]
   /** Invalid skill slugs mentioned but not found in availableSkillSlugs */
   invalidSkills: string[]
-  /** Source slugs mentioned via [source:slug] */
-  sources: string[]
   /** File paths mentioned via [file:path] */
   files: string[]
   /** Folder paths mentioned via [folder:path] */
@@ -52,36 +49,24 @@ export interface ParsedMentions {
  *
  * @param text - The message text to parse
  * @param availableSkillSlugs - Valid skill slugs to match against
- * @param availableSourceSlugs - Valid source slugs to match against
  * @returns Parsed mentions by type
  *
  * @example
- * parseMentions('[skill:commit] [source:linear]', ['commit'], ['linear'])
- * // Returns: { skills: ['commit'], sources: ['linear'] }
+ * parseMentions('[skill:commit]', ['commit'])
+ * // Returns: { skills: ['commit'] }
  */
 export function parseMentions(
   text: string,
   availableSkillSlugs: string[],
-  availableSourceSlugs: string[]
 ): ParsedMentions {
   const result: ParsedMentions = {
     skills: [],
     invalidSkills: [],
-    sources: [],
     files: [],
     folders: [],
   }
 
-  // Match source mentions: [source:slug]
-  const sourcePattern = /\[source:([\w-]+)\]/g
   let match: RegExpExecArray | null
-  while ((match = sourcePattern.exec(text)) !== null) {
-    const slug = match[1]!
-    if (availableSourceSlugs.includes(slug) && !result.sources.includes(slug)) {
-      result.sources.push(slug)
-    }
-  }
-
   // Match skill mentions: [skill:slug] or [skill:workspaceId:slug]
   // The pattern captures the last component (slug) after any number of colons
   // Workspace IDs can contain spaces, hyphens, underscores, and dots
@@ -145,20 +130,6 @@ export function resolveSkillMentions(
 }
 
 /**
- * Resolve source mentions to semantic markers.
- *
- * [source:github] → [Mentioned source: github]
- *
- * @param text - The message text with source mentions
- */
-export function resolveSourceMentions(text: string): string {
-  return text.replace(
-    /\[source:([\w-]+)\]/g,
-    (_match, slug: string) => `[Mentioned source: ${slug}]`
-  )
-}
-
-/**
  * Resolve file and folder mentions to semantic markers with absolute paths.
  *
  * [file:src/index.ts]       → [Mentioned file: index.ts (at /Users/me/project/src/index.ts)]
@@ -169,7 +140,7 @@ export function resolveSourceMentions(text: string): string {
  * this file/folder and it should be proactively read. This matches the
  * [Attached file: ...] pattern used by drag-and-drop attachments.
  *
- * Leaves other mention types ([skill:...], [source:...]) untouched.
+ * Leaves other mention types such as [skill:...] untouched.
  */
 export function resolveFileMentions(text: string, workingDirectory: string): string {
   return text

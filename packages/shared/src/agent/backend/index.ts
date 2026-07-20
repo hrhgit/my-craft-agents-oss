@@ -33,12 +33,8 @@ export type {
   BackendHostRuntimeContext,
   PermissionCallback,
   PlanCallback,
-  AuthCallback,
-  SourceChangeCallback,
-  SourceActivationCallback,
   ChatOptions,
   RecoveryMessage,
-  SdkMcpServerConfig,
   LlmAuthType,
   LlmProviderType,
   PostInitResult,
@@ -66,7 +62,6 @@ export {
   // Utilities
   resolveModelForProvider,
   getDefaultAuthType,
-  cleanupSourceRuntimeArtifacts,
   testBackendConnection,
 } from './factory.ts';
 

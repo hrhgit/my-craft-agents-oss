@@ -21,8 +21,7 @@ apps/electron/
 │   │   ├── menu.ts        # Application menu (File, Edit, View, Help)
 │   │   ├── sessions.ts    # Session management, MortiseAgent integration
 │   │   ├── deep-link.ts   # Deep link URL parsing and handling
-│   │   ├── agent-service.ts # Agent listing, caching, auth checking
-│   │   └── sources-service.ts # Source and authentication service
+│   │   └── agent-service.ts # Agent listing, caching, auth checking
 │   ├── preload/           # Context bridge (main ↔ renderer)
 │   │   └── index.ts       # Exposes electronAPI to renderer
 │   ├── renderer/          # React UI
@@ -30,7 +29,7 @@ apps/electron/
 │   │   ├── components/
 │   │   │   ├── chat/      # Chat UI (ChatInput, ChatDisplay)
 │   │   │   ├── markdown/  # Markdown renderer with Shiki
-│   │   │   └── ui/        # shadcn/ui components (incl. source-avatar.tsx)
+│   │   │   └── ui/        # Shared shadcn/ui components
 │   │   ├── contexts/
 │   │   │   └── NavigationContext.tsx  # Type-safe routing and navigation
 │   │   ├── lib/
@@ -221,7 +220,6 @@ External apps can navigate using `mortise://` URLs:
 ```
 mortise://settings
 mortise://allSessions/session/session123
-mortise://sources/source/github
 mortise://action/new-chat
 mortise://workspace/{id}/allSessions/session/abc123
 ```
@@ -233,11 +231,10 @@ See `CLAUDE.md` for complete route reference.
 | File | Purpose |
 |------|---------|
 | `main/index.ts` | App entry, window creation |
-| `main/sessions.ts` | MortiseAgent wrapper, event processing, source integration |
+| `main/sessions.ts` | MortiseAgent wrapper and event processing |
 | `main/ipc.ts` | IPC channel handlers (sessions, files, shell) |
 | `main/menu.ts` | Application menu (File, Edit, View, Help) |
 | `main/deep-link.ts` | Deep link URL parsing and handling |
-| `main/sources-service.ts` | Source loading and authentication service |
 | `preload/index.ts` | Context bridge API |
 | `renderer/App.tsx` | React root, state management |
 | `renderer/contexts/NavigationContext.tsx` | Type-safe routing and navigation handler |
@@ -252,7 +249,6 @@ See `CLAUDE.md` for complete route reference.
 | `renderer/components/app-shell/input/structured/PermissionRequest.tsx` | Bash command approval UI |
 | `renderer/components/chat/SessionList.tsx` | Session sidebar with rename support |
 | `renderer/components/chat/AttachmentPreview.tsx` | File attachment bubbles |
-| `renderer/components/ui/source-avatar.tsx` | Unified source icon component |
 | `renderer/playground/` | Component development playground |
 | `shared/types.ts` | IPC channels, Message/Session/FileAttachment types |
 | `shared/routes.ts` | Type-safe route definitions and builders |

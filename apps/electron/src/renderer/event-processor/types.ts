@@ -5,7 +5,7 @@
  * All agent events flow through a single pure function for consistent state transitions.
  */
 
-import type { Session, Message, PermissionRequest, CredentialRequest, TypedError, PermissionMode, AuthRequest, ToolDisplayMeta } from '../../shared/types'
+import type { Session, Message, PermissionRequest, TypedError, PermissionMode, ToolDisplayMeta } from '../../shared/types'
 import type { PlanModeStateV1 } from '@mortise/core/types'
 
 /**
@@ -121,15 +121,6 @@ export interface PermissionRequestEvent {
   type: 'permission_request'
   sessionId: string
   request: PermissionRequest
-}
-
-/**
- * Sources changed event
- */
-export interface SourcesChangedEvent {
-  type: 'sources_changed'
-  sessionId: string
-  enabledSourceSlugs: string[]
 }
 
 /**
@@ -287,12 +278,6 @@ export interface ProviderChangedEvent {
 /**
  * Credential request event - prompts user for credentials
  */
-export interface CredentialRequestEvent {
-  type: 'credential_request'
-  sessionId: string
-  request: CredentialRequest
-}
-
 /**
  * Task backgrounded event - background agent started
  */
@@ -387,37 +372,6 @@ export interface SessionUnsharedEvent {
  * Auth request event - unified auth flow (credential or OAuth)
  * Adds auth-request message to session and displays inline auth UI
  */
-export interface AuthRequestEvent {
-  type: 'auth_request'
-  sessionId: string
-  message: Message
-  request: AuthRequest
-}
-
-/**
- * Auth completed event - auth request was completed (success, failure, or cancelled)
- * Updates the auth-request message status
- */
-export interface AuthCompletedEvent {
-  type: 'auth_completed'
-  sessionId: string
-  requestId: string
-  success: boolean
-  cancelled?: boolean
-  error?: string
-}
-
-/**
- * Source activated event - a source was auto-activated mid-turn.
- * The server owns the auto-retry; renderers should treat this as UI feedback only.
- */
-export interface SourceActivatedEvent {
-  type: 'source_activated'
-  sessionId: string
-  sourceSlug: string
-  originalMessage: string
-}
-
 /**
  * Usage update event - real-time context usage during processing
  * Allows UI to show growing context as agent processes, not just on complete
@@ -443,8 +397,6 @@ export type AgentEvent =
   | ErrorEvent
   | TypedErrorEvent
   | PermissionRequestEvent
-  | CredentialRequestEvent
-  | SourcesChangedEvent
   | NameChangedEvent
   | PlanSubmittedEvent
   | PlanArtifactChangedEvent
@@ -467,9 +419,6 @@ export type AgentEvent =
   | MessageAnnotationsUpdatedEvent
   | SessionSharedEvent
   | SessionUnsharedEvent
-  | AuthRequestEvent
-  | AuthCompletedEvent
-  | SourceActivatedEvent
   | UsageUpdateEvent
 
 /**
@@ -477,7 +426,6 @@ export type AgentEvent =
  */
 export type Effect =
   | { type: 'permission_request'; request: PermissionRequest }
-  | { type: 'credential_request'; request: CredentialRequest }
   | { type: 'generate_title'; sessionId: string; userMessage: string }
   | { type: 'permission_mode_changed'; sessionId: string; permissionMode: PermissionMode; previousPermissionMode?: PermissionMode; transitionDisplay?: string; modeVersion?: number; changedAt?: string; changedBy?: 'user' | 'system' | 'restore' | 'automation' | 'unknown' }
   | { type: 'restore_input'; text: string }

@@ -1,4 +1,4 @@
-import type { CredentialRequest, PermissionRequest, PiProjectionEntityV1 } from '@mortise/shared/protocol'
+import type { PermissionRequest, PiProjectionEntityV1 } from '@mortise/shared/protocol'
 import { isPlanArtifactV1, type PlanArtifactV1 } from '@mortise/core'
 
 export type PiTimelineItem =
@@ -52,18 +52,6 @@ export type PiTimelineItem =
       seq: number
       message: string
     }
-  | {
-      type: 'auth'
-      id: string
-      seq: number
-      request: {
-        requestId: string
-        type: 'oauth' | 'oauth-google' | 'oauth-slack' | 'oauth-microsoft'
-        sourceSlug: string
-        sourceName: string
-        status: 'pending' | 'completed' | 'cancelled' | 'failed'
-      }
-    }
 
 export interface PiRuntimeState {
   isProcessing: boolean
@@ -85,7 +73,6 @@ export function getPiTimelineSearchText(item: PiTimelineItem): string {
       .map(value => typeof value === 'string' ? value : value === undefined ? '' : JSON.stringify(value))
       .join('\n')
   }
-  if (item.type === 'auth') return `${item.request.sourceName}\n${item.request.type}\n${item.request.status}`
   if (item.type === 'attachment') return `${item.name}\n${item.mediaType ?? ''}`
   return item.content
 }
@@ -182,29 +169,6 @@ export function buildPiTimelineItems(entities: readonly PiProjectionEntityV1[]):
         }]
       }
 
-      if (entity.entityType === 'prompt_request'
-        && (entity.kind === 'auth_request' || entity.kind === 'prompt_resolved')
-        && (payload.authType === 'oauth' || payload.authType === 'oauth-google'
-          || payload.authType === 'oauth-slack' || payload.authType === 'oauth-microsoft')
-        && typeof payload.requestId === 'string'
-        && typeof payload.sourceSlug === 'string'
-        && typeof payload.sourceName === 'string') {
-        const status = payload.status === 'pending' ? 'pending'
-          : payload.resolution === 'completed' ? 'completed'
-          : payload.resolution === 'cancelled' ? 'cancelled'
-          : 'failed'
-        return [{
-          type: 'auth', id: entity.entityId, seq: entity.lastSeq,
-          request: {
-            requestId: payload.requestId,
-            type: payload.authType,
-            sourceSlug: payload.sourceSlug,
-            sourceName: payload.sourceName,
-            status,
-          },
-        }]
-      }
-
       if (entity.kind === 'runtime_error') {
         const error = record(payload.error)
         const message = typeof payload.message === 'string'
@@ -266,7 +230,7 @@ export function selectPendingPiPermission(
     description: typeof payload.description === 'string' ? payload.description : payload.toolName,
     command: typeof payload.command === 'string' ? payload.command : undefined,
     type: payload.permissionType === 'bash' || payload.permissionType === 'file_write'
-      || payload.permissionType === 'tool_mutation' || payload.permissionType === 'mcp_mutation' || payload.permissionType === 'api_mutation'
+      || payload.permissionType === 'tool_mutation' || payload.permissionType === 'mcp_mutation'
       || payload.permissionType === 'admin_approval' ? payload.permissionType : undefined,
     appName: typeof payload.appName === 'string' ? payload.appName : undefined,
     reason: typeof payload.reason === 'string' ? payload.reason : undefined,
@@ -275,40 +239,5 @@ export function selectPendingPiPermission(
     rememberForMinutes: typeof payload.rememberForMinutes === 'number' ? payload.rememberForMinutes : undefined,
     commandHash: typeof payload.commandHash === 'string' ? payload.commandHash : undefined,
     approvalTtlSeconds: typeof payload.approvalTtlSeconds === 'number' ? payload.approvalTtlSeconds : undefined,
-  }
-}
-
-/** Maps a secret-free Host auth prompt onto the existing credential form contract. */
-export function selectPendingPiCredential(
-  entities: readonly PiProjectionEntityV1[],
-  sessionId: string,
-): CredentialRequest | undefined {
-  const entity = entities
-    .filter(candidate => candidate.entityType === 'prompt_request' && candidate.kind === 'auth_request')
-    .sort((a, b) => b.lastSeq - a.lastSeq)
-    .find(candidate => record(candidate.payload)?.status === 'pending')
-  const payload = entity ? record(entity.payload) : null
-  if (!payload || payload.authType !== 'credential'
-    || typeof payload.requestId !== 'string'
-    || typeof payload.sourceSlug !== 'string'
-    || typeof payload.sourceName !== 'string') return undefined
-
-  const mode = payload.mode === 'basic' || payload.mode === 'header' || payload.mode === 'query'
-    || payload.mode === 'multi-header' ? payload.mode : 'bearer'
-  const labels = record(payload.labels)
-  const headerNames = Array.isArray(payload.headerNames)
-    ? payload.headerNames.filter((name): name is string => typeof name === 'string')
-    : undefined
-
-  return {
-    type: 'credential', sessionId, requestId: payload.requestId,
-    sourceSlug: payload.sourceSlug, sourceName: payload.sourceName, mode,
-    labels: labels ? {
-      credential: typeof labels.credential === 'string' ? labels.credential : undefined,
-      username: typeof labels.username === 'string' ? labels.username : undefined,
-      password: typeof labels.password === 'string' ? labels.password : undefined,
-    } : undefined,
-    headerNames,
-    passwordRequired: typeof payload.passwordRequired === 'boolean' ? payload.passwordRequired : undefined,
   }
 }

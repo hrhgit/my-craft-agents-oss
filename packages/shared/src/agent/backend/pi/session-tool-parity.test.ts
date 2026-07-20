@@ -21,7 +21,7 @@ describe('Pi backend session tool parity', () => {
 
   it('registers canonical names without transport prefixes', () => {
     const names = getSessionHostToolDefs().map((tool) => tool.name);
-    expect(names).toContain('source_test');
+    expect(names).toContain('spawn_session');
     expect(names.some((name) => name.startsWith('mcp__session__'))).toBe(false);
   });
 });

@@ -9,7 +9,11 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-type WebHandler = (req: Request) => Promise<Response> | Response
+export interface NodeHttpRequestContext {
+  peerAddress?: string
+}
+
+type WebHandler = (req: Request, context: NodeHttpRequestContext) => Promise<Response> | Response
 
 /**
  * Wrap a web-standard fetch handler as a Node HTTP request listener.
@@ -59,10 +63,10 @@ async function handleRequest(
   const request = new Request(url, {
     method: nodeReq.method,
     headers,
-    body,
+    body: body ? new Uint8Array(body) : null,
   })
 
-  const response = await handler(request)
+  const response = await handler(request, { peerAddress: nodeReq.socket.remoteAddress })
 
   // Write web-standard Response back to Node ServerResponse.
   // Headers.forEach iterates each value separately, which correctly

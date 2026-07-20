@@ -65,7 +65,6 @@ mortise-cli versions          # Show server runtime versions
 mortise-cli workspaces        # List all workspaces
 mortise-cli sessions          # List sessions in workspace
 mortise-cli providers         # List AI providers
-mortise-cli sources           # List configured sources
 ```
 
 ### Session Operations
@@ -119,7 +118,7 @@ mortise-cli listen session:event
 
 ```bash
 mortise-cli run <prompt>
-mortise-cli run --workspace-dir ./project --source github "List open PRs"
+mortise-cli run --workspace-dir ./project "Summarize this repository"
 ```
 
 The `run` command is fully self-contained — it spawns a headless server, creates a session, sends the prompt, streams the response, and exits. No separate server setup needed. An API key is resolved from `--api-key`, `$LLM_API_KEY`, or a provider-specific env var (e.g., `$OPENAI_API_KEY`, `$GOOGLE_API_KEY`).
@@ -127,7 +126,6 @@ The `run` command is fully self-contained — it spawns a headless server, creat
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--workspace-dir <path>` | — | Register a workspace directory before running |
-| `--source <slug>` | — | Enable a source (repeatable) |
 | `--output-format <fmt>` | `text` | Output format: `text` or `stream-json` |
 | `--mode <mode>` | `allow-all` | Permission mode for the session |
 | `--no-cleanup` | `false` | Skip session deletion on exit |
@@ -171,6 +169,45 @@ Pi extensions that use interaction V1 or legacy RemoteUI work with
 `--interactive`, and degrade gracefully (auto-cancel) in the default
 non-interactive mode.
 
+### Automations
+
+Automations use the host-owned `automation.workspace/v1` protocol. The CLI
+never edits automation files or owns a scheduler.
+
+```bash
+mortise-cli --workspace <id> automation describe
+mortise-cli --workspace <id> automation list
+mortise-cli --workspace <id> automation get <automation-id>
+mortise-cli --workspace <id> automation validate @definition.json
+mortise-cli --workspace <id> automation create @definition.json --expected-revision null
+mortise-cli --workspace <id> automation update @definition.json --expected-revision 4
+mortise-cli --workspace <id> automation delete <automation-id> --expected-revision 4
+mortise-cli --workspace <id> automation set-enabled <automation-id> false --expected-revision 4
+mortise-cli --workspace <id> automation run <automation-id>
+mortise-cli --workspace <id> automation get-run <run-id>
+mortise-cli --workspace <id> automation list-runs --automation-id <automation-id> --limit 20
+mortise-cli --workspace <id> automation emit-event @event.json
+```
+
+Mutating commands accept `--operation-id`; otherwise the CLI generates one.
+Updates require the current revision. `run` and `emit-event` return after
+durable acceptance; use `get-run` to query completion.
+
+External programs use the loopback structured CloudEvents route:
+
+```text
+POST /api/automations/workspaces/<workspace-id>/events
+Content-Type: application/cloudevents+json
+Authorization: Bearer <workspace-capability-token>
+```
+
+`automation token path` discovers the owner-only token file and `automation
+token rotate` replaces it. The token is absent from endpoint metadata and CLI
+output. Events are limited to 1 MiB, and `202` is returned only after durable
+acceptance. The default local producer credential is bound to CloudEvent
+sources beginning with `urn:mortise:external:` and event types beginning with
+`mortise.`; events outside those namespaces are rejected before persistence.
+
 ### Validate Server
 
 ```bash
@@ -183,7 +220,7 @@ mortise-cli --validate-server
 
 When no `--url` is provided, `--validate-server` automatically spawns a local headless server (same as the `run` command), runs the validation, and shuts it down.
 
-Runs a 21-step integration test covering the full server lifecycle including source and skill creation:
+Runs an integration test covering the full server lifecycle, including session, skill, branching, and automation workflows:
 
 1. Connect + handshake
 2. `credentials:healthCheck`
@@ -192,22 +229,19 @@ Runs a 21-step integration test covering the full server lifecycle including sou
 5. `workspaces:get`
 6. `sessions:get`
 7. `LLM_Connection:list`
-8. `sources:get`
-9. `sessions:create` (temporary `__cli-validate-*` session)
-10. `sessions:getMessages`
-11. Send message + stream (text response)
-12. Send message + tool use (Bash tool)
-13. `sources:create` (temporary Cat Facts API source)
-14. Send + source mention (uses the created source)
-15. Send + skill create (writes SKILL.md via Bash)
-16. `skills:get` (verify skill appears)
-17. Send + skill mention (invokes the created skill)
-18. `skills:delete` (cleanup)
-19. `sources:delete` (cleanup)
-20. `sessions:delete` (cleanup)
-21. Disconnect
+8. `sessions:create` (temporary `__cli-validate-*` session)
+9. `sessions:getMessages`
+10. Send message + stream (text response)
+11. Send message + tool use (Bash tool)
+12. Exercise session self-management tools
+13. Create and verify a branch
+14. Send + skill create (writes SKILL.md via Bash)
+15. `skills:get` and skill invocation
+16. Exercise automation validation
+17. Delete temporary skills, branches, sessions, and workspaces
+18. Disconnect
 
-**Note:** This test mutates workspace state — it creates and deletes a temporary session, source, and skill. All resources are cleaned up on completion. Continues on failure and reports a summary. Use `--json` for machine-readable output.
+**Note:** This test mutates workspace state by creating temporary sessions, skills, and automations. It cleans them up on completion, continues on failure, and reports a summary. Use `--json` for machine-readable output.
 
 ## Scripting Patterns
 

@@ -17,7 +17,6 @@ export type { SessionFilter, SettingsSubpage }
  */
 export type SidebarMode =
   | { type: 'sessions'; filter: SessionFilter }
-  | { type: 'sources' }
   | { type: 'settings'; subpage: SettingsSubpage | null }
 
 /**
@@ -26,13 +25,6 @@ export type SidebarMode =
 export const isSessionsMode = (
   mode: SidebarMode
 ): mode is { type: 'sessions'; filter: SessionFilter } => mode.type === 'sessions'
-
-/**
- * Type guard to check if mode is sources mode
- */
-export const isSourcesMode = (
-  mode: SidebarMode
-): mode is { type: 'sources' } => mode.type === 'sources'
 
 /**
  * Type guard to check if mode is settings mode
@@ -46,7 +38,6 @@ export const isSettingsMode = (
  * Used to save/restore the last selected sidebar mode
  */
 export const getSidebarModeKey = (mode: SidebarMode): string => {
-  if (mode.type === 'sources') return 'sources'
   if (mode.type === 'settings') {
     return mode.subpage === null ? 'settings' : `settings:${mode.subpage}`
   }
@@ -58,7 +49,6 @@ export const getSidebarModeKey = (mode: SidebarMode): string => {
  * Returns null if the key is invalid or requires validation (state)
  */
 export const parseSidebarModeKey = (key: string): SidebarMode | null => {
-  if (key === 'sources') return { type: 'sources' }
   if (key === 'allSessions') return { type: 'sessions', filter: { kind: 'allSessions' } }
   if (key.startsWith('settings:')) {
     const subpage = key.slice(9) as SettingsSubpage

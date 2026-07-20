@@ -1,12 +1,11 @@
 /**
  * Safe Mode Configuration
  *
- * Allows customization of Safe Mode rules per workspace and per source.
+ * Allows customization of Safe Mode rules per workspace.
  * Users can create permissions.json files to extend the default rules.
  *
  * File locations:
  * - Workspace: ~/.mortise/workspaces/{slug}/permissions.json
- * - Per-source: ~/.mortise/workspaces/{slug}/sources/{sourceSlug}/permissions.json
  *
  * Rules are additive - custom configs extend the defaults (more permissive).
  */
@@ -20,15 +19,12 @@ import { atomicWriteFileSync, readJsonFileSync, safeJsonParse } from '../utils/f
 import { withFileLockSync } from '../storage/index.ts';
 import { CONFIG_DIR } from '../config/paths.ts';
 import { getBundledAssetsDir } from '../utils/paths.ts';
-import { getSourcePath } from '../sources/storage.ts';
 import { isValidPermissionsFile } from '../config/validators.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
 import {
   SAFE_MODE_CONFIG,
   PermissionsConfigSchema,
-  type ApiEndpointRule,
   type PermissionsConfigFile,
-  type CompiledApiEndpointRule,
   type CompiledBashPattern,
   type CompiledBlockedCommandHint,
   type BlockedCommandHintRule,
@@ -66,8 +62,7 @@ export function getAppPermissionsDir(): string {
  * - If file exists and bundled is newer → merge new patterns, update version
  * - If file exists and same/older version → no-op (preserve user changes)
  *
- * User customizations in workspace/source permissions.json files
- * are never touched by this function.
+ * User customizations in workspace permissions.json files are never touched by this function.
  */
 export function ensureDefaultPermissions(): void {
   // Skip if already initialized this session (prevents re-init on hot reload)
@@ -214,9 +209,7 @@ export function loadDefaultPermissions(): PermissionsCustomConfig | null {
 // Re-export types from mode-types for external consumers
 export {
   PermissionsConfigSchema,
-  type ApiEndpointRule,
   type PermissionsConfigFile,
-  type CompiledApiEndpointRule,
   type CompiledBashPattern,
   type PermissionPaths,
 };
@@ -246,8 +239,6 @@ export interface PermissionsCustomConfig {
   allowedBashPatterns: PatternWithComment[];
   /** Additional MCP patterns to allow (as regex strings) */
   allowedMcpPatterns: string[];
-  /** API endpoint rules for fine-grained control */
-  allowedApiEndpoints: ApiEndpointRule[];
   /** File paths to allow writes in Explore mode (glob pattern strings) */
   allowedWritePaths: string[];
   /** Command-specific hints for blocked Bash commands */
@@ -265,8 +256,6 @@ export interface MergedPermissionsConfig {
   /** Command-specific hints for blocked Bash command explanations */
   blockedCommandHints: CompiledBlockedCommandHint[];
   readOnlyMcpPatterns: RegExp[];
-  /** Fine-grained API endpoint rules */
-  allowedApiEndpoints: CompiledApiEndpointRule[];
   /** File paths allowed for writes in Explore mode (glob patterns) */
   allowedWritePaths: string[];
   /** Display name for error messages */
@@ -278,12 +267,10 @@ export interface MergedPermissionsConfig {
 }
 
 /**
- * Context for permissions checking (includes workspace/source/agent info)
+ * Context for workspace permission checks.
  */
 export interface PermissionsContext {
   workspaceRootPath: string;
-  /** Active source slugs for source-specific rules */
-  activeSourceSlugs?: string[];
 }
 
 // ============================================================
@@ -297,7 +284,6 @@ export function parsePermissionsJson(content: string): PermissionsCustomConfig {
   const emptyConfig: PermissionsCustomConfig = {
     allowedBashPatterns: [],
     allowedMcpPatterns: [],
-    allowedApiEndpoints: [],
     allowedWritePaths: [],
     blockedCommandHints: [],
   };
@@ -337,7 +323,6 @@ export function parsePermissionsJson(content: string): PermissionsCustomConfig {
     return {
       allowedBashPatterns: normalizeBashPatterns(data.allowedBashPatterns),
       allowedMcpPatterns: normalizePatterns(data.allowedMcpPatterns),
-      allowedApiEndpoints: data.allowedApiEndpoints ?? [],
       allowedWritePaths: normalizePatterns(data.allowedWritePaths),
       blockedCommandHints: data.blockedCommandHints ?? [],
     };
@@ -425,16 +410,6 @@ export function validatePermissionsConfig(config: PermissionsConfigFile): string
   checkPatterns(config.allowedBashPatterns, 'allowedBashPatterns');
   checkPatterns(config.allowedMcpPatterns, 'allowedMcpPatterns');
 
-  // Validate API endpoint patterns
-  if (config.allowedApiEndpoints) {
-    for (let i = 0; i < config.allowedApiEndpoints.length; i++) {
-      const rule = config.allowedApiEndpoints[i];
-      if (rule && !validateRegex(rule.path)) {
-        errors.push(`allowedApiEndpoints[${i}].path: Invalid regex pattern: ${rule.path}`);
-      }
-    }
-  }
-
   // Validate blocked command hint conditional regex patterns
   if (config.blockedCommandHints) {
     for (let i = 0; i < config.blockedCommandHints.length; i++) {
@@ -460,13 +435,6 @@ export function getWorkspacePermissionsPath(workspaceRootPath: string): string {
 }
 
 /**
- * Get path to source permissions.json
- */
-export function getSourcePermissionsPath(workspaceRootPath: string, sourceSlug: string): string {
-  return join(getSourcePath(workspaceRootPath, sourceSlug), 'permissions.json');
-}
-
-/**
  * Load workspace-level permissions config
  */
 export function loadWorkspacePermissionsConfig(workspaceRootPath: string): PermissionsCustomConfig | null {
@@ -480,27 +448,6 @@ export function loadWorkspacePermissionsConfig(workspaceRootPath: string): Permi
     return config;
   } catch (error) {
     debug(`[Permissions] Error loading workspace config:`, error);
-    return null;
-  }
-}
-
-/**
- * Load source-level permissions config
- */
-export function loadSourcePermissionsConfig(
-  workspaceRootPath: string,
-  sourceSlug: string
-): PermissionsCustomConfig | null {
-  const path = getSourcePermissionsPath(workspaceRootPath, sourceSlug);
-  if (!existsSync(path)) return null;
-
-  try {
-    const content = readFileSync(path, 'utf-8');
-    const config = parsePermissionsJson(content);
-    debug(`[Permissions] Loaded source config from ${path}:`, config);
-    return config;
-  } catch (error) {
-    debug(`[Permissions] Error loading source config:`, error);
     return null;
   }
 }
@@ -526,21 +473,6 @@ export function loadRawWorkspacePermissions(workspaceRootPath: string): Permissi
 }
 
 /**
- * Load raw PermissionsConfigFile from a source permissions.json.
- * Returns null if the file doesn't exist.
- */
-export function loadRawSourcePermissions(workspaceRootPath: string, sourceSlug: string): PermissionsConfigFile | null {
-  const filePath = getSourcePermissionsPath(workspaceRootPath, sourceSlug);
-  if (!existsSync(filePath)) return null;
-  const content = readFileSync(filePath, 'utf-8');
-  const json = safeJsonParse(content);
-  const result = PermissionsConfigSchema.safeParse(json);
-  if (!result.success) return null;
-  permissionSnapshots.set(result.data, permissionsHash(result.data));
-  return result.data;
-}
-
-/**
  * Save a PermissionsConfigFile to the workspace permissions.json.
  */
 export function saveWorkspacePermissions(workspaceRootPath: string, config: PermissionsConfigFile): void {
@@ -548,17 +480,6 @@ export function saveWorkspacePermissions(workspaceRootPath: string, config: Perm
   mkdirSync(workspaceRootPath, { recursive: true });
   persistPermissions(filePath, config);
   permissionsConfigCache.invalidateWorkspace(workspaceRootPath);
-}
-
-/**
- * Save a PermissionsConfigFile to a source permissions.json.
- */
-export function saveSourcePermissions(workspaceRootPath: string, sourceSlug: string, config: PermissionsConfigFile): void {
-  const filePath = getSourcePermissionsPath(workspaceRootPath, sourceSlug);
-  const sourceDir = getSourcePath(workspaceRootPath, sourceSlug);
-  mkdirSync(sourceDir, { recursive: true });
-  persistPermissions(filePath, config);
-  permissionsConfigCache.invalidateSource(workspaceRootPath, sourceSlug);
 }
 
 function persistPermissions(filePath: string, config: PermissionsConfigFile): void {
@@ -576,33 +497,6 @@ function persistPermissions(filePath: string, config: PermissionsConfigFile): vo
 }
 
 // ============================================================
-// API Endpoint Checking
-// ============================================================
-
-/**
- * Check if an API call is allowed by endpoint rules
- */
-export function isApiEndpointAllowed(
-  method: string,
-  path: string,
-  config: MergedPermissionsConfig
-): boolean {
-  const upperMethod = method.toUpperCase();
-
-  // GET is always allowed
-  if (upperMethod === 'GET') return true;
-
-  // Check fine-grained endpoint rules
-  for (const rule of config.allowedApiEndpoints) {
-    if (rule.method === upperMethod && rule.pathPattern.test(path)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// ============================================================
 // Config Cache
 // ============================================================
 
@@ -612,7 +506,6 @@ export function isApiEndpointAllowed(
  */
 class PermissionsConfigCache {
   private workspaceConfigs: Map<string, PermissionsCustomConfig | null> = new Map();
-  private sourceConfigs: Map<string, PermissionsCustomConfig | null> = new Map();
   private mergedConfigs: Map<string, MergedPermissionsConfig> = new Map();
 
   // App-level default permissions (loaded from ~/.mortise/permissions/default.json)
@@ -640,17 +533,6 @@ class PermissionsConfigCache {
   }
 
   /**
-   * Get or load source config
-   */
-  getSourceConfig(workspaceRootPath: string, sourceSlug: string): PermissionsCustomConfig | null {
-    const key = `${workspaceRootPath}::${sourceSlug}`;
-    if (!this.sourceConfigs.has(key)) {
-      this.sourceConfigs.set(key, loadSourcePermissionsConfig(workspaceRootPath, sourceSlug));
-    }
-    return this.sourceConfigs.get(key) ?? null;
-  }
-
-  /**
    * Invalidate app-level default permissions (called by ConfigWatcher)
    * This clears all merged configs since defaults affect everything
    */
@@ -675,33 +557,9 @@ class PermissionsConfigCache {
     }
   }
 
-  /**
-   * Invalidate source config (called by ConfigWatcher)
-   */
-  invalidateSource(workspaceRootPath: string, sourceSlug: string): void {
-    debug(`[Permissions] Invalidating source config: ${workspaceRootPath}/${sourceSlug}`);
-    this.sourceConfigs.delete(`${workspaceRootPath}::${sourceSlug}`);
-    // Clear merged configs that include this source
-    // Cache key format: "{workspaceRootPath}::{source1},{source2},..."
-    // Use precise matching to avoid false positives (e.g., "linear" matching "linear-triage")
-    for (const key of this.mergedConfigs.keys()) {
-      if (!key.startsWith(`${workspaceRootPath}::`)) continue;
-
-      // Extract sources portion after the ::
-      const sourcesStr = key.slice(workspaceRootPath.length + 2);
-      if (!sourcesStr) continue;
-
-      // Check for exact match: at start, end, or between commas
-      const sources = sourcesStr.split(',');
-      if (sources.includes(sourceSlug)) {
-        this.mergedConfigs.delete(key);
-      }
-    }
-  }
-
 
   /**
-   * Get merged config for a context (workspace + active sources)
+   * Get merged config for a workspace context.
    * Uses additive merging: custom configs extend defaults
    */
   getMergedConfig(context: PermissionsContext): MergedPermissionsConfig {
@@ -726,7 +584,6 @@ class PermissionsConfigCache {
       readOnlyBashPatterns: [...defaults.readOnlyBashPatterns],
       blockedCommandHints: [...(defaults.blockedCommandHints ?? [])],
       readOnlyMcpPatterns: [...defaults.readOnlyMcpPatterns],
-      allowedApiEndpoints: [],
       allowedWritePaths: [],
       displayName: defaults.displayName,
       shortcutHint: defaults.shortcutHint,
@@ -749,17 +606,6 @@ class PermissionsConfigCache {
     const wsConfig = this.getWorkspaceConfig(context.workspaceRootPath);
     if (wsConfig) {
       this.applyCustomConfig(merged, wsConfig);
-    }
-
-    // Add source-level customizations (additive, with auto-scoped MCP patterns)
-    if (context.activeSourceSlugs) {
-      for (const sourceSlug of context.activeSourceSlugs) {
-        const srcConfig = this.getSourceConfig(context.workspaceRootPath, sourceSlug);
-        if (srcConfig) {
-          // Use applySourceConfig which auto-scopes MCP patterns to this source
-          this.applySourceConfig(merged, srcConfig, sourceSlug);
-        }
-      }
     }
 
     return merged;
@@ -797,17 +643,6 @@ class PermissionsConfigCache {
         merged.readOnlyMcpPatterns.push(regex);
       } else {
         debug(`[Permissions] Invalid default MCP pattern, skipping: ${pattern}`);
-      }
-    }
-
-    // Add allowed API endpoints
-    for (const rule of config.allowedApiEndpoints) {
-      const pathRegex = validateRegex(rule.path);
-      if (pathRegex) {
-        merged.allowedApiEndpoints.push({
-          method: rule.method,
-          pathPattern: pathRegex,
-        });
       }
     }
 
@@ -855,19 +690,6 @@ class PermissionsConfigCache {
       }
     }
 
-    // Add allowed API endpoints (fine-grained)
-    for (const rule of custom.allowedApiEndpoints) {
-      const pathRegex = validateRegex(rule.path);
-      if (pathRegex) {
-        merged.allowedApiEndpoints.push({
-          method: rule.method,
-          pathPattern: pathRegex,
-        });
-      } else {
-        debug(`[Permissions] Invalid API endpoint path pattern, skipping: ${rule.path}`);
-      }
-    }
-
     // Add allowed write paths (glob patterns, stored as strings)
     for (const pattern of custom.allowedWritePaths) {
       merged.allowedWritePaths.push(pattern);
@@ -882,80 +704,8 @@ class PermissionsConfigCache {
     }
   }
 
-  /**
-   * Apply source-specific config with auto-scoped MCP patterns.
-   * MCP patterns in a source's permissions.json are automatically prefixed with
-   * mcp__<sourceSlug>__ so they only apply to that source's tools.
-   * This prevents cross-source leakage when using simple patterns like "list".
-   */
-  private applySourceConfig(
-    merged: MergedPermissionsConfig,
-    custom: PermissionsCustomConfig,
-    sourceSlug: string
-  ): void {
-    // Write paths - apply normally (global effect)
-    for (const pattern of custom.allowedWritePaths) {
-      merged.allowedWritePaths.push(pattern);
-    }
-
-    // MCP patterns - AUTO-SCOPE to this source
-    // User writes: "list" → becomes: "mcp__<sourceSlug>__.*list"
-    // This ensures patterns only match tools from THIS source
-    for (const pattern of custom.allowedMcpPatterns) {
-      const scopedPattern = `mcp__${sourceSlug}__.*${pattern}`;
-      const regex = validateRegex(scopedPattern);
-      if (regex) {
-        merged.readOnlyMcpPatterns.push(regex);
-        debug(`[Permissions] Scoped MCP pattern for ${sourceSlug}: ${pattern} → ${scopedPattern}`);
-      } else {
-        debug(`[Permissions] Invalid MCP pattern after scoping, skipping: ${scopedPattern}`);
-      }
-    }
-
-    // Bash patterns - apply normally (not source-specific)
-    for (const patternEntry of custom.allowedBashPatterns) {
-      if (!shouldCompileBashPattern(patternEntry.pattern)) {
-        debug(`[Permissions] Skipping mortise bash pattern (feature disabled): ${patternEntry.pattern}`);
-        continue;
-      }
-
-      const regex = validateRegex(patternEntry.pattern);
-      if (regex) {
-        merged.readOnlyBashPatterns.push({
-          regex,
-          source: patternEntry.pattern,
-          comment: patternEntry.comment,
-        });
-      } else {
-        debug(`[Permissions] Invalid bash pattern, skipping: ${patternEntry.pattern}`);
-      }
-    }
-
-    // API endpoints - apply normally (API tools are already source-scoped as api_<slug>)
-    for (const rule of custom.allowedApiEndpoints) {
-      const pathRegex = validateRegex(rule.path);
-      if (pathRegex) {
-        merged.allowedApiEndpoints.push({
-          method: rule.method,
-          pathPattern: pathRegex,
-        });
-      } else {
-        debug(`[Permissions] Invalid API endpoint path pattern, skipping: ${rule.path}`);
-      }
-    }
-
-    // Blocked command hints - apply normally (bash is session-level)
-    for (const hint of custom.blockedCommandHints) {
-      const compiled = compileBlockedCommandHint(hint);
-      if (compiled) {
-        merged.blockedCommandHints.push(compiled);
-      }
-    }
-  }
-
   private buildCacheKey(context: PermissionsContext): string {
-    const sources = context.activeSourceSlugs?.sort().join(',') ?? '';
-    return `${context.workspaceRootPath}::${sources}`;
+    return context.workspaceRootPath;
   }
 
   /**
@@ -964,7 +714,6 @@ class PermissionsConfigCache {
   clear(): void {
     this.defaultConfig = undefined;
     this.workspaceConfigs.clear();
-    this.sourceConfigs.clear();
     this.mergedConfigs.clear();
   }
 }

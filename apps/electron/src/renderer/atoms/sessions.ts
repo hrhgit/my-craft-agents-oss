@@ -27,7 +27,6 @@ export interface SessionMeta {
   isProcessing?: boolean
   lastReadMessageId?: string
   workingDirectory?: string
-  enabledSourceSlugs?: string[]
   /** Shared viewer URL (if shared via viewer) */
   sharedUrl?: string
   /** Shared session ID in viewer (for revoke) */

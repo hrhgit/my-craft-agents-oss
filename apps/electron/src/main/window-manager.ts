@@ -10,6 +10,7 @@ import { RPC_CHANNELS, type BrowserHostDockNavigationCommand, type WindowCloseRe
 import type { SavedWindow } from './window-state'
 import { clampWindowBounds, type WindowBounds } from './window-bounds'
 import {
+  applyInitialWindowNavigation,
   applyWindowRendererRuntimeQuery,
   buildInitialWindowRendererQuery,
   resolveWindowLayoutRuntime,
@@ -108,6 +109,8 @@ export interface CreateWindowOptions {
   initialDeepLink?: string
   /** Session selected after the initial workspace session list has loaded. */
   initialSessionId?: string
+  /** Explicit renderer route that overrides restored panel URL state. */
+  initialRoute?: string
   /** Full URL to restore from saved state (preserves route/query params) */
   restoreUrl?: string
   /** Custom window width (overrides focused/default size) */
@@ -306,7 +309,7 @@ export class WindowManager {
    */
   createWindow(options: CreateWindowOptions): BrowserWindow {
     const {
-      workspaceId, focused = false, initialDeepLink, initialSessionId, restoreUrl, customTitle,
+      workspaceId, focused = false, initialDeepLink, initialSessionId, initialRoute, restoreUrl, customTitle,
       role = 'main', sessionId, parentWebContentsId, layoutWindowId,
     } = options
 
@@ -464,6 +467,7 @@ export class WindowManager {
       workspaceId,
       focused,
       initialSessionId,
+      initialRoute,
       layoutWindowId: resolvedLayoutWindowId,
       ...runtimeQueryOptions,
     })
@@ -489,10 +493,10 @@ export class WindowManager {
           const devUrl = new URL(VITE_DEV_SERVER_URL)
           // Preserve pathname and search from saved URL, use dev server host
           devUrl.pathname = savedUrl.pathname
-          rendererQuery = withWindowRuntimeQuery({
+          rendererQuery = withWindowRuntimeQuery(applyInitialWindowNavigation({
             ...Object.fromEntries(savedUrl.searchParams),
             workspaceId,
-          })
+          }, initialRoute))
           devUrl.search = new URLSearchParams(rendererQuery).toString()
           window.loadURL(devUrl.toString())
         } catch {
@@ -508,10 +512,10 @@ export class WindowManager {
         // mounts to a different /tmp dir on each launch). See #13.
         try {
           const savedUrl = new URL(restoreUrl)
-          rendererQuery = withWindowRuntimeQuery({
+          rendererQuery = withWindowRuntimeQuery(applyInitialWindowNavigation({
             ...Object.fromEntries(savedUrl.searchParams),
             workspaceId,
-          })
+          }, initialRoute))
           window.loadFile(join(__dirname, 'renderer/index.html'), { query: rendererQuery })
         } catch {
           rendererQuery = defaultRendererQuery

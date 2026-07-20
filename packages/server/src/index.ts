@@ -39,9 +39,18 @@ import {
 import { validateSession, createWebuiHandler, nodeHttpAdapter } from '@mortise/server-core/webui'
 import type { WebuiHandler } from '@mortise/server-core/webui'
 import { getCredentialManager } from '@mortise/shared/credentials'
-import { CONFIG_DIR, getWorkspaces } from '@mortise/shared/config'
-import { errorMessage } from '@mortise/shared/utils'
+import { CONFIG_DIR, getWorkspaceByNameOrId, getWorkspaces } from '@mortise/shared/config'
+import { errorMessage, writeRuntimeLog } from '@mortise/shared/utils'
 import { createMessagingBootstrap, type MessagingBootstrapHandle } from '@mortise/messaging-gateway'
+import {
+  AutomationIngressTokenRegistry,
+  createAutomationIngressHandler,
+  type AutomationWorkspaceDispatcherV1,
+} from '@mortise/server-core/services'
+import {
+  registerAutomationWorkspaceRpcHandlers,
+} from '@mortise/server-core/handlers'
+import { executeAutomationWorkspaceOperationV1 } from '@mortise/server-core/handlers/rpc/automations'
 
 // --generate-token: print a crypto-random token and exit
 if (process.argv.includes('--generate-token')) {
@@ -56,6 +65,12 @@ import { setSearchPlatform, setImageProcessor } from '@mortise/server-core/servi
 import type { HandlerDeps } from '@mortise/server-core/handlers'
 
 process.env.MORTISE_IS_PACKAGED ??= 'false'
+process.env.MORTISE_PROCESS_ROLE ??= 'server'
+process.env.MORTISE_BACKEND_KIND ??= 'headless'
+process.env.MORTISE_PRODUCT_VERSION ??= process.env.MORTISE_VERSION ?? packageVersion
+process.env.MORTISE_BUILD_ID ??= `${process.env.MORTISE_IS_PACKAGED === 'true' ? 'packaged' : 'source'}:${process.env.MORTISE_PRODUCT_VERSION}`
+writeRuntimeLog('info', { scope: 'process', event: 'started', data: { argv0: process.argv0 } })
+process.once('exit', code => writeRuntimeLog('info', { scope: 'process', event: 'finished', data: { exitCode: code } }))
 
 // Prevent unhandled rejections from crashing the server.
 // SDK subprocess abort can reject promises that propagate up unhandled;
@@ -133,7 +148,8 @@ const isLoopbackRpcHost = ['127.0.0.1', 'localhost', '::1'].includes(rpcHost)
 // ---------------------------------------------------------------------------
 
 let webuiHandler: WebuiHandler | null = null
-let webuiNodeHandler: ReturnType<typeof nodeHttpAdapter> | undefined
+const automationIngressTokens = new AutomationIngressTokenRegistry(CONFIG_DIR)
+let automationWorkspaceDispatcher: AutomationWorkspaceDispatcherV1 | null = null
 
 // Health check is injected lazily — the session manager isn't ready until
 // after bootstrap completes, but the handler captures the closure.
@@ -156,9 +172,25 @@ if (webuiEnabled && serverToken) {
     getHealthCheck: () => healthCheckFn?.() ?? { status: 'starting' },
     logger: { info: console.log, warn: console.warn, error: console.error } as any,
   })
-
-  webuiNodeHandler = nodeHttpAdapter(webuiHandler.fetch)
 }
+
+const automationIngressHandler = createAutomationIngressHandler({
+  tokens: automationIngressTokens,
+  workspaceExists: workspaceId => Boolean(getWorkspaceByNameOrId(workspaceId)),
+  dispatcher: {
+    execute: (workspaceId, command, context) => {
+      if (!automationWorkspaceDispatcher) throw new Error('Automation dispatcher is still starting')
+      return automationWorkspaceDispatcher.execute(workspaceId, command, context)
+    },
+  },
+})
+const webuiNodeHandler = nodeHttpAdapter(async (request, context) => {
+  const ingressResponse = await automationIngressHandler(request, context.peerAddress)
+  if (ingressResponse) return ingressResponse
+  return webuiHandler
+    ? webuiHandler.fetch(request)
+    : new Response('Not Found', { status: 404 })
+})
 
 // Resolve WhatsApp worker paths up-front so the helper + Docker env stay in sync.
 // The worker is a Node subprocess — Bun cannot run it directly — so we must
@@ -215,7 +247,7 @@ const instance = await (async () => {
       }),
       createSessionManager: () => new SessionManager(),
       bindRpcServer: (sm, server) => sm.setRpcServer(server),
-      createHandlerDeps: ({ sessionManager, platform, oauthFlowStore }) => {
+      createHandlerDeps: ({ sessionManager, platform }) => {
         messagingHandle = createMessagingBootstrap({
           sessionManager,
           credentialManager: getCredentialManager(),
@@ -231,7 +263,6 @@ const instance = await (async () => {
         return {
           sessionManager,
           platform,
-          oauthFlowStore,
           messagingRegistry: messagingHandle.registry,
         }
       },
@@ -263,6 +294,40 @@ const instance = await (async () => {
   }
 })()
 
+automationWorkspaceDispatcher = {
+  async execute(workspaceId, command, context) {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) {
+      return { schemaVersion: 1, status: 'invalid', error: { code: 'workspace_not_found', message: 'Workspace not found', retryable: false } }
+    }
+    if (command.operation === 'emit-event' && command.event.mortisesessionid) {
+      const session = await instance.sessionManager.getSession(command.event.mortisesessionid)
+      if (!session || session.workspaceId !== workspace.id) {
+        return {
+          schemaVersion: 1,
+          operationId: command.operationId,
+          status: 'invalid',
+          error: { code: 'invalid_event_session', message: 'Event Session does not belong to the ingress workspace', retryable: false },
+        }
+      }
+    }
+    return executeAutomationWorkspaceOperationV1({
+      workspaceId: workspace.id,
+      workspaceRootPath: workspace.rootPath,
+      writerId: `${process.env.MORTISE_BUILD_ID}:${process.pid}`,
+      eventSourceKind: context.eventSourceKind,
+      host: instance.sessionManager.getAutomationHost(workspace.id) ?? undefined,
+    }, command)
+  },
+}
+registerAutomationWorkspaceRpcHandlers(instance.wsServer, {
+  dispatcher: automationWorkspaceDispatcher,
+  tokens: automationIngressTokens,
+})
+for (const workspace of getWorkspaces()) {
+  if (!workspace.remoteServer) automationIngressTokens.ensure(workspace.id)
+}
+
 // ---------------------------------------------------------------------------
 // Messaging post-bootstrap: bind the WS publisher and initialize local
 // workspaces. Remote-owned workspaces are skipped because their messaging
@@ -287,22 +352,6 @@ if (webuiHandler) {
   const depsLike = { sessionManager: instance.sessionManager } as any
   healthCheckFn = () => getHealthCheck(depsLike)
 
-  // Wire up OAuth callback deps so /api/oauth/callback works
-  const { getSourceCredentialManager, loadWorkspaceSources } = await import('@mortise/shared/sources')
-  const { getWorkspaceByNameOrId } = await import('@mortise/shared/config')
-  const { pushTyped } = await import('@mortise/server-core/transport')
-  const { RPC_CHANNELS } = await import('@mortise/shared/protocol')
-
-  webuiHandler.setOAuthCallbackDeps({
-    flowStore: instance.oauthFlowStore,
-    credManager: getSourceCredentialManager(),
-    sessionManager: instance.sessionManager,
-    pushSourcesChanged: (workspaceId: string) => {
-      const ws = getWorkspaceByNameOrId(workspaceId)
-      const sources = ws ? loadWorkspaceSources(ws.rootPath) : []
-      pushTyped(instance.wsServer, RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId }, workspaceId, sources)
-    },
-  })
 }
 
 // Start HTTP health endpoint if MORTISE_HEALTH_PORT is set

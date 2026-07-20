@@ -2,7 +2,7 @@
  * Spawn Session Tool (spawn_session)
  *
  * Session-scoped tool that enables the main agent to create independent sessions
- * with configurable provider, model, sources, and an initial prompt.
+ * with a configurable provider, model, and initial prompt.
  *
  * Task 11: spawn_session is now a thin wrapper. When the backend implements
  * spawnChildSession (PiAgent), the onSpawnSession callback delegates to pi's
@@ -13,7 +13,7 @@
  * spawnChildSession fall back to independent mortise session creation (deprecated).
  *
  * Two modes:
- * - help=true: Returns available providers, models, and sources
+ * - help=true: Returns available providers and models
  * - Default: Creates a session and sends the prompt (fire-and-forget)
  */
 
@@ -30,7 +30,6 @@ interface SpawnSessionToolArgs {
   name?: string;
   provider?: string;
   model?: string;
-  enabledSourceSlugs?: string[];
   permissionMode?: 'safe' | 'ask' | 'allow-all';
   thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   workingDirectory?: string;
@@ -49,14 +48,14 @@ export interface SpawnSessionToolOptions {
 export function createSpawnSessionTool(options: SpawnSessionToolOptions) {
   return createMcpTool<SpawnSessionToolArgs>(
     'spawn_session',
-    `Create a new session that runs independently with its own prompt, provider, model, and sources.
+    `Create a new session that runs independently with its own prompt, provider, and model.
 
 Use this to delegate tasks to parallel sessions — research, analysis, drafts, or any work that benefits from separate context.
 
-Call with help=true first to discover available providers, models, and sources.
+Call with help=true first to discover available providers and models.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: provider, model, permissionMode, thinkingLevel, enabledSourceSlugs. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. workingDirectory is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
+Optional overrides: provider, model, permissionMode, and thinkingLevel. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. workingDirectory is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
 
 thinkingLevel is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring.
 
@@ -64,7 +63,7 @@ The spawned session appears in the session list and runs fire-and-forget.
 Only use 'attachments' for existing file paths on disk — the tool reads them automatically.`,
     {
       help: z.boolean().optional()
-        .describe('If true, returns available providers, models, and sources instead of creating a session'),
+        .describe('If true, returns available providers and models instead of creating a session'),
       prompt: z.string().optional()
         .describe('Instructions for the new session (required when not in help mode)'),
       name: z.string().optional()
@@ -73,8 +72,6 @@ Only use 'attachments' for existing file paths on disk — the tool reads them a
         .describe('Pi provider key (e.g., "anthropic", "openai")'),
       model: z.string().optional()
         .describe('Model ID override'),
-      enabledSourceSlugs: z.array(z.string()).optional()
-        .describe('Source slugs to enable in the new session'),
       permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional()
         .describe('Permission mode for the new session'),
       thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional()

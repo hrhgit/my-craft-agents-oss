@@ -143,7 +143,7 @@ export function useWorkspaceNavigation({
       }
       return
     }
-    await Promise.resolve(onSelectWorkspace(workspaceId, false, 'allSessions'))
+    await Promise.resolve(onSelectWorkspace(workspaceId, false, 'newConversation'))
   }, [isDisconnected, onSelectWorkspace, setFullscreenOverlayOpen, workspaces])
 
   const selectSession = React.useCallback(async (workspaceId: string, sessionId: string) => {
@@ -179,7 +179,7 @@ export function useWorkspaceNavigation({
     closeCreation()
     toast.success(t('toast.createdWorkspace', { name: workspace.name }))
     onRefreshWorkspaces?.()
-    void Promise.resolve(onSelectWorkspace(workspace.id, false, 'allSessions'))
+    void Promise.resolve(onSelectWorkspace(workspace.id, false, 'newConversation'))
   }, [closeCreation, onRefreshWorkspaces, onSelectWorkspace, t])
 
   const handleReconnectWorkspace = React.useCallback(async (
@@ -192,7 +192,7 @@ export function useWorkspaceNavigation({
       // replace the immutable WsRpcClient instead of reconnecting the old one.
       await window.electronAPI.switchWorkspace(workspaceId)
     } else {
-      await Promise.resolve(onSelectWorkspace(workspaceId, false, 'allSessions'))
+      await Promise.resolve(onSelectWorkspace(workspaceId, false, 'newConversation'))
     }
     await waitForTransportConnected(window.electronAPI)
     await Promise.resolve(onRefreshWorkspaces?.())

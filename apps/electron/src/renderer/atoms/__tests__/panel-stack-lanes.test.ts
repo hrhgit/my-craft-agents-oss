@@ -73,7 +73,7 @@ describe('panel stack single-lane behavior', () => {
     expect(shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))).toBe(false)
 
     store.set(activeDockTabIdAtom, 'dock:content:files')
-    store.set(pushPanelAtom, { route: 'sources/source/github' })
+    store.set(pushPanelAtom, { route: 'skills/skill/review' })
     expect(getStack(store)).toHaveLength(1)
     expect(store.get(activeDockTabTypeAtom)).toBe('other')
     expect(shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))).toBe(false)
@@ -116,7 +116,7 @@ describe('panel stack single-lane behavior', () => {
     const store = createStore()
 
     store.set(pushPanelAtom, { route: 'allSessions/session/s1' })
-    store.set(pushPanelAtom, { route: 'sources/source/github' })
+    store.set(pushPanelAtom, { route: 'skills/skill/review' })
     store.set(pushPanelAtom, { route: 'settings' })
 
     const stack = getStack(store)

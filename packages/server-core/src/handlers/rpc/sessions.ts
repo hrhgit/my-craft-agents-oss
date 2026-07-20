@@ -1,7 +1,14 @@
 import { existsSync } from 'fs'
 import { readFile, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { RPC_CHANNELS, type FileAttachment, type SendMessageOptions, type SessionEvent, type Session } from '@mortise/shared/protocol'
+import {
+  RPC_CHANNELS,
+  type CreateAndSendFirstTurnRequest,
+  type FileAttachment,
+  type SendMessageOptions,
+  type SessionEvent,
+  type Session,
+} from '@mortise/shared/protocol'
 import type { StoredAttachment } from '@mortise/core/types'
 import { storedToMessage } from '@mortise/core/types'
 import { getWorkspaceByNameOrId } from '@mortise/shared/config'
@@ -183,6 +190,8 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY,
   RPC_CHANNELS.sessions.MARK_ALL_READ,
   RPC_CHANNELS.sessions.CREATE,
+  RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN,
+  RPC_CHANNELS.sessions.DISCARD_FIRST_TURN_ATTACHMENT_STAGING,
   RPC_CHANNELS.sessions.DELETE,
   RPC_CHANNELS.sessions.GET_MESSAGES,
   RPC_CHANNELS.sessions.GET_PI_PROJECTION_SNAPSHOT,
@@ -191,7 +200,6 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.KILL_SHELL,
   RPC_CHANNELS.tasks.GET_OUTPUT,
   RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION,
-  RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL,
   RPC_CHANNELS.extensions.REMOTEUI_RESPONSE,
   RPC_CHANNELS.extensions.COMMAND_INVOKE,
   RPC_CHANNELS.extensions.GET_COMMANDS,
@@ -330,13 +338,50 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.getPiProjectionSnapshot(sessionId)
   })
 
-  // Create a new session
+  // Persisted empty sessions remain an internal capability for hidden helpers
+  // and branches. An ordinary conversation must use the first-turn transaction
+  // so it cannot appear before Pi has persisted an assistant response.
   server.handle(RPC_CHANNELS.sessions.CREATE, async (ctx, workspaceId: string, options?: import('@mortise/shared/protocol').CreateSessionOptions) => {
+    const isHiddenInternalSession = options?.hidden === true
+    const isBranchSession = Boolean(options?.branchFromSessionId || options?.branchFromMessageId)
+    if (!isHiddenInternalSession && !isBranchSession) {
+      throw new Error('Ordinary sessions must use sessions:createAndSendFirstTurn')
+    }
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const end = perf.start('rpc.createSession', { workspaceId: wid })
     const session = await sessionManager.createSession(wid, options)
     end()
     return session
+  })
+
+  // Ordinary New is one server-owned transaction. The provisional identity is
+  // never returned and this call resolves only after Pi's first assistant-backed
+  // JSONL exists and Mortise has published the durable Session.
+  server.handle(RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN, async (
+    ctx,
+    request: CreateAndSendFirstTurnRequest,
+  ) => {
+    const workspaceId = resolveWorkspaceId(ctx.workspaceId, request.workspaceId)!
+    const end = perf.start('rpc.createAndSendFirstTurn', { workspaceId })
+    try {
+      return await sessionManager.createAndSendFirstTurn({
+        ...request,
+        workspaceId,
+        callerClientId: ctx.clientId,
+        signal: ctx.signal,
+      })
+    } finally {
+      end()
+    }
+  }, { timeoutMs: 300_000 })
+
+  server.handle(RPC_CHANNELS.sessions.DISCARD_FIRST_TURN_ATTACHMENT_STAGING, async (
+    ctx,
+    workspaceId: string,
+    stagingId: string,
+  ) => {
+    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
+    return sessionManager.discardFirstTurnAttachmentStaging(wid, stagingId)
   })
 
   // Delete a session
@@ -458,13 +503,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.respondToPermission(sessionId, requestId, allowed, alwaysAllow)
   })
 
-  // Respond to a credential request (secure auth input)
-  // Returns true if the response was delivered, false if agent/session is gone
-  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL, async (ctx, sessionId: string, requestId: string, response: import('@mortise/shared/protocol').CredentialResponse) => {
-    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
-    return sessionManager.respondToCredential(sessionId, requestId, response)
-  })
-
   // 回复 pi 扩展发起的 remoteui:request（payload=null 表示用户取消）
   // 由渲染进程 RemoteUIModal 调用，转发到对应会话的 PiAgent.sendRemoteUIResponse
   server.handle(RPC_CHANNELS.extensions.REMOTEUI_RESPONSE, async (ctx, sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected') => {
@@ -524,8 +562,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         return sessionManager.setSessionThinkingLevel(sessionId, command.level)
       case 'updateWorkingDirectory':
         return sessionManager.updateWorkingDirectory(sessionId, command.dir)
-      case 'setSources':
-        return sessionManager.setSessionSources(sessionId, command.sourceSlugs)
       case 'showInFinder': {
         const sessionPath = resolveSessionDisplayPath(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
         if (sessionPath) {

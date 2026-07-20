@@ -93,17 +93,15 @@ function seedFixtureProfile(root: string, mortiseConfigDir: string, piAgentDir: 
   }))
 
   for (const workspace of workspaces) {
-    mkdirSync(join(workspace.rootPath, 'sources'), { recursive: true })
+    mkdirSync(workspace.rootPath, { recursive: true })
     writeJson(join(workspace.rootPath, 'config.json'), {
       id: workspace.id,
       name: workspace.name,
       slug: workspace.slug,
       defaults: {
-        enabledSourceSlugs: [],
         permissionMode: workspace.permissionMode ?? 'safe',
         cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
       },
-      localMcpServers: { enabled: false },
       createdAt: FIXTURE_CREATED_AT,
       updatedAt: FIXTURE_CREATED_AT,
     })
@@ -185,7 +183,6 @@ function seedFixtureProfile(root: string, mortiseConfigDir: string, piAgentDir: 
     keepAwakeWhileRunning: false,
     richToolDescriptions: true,
     browserToolEnabled: true,
-    dataSourcesEnabled: true,
   })
   writeJson(join(mortiseConfigDir, 'preferences.json'), {
     name: 'Mortise UI Tester',

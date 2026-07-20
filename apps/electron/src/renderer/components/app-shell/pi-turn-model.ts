@@ -69,6 +69,12 @@ interface AssistantMessageRecord {
   blocks: AssistantTextBlock[]
 }
 
+interface AssistantUsageRecord {
+  seq: number
+  inputTokens: number
+  outputTokens: number
+}
+
 interface PlanArtifactRecord {
   entityId: string
   seq: number
@@ -83,6 +89,7 @@ interface AssistantRecord {
   seq: number
   turnEntity?: PiProjectionEntityV1
   messages: Map<string, AssistantMessageRecord>
+  usages: Map<string, AssistantUsageRecord>
   activities: Array<ActivityItem & { __seq: number }>
   artifacts: PlanArtifactRecord[]
 }
@@ -105,6 +112,20 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function tokenUsage(value: unknown, seq: number): AssistantUsageRecord | undefined {
+  const usage = record(value)
+  const inputTokens = numberValue(usage?.inputTokens)
+  const outputTokens = numberValue(usage?.outputTokens)
+  if (inputTokens === undefined || inputTokens < 0 || outputTokens === undefined || outputTokens < 0) {
+    return undefined
+  }
+  return {
+    seq,
+    inputTokens: Math.floor(inputTokens),
+    outputTokens: Math.floor(outputTokens),
+  }
 }
 
 function wallClockTimestamp(value: unknown): number | undefined {
@@ -243,6 +264,7 @@ function getAssistantRecord(records: Map<string, AssistantRecord>, turnId: strin
     turnId,
     seq,
     messages: new Map(),
+    usages: new Map(),
     activities: [],
     artifacts: [],
   }
@@ -359,6 +381,11 @@ function buildAssistantTurn(
   const durationMs = startedAt !== undefined && completedAt !== undefined && completedAt >= startedAt
     ? completedAt - startedAt
     : undefined
+  const usage = [...recordValue.usages.values()].reduce((total, messageUsage) => ({
+    inputTokens: total.inputTokens + messageUsage.inputTokens,
+    outputTokens: total.outputTokens + messageUsage.outputTokens,
+  }), { inputTokens: 0, outputTokens: 0 })
+  const hasUsage = recordValue.usages.size > 0
   return {
     type: 'assistant',
     turnId: recordValue.turnId,
@@ -371,6 +398,8 @@ function buildAssistantTurn(
     startedAt,
     completedAt,
     durationMs,
+    inputTokens: hasUsage ? usage.inputTokens : undefined,
+    outputTokens: hasUsage ? usage.outputTokens : undefined,
     todos: extractTodos(activities),
   }
 }
@@ -399,6 +428,7 @@ function batchAssistantRecords(
       turnId: owner?.turnId ?? source.turnId,
       seq: owner?.seq ?? source.seq,
       messages: new Map(),
+      usages: new Map(),
       activities: [],
       artifacts: [],
     }
@@ -420,6 +450,10 @@ function batchAssistantRecords(
         existing.seq = Math.min(existing.seq, message.seq)
         existing.blocks.push(...message.blocks)
       }
+    }
+
+    for (const [messageId, usage] of source.usages) {
+      getBatch(ownerAt(usage.seq), source).usages.set(messageId, usage)
     }
 
     for (const activity of source.activities) {
@@ -545,6 +579,8 @@ export function buildPiTurns(
       const contentKind = payload.contentKind === 'thinking' || entity.kind.startsWith('thinking') ? 'thinking' : 'text'
       const turnId = entity.turnId ?? `message:${messageId}`
       const assistant = getAssistantRecord(assistants, turnId, entity.createdSeq)
+      const usage = tokenUsage(payload.usage, entity.createdSeq)
+      if (usage) assistant.usages.set(messageId, usage)
       if (contentKind === 'thinking') {
         assistant.activities.push({
           __seq: entity.createdSeq,
@@ -633,46 +669,6 @@ export function buildPiTurns(
         artifact: payload.artifact,
         content: typeof payload.content === 'string' ? payload.content : '',
       })
-      continue
-    }
-
-    if (entity.entityType === 'prompt_request'
-      && (entity.kind === 'auth_request' || entity.kind === 'prompt_resolved')) {
-      const authType = payload.authType
-      if (authType !== 'credential' && authType !== 'oauth' && authType !== 'oauth-google'
-        && authType !== 'oauth-slack' && authType !== 'oauth-microsoft') continue
-      const requestId = stringValue(payload.requestId)
-      if (!requestId) continue
-      const labels = record(payload.labels)
-      const resolution = payload.resolution
-      const status = payload.status === 'pending' ? 'pending'
-        : resolution === 'completed' ? 'completed'
-        : resolution === 'cancelled' ? 'cancelled'
-        : 'failed'
-      const message: Message = {
-        id: `auth:${requestId}`,
-        role: 'auth-request',
-        content: [stringValue(payload.sourceName), authType, status].filter(Boolean).join(' '),
-        timestamp: numberValue(payload.timestamp) ?? entity.createdSeq,
-        authRequestId: requestId,
-        authRequestType: authType,
-        authSourceSlug: stringValue(payload.sourceSlug),
-        authSourceName: stringValue(payload.sourceName),
-        authStatus: status,
-        authCredentialMode: payload.mode === 'basic' || payload.mode === 'header' || payload.mode === 'query'
-          || payload.mode === 'multi-header' ? payload.mode : 'bearer',
-        authHeaderNames: Array.isArray(payload.headerNames)
-          ? payload.headerNames.filter((name): name is string => typeof name === 'string')
-          : undefined,
-        authLabels: labels ? {
-          credential: stringValue(labels.credential),
-          username: stringValue(labels.username),
-          password: stringValue(labels.password),
-        } : undefined,
-        authPasswordRequired: typeof payload.passwordRequired === 'boolean' ? payload.passwordRequired : undefined,
-        authError: stringValue(payload.error),
-      }
-      entries.push({ seq: entity.createdSeq, priority: 2, turn: { type: 'auth-request', message, timestamp: message.timestamp } })
       continue
     }
 
@@ -774,7 +770,7 @@ export function getPiTurnSearchText(turn: Turn): string {
   if (turn.type === 'user') {
     return [turn.message.content, ...turn.message.attachments?.map(attachment => attachment.name) ?? []].join('\n')
   }
-  if (turn.type === 'system' || turn.type === 'auth-request') return turn.message.content
+  if (turn.type === 'system') return turn.message.content
   return [
     turn.response?.text,
     ...turn.activities.flatMap(activity => [

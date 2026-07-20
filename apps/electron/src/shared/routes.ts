@@ -54,19 +54,6 @@ export const routes = {
     deleteSession: (sessionId: string) =>
       `action/delete-session/${sessionId}` as const,
 
-    /** Start OAuth flow for a source */
-    oauth: (sourceSlug: string) => `action/oauth/${sourceSlug}` as const,
-
-    /** Open add source UI */
-    addSource: () => 'action/add-source' as const,
-
-    // Note: test-source route can be added when API support is available
-    // testSource: (sourceSlug: string) => `action/test-source/${sourceSlug}` as const,
-
-    /** Delete a source */
-    deleteSource: (sourceSlug: string) =>
-      `action/delete-source/${sourceSlug}` as const,
-
     /** Set permission mode for a session */
     setPermissionMode: (
       sessionId: string,
@@ -86,34 +73,9 @@ export const routes = {
     allSessions: (sessionId?: string) =>
       sessionId ? `allSessions/session/${sessionId}` as const : 'allSessions' as const,
 
-    /** Sources view (sources navigator) - supports type filtering */
-    sources: (params?: { sourceSlug?: string; type?: 'api' | 'mcp' | 'local' }) => {
-      const { sourceSlug, type } = params ?? {}
-      // Build base from filter type
-      const base = type ? `sources/${type}` : 'sources'
-      if (sourceSlug) {
-        return `${base}/source/${sourceSlug}` as const
-      }
-      return base as 'sources' | `sources/${'api' | 'mcp' | 'local'}`
-    },
-
-    /** API sources view (sources navigator, api filter) */
-    sourcesApi: (sourceSlug?: string) =>
-      sourceSlug
-        ? `sources/api/source/${sourceSlug}` as const
-        : 'sources/api' as const,
-
-    /** MCP sources view (sources navigator, mcp filter) */
-    sourcesMcp: (sourceSlug?: string) =>
-      sourceSlug
-        ? `sources/mcp/source/${sourceSlug}` as const
-        : 'sources/mcp' as const,
-
-    /** Local folder sources view (sources navigator, local filter) */
-    sourcesLocal: (sourceSlug?: string) =>
-      sourceSlug
-        ? `sources/local/source/${sourceSlug}` as const
-        : 'sources/local' as const,
+    /** Workspace-scoped new-conversation draft. No Session exists until submit. */
+    newConversation: (draftId: string = 'default') =>
+      `allSessions/new/${encodeURIComponent(draftId)}` as const,
 
     /** Skills view (skills navigator). Pass a slug string for a local skill detail view. */
     skills: (skillSlug?: string) => {

@@ -53,8 +53,7 @@ export class CredentialManager {
     }
 
     // PiCredentialStore is always available and is currently the only
-    // credential backend. This sync path exists for sync callers such as
-    // saveSourceConfig(), where fire-and-forget cleanup can race immediate reloads.
+    // credential backend, so synchronous deletion can initialize it directly.
     const backend = new PiCredentialStore();
     this.backends = [backend];
     this.writeBackend = backend;
@@ -262,12 +261,13 @@ export class CredentialManager {
     );
   }
 
-  /** Delete all credentials for a workspace (source credentials) */
-  async deleteWorkspaceCredentials(workspaceId: string): Promise<void> {
-    const allCreds = await this.list({ workspaceId });
-    for (const cred of allCreds) {
-      await this.delete(cred);
-    }
+  async getAutomationSecret(workspaceId: string, id: string): Promise<string | null> {
+    const credential = await this.get({ type: 'automation_secret', workspaceId, name: id })
+    return credential?.value ?? null
+  }
+
+  async setAutomationSecret(workspaceId: string, id: string, value: string): Promise<void> {
+    await this.set({ type: 'automation_secret', workspaceId, name: id }, { value })
   }
 
   // Note: OpenAI API key methods removed - Codex uses native ChatGPT OAuth flow

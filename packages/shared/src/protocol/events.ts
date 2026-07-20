@@ -4,7 +4,6 @@
  */
 
 import type { ThemeOverrides } from '../config/index'
-import type { LoadedSource } from '../sources/types'
 import type { LoadedSkill } from '../skills/types'
 import { RPC_CHANNELS } from './channels'
 import type {
@@ -26,7 +25,6 @@ export interface BroadcastEventMap {
   [RPC_CHANNELS.fs.WORKSPACE_CHANGED]: [workspaceId: string]
 
   // Domain change broadcasts (global via broadcastToAll)
-  [RPC_CHANNELS.sources.CHANGED]: [workspaceId: string, sources: LoadedSource[]]
   [RPC_CHANNELS.automations.CHANGED]: [workspaceId: string]
   [RPC_CHANNELS.skills.CHANGED]: [workspaceId: string, skills: LoadedSkill[]]
   [RPC_CHANNELS.permissions.DEFAULTS_CHANGED]: [value: null]

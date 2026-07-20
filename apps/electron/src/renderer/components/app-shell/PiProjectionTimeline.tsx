@@ -4,8 +4,6 @@ import type { PiProjectionState } from '@/atoms/pi-projection'
 import { cn } from '@/lib/utils'
 import { CollapsibleMarkdownProvider, Markdown, StreamingMarkdown } from '@/components/markdown'
 import { ActivityCardsOverlay, UserMessageBubble, extractOverlayCards, type ActivityItem } from '@mortise/ui'
-import type { CredentialResponse } from '../../../shared/types'
-import { MemoizedAuthRequestCard } from '@/components/chat/AuthRequestCard'
 import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, type PiTimelineItem } from './pi-timeline-model'
 import { ExtensionContributionZone, ExtensionReplaceZone } from '@/components/extensions/ExtensionContributionZone'
 
@@ -13,7 +11,6 @@ interface PiProjectionTimelineProps {
   projection: PiProjectionState
   onOpenFile: (path: string) => void
   onOpenUrl: (url: string) => void
-  onRespondToCredential?: (sessionId: string, requestId: string, response: CredentialResponse) => void
   searchQuery?: string
   currentMatchIndex?: number
   pageSize?: number
@@ -133,7 +130,6 @@ export function PiProjectionTimeline({
   projection,
   onOpenFile,
   onOpenUrl,
-  onRespondToCredential,
   searchQuery = '',
   currentMatchIndex = 0,
   pageSize = 20,
@@ -172,19 +168,6 @@ export function PiProjectionTimeline({
           </div>
           if (item.type === 'attachment') return <div key={item.id} ref={element => onItemRef?.(item.id, element)} className={cn('my-3', matchClass)}><AttachmentRef item={item} /></div>
           if (item.type === 'artifact') return <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('my-3', matchClass)}><Markdown>{item.content}</Markdown></div>
-          if (item.type === 'auth') {
-            if (!projection.sessionId) return null
-            return (
-              <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('my-3', matchClass)}>
-                <MemoizedAuthRequestCard
-                  request={item.request}
-                  sessionId={projection.sessionId}
-                  onRespondToCredential={onRespondToCredential}
-                  isInteractive={item.request.status === 'pending'}
-                />
-              </div>
-            )
-          }
           if (item.type === 'error') {
             return <div key={item.id} ref={element => onItemRef?.(item.id, element)} data-pi-entity-id={item.id} className={cn('my-3 flex items-start gap-2 border-l border-destructive/50 py-1 pl-3 text-sm text-destructive', matchClass)}><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{item.message}</span></div>
           }

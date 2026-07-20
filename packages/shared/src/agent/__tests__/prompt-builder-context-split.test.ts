@@ -1,7 +1,7 @@
 /**
  * Guards the volatile/stable context split (issue #862).
  *
- * The Pi adapter folded volatile context (date/time, session_state, sources)
+ * The Pi adapter folded volatile context (date/time and session_state)
  * into the cached system prefix, re-stamping it every turn and killing
  * prompt-cache reuse. The fix splits PromptBuilder.buildContextParts() into
  * buildVolatileContextParts() + buildStableContextParts() so the Pi path can
@@ -11,8 +11,7 @@
  * These tests pin three invariants:
  *  1. buildContextParts === [...volatile, ...stable] — the Claude path output is
  *     unchanged (same blocks, same order).
- *  2. Blocks are routed correctly: session_state + sources are volatile;
- *     workspace capabilities is stable.
+ *  2. Session state is volatile while working-directory context is stable.
  *  3. The one-shot mode-change signal is consumed exactly once, and only by the
  *     volatile builder — never by the stable builder.
  */
@@ -23,8 +22,6 @@ import { cleanupModeState, initializeModeState, setPermissionMode } from '../mod
 // Matches createMockSession() in test-utils.ts
 const SESSION_ID = 'test-session-id'
 const OPTS = { plansFolderPath: '/tmp/plans', dataFolderPath: '/tmp/data' }
-const SOURCE_BLOCK = '<sources>\nActive: none\n</sources>'
-
 function makeBuilder() {
   return new TestAgent(createMockBackendConfig()).getPromptBuilder()
 }
@@ -37,27 +34,25 @@ describe('PromptBuilder volatile/stable context split (issue #862)', () => {
     cleanupModeState(SESSION_ID)
     const builder = makeBuilder()
     const composed = [
-      ...builder.buildVolatileContextParts(OPTS, SOURCE_BLOCK),
+      ...builder.buildVolatileContextParts(OPTS),
       ...builder.buildStableContextParts(),
     ]
-    const combined = builder.buildContextParts(OPTS, SOURCE_BLOCK)
+    const combined = builder.buildContextParts(OPTS)
     expect(combined).toEqual(composed)
   })
 
-  it('routes session_state + sources to volatile and workspace capabilities to stable', () => {
+  it('routes session state to volatile and working-directory context to stable', () => {
     cleanupModeState(SESSION_ID)
     const builder = makeBuilder()
-    const volatileText = builder.buildVolatileContextParts(OPTS, SOURCE_BLOCK).join('\n')
+    const volatileText = builder.buildVolatileContextParts(OPTS).join('\n')
     const stableText = builder.buildStableContextParts().join('\n')
 
-    // session_state + source ride the volatile tail
+    // Session state rides the volatile tail.
     expect(volatileText).toContain('permissionMode:')
-    expect(volatileText).toContain(SOURCE_BLOCK)
-    // workspace capabilities is stable
-    expect(stableText).toContain('<workspace_capabilities>')
+    expect(stableText).toContain('<working_directory>')
 
     // The halves must not bleed into each other
-    expect(volatileText).not.toContain('<workspace_capabilities>')
+    expect(volatileText).not.toContain('<working_directory>')
     expect(stableText).not.toContain('permissionMode:')
   })
 
@@ -73,8 +68,8 @@ describe('PromptBuilder volatile/stable context split (issue #862)', () => {
     expect(builder.buildStableContextParts().join('\n')).not.toContain('modeChangeUserSignal:')
 
     // Volatile path emits it on the first call, then never again.
-    const first = builder.buildVolatileContextParts(OPTS, SOURCE_BLOCK).join('\n')
-    const second = builder.buildVolatileContextParts(OPTS, SOURCE_BLOCK).join('\n')
+    const first = builder.buildVolatileContextParts(OPTS).join('\n')
+    const second = builder.buildVolatileContextParts(OPTS).join('\n')
     expect(first).toContain('modeChangeUserSignal:')
     expect(second).not.toContain('modeChangeUserSignal:')
   })

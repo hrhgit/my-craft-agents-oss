@@ -1,8 +1,8 @@
 /**
  * Unified Icon Utilities
  *
- * Shared icon handling for skills, sources, and statuses.
- * All three systems use the same icon format and behavior:
+ * Shared icon handling for skills and statuses.
+ * Both systems use the same icon format and behavior:
  *
  * Supported formats:
  * - Emoji: "🔧" - rendered as text in UI
@@ -56,7 +56,7 @@ const CONTENT_TYPE_TO_EXT: Record<string, string> = {
  * Returns the value if valid (emoji or URL), undefined if invalid.
  *
  * @param icon - The icon value to validate
- * @param context - Context for debug logging (e.g., "Skills", "Sources", "Statuses")
+ * @param context - Context for debug logging (for example, "Skills" or "Statuses")
  */
 export function validateIconValue(icon: unknown, context: string = 'Icon'): string | undefined {
   if (typeof icon !== 'string' || !icon.trim()) {

@@ -10,10 +10,10 @@
  * 3. Auto-selection of first item in new views
  *
  * Bad (in click handlers):
- *   setSidebarMode({ type: 'sources' })
+ *   setSidebarMode({ type: 'settings' })
  *
  * Good:
- *   navigate(routes.view.sources())
+ *   navigate(routes.view.settings())
  *   navigate(routes.view.agent(agentId))
  *
  * Note: This rule only checks AppShell.tsx where the navigation state is defined.

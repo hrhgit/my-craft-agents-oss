@@ -7,8 +7,7 @@
  * feature parity with Claude's session-scoped tools.
  *
  * Callback Communication:
- * Tools that need to communicate with the main Electron process (e.g., OAuth
- * triggers pausing execution) send structured
+ * Tools that need to communicate with the main Electron process send structured
  * JSON messages to stderr with a "__CALLBACK__" prefix. The main process monitors
  * stderr and handles these callbacks.
  *
@@ -31,7 +30,7 @@ import {
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname } from 'node:path';
 import type { ToolResult } from '@mortise/shared/agent';
 import { isDeveloperFeedbackEnabled } from '@mortise/shared/feature-flags';
 import { CONFIG_DIR } from '@mortise/shared/config/paths';
@@ -41,15 +40,10 @@ import { createPiSkillResolver } from '@mortise/shared/pi/skill-resolver';
 import {
   type SessionToolContext,
   type CallbackMessage,
-  type AuthRequest,
-  type SourceConfig,
-  type LoadedSource,
-  type CredentialManagerInterface,
   // Registry
   getSessionToolRegistry,
   getToolDefsAsJsonSchema,
   // Helpers
-  loadSourceConfig as loadSourceConfigFromHelpers,
   errorResponse,
 } from '@mortise/session-tools-core';
 
@@ -80,77 +74,6 @@ const CALLBACK_TOOL_TIMEOUT_MS = 120000;
 function sendCallback(callback: CallbackMessage): void {
   // Write to stderr as a single line JSON (main process parses this)
   console.error(`__CALLBACK__${JSON.stringify(callback)}`);
-}
-
-// ============================================================
-// Credential Cache Access
-// ============================================================
-
-/**
- * Credential cache entry format (matches main process format).
- * Written by Electron main process, read by this server.
- */
-interface CredentialCacheEntry {
-  value: string;
-  expiresAt?: number;
-}
-
-/**
- * Get the path to a source's credential cache file.
- * The main process writes decrypted credentials to these files.
- */
-function getCredentialCachePath(workspaceRootPath: string, sourceSlug: string): string {
-  if (basename(sourceSlug) !== sourceSlug) {
-    throw new Error('Invalid source slug: path separators not allowed');
-  }
-  return join(workspaceRootPath, 'sources', sourceSlug, '.credential-cache.json');
-}
-
-/**
- * Read credentials from the cache file for a source.
- * Returns null if the cache doesn't exist or is expired.
- */
-function readCredentialCache(workspaceRootPath: string, sourceSlug: string): string | null {
-  try {
-    const cachePath = getCredentialCachePath(workspaceRootPath, sourceSlug);
-    if (!existsSync(cachePath)) {
-      return null;
-    }
-
-    const content = readFileSync(cachePath, 'utf-8');
-    const cache = JSON.parse(content) as CredentialCacheEntry;
-
-    // Check expiry if set
-    if (cache.expiresAt && Date.now() > cache.expiresAt) {
-      return null;
-    }
-
-    return cache.value || null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Create a credential manager that reads from credential cache files.
- * This allows the session-mcp-server to access credentials without keychain access.
- */
-function createCredentialManager(workspaceRootPath: string): CredentialManagerInterface {
-  return {
-    hasValidCredentials: async (source: LoadedSource): Promise<boolean> => {
-      const token = readCredentialCache(workspaceRootPath, source.config.slug);
-      return token !== null;
-    },
-
-    getToken: async (source: LoadedSource): Promise<string | null> => {
-      return readCredentialCache(workspaceRootPath, source.config.slug);
-    },
-
-    refresh: async (_source: LoadedSource): Promise<string | null> => {
-      // Cannot refresh from subprocess - would need main process
-      return null;
-    },
-  };
 }
 
 // ============================================================
@@ -190,16 +113,7 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
         planPath,
       });
     },
-    onAuthRequest: (request: AuthRequest) => {
-      sendCallback({
-        __callback__: 'auth_request',
-        ...request,
-      });
-    },
   };
-
-  // Create credential manager that reads from cache files
-  const credentialManager = createCredentialManager(workspaceRootPath);
 
   // Session paths for transform_data / render_template. Shared storage helpers
   // resolve the sidecar next to Pi's workspace-scoped session projection without
@@ -212,7 +126,6 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
   return {
     sessionId,
     workspacePath: workspaceRootPath,
-    get sourcesPath() { return join(workspaceRootPath, 'sources'); },
     workingDirectory,
     get skillPaths() {
       return createPiSkillResolver(workingDirectory).getSkillPaths().map((entry) => entry.dir);
@@ -223,12 +136,6 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
     dataPath: sessionDataDir,
     callbacks,
     fs,
-    loadSourceConfig: (sourceSlug: string): SourceConfig | null => {
-      return loadSourceConfigFromHelpers(workspaceRootPath, sourceSlug);
-    },
-
-    // Credential manager reads from cache files written by main process
-    credentialManager,
 
     // Preferences: write directly to preferences.json
     updatePreferences: (updates: Record<string, unknown>) => {
@@ -260,7 +167,7 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
       writeFileSync(filePath, JSON.stringify(feedback, null, 2), 'utf-8');
     },
 
-    // Note: saveSourceConfig, validators, renderMermaid
+    // Note: validators and renderer-only capabilities
     // are not available in Codex context (require Electron internals)
   };
 }

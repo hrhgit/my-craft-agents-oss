@@ -139,14 +139,6 @@ export function getWorkspacePath(workspaceId: string): string {
 }
 
 /**
- * Get path to workspace sources directory
- * @param rootPath - Absolute path to workspace root folder
- */
-export function getWorkspaceSourcesPath(rootPath: string): string {
-  return join(rootPath, 'sources');
-}
-
-/**
  * Get path to workspace skills directory
  * @param rootPath - Absolute path to workspace root folder
  */
@@ -351,32 +343,6 @@ export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): 
 // ============================================================
 
 /**
- * Count subdirectories in a path
- */
-function countSubdirs(dirPath: string): number {
-  if (!existsSync(dirPath)) return 0;
-  try {
-    return readdirSync(dirPath, { withFileTypes: true }).filter((d) => d.isDirectory()).length;
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * List subdirectory names in a path
- */
-function listSubdirNames(dirPath: string): string[] {
-  if (!existsSync(dirPath)) return [];
-  try {
-    return readdirSync(dirPath, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
-  } catch {
-    return [];
-  }
-}
-
-/**
  * Load workspace with summary info from a rootPath
  * @param rootPath - Absolute path to workspace root folder
  */
@@ -393,7 +359,6 @@ export function loadWorkspace(rootPath: string): LoadedWorkspace | null {
 
   return {
     config,
-    sourceSlugs: listSubdirNames(getWorkspaceSourcesPath(rootPath)),
     sessionCount: countSessionsByCwd(rootPath),
   };
 }
@@ -409,7 +374,6 @@ export function getWorkspaceSummary(rootPath: string): WorkspaceSummary | null {
   return {
     slug: config.slug,
     name: config.name,
-    sourceCount: countSubdirs(getWorkspaceSourcesPath(rootPath)),
     sessionCount: countSessionsByCwd(rootPath),
     createdAt: config.createdAt,
     updatedAt: config.updatedAt,
@@ -485,7 +449,6 @@ export function createWorkspaceAtPath(
   const workspaceDefaults: WorkspaceConfig['defaults'] = {
     permissionMode: globalDefaults.workspaceDefaults.permissionMode,
     cyclablePermissionModes: globalDefaults.workspaceDefaults.cyclablePermissionModes,
-    enabledSourceSlugs: [],
     ...defaults, // User-provided defaults override global defaults
   };
 
@@ -494,7 +457,6 @@ export function createWorkspaceAtPath(
     name,
     slug,
     defaults: workspaceDefaults,
-    localMcpServers: globalDefaults.workspaceDefaults.localMcpServers,
     createdAt: now,
     updatedAt: now,
   };
@@ -508,9 +470,7 @@ export function createWorkspaceAtPath(
   // workspace-skill fallback paths in pre-tool-use.ts and skill-validate.ts;
   // the stale `loadWorkspaceSkills` reference previously documented here
   // does not exist in the codebase).
-  // `sources/` and `automations/` remain Mortise-owned.
   mkdirSync(rootPath, { recursive: true });
-  mkdirSync(getWorkspaceSourcesPath(rootPath), { recursive: true });
 
   // Save config
   saveWorkspaceConfig(rootPath, config);
@@ -640,34 +600,6 @@ export function setWorkspaceColorTheme(rootPath: string, themeId: string | undef
   }
 
   saveWorkspaceConfig(rootPath, config);
-}
-
-// ============================================================
-// Local MCP Configuration
-// ============================================================
-
-/**
- * Check if local (stdio) MCP servers are enabled for a workspace.
- * Resolution order: ENV (MORTISE_LOCAL_MCP_ENABLED) > workspace config > default (true)
- *
- * @param rootPath - Absolute path to workspace root folder
- * @returns true if local MCP servers should be enabled
- */
-export function isLocalMcpEnabled(rootPath: string): boolean {
-  // 1. Environment variable override (highest priority)
-  const envValue = process.env.MORTISE_LOCAL_MCP_ENABLED;
-  if (envValue !== undefined) {
-    return envValue.toLowerCase() === 'true';
-  }
-
-  // 2. Workspace config
-  const config = loadWorkspaceConfig(rootPath);
-  if (config?.localMcpServers?.enabled !== undefined) {
-    return config.localMcpServers.enabled;
-  }
-
-  // 3. Default: enabled
-  return true;
 }
 
 // ============================================================

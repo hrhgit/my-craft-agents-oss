@@ -103,7 +103,6 @@ function validatePackagedLayout(layout) {
     path.join(layout.appDist, 'resources', 'pi-extensions', 'browser.js'),
     path.join(layout.appDist, 'resources', 'pi-extensions', 'messaging.js'),
     path.join(layout.appDist, 'resources', 'docs', 'mortise-cli.md'),
-    path.join(layout.appResources, 'bridge-mcp-server', 'index.js'),
     path.join(layout.appResources, 'session-mcp-server', 'index.js'),
     path.join(layout.appResources, 'scripts', 'pdf_tool.py'),
     layout.bunExecutable,
@@ -125,10 +124,18 @@ function validatePackagedLayout(layout) {
 
   for (const file of requiredFiles) assertNonEmptyFile(file);
 
+  // The optional Developer Kit is a separately packaged product and its
+  // Dev Host intentionally carries its own Bun runtime. Only enforce the
+  // single-copy invariant for the Mortise application payload; an accidental
+  // copy under app/dist must still fail validation.
+  const developerKitRoot = path.join(layout.resourcesDir, 'developer-kit');
   const bunCopies = findFilesNamed(
     layout.resourcesDir,
     layout.platform === 'win32' ? 'bun.exe' : 'bun',
-  );
+  ).filter(file => {
+    const relative = path.relative(developerKitRoot, file);
+    return relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative);
+  });
   if (bunCopies.length !== 1 || path.resolve(bunCopies[0]) !== path.resolve(layout.bunExecutable)) {
     throw new Error(`Expected exactly one packaged Bun runtime at ${layout.bunExecutable}; found: ${bunCopies.join(', ')}`);
   }

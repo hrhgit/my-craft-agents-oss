@@ -67,7 +67,6 @@ function createDeps(): HandlerDeps {
       reloadProviderRuntime,
     } as unknown as ISessionManager,
     platform,
-    oauthFlowStore: {} as HandlerDeps['oauthFlowStore'],
   }
 }
 

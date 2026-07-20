@@ -96,9 +96,11 @@ import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@mortise/server-core/sessions'
-import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createKeychainCapabilityProvider, createMessagingSessionCapabilityProvider, createOAuthCapabilityProvider, createScopedAutomationCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
-import { completeOAuthFlow } from '@mortise/server-core/handlers/rpc/oauth'
-import { listWorkspaceAutomationsForCapability, setWorkspaceAutomationEnabledById } from '@mortise/server-core/handlers/rpc/automations'
+import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createMessagingSessionCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
+import { executeAutomationWorkspaceOperationV1 } from '@mortise/server-core/handlers/rpc/automations'
+import { registerAutomationWorkspaceRpcHandlers } from '@mortise/server-core/handlers'
+import { AutomationIngressTokenRegistry, createAutomationIngressHandler } from '@mortise/server-core/services'
+import { nodeHttpAdapter } from '@mortise/server-core/webui'
 import { registerAllRpcHandlers } from './handlers/index'
 import { registerCoreRpcHandlers, cleanupClientFileWatches } from '@mortise/server-core/handlers/rpc'
 import type { PlatformServices } from '../runtime/platform'
@@ -118,12 +120,12 @@ import { setSearchPlatform, setImageProcessor } from '@mortise/server-core/servi
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
 import { resolveInitialWindowTarget } from './initial-window-target'
+import { routes } from '../shared/routes'
 import { LayoutCoordinator } from './layout-coordinator'
 import { loadWindowState, saveWindowState } from './window-state'
 import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig, CONFIG_DIR } from '@mortise/shared/config'
 import { getDefaultWorkspacesDir } from '@mortise/shared/workspaces'
 import { initializeDocs } from '@mortise/shared/docs'
-import { initializeReleaseNotes } from '@mortise/shared/release-notes'
 import { ensureDefaultPermissions } from '@mortise/shared/agent/permissions-config'
 import { ensureToolIcons, ensurePresetThemes } from '@mortise/shared/config'
 import { setBundledAssetsRoot, writeRuntimeLog } from '@mortise/shared/utils'
@@ -132,8 +134,6 @@ import { setPowerShellValidatorRoot } from '@mortise/shared/agent'
 import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
 import { createBrowserCapabilityAdapter } from './browser-capability-adapter'
-import { createCallbackServer, createPendingFlow, OAuthFlowStore } from '@mortise/shared/auth'
-import { getSourceCredentialManager, loadSource } from '@mortise/shared/sources'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog } from './logger'
 import { setPerfEnabled, enableDebug } from '@mortise/shared/utils'
@@ -145,6 +145,12 @@ import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
 import { spawnWorkspaceServer, type SpawnedWorkspaceServer } from './workspace-server-spawner'
 import { resolveElectronResourcePaths } from './electron-resource-paths'
 const isPackagedDeveloperHost = __MORTISE_DEV_HOST_BUILD__ && app.isPackaged
+process.env.MORTISE_PROCESS_ROLE ??= 'electron-main'
+process.env.MORTISE_BACKEND_KIND ??= 'electron'
+process.env.MORTISE_PRODUCT_VERSION ??= app.getVersion()
+process.env.MORTISE_BUILD_ID ??= process.env.MORTISE_UI_BUILD_ID ?? `${app.isPackaged ? 'packaged' : 'source'}:${app.getVersion()}`
+writeRuntimeLog('info', { scope: 'process', event: 'started', data: { argv0: process.argv0 } })
+process.once('exit', code => writeRuntimeLog('info', { scope: 'process', event: 'finished', data: { exitCode: code } }))
 
 if (__MORTISE_UI_VALIDATION_BUILD__ && process.env.MORTISE_UI_TEST_HOST === '1' && ((!app.isPackaged && process.env.NODE_ENV !== 'production') || isPackagedDeveloperHost)) {
   const isolatedElectronData = process.env.MORTISE_UI_ELECTRON_USER_DATA_DIR
@@ -239,19 +245,6 @@ let windowManager: WindowManager | null = null
 let layoutCoordinator: LayoutCoordinator | null = null
 let sessionManager: SessionManager | null = null
 let browserPaneManager: BrowserPaneManager | null = null
-let oauthFlowStore: OAuthFlowStore | null = null
-const capabilityOAuthFlows = new Map<string, {
-  sessionId: string
-  state: string
-  status: 'pending' | 'completed' | 'cancelled' | 'failed'
-  accountLabel?: string
-  errorCode?: string
-  close(): void
-}>()
-function disposeCapabilityOAuthFlows(): void {
-  for (const flow of capabilityOAuthFlows.values()) flow.close()
-  capabilityOAuthFlows.clear()
-}
 let moduleSink: EventSink | null = null
 let moduleClientResolver: ((webContentsId: number) => string | undefined) | null = null
 let uiTestHost: { url: string; close(): Promise<void> } | null = null
@@ -263,6 +256,8 @@ let workspaceServer: SpawnedWorkspaceServer | null = null
 // through createMessagingBootstrap — do not construct MessagingGatewayRegistry
 // directly.
 let messagingHandle: MessagingBootstrapHandle | null = null
+const automationIngressTokens = new AutomationIngressTokenRegistry()
+let automationWorkspaceDispatcher: import('@mortise/server-core/services').AutomationWorkspaceDispatcherV1 | null = null
 
 // Store pending deep link if app not ready yet (cold start)
 let pendingDeepLink: string | null = null
@@ -413,6 +408,7 @@ async function createInitialWindows(): Promise<void> {
         workspaceId: saved.workspaceId,
         focused: saved.focused,
         restoreUrl: saved.url,
+        initialRoute: routes.view.newConversation(),
       })
       win.setBounds(saved.bounds)
 
@@ -434,7 +430,10 @@ async function createInitialWindows(): Promise<void> {
   })
   if (!target) return
 
-  windowManager.createWindow(target)
+  windowManager.createWindow({
+    workspaceId: target.workspaceId,
+    initialRoute: routes.view.newConversation(),
+  })
   mainLog.info('Created initial workspace window', target)
 }
 
@@ -461,9 +460,6 @@ app.whenReady().then(async () => {
 
   // Initialize bundled docs
   initializeDocs()
-
-  // Initialize bundled release notes
-  initializeReleaseNotes()
 
   // Ensure default permissions file exists (copies bundled default.json on first run)
   ensureDefaultPermissions()
@@ -721,6 +717,17 @@ app.whenReady().then(async () => {
         mainLog.info(`[server-mode] Enabled — binding ${rpcHost}:${rpcPort}${tls ? ' (TLS)' : ''}`)
       }
 
+      const automationIngressHandler = createAutomationIngressHandler({
+        tokens: automationIngressTokens,
+        workspaceExists: workspaceId => Boolean(getWorkspaceByNameOrId(workspaceId)),
+        dispatcher: {
+          execute: (workspaceId, command, context) => {
+            if (!automationWorkspaceDispatcher) throw new Error('Automation dispatcher is still starting')
+            return automationWorkspaceDispatcher.execute(workspaceId, command, context)
+          },
+        },
+      })
+
       // Bootstrap the WS RPC server via shared bootstrap function.
       const instance = await bootstrapServer<SessionManager, HandlerDeps>({
         serverToken,
@@ -730,6 +737,9 @@ app.whenReady().then(async () => {
         bundledAssetsRoot: __dirname,
         serverId: 'local',
         serverVersion: app.getVersion(),
+        httpHandler: nodeHttpAdapter(async (request, context) =>
+          await automationIngressHandler(request, context.peerAddress)
+            ?? new Response('Not Found', { status: 404 })),
         authorizeWorkspace: ({ workspaceId, webContentsId, phase }) => {
           if (!workspaceId) return true
           if (!getWorkspaceByNameOrId(workspaceId)) return false
@@ -879,156 +889,6 @@ app.whenReady().then(async () => {
               case 'challenge': return browserPaneManager!.detectSecurityChallenge(instanceId)
             }
           }))
-          sm.registerCapabilityProvider(createOAuthCapabilityProvider({
-            async begin({ sourceSlug, sessionId }, signal) {
-              const session = await sm.getSession(sessionId)
-              if (!session) throw new Error('Session not found')
-              const workspace = getWorkspaceByNameOrId(session.workspaceId)
-              if (!workspace) throw new Error('Workspace not found')
-              const source = loadSource(workspace.rootPath, sourceSlug)
-              if (!source) throw new Error(`Source not found: ${sourceSlug}`)
-              const flowStore = oauthFlowStore
-              if (!flowStore) throw new Error('OAuth service is not ready')
-
-              const callbackServer = await createCallbackServer({ appType: 'electron' })
-              const prepared = await getSourceCredentialManager().prepareOAuth(source, {
-                callbackUrl: `${callbackServer.url}/callback`,
-              })
-              const flowId = randomUUID()
-              flowStore.store(createPendingFlow({
-                flowId,
-                state: prepared.state,
-                codeVerifier: prepared.codeVerifier,
-                redirectUri: prepared.redirectUri,
-                source,
-                clientId: prepared.clientId,
-                clientSecret: prepared.clientSecret,
-                tokenEndpoint: prepared.tokenEndpoint,
-                provider: prepared.provider,
-                ownerClientId: `pi-extension:${sessionId}`,
-                workspaceId: session.workspaceId,
-                sourceSlug,
-                sessionId,
-              }))
-              const tracked: {
-                sessionId: string
-                state: string
-                status: 'pending' | 'completed' | 'cancelled' | 'failed'
-                accountLabel?: string
-                errorCode?: string
-                close(): void
-              } = {
-                sessionId,
-                state: prepared.state,
-                status: 'pending',
-                close: () => callbackServer.close(),
-              }
-              capabilityOAuthFlows.set(flowId, tracked)
-
-              const cancel = () => {
-                if (tracked.status !== 'pending') return
-                flowStore.remove(prepared.state)
-                tracked.status = 'cancelled'
-                callbackServer.close()
-              }
-              signal.addEventListener('abort', cancel, { once: true })
-
-              void (async () => {
-                try {
-                  await shell.openExternal(prepared.authUrl)
-                  const callback = await callbackServer.promise
-                  if (callback.query.error) {
-                    flowStore.remove(prepared.state)
-                    tracked.status = 'failed'
-                    Object.assign(tracked, { errorCode: 'OAUTH_PROVIDER_REJECTED' })
-                    return
-                  }
-                  const code = callback.query.code
-                  if (!code) throw new Error('OAuth callback did not include an authorization code')
-                  const result = await completeOAuthFlow({
-                    code,
-                    state: prepared.state,
-                    flowStore,
-                    credManager: getSourceCredentialManager(),
-                    sessionManager: sm,
-                    pushSourcesChanged: () => {},
-                    logger: mainLog,
-                  })
-                  tracked.status = result.success ? 'completed' : 'failed'
-                  if (result.email) Object.assign(tracked, { accountLabel: result.email })
-                  if (!result.success) Object.assign(tracked, { errorCode: 'OAUTH_EXCHANGE_FAILED' })
-                } catch {
-                  flowStore.remove(prepared.state)
-                  tracked.status = 'failed'
-                  Object.assign(tracked, { errorCode: 'OAUTH_FLOW_FAILED' })
-                } finally {
-                  callbackServer.close()
-                }
-              })()
-
-              return { flowId, status: 'pending', userAction: 'open_authorization' }
-            },
-            async status({ flowId, sessionId }) {
-              const flow = capabilityOAuthFlows.get(flowId)
-              if (!flow || flow.sessionId !== sessionId) throw new Error('OAuth flow not found for this session')
-              const result = {
-                flowId,
-                status: flow.status,
-                ...(flow.accountLabel ? { accountLabel: flow.accountLabel } : {}),
-                ...(flow.errorCode ? { errorCode: flow.errorCode } : {}),
-              }
-              if (flow.status !== 'pending') capabilityOAuthFlows.delete(flowId)
-              return result
-            },
-            async cancel({ flowId, sessionId }) {
-              const flow = capabilityOAuthFlows.get(flowId)
-              if (!flow || flow.sessionId !== sessionId) throw new Error('OAuth flow not found for this session')
-              oauthFlowStore?.remove(flow.state)
-              flow.close()
-              flow.status = 'cancelled'
-              capabilityOAuthFlows.delete(flowId)
-              return { flowId, status: 'cancelled' }
-            },
-            async revoke({ sourceSlug, sessionId }) {
-              const session = await sm.getSession(sessionId)
-              if (!session) throw new Error('Session not found')
-              const workspace = getWorkspaceByNameOrId(session.workspaceId)
-              if (!workspace) throw new Error('Workspace not found')
-              const source = loadSource(workspace.rootPath, sourceSlug)
-              if (!source) throw new Error(`Source not found: ${sourceSlug}`)
-              await getSourceCredentialManager().delete(source)
-              getSourceCredentialManager().markSourceNeedsReauth(source, 'Signed out by extension request')
-              return { sourceSlug, revoked: true }
-            },
-          }))
-          sm.registerCapabilityProvider(createKeychainCapabilityProvider({
-            async has(input, sessionId) {
-              const session = await sm.getSession(sessionId)
-              if (!session) throw new Error('Session not found')
-              if (!input.sourceId || !['source_oauth', 'source_bearer', 'source_apikey', 'source_basic'].includes(input.type)) {
-                throw new Error('Only session-workspace source credential references are supported')
-              }
-              const credential = await getCredentialManager().get({
-                type: input.type as 'source_oauth' | 'source_bearer' | 'source_apikey' | 'source_basic',
-                workspaceId: session.workspaceId,
-                sourceId: input.sourceId,
-              })
-              return { present: credential !== null }
-            },
-            async remove(input, sessionId) {
-              const session = await sm.getSession(sessionId)
-              if (!session) throw new Error('Session not found')
-              if (!input.sourceId || !['source_oauth', 'source_bearer', 'source_apikey', 'source_basic'].includes(input.type)) {
-                throw new Error('Only session-workspace source credential references are supported')
-              }
-              const removed = await getCredentialManager().delete({
-                type: input.type as 'source_oauth' | 'source_bearer' | 'source_apikey' | 'source_basic',
-                workspaceId: session.workspaceId,
-                sourceId: input.sourceId,
-              })
-              return { removed }
-            },
-          }))
           sm.registerCapabilityProvider(createSessionShareCapabilityProvider({
             async status(sessionId: string) {
               const session = await sm.getSession(sessionId)
@@ -1056,7 +916,7 @@ app.whenReady().then(async () => {
           return sm
         },
         bindRpcServer: (sm, server) => sm.setRpcServer(server),
-        createHandlerDeps: ({ sessionManager: sm, platform: p, oauthFlowStore: ofs }) => {
+        createHandlerDeps: ({ sessionManager: sm, platform: p }) => {
           // The messaging handle is built here because it needs sessionManager.
           // The WS publisher is attached after bootstrapServer resolves (via
           // handle.setPublisher) because wsServer isn't available yet.
@@ -1128,46 +988,31 @@ app.whenReady().then(async () => {
             },
           }))
           const automationCapabilityAdapter = {
-            async status(sessionId: string) {
-              const { session } = await resolveCapabilitySession(sessionId)
-              return sm.getWorkspaceAutomationSummary(session.workspaceId)
-            },
-            async list(sessionId: string) {
-              const { workspace } = await resolveCapabilitySession(sessionId)
-              return listWorkspaceAutomationsForCapability(workspace.rootPath)
-            },
-            async setEnabled(sessionId: string, automationId: string, enabled: boolean) {
-              const { workspace } = await resolveCapabilitySession(sessionId)
-              await setWorkspaceAutomationEnabledById(workspace.rootPath, automationId, enabled)
-              sm.notifyConfigFileChange(workspace.rootPath, 'automations.json')
-              return { id: automationId, enabled }
+            async execute(command: import('@mortise/shared/protocol').AutomationWorkspaceCommandV1, context: {
+              sessionId: string
+              eventSourceKind: 'agent' | 'extension'
+            }) {
+              const { workspace } = await resolveCapabilitySession(context.sessionId)
+              return executeAutomationWorkspaceOperationV1({
+                workspaceId: workspace.id,
+                workspaceRootPath: workspace.rootPath,
+                eventSourceKind: context.eventSourceKind,
+                host: sm.getAutomationHost(workspace.id) ?? undefined,
+              }, command)
             },
           }
-          if (!isHeadless) {
-            sm.registerCapabilityProvider(createAutomationWorkspaceCapabilityProvider(automationCapabilityAdapter))
-            const scopedAdapter = (kind: 'scheduler' | 'webhook') => ({
-              async status(sessionId: string) {
-                const all = await automationCapabilityAdapter.list(sessionId)
-                const matches = all.filter(item => kind === 'scheduler'
-                  ? /schedule|cron/i.test(item.event)
-                  : item.actionTypes.includes('webhook'))
-                const base = await automationCapabilityAdapter.status(sessionId)
-                return { automationCount: matches.length, schedulerRunning: kind === 'scheduler' && base.schedulerRunning }
-              },
-              async list(sessionId: string) {
-                const all = await automationCapabilityAdapter.list(sessionId)
-                return all.filter(item => kind === 'scheduler'
-                  ? /schedule|cron/i.test(item.event)
-                  : item.actionTypes.includes('webhook'))
-              },
-              async setEnabled(sessionId: string, automationId: string, enabled: boolean) {
-                const matches = await this.list(sessionId)
-                if (!matches.some(item => item.id === automationId)) throw new Error(`${kind} automation not found`)
-                return automationCapabilityAdapter.setEnabled(sessionId, automationId, enabled)
-              },
-            })
-            sm.registerCapabilityProvider(createScopedAutomationCapabilityProvider('scheduler', scopedAdapter('scheduler')))
-            sm.registerCapabilityProvider(createScopedAutomationCapabilityProvider('webhook', scopedAdapter('webhook')))
+          sm.registerCapabilityProvider(createAutomationWorkspaceCapabilityProvider(automationCapabilityAdapter))
+          automationWorkspaceDispatcher = {
+            async execute(workspaceId, command, context) {
+              const workspace = getWorkspaceByNameOrId(workspaceId)
+              if (!workspace) return { schemaVersion: 1, status: 'invalid', error: { code: 'workspace_not_found', message: 'Workspace not found', retryable: false } }
+              return executeAutomationWorkspaceOperationV1({
+                workspaceId: workspace.id,
+                workspaceRootPath: workspace.rootPath,
+                eventSourceKind: context.eventSourceKind,
+                host: sm.getAutomationHost(workspace.id) ?? undefined,
+              }, command)
+            },
           }
           return {
             sessionManager: sm,
@@ -1175,15 +1020,24 @@ app.whenReady().then(async () => {
             windowManager: windowManager ?? undefined,
             browserPaneManager: browserPaneManager ?? undefined,
             layoutCoordinator: layoutCoordinator ?? undefined,
-            oauthFlowStore: ofs,
             messagingRegistry: messagingHandle.registry,
           }
         },
         // Headless: register only core handlers (no GUI handlers for browser, settings, etc.)
         // GUI: register all handlers (core + GUI)
-        registerAllRpcHandlers: isHeadless
-          ? (server, deps, serverCtx) => registerCoreRpcHandlers(server, deps, serverCtx)
-          : registerAllRpcHandlers,
+        registerAllRpcHandlers: (server, deps, serverCtx) => {
+          if (isHeadless) registerCoreRpcHandlers(server, deps, serverCtx)
+          else registerAllRpcHandlers(server, deps, serverCtx)
+          registerAutomationWorkspaceRpcHandlers(server, {
+            dispatcher: {
+              execute: (workspaceId, command, context) => {
+                if (!automationWorkspaceDispatcher) throw new Error('Automation dispatcher is still starting')
+                return automationWorkspaceDispatcher.execute(workspaceId, command, context)
+              },
+            },
+            tokens: automationIngressTokens,
+          })
+        },
         setSessionEventSink: (sm, sink) => sm.setEventSink(sink),
         initializeSessionManager: (sm) => sm.initialize(),
         initModelRefreshService: () => initModelRefreshService(async (slug: string) => {
@@ -1213,9 +1067,11 @@ app.whenReady().then(async () => {
 
       // Capture module-level references for before-quit cleanup and deep-link handlers
       sessionManager = instance.sessionManager
-      oauthFlowStore = instance.oauthFlowStore
       moduleSink = instance.wsServer.push.bind(instance.wsServer)
       moduleClientResolver = resolveClientId
+      for (const workspace of getWorkspaces()) {
+        if (!workspace.remoteServer) automationIngressTokens.ensure(workspace.id)
+      }
       layoutCoordinator?.setChangedHandler(layout => {
         moduleSink?.(RPC_CHANNELS.layout.CHANGED, { to: 'workspace', workspaceId: layout.workspaceId }, layout)
       })
@@ -1890,13 +1746,6 @@ app.on('before-quit', async (event) => {
     {
       name: 'browser-panes',
       run: () => browserPaneManager?.destroyAll(),
-    },
-    {
-      name: 'oauth-flows',
-      run: () => {
-        disposeCapabilityOAuthFlows()
-        oauthFlowStore?.dispose()
-      },
     },
     {
       name: 'model-refresh',

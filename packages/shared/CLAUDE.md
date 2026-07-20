@@ -3,12 +3,11 @@
 ## Purpose
 Core business logic package for Mortise Agent:
 - Agent backends and session-scoped tools
-- Sources, credentials, sessions, and config
+- Credentials, sessions, and config
 - Permission modes and validation
 
 ## Key folders
 - `src/agent/` — `pi-agent.ts`, `base-agent.ts`, tools, permissions
-- `src/sources/` — source storage/types/services
 - `src/sessions/` — session persistence/index
 - `src/config/` — config/preferences/theme/watcher
 - `src/credentials/` — pi auth.json thin wrapper
@@ -21,7 +20,6 @@ cd packages/shared && bun run tsc --noEmit
 
 ## Hard rules
 - Permission modes are fixed: `safe`, `ask`, `allow-all`.
-- Source types are fixed: `mcp`, `api`, `local`.
 - Keep credential handling in `src/credentials/` pathways (no ad-hoc secret storage).
 - Keep user-facing tool contracts backward-compatible where possible.
 
@@ -30,17 +28,14 @@ cd packages/shared && bun run tsc --noEmit
 - Route model vendors through Pi providers in `models.json`; Mortise runtime selection uses provider keys and model IDs directly.
 - Custom endpoint model capabilities must preserve explicit per-model overrides end-to-end. Active sessions refresh provider runtime capabilities via `updateRuntimeConfig`, with the lazy `getOrCreateAgent` path acting as a backstop.
 - `update_runtime_config` IPC carries `model, providerType, authType, baseUrl, customEndpoint, customModels` only — `piAuthProvider`, `slug`, and the broader credential/provider routing state cannot be re-routed inside a live Pi subprocess. `runtime-config.ts:buildRestartRequiredSignature` hashes those fields separately from the in-place-safe ones; when the restart signature drifts, `tryRefreshAgentRuntime` skips the in-place attempt and goes straight to dispose + recreate so the new auth/provider state actually takes effect.
-- Session lifecycle distinguishes **hard aborts** from **UI handoff interrupts**:
-  - use hard aborts for true cancellation/teardown (`UserStop`, redirect fallback)
-  - use handoff interrupts for pause points where control moves to the UI (`AuthRequest`, `PlanSubmitted`)
+- Session lifecycle distinguishes hard aborts from UI handoff interrupts; use hard aborts for true cancellation/teardown and handoff interrupts for pause points such as submitted plans.
 - Remote workspace handoff summaries are injected as one-shot hidden context on the destination session's first turn.
-- WebUI source OAuth uses the deployment's `MORTISE_OAUTH_RELAY_URL`; the deployment-specific callback target is carried in a relay-owned outer `state` envelope and unwrapped by the router worker.
 - Automations matching is unified through canonical matcher adapters in `src/automations/utils.ts` (`matcherMatches*`). Avoid direct primitive-only matcher checks in feature code so condition gating stays consistent across app and agent events.
 - Automation matchers may declare an optional `telegramTopic?: string` to route spawned sessions into a Telegram forum topic in the workspace's paired supergroup. The field is plumbed through `PendingPrompt` and `ExecutePromptAutomationInput`; runtime resolution and topic creation live in `@mortise/messaging-gateway`'s `TopicRegistry` and `MessagingGatewayRegistry.bindAutomationSession`. SessionManager picks up the resolution via the optional `setAutomationBinder` hook installed by the messaging-gateway bootstrap.
 - The OpenAI Chat Completions strip stream (`unified-network-interceptor.ts:createOpenAiSseStrippingStream`) emits **one consolidated SSE event per logical tool call** with `id + name + cleanArgs` together — never split across init + args-only deltas. Some downstream SDKs (Pi SDK) treat args-only deltas as new tool_calls instead of merging by index, which produces duplicate empty-id entries on parallel-tool turns from DeepSeek and other relays. `sanitizeOpenAiHistoryInPlace` recovers sessions whose history was persisted by the pre-fix split-emit version.
 - Mortise's global `midStreamBehavior` controls the plain Enter action during an in-flight turn; Ctrl/Cmd+Enter uses the opposite action. It is independent of provider selection and is read via `getMidStreamBehavior()` in `SessionManager.sendMessage`.
-- Mortise no longer injects the network interceptor into Pi subprocesses. Pi owns provider/model HTTP transport; Mortise should consume Pi's public RPC events and only keep host-side UI/session/source adapters here. Keep `unified-network-interceptor.ts` as an opt-in helper with direct tests, not as part of Pi runtime resolution.
-- Per-message context is split into **volatile** vs **stable** blocks (`PromptBuilder.buildVolatileContextParts()` / `buildStableContextParts()`, composed by `buildContextParts()`). Volatile = date/time, `session_state`, `sources` (change per turn); stable = workspace capabilities, working directory (invariant per session). **Claude** keeps all blocks on the user-message tail (system prompt stays cacheable). **Pi** folds only stable blocks into the system prefix and routes volatile blocks to the user tail — otherwise a per-minute re-stamp invalidates pi-ai's cached system prefix and all downstream history (#862). `buildVolatileContextParts` consumes the one-shot mode-change signal (`consumeModeChangeUserSignal`), so call it **exactly once per turn** — never re-invoke a builder to compute a cache-debug hash (hash the produced string instead).
+- Mortise no longer injects the network interceptor into Pi subprocesses. Pi owns provider/model HTTP transport; Mortise should consume Pi's public RPC events and only keep host-side UI/session adapters here. Keep `unified-network-interceptor.ts` as an opt-in helper with direct tests, not as part of Pi runtime resolution.
+- Per-message context is split into **volatile** vs **stable** blocks (`PromptBuilder.buildVolatileContextParts()` / `buildStableContextParts()`, composed by `buildContextParts()`). Volatile blocks include date/time and `session_state`; working-directory context is stable. **Pi** folds only stable blocks into the system prefix and routes volatile blocks to the user tail. `buildVolatileContextParts` consumes the one-shot mode-change signal (`consumeModeChangeUserSignal`), so call it exactly once per turn.
 - Provider credentials and OAuth identities are owned by Pi `auth.json`; Mortise must not add a parallel provider credential record.
 - **Mythos-class thinking (Claude Fable 5 / Mythos 5).** These models have adaptive thinking **always on** and the Messages API **rejects `thinking: { type: 'disabled' }`** (unlike Opus/Sonnet/Haiku, whose API is unchanged). `resolveClaudeThinkingOptions` therefore detects them via `isAdaptiveThinkingAlwaysOnModel()` (`config/models.ts`) and maps the "off"/`minimizeThinking` case to `{ thinking: { type: 'adaptive' }, effort: 'low' }` instead of `disabled` — there is no way to turn thinking off on these models. `runMiniCompletion` is unaffected (it runs on the resolved mini model, which is always Haiku). Model id is the dateless pinned snapshot `claude-fable-5` (1M context, 128k max output); registered in `MODEL_REGISTRY`.
 
@@ -67,7 +62,7 @@ Keys use **flat dot-notation** with a category prefix:
 | `common.*` | Shared labels (Cancel, Save, Close, Edit, Loading...) | `common.cancel` |
 | `menu.*` | App menu items (File, Edit, View, Window) | `menu.toggleSidebar` |
 | `sidebar.*` | Left sidebar navigation items | `sidebar.allSessions` |
-| `sidebarMenu.*` | Sidebar context menu actions | `sidebarMenu.addSource` |
+| `sidebarMenu.*` | Sidebar context menu actions | `sidebarMenu.rename` |
 | `sessionMenu.*` | Session context menu actions | `sessionMenu.archive` |
 | `settings.*` | Settings pages — nested by page ID | `settings.ai.connections` |
 | `chat.*` | Chat input, session viewer, inline UI | `chat.attachFiles` |
@@ -77,12 +72,10 @@ Keys use **flat dot-notation** with a category prefix:
 | `dialog.*` | Modal dialogs | `dialog.pairingCode.title` |
 | `apiSetup.*` | API connection setup | `apiSetup.modelTier.best` |
 | `workspace.*` | Workspace creation/management | `workspace.createNew` |
-| `sourceInfo.*` | Source detail page | `sourceInfo.connection` |
 | `skillInfo.*` | Skill detail page | `skillInfo.metadata` |
 | `automations.*` | Automation list/detail/menus | `automations.runTest` |
-| `sourcesList.*` | Sources list panel | `sourcesList.noSourcesConfigured` |
 | `skillsList.*` | Skills list panel | `skillsList.addSkill` |
-| `editPopover.*` | EditPopover labels/placeholders | `editPopover.label.addSource` |
+| `editPopover.*` | EditPopover labels/placeholders | `editPopover.label.addSkill` |
 | `status.*` | Session status names (by status ID) | `status.needs-review` |
 | `mode.*` | Permission mode names (by mode ID) | `mode.safe` |
 | `hints.*` | Empty state workflow suggestions | `hints.summarizeGmail` |
@@ -147,20 +140,6 @@ The main-process i18n instance has **no detection plugin** (no `localStorage` in
 `uiLanguage` is **not** user-editable through `update_user_preferences`. The Appearance dropdown is the only writer.
 
 **Session-title language** resolves from this same persisted `uiLanguage` via `resolveTitleLanguageName()` (`config/preferences.ts`), **not** `i18n.resolvedLanguage`. The main-process i18n value hydrates asynchronously at startup and can still read the `'en'` fallback when an early title generates, which forced English titles for non-English chats (#885). When no language is persisted the helper returns `undefined`, so the title prompt auto-detects the conversation language instead of defaulting to English. Used at both `SessionManager` title sites (`generateTitle`, `refreshTitle`).
-
-## Token refresh for API sources
-
-API sources can auto-refresh tokens via two paths:
-- **OAuth** — Google, Slack, Microsoft, or generic OAuth (`authType: 'oauth'`)
-- **Renew endpoint** — custom bearer-token APIs with `api.renewEndpoint` in config.json
-
-For renew-endpoint sources, the current access token is sent to the configured endpoint and a new token is extracted from the response. No separate refresh token is needed (MVP scope).
-
-Key integration points:
-- `isRefreshableSource()` in `types.ts` — single guard for "can this source auto-refresh?"
-- `SourceCredentialManager.refreshApiRenew()` — calls the renew endpoint
-- `TokenRefreshManager` — treats renew-endpoint sources as refreshable even without `refreshToken`
-- `server-builder.ts` — passes a token getter (not static credential) for renew-endpoint sources
 
 ## `queryLlm` backend contract
 

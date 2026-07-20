@@ -7,7 +7,7 @@
  * - Max width 80%
  * - Markdown rendering for links and code
  * - Optional file attachments with thumbnails
- * - Content badges for @mentions (sources, skills)
+ * - Content badges for @mentions and attached context
  * - Pending/queued states (Electron only)
  */
 
@@ -318,7 +318,7 @@ export interface UserMessageBubbleProps {
   onFileClick?: (path: string) => void
   /** Stored attachments (images, documents) */
   attachments?: StoredAttachment[]
-  /** Content badges for inline display (sources, skills) */
+  /** Content badges for inline display */
   badges?: ContentBadge[]
   /** Whether the message is awaiting backend confirmation. User bubbles stay visually stable. */
   isPending?: boolean

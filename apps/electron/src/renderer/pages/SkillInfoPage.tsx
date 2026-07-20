@@ -3,7 +3,7 @@
  *
  * Displays comprehensive skill details including metadata,
  * permission modes, and instructions.
- * Uses the Info_ component system for consistent styling with SourceInfoPage.
+ * Uses the shared Info_ component system for consistent detail-page styling.
  */
 
 import * as React from 'react'
@@ -191,11 +191,6 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
                   {formatPath(skill.path)}
                 </button>
               </Info_Table.Row>
-              {skill.metadata.requiredSources && skill.metadata.requiredSources.length > 0 && (
-                <Info_Table.Row label={t('skillInfo.requiredSources')}>
-                  {skill.metadata.requiredSources.join(', ')}
-                </Info_Table.Row>
-              )}
             </Info_Table>
           </Info_Section>
 

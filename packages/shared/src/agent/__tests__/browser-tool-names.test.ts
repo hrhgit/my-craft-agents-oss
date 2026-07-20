@@ -34,7 +34,7 @@ describe('browser tool name normalization', () => {
 
   it('returns null for non-browser tools', () => {
     expect(normalizeBrowserToolName('Read')).toBeNull();
-    expect(normalizeBrowserToolName('mcp__session__source_test')).toBeNull();
+    expect(normalizeBrowserToolName('mcp__session__config_validate')).toBeNull();
   });
 
   it('detects canonical + aliases with boolean helper', () => {

@@ -297,6 +297,10 @@ export interface TurnCardProps {
   completedAt?: number
   /** End-to-end duration from the user request to completion. */
   durationMs?: number
+  /** Input tokens consumed by this user-visible turn. */
+  inputTokens?: number
+  /** Output tokens produced by this user-visible turn. */
+  outputTokens?: number
   /** Start in expanded state */
   defaultExpanded?: boolean
   /** Controlled expansion state (overrides internal state) */
@@ -629,9 +633,9 @@ function extractActionFromDisplayName(iconName: string, llmName: string): string
  * Format tool display using embedded toolDisplayMeta.
  * toolDisplayMeta is set at storage time in the main process and includes:
  * - displayName: Human-readable name
- * - iconDataUrl: Base64-encoded icon (for skills/sources)
+ * - iconDataUrl: Base64-encoded icon
  * - description: Brief description
- * - category: 'skill' | 'source' | 'native' | 'mcp'
+ * - category: 'skill' | 'native' | 'mcp'
  */
 function formatToolDisplay(
   activity: ActivityItem
@@ -640,8 +644,8 @@ function formatToolDisplay(
 
   // Primary: Use embedded toolDisplayMeta (works in both Electron and viewer)
   if (toolDisplayMeta) {
-    // For MCP tools, append the tool slug to the source name
-    if (toolName?.startsWith('mcp__') && toolDisplayMeta.category === 'source') {
+    // For MCP tools, append the tool slug to the server display name.
+    if (toolName?.startsWith('mcp__') && toolDisplayMeta.category === 'mcp') {
       const parts = toolName.match(/^mcp__([^_]+)__(.+)$/)
       if (parts) {
         const toolSlug = parts[2]
@@ -773,7 +777,7 @@ function getPreviewText(
 
 /**
  * Status icon for an activity - exported for reuse in inline execution.
- * Supports custom icons from skill/source metadata when completed.
+ * Supports custom icons from tool metadata when completed.
  * Edit/Write tools show tool-specific icons; others show checkmark or custom icon.
  */
 export function ActivityStatusIcon({
@@ -1393,6 +1397,10 @@ export interface ResponseCardProps {
   completedAt?: number
   /** End-to-end duration from the user request to completion. */
   durationMs?: number
+  /** Input tokens consumed by this user-visible turn. */
+  inputTokens?: number
+  /** Output tokens produced by this user-visible turn. */
+  outputTokens?: number
   /** Callback to open file in editor */
   onOpenFile?: (path: string) => void
   /** Callback to open URL */
@@ -1635,13 +1643,36 @@ function applyTextHighlightRange(
   }
 }
 
-function CompletionTiming({ completedAt, durationMs }: { completedAt?: number; durationMs?: number }) {
+function CompletionMetadata({
+  completedAt,
+  durationMs,
+  inputTokens,
+  outputTokens,
+}: {
+  completedAt?: number
+  durationMs?: number
+  inputTokens?: number
+  outputTokens?: number
+}) {
   const { t } = useTranslation()
-  if (completedAt === undefined || durationMs === undefined
-    || !Number.isFinite(completedAt) || !Number.isFinite(durationMs) || durationMs < 0) return null
+  const hasTiming = completedAt !== undefined && durationMs !== undefined
+    && Number.isFinite(completedAt) && Number.isFinite(durationMs) && durationMs >= 0
+  const hasInputTokens = inputTokens !== undefined && Number.isFinite(inputTokens) && inputTokens >= 0
+  const hasOutputTokens = outputTokens !== undefined && Number.isFinite(outputTokens) && outputTokens >= 0
+  if (!hasTiming && !hasInputTokens && !hasOutputTokens) return null
+
   return (
-    <span className="shrink-0 tabular-nums text-muted-foreground/70" data-response-completion-time={completedAt}>
-      {formatCompletionClock(completedAt)} {t('turnCard.elapsed')}{formatRequestDuration(durationMs)}
+    <span className="flex shrink-0 items-center gap-2 tabular-nums" data-response-completion-metadata>
+      {hasTiming && (
+        <>
+          <time dateTime={new Date(completedAt).toISOString()} data-response-completion-time={completedAt}>
+            {formatCompletionClock(completedAt)}
+          </time>
+          <span>{t('turnCard.elapsed')} {formatRequestDuration(durationMs)}</span>
+        </>
+      )}
+      {hasInputTokens && <span>{t('turnCard.inputTokens')} {formatTokens(inputTokens)}</span>}
+      {hasOutputTokens && <span>{t('turnCard.outputTokens')} {formatTokens(outputTokens)}</span>}
     </span>
   )
 }
@@ -1668,6 +1699,8 @@ export function ResponseCard({
   streamStartTime,
   completedAt,
   durationMs,
+  inputTokens,
+  outputTokens,
   onOpenFile,
   onOpenUrl,
   onPopOut,
@@ -1695,7 +1728,9 @@ export function ResponseCard({
   const artifactPresentation = React.useContext(ArtifactContributionContext)
   const [artifactPane, setArtifactPane] = useState<'primary' | 'aside'>('primary')
   const hasArtifactAside = Boolean(artifact && artifactPresentation?.aside)
-  const hasCompletionTiming = completedAt !== undefined && durationMs !== undefined
+  const hasCompletionMetadata = (completedAt !== undefined && durationMs !== undefined)
+    || inputTokens !== undefined
+    || outputTokens !== undefined
   // Throttled content for display - updates every CONTENT_THROTTLE_MS during streaming
   const [displayedText, setDisplayedText] = useState(text)
   const lastUpdateRef = useRef(Date.now())
@@ -2498,7 +2533,8 @@ export function ResponseCard({
 
     return (
       <>
-        <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden relative group">
+        <div className="group/assistant-response">
+          <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden relative group">
           {/* Fullscreen button - desktop only; compact mode keeps message chrome minimal */}
           {!compactMode && (
           <button
@@ -2613,7 +2649,6 @@ export function ResponseCard({
 
               {/* Right side */}
               <div className="flex items-center gap-3">
-                <CompletionTiming completedAt={completedAt} durationMs={durationMs} />
                 {/* Accept Plan dropdown (plan variant only, last response) */}
                 {isPlan && !artifact && showAcceptPlan && onAccept && onAcceptWithCompact && (
                   <div
@@ -2637,30 +2672,46 @@ export function ResponseCard({
             </div>
           )}
 
-          {/* Compact footer keeps completion metadata and the last-plan action. */}
-          {compactMode && (hasCompletionTiming
-            || (isPlan && !artifact && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact)) && (
+          {/* Compact footer keeps only the last-plan action. */}
+          {compactMode && isPlan && !artifact && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact && (
             <div
               className={cn(
-                "pl-3 pr-2 py-1.5 border-t border-border/30 flex items-center justify-between gap-2 bg-muted/20",
+                "pl-3 pr-2 py-1.5 border-t border-border/30 flex items-center justify-end gap-2 bg-muted/20",
                 SIZE_CONFIG.fontSize
               )}
             >
-              <CompletionTiming completedAt={completedAt} durationMs={durationMs} />
-              {isPlan && !artifact && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact && (
-                <CompactAcceptPlanDrawer
-                  onAccept={onAccept}
-                  onAcceptWithCompact={onAcceptWithCompact}
-                  acceptLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.acceptPlan')}
-                  acceptOptionLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.accept')}
-                />
-              )}
+              <CompactAcceptPlanDrawer
+                onAccept={onAccept}
+                onAcceptWithCompact={onAcceptWithCompact}
+                acceptLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.acceptPlan')}
+                acceptOptionLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.accept')}
+              />
             </div>
           )}
 
           {artifact && artifactPresentation?.footer && (
             <div className="border-t border-border/30 bg-muted/15 px-3 py-2" data-artifact-footer={artifact.artifactId}>
               {artifactPresentation.footer}
+            </div>
+          )}
+          </div>
+
+          {!compactMode && hasCompletionMetadata && (
+            <div
+              className={cn(
+                "flex h-[18px] min-h-[18px] items-center justify-end px-3 text-xs leading-none text-muted-foreground/65",
+                "pointer-events-none opacity-0 transition-opacity duration-150",
+                "group-hover/assistant-response:pointer-events-auto group-hover/assistant-response:opacity-100",
+                "group-focus-within/assistant-response:pointer-events-auto group-focus-within/assistant-response:opacity-100"
+              )}
+              data-response-completion-row
+            >
+              <CompletionMetadata
+                completedAt={completedAt}
+                durationMs={durationMs}
+                inputTokens={inputTokens}
+                outputTokens={outputTokens}
+              />
             </div>
           )}
         </div>
@@ -2839,6 +2890,8 @@ export const TurnCard = React.memo(function TurnCard({
   isComplete,
   completedAt,
   durationMs,
+  inputTokens,
+  outputTokens,
   defaultExpanded = false,
   isExpanded: externalIsExpanded,
   onExpandedChange,
@@ -3271,6 +3324,8 @@ export const TurnCard = React.memo(function TurnCard({
                 streamStartTime={response.streamStartTime}
                 completedAt={completedAt}
                 durationMs={durationMs}
+                inputTokens={inputTokens}
+                outputTokens={outputTokens}
                 sessionId={sessionId}
                 onOpenFile={onOpenFile}
                 onOpenUrl={onOpenUrl}
@@ -3306,6 +3361,8 @@ export const TurnCard = React.memo(function TurnCard({
             streamStartTime={response.streamStartTime}
             completedAt={completedAt}
             durationMs={durationMs}
+            inputTokens={inputTokens}
+            outputTokens={outputTokens}
             sessionId={sessionId}
             onOpenFile={onOpenFile}
             onOpenUrl={onOpenUrl}
@@ -3353,7 +3410,8 @@ export const TurnCard = React.memo(function TurnCard({
   if (prev.displayMode !== next.displayMode) return false
 
   // Re-render when persisted completion metadata arrives or changes.
-  if (prev.completedAt !== next.completedAt || prev.durationMs !== next.durationMs) return false
+  if (prev.completedAt !== next.completedAt || prev.durationMs !== next.durationMs
+    || prev.inputTokens !== next.inputTokens || prev.outputTokens !== next.outputTokens) return false
 
   // Re-render if compactMode changed (affects ResponseCard footer rendering)
   if (prev.compactMode !== next.compactMode) return false

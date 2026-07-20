@@ -40,13 +40,19 @@ export const CHANNEL_MAP = {
   getSessionMessages: invoke(RPC_CHANNELS.sessions.GET_MESSAGES),
   getPiProjectionSnapshot: invoke(RPC_CHANNELS.sessions.GET_PI_PROJECTION_SNAPSHOT),
   createSession: invoke(RPC_CHANNELS.sessions.CREATE),
+  createAndSendFirstTurn: invoke(
+    RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN,
+    undefined,
+    0,
+    SEND_MESSAGE_RPC_TIMEOUT_MS,
+  ),
+  discardFirstTurnAttachmentStaging: invoke(RPC_CHANNELS.sessions.DISCARD_FIRST_TURN_ATTACHMENT_STAGING),
   deleteSession: invoke(RPC_CHANNELS.sessions.DELETE),
   sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE, undefined, 2, SEND_MESSAGE_RPC_TIMEOUT_MS, 0),
   cancelProcessing: invoke(RPC_CHANNELS.sessions.CANCEL),
   killShell: invoke(RPC_CHANNELS.sessions.KILL_SHELL),
   getTaskOutput: invoke(RPC_CHANNELS.tasks.GET_OUTPUT),
   respondToPermission: invoke(RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION),
-  respondToCredential: invoke(RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL),
   sessionCommand: invoke(RPC_CHANNELS.sessions.COMMAND),
   exportSession: invoke(RPC_CHANNELS.sessions.EXPORT),
   importSession: invoke(RPC_CHANNELS.sessions.IMPORT, undefined, 1),
@@ -124,10 +130,6 @@ export const CHANNEL_MAP = {
   onUpdateAvailable: listener(RPC_CHANNELS.update.AVAILABLE),
   onUpdateDownloadProgress: listener(RPC_CHANNELS.update.DOWNLOAD_PROGRESS),
 
-  // Release notes
-  getReleaseNotes: invoke(RPC_CHANNELS.releaseNotes.GET),
-  getLatestReleaseVersion: invoke(RPC_CHANNELS.releaseNotes.GET_LATEST_VERSION),
-
   // Shell operations
   openUrl: invoke(RPC_CHANNELS.shell.OPEN_URL),
   openFile: invoke(RPC_CHANNELS.shell.OPEN_FILE),
@@ -168,6 +170,9 @@ export const CHANNEL_MAP = {
   setMidStreamBehavior: invoke(RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR),
   getNetworkProxySettings: invoke(RPC_CHANNELS.settings.GET_NETWORK_PROXY),
   setNetworkProxySettings: invoke(RPC_CHANNELS.settings.SET_NETWORK_PROXY),
+  getDeveloperKitStatus: invoke(RPC_CHANNELS.settings.GET_DEVELOPER_KIT),
+  discoverDeveloperKit: invoke(RPC_CHANNELS.settings.DISCOVER_DEVELOPER_KIT),
+  setDeveloperKitPath: invoke(RPC_CHANNELS.settings.SET_DEVELOPER_KIT),
 
   // Agent settings
   getAgentSettings: invoke(RPC_CHANNELS.agentSettings.GET),
@@ -244,26 +249,12 @@ export const CHANNEL_MAP = {
   unwatchSessionFiles: invoke(RPC_CHANNELS.sessions.UNWATCH_FILES),
   onSessionFilesChanged: listener(RPC_CHANNELS.sessions.FILES_CHANGED),
 
-  // Sources
-  getSources: invoke(RPC_CHANNELS.sources.GET),
-  createSource: invoke(RPC_CHANNELS.sources.CREATE),
-  deleteSource: invoke(RPC_CHANNELS.sources.DELETE),
-  startSourceOAuth: invoke(RPC_CHANNELS.sources.START_OAUTH),
-  saveSourceCredentials: invoke(RPC_CHANNELS.sources.SAVE_CREDENTIALS),
-  getSourcePermissionsConfig: invoke(RPC_CHANNELS.sources.GET_PERMISSIONS),
   getWorkspacePermissionsConfig: invoke(RPC_CHANNELS.workspace.GET_PERMISSIONS),
   getDefaultPermissionsConfig: invoke(RPC_CHANNELS.permissions.GET_DEFAULTS),
   onDefaultPermissionsChanged: listener(RPC_CHANNELS.permissions.DEFAULTS_CHANGED),
-  getMcpTools: invoke(RPC_CHANNELS.sources.GET_MCP_TOOLS),
 
   // Session content search
   searchSessionContent: invoke(RPC_CHANNELS.sessions.SEARCH_CONTENT),
-
-  // OAuth (server-owned credentials)
-  oauthRevoke: invoke(RPC_CHANNELS.oauth.REVOKE),
-
-  // Sources change listener
-  onSourcesChanged: listener(RPC_CHANNELS.sources.CHANGED),
 
   // Skills
   getSkills: invoke(RPC_CHANNELS.skills.GET),
@@ -289,7 +280,6 @@ export const CHANNEL_MAP = {
   getWorkspaceColorTheme: invoke(RPC_CHANNELS.theme.GET_WORKSPACE_COLOR_THEME),
   setWorkspaceColorTheme: invoke(RPC_CHANNELS.theme.SET_WORKSPACE_COLOR_THEME),
   getAllWorkspaceThemes: invoke(RPC_CHANNELS.theme.GET_ALL_WORKSPACE_THEMES),
-  getLogoUrl: invoke(RPC_CHANNELS.logo.GET_URL),
   onAppThemeChange: listener(RPC_CHANNELS.theme.APP_CHANGED),
   broadcastThemePreferences: invoke(RPC_CHANNELS.theme.BROADCAST_PREFERENCES),
   onThemePreferencesChange: listener(RPC_CHANNELS.theme.PREFERENCES_CHANGED),
@@ -320,12 +310,8 @@ export const CHANNEL_MAP = {
   // Tools settings
   getBrowserToolEnabled: invoke(RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED),
   setBrowserToolEnabled: invoke(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED),
-  getDataSourcesEnabled: invoke(RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED),
-  setDataSourcesEnabled: invoke(RPC_CHANNELS.tools.SET_DATA_SOURCES_ENABLED),
 
   // Pi Extensions 集成开关（控制全局 pi 扩展加载与 automation 委托）
-  getPiExtensionsDelegatePromptAutomation: invoke(RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION),
-  setPiExtensionsDelegatePromptAutomation: invoke(RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION),
   getPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.GET_SETTINGS),
   setPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.SET_SETTINGS),
   updatePiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS),
@@ -399,6 +385,7 @@ export const CHANNEL_MAP = {
 
   // Automations
   getAutomations: invoke(RPC_CHANNELS.automations.GET),
+  automationCommand: invoke(RPC_CHANNELS.automations.COMMAND),
   testAutomation: invoke(RPC_CHANNELS.automations.TEST),
   setAutomationEnabled: invoke(RPC_CHANNELS.automations.SET_ENABLED),
   duplicateAutomation: invoke(RPC_CHANNELS.automations.DUPLICATE),

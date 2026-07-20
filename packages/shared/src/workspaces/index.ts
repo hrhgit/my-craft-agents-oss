@@ -18,7 +18,6 @@ export {
   getDefaultWorkspacesDir,
   ensureDefaultWorkspacesDir,
   getWorkspacePath,
-  getWorkspaceSourcesPath,
   getWorkspaceSkillsPath,
   // Session view aggregation ()
   countSessionsByCwd,

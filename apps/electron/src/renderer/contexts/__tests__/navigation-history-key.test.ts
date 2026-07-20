@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch, shouldNavigateToInitialDefault } from '../navigation-history'
+import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch, shouldAutoSelectSessionOnLoad, shouldNavigateToInitialDefault } from '../navigation-history'
 
 describe('buildSemanticHistoryKey', () => {
   it('changes when focused panel index changes even if routes are identical', () => {
@@ -23,7 +23,7 @@ describe('buildSemanticHistoryKey', () => {
   it('stays stable for identical semantic inputs', () => {
     const input = {
       workspaceSlug: 'ws',
-      pageSurfaceRoute: 'sources/source/github',
+      pageSurfaceRoute: 'skills/skill/review',
       panelRoutes: ['allSessions/session/s1', 'allSessions/session/s2'],
       focusedPanelIndex: 1,
     }
@@ -78,6 +78,29 @@ describe('canRunInitialRestore', () => {
   })
 })
 
+describe('shouldAutoSelectSessionOnLoad', () => {
+  it('does not replace an explicit new-conversation draft', () => {
+    const base = {
+      suppressed: false,
+      isReady: true,
+      workspaceId: 'ws-a',
+      panelCount: 1,
+    }
+    expect(shouldAutoSelectSessionOnLoad({
+      ...base,
+      state: {
+        navigator: 'sessions',
+        filter: { kind: 'allSessions' },
+        details: { type: 'new', draftId: 'default' },
+      },
+    })).toBe(false)
+    expect(shouldAutoSelectSessionOnLoad({
+      ...base,
+      state: { navigator: 'sessions', filter: { kind: 'allSessions' }, details: null },
+    })).toBe(true)
+  })
+})
+
 describe('shouldNavigateToInitialDefault', () => {
   it('does not replace coordinator-owned auxiliary content with a default conversation', () => {
     expect(shouldNavigateToInitialDefault(new URLSearchParams({
@@ -92,15 +115,23 @@ describe('shouldNavigateToInitialDefault', () => {
       layoutWindowId: 'standalone:5',
       layoutReadOnly: '1',
     }))).toBe(true)
-    expect(shouldNavigateToInitialDefault(new URLSearchParams({ route: 'sources' }))).toBe(false)
+    expect(shouldNavigateToInitialDefault(new URLSearchParams({ route: 'settings' }))).toBe(false)
   })
 })
 
 describe('resolveWorkspaceSwitchSearch', () => {
+  it('keeps a workspace-list switch on the empty conversation page', () => {
+    expect(resolveWorkspaceSwitchSearch({
+      destination: 'newConversation',
+      savedSearch: '?ws=target&route=allSessions%2Fsession%2Fold',
+      workspaceSlug: 'target',
+    })).toBe('?ws=target&route=allSessions%2Fnew%2Fdefault')
+  })
+
   it('opens all sessions for an explicit workspace-list switch', () => {
     expect(resolveWorkspaceSwitchSearch({
       destination: 'allSessions',
-      savedSearch: '?ws=target&route=sources',
+      savedSearch: '?ws=target&route=settings',
       workspaceSlug: 'target',
     })).toBe('?ws=target&route=allSessions')
   })
@@ -116,9 +147,9 @@ describe('resolveWorkspaceSwitchSearch', () => {
   it('preserves saved navigation for history-driven workspace restoration', () => {
     expect(resolveWorkspaceSwitchSearch({
       destination: 'restore',
-      savedSearch: '?ws=target&route=sources%2Fsource%2Fgithub',
+      savedSearch: '?ws=target&route=skills%2Fskill%2Freview-pr',
       workspaceSlug: 'target',
-    })).toBe('?ws=target&route=sources%2Fsource%2Fgithub')
+    })).toBe('?ws=target&route=skills%2Fskill%2Freview-pr')
   })
 
   it('defaults to all sessions when no saved navigation exists', () => {

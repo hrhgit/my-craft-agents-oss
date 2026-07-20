@@ -14,6 +14,7 @@ import { createWebApi } from './adapter/web-api'
 import type { WsRpcClient } from '@mortise/server-core/transport/client'
 import { errorMessage } from '@mortise/shared/utils/text'
 import { waitForInitialConnection } from './connection'
+import { resolveInitialWebUiSearch } from './initial-navigation'
 
 if (__MORTISE_UI_VALIDATION_BUILD__) {
   Object.defineProperty(window, '__MORTISE_EXTENSION_UI_VALIDATION__', {
@@ -99,7 +100,13 @@ export default function App() {
       if (!wsUrl) throw new Error('Server did not return a WebSocket URL')
 
       // 2. Determine workspace — check URL params first
-      const params = new URLSearchParams(window.location.search)
+      const initialSearch = resolveInitialWebUiSearch(window.location.search)
+      if (initialSearch !== window.location.search) {
+        const url = new URL(window.location.href)
+        url.search = initialSearch
+        history.replaceState(history.state, '', url)
+      }
+      const params = new URLSearchParams(initialSearch)
       let workspaceId = params.get('workspace') ?? undefined
 
       // If no workspace in URL, fetch the default from the server

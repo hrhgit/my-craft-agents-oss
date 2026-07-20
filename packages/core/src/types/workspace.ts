@@ -4,7 +4,6 @@
 
 /**
  * How MCP server should be authenticated (workspace-level)
- * Note: Different from SourceMcpAuthType which uses 'oauth' | 'bearer' | 'none' for individual sources
  */
 export type McpAuthType = 'workspace_oauth' | 'workspace_bearer' | 'public';
 

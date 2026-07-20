@@ -52,7 +52,7 @@ describe('normalizePanelRouteForReconcile', () => {
     }
 
     expect(normalizePanelRouteForReconcile('settings', resolver)).toBe('settings')
-    expect(normalizePanelRouteForReconcile('sources', resolver)).toBe('sources')
+    expect(normalizePanelRouteForReconcile('skills', resolver)).toBe('skills')
   })
 
   it('keeps explicit detail route even if resolver tries to rewrite it', () => {
@@ -61,15 +61,15 @@ describe('normalizePanelRouteForReconcile', () => {
         if (state.navigator === 'sessions') {
           return { ...state, details: { type: 'session', sessionId: 'rewritten' } }
         }
-        if (state.navigator === 'sources') {
-          return { ...state, details: { type: 'source', sourceSlug: 'rewritten' } }
+        if (state.navigator === 'skills') {
+          return { ...state, details: { type: 'skill', skillSlug: 'rewritten' } }
         }
       }
       return state
     }
 
     expect(normalizePanelRouteForReconcile('allSessions/session/s2', resolver)).toBe('allSessions/session/s2')
-    expect(normalizePanelRouteForReconcile('sources/source/github', resolver)).toBe('sources/source/github')
+    expect(normalizePanelRouteForReconcile('skills/skill/review', resolver)).toBe('skills/skill/review')
   })
 
   it('keeps explicit detail routes distinct across multiple panels', () => {

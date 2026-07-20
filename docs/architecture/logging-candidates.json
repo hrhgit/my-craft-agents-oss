@@ -1,0 +1,38 @@
+[
+  {
+    "name": "pino",
+    "stars": 18044,
+    "last_commit_days": 1,
+    "license": "MIT",
+    "release_recency": 1,
+    "docs_score": 9,
+    "quality_signals": 9,
+    "fit_score": 8,
+    "archived": false,
+    "source_url": "https://github.com/pinojs/pino"
+  },
+  {
+    "name": "winston",
+    "stars": 24503,
+    "last_commit_days": 3,
+    "license": "MIT",
+    "release_recency": 0.9,
+    "docs_score": 9,
+    "quality_signals": 8,
+    "fit_score": 6,
+    "archived": false,
+    "source_url": "https://github.com/winstonjs/winston"
+  },
+  {
+    "name": "tslog",
+    "stars": 1628,
+    "last_commit_days": 3,
+    "license": "MIT",
+    "release_recency": 1,
+    "docs_score": 8,
+    "quality_signals": 8,
+    "fit_score": 7,
+    "archived": false,
+    "source_url": "https://github.com/fullstack-build/tslog"
+  }
+]

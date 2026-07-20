@@ -5,7 +5,7 @@
  */
 
 export { default as ChatPage } from './ChatPage'
-export { default as SourceInfoPage } from './SourceInfoPage'
+export { default as NewConversationPage } from './NewConversationPage'
 // Settings pages
 export {
   SettingsNavigator,

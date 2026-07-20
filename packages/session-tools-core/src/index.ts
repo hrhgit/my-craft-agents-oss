@@ -9,25 +9,6 @@
 
 // Types
 export type {
-  // Credential types
-  CredentialInputMode,
-
-  // Service types
-  GoogleService,
-  SlackService,
-  MicrosoftService,
-
-  // Auth request types
-  AuthRequestType,
-  BaseAuthRequest,
-  CredentialAuthRequest,
-  McpOAuthAuthRequest,
-  GoogleOAuthAuthRequest,
-  SlackOAuthAuthRequest,
-  MicrosoftOAuthAuthRequest,
-  AuthRequest,
-  AuthResult,
-
   // IPC types
   CallbackMessage,
 
@@ -42,39 +23,12 @@ export type {
   ValidationIssue,
   ValidationResult,
 
-  // Source config types
-  SourceType,
-  McpTransport,
-  McpAuthType,
-  ApiAuthType,
-  McpSourceConfig,
-  ApiSourceConfig,
-  LocalSourceConfig,
-  SourceConfig,
-  ConnectionStatus,
 } from './types.ts';
 
 // Response helpers
 export {
   errorResponse,
 } from './response.ts';
-
-// Source helpers
-export {
-  getSourcePath,
-  getSourceConfigPath,
-  getSourceGuidePath,
-  sourceExists,
-  sourceConfigExists,
-  loadSourceConfig,
-  listSourceSlugs,
-  getSkillPath,
-  getSkillMdPath,
-  generateRequestId,
-  // Multi-header credential helpers
-  detectCredentialMode,
-  getEffectiveHeaderNames,
-} from './source-helpers.ts';
 
 // Validation
 export {
@@ -99,10 +53,6 @@ export {
   SkillMetadataSchema,
   validateSkillContent,
 
-  // Source validation
-  SOURCE_CONFIG_REQUIRED_FIELDS,
-  SOURCE_TYPES,
-  validateSourceConfigBasic,
 } from './validation.ts';
 
 // Context interface
@@ -110,15 +60,7 @@ export type {
   SessionToolContext,
   SessionToolCallbacks,
   FileSystemInterface,
-  CredentialManagerInterface,
   ValidatorInterface,
-  LoadedSource,
-  // MCP validation types
-  StdioMcpConfig,
-  HttpMcpConfig,
-  StdioValidationResult,
-  McpValidationResult,
-  ApiTestResult,
   // Session query types
   SessionInfo,
   SessionListItem,
@@ -133,16 +75,9 @@ export type {
   ConfigValidateArgs,
   SkillValidateArgs,
   MermaidValidateArgs,
-  SourceTestArgs,
-  SourceOAuthTriggerArgs,
-  GoogleOAuthTriggerArgs,
-  SlackOAuthTriggerArgs,
-  MicrosoftOAuthTriggerArgs,
-  CredentialPromptArgs,
   UpdatePreferencesArgs,
   TransformDataArgs,
   ScriptSandboxArgs,
-  RenderTemplateArgs,
   SendDeveloperFeedbackArgs,
 } from './handlers/index.ts';
 
@@ -152,13 +87,9 @@ export {
   ConfigValidateSchema,
   SkillValidateSchema,
   MermaidValidateSchema,
-  SourceTestSchema,
-  SourceOAuthTriggerSchema,
-  CredentialPromptSchema,
   UpdatePreferencesSchema,
   TransformDataSchema,
   ScriptSandboxSchema,
-  RenderTemplateSchema,
   // Developer feedback schema
   SendDeveloperFeedbackSchema,
   // Descriptions

@@ -23,7 +23,7 @@ import {
 } from './samples/customer-support'
 
 // Import icons for simple samples
-import { nativeToolIcons, sourceIcons, createCircleIcon } from './sample-icons'
+import { nativeToolIcons, mcpToolIcons, createCircleIcon } from './sample-icons'
 
 /** Wrapper with padding for playground preview */
 function PaddedWrapper({ children }: { children: ReactNode }) {
@@ -101,8 +101,8 @@ const simpleSlack: ActivityItem = {
   displayName: 'Send Message',
   toolDisplayMeta: {
     displayName: 'Slack',
-    category: 'source',
-    iconDataUrl: sourceIcons.slack,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.slack,
   },
   timestamp: now - 1000,
 }
@@ -111,10 +111,9 @@ const simpleStripe: ActivityItem = {
   id: 'simple-stripe',
   type: 'tool',
   status: 'completed',
-  toolName: 'mcp__stripe__api_stripe',
+  toolName: 'mcp__stripe__list_customers',
   toolInput: {
-    path: '/v1/customers',
-    method: 'GET',
+    limit: 25,
     _intent: 'Fetching customer list',
     _displayName: 'List Customers',
   },
@@ -122,8 +121,8 @@ const simpleStripe: ActivityItem = {
   displayName: 'List Customers',
   toolDisplayMeta: {
     displayName: 'Stripe',
-    category: 'source',
-    iconDataUrl: sourceIcons.stripe,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.stripe,
   },
   timestamp: now,
 }
@@ -273,7 +272,7 @@ function TurnCardModesDemo({
         </button>
         <span className="ml-4 text-xs text-muted-foreground">
           {mode === 'informative'
-            ? 'Hides MCP/API tool names and params, shows only source + intent'
+            ? 'Hides MCP tool names and params, shows only service + intent'
             : 'Shows full tool names, params, and all metadata'
           }
         </span>
@@ -365,7 +364,7 @@ export const turnCardModesComponents: ComponentEntry[] = [
       },
       {
         name: 'Simple: Native + MCP Mix',
-        description: 'Quick demo with native tools and MCP sources',
+        description: 'Quick demo with native tools and MCP servers',
         props: {
           userMessage: 'Check the repo status, run tests, and notify the team on Slack.',
           activities: [

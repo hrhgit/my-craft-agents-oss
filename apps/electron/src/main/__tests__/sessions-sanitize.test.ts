@@ -42,16 +42,6 @@ describe('sanitizeForTitle', () => {
     })
   })
 
-  describe('source mentions', () => {
-    it('strips [source:slug] format', () => {
-      expect(sanitizeForTitle('[source:github] check PRs')).toBe('check PRs')
-    })
-
-    it('strips source with hyphens', () => {
-      expect(sanitizeForTitle('[source:my-source] query data')).toBe('query data')
-    })
-  })
-
   describe('file mentions', () => {
     it('strips [file:/path/to/file]', () => {
       expect(sanitizeForTitle('[file:/Users/me/project/index.ts] refactor this')).toBe('refactor this')
@@ -118,23 +108,23 @@ describe('sanitizeForTitle', () => {
     })
 
     it('handles whitespace left after stripping mentions', () => {
-      expect(sanitizeForTitle('[skill:commit]   [source:github]   do work')).toBe('do work')
+      expect(sanitizeForTitle('[skill:commit]   do work')).toBe('do work')
     })
   })
 
   describe('multiple mentions in one title', () => {
     it('strips mixed mention types', () => {
-      expect(sanitizeForTitle('[skill:commit] [source:github] [file:/a/b.ts] fix everything')).toBe('fix everything')
+      expect(sanitizeForTitle('[skill:commit] [file:/a/b.ts] fix everything')).toBe('fix everything')
     })
 
     it('strips mentions interspersed with text', () => {
-      expect(sanitizeForTitle('use [skill:commit] and [source:github] to fix [file:/a.ts]')).toBe('use and to fix')
+      expect(sanitizeForTitle('use [skill:commit] to fix [file:/a.ts]')).toBe('use to fix')
     })
   })
 
   describe('edge cases', () => {
     it('returns empty string when only mentions present', () => {
-      expect(sanitizeForTitle('[skill:commit] [source:github]')).toBe('')
+      expect(sanitizeForTitle('[skill:commit]')).toBe('')
     })
 
     it('handles empty string', () => {
@@ -156,7 +146,7 @@ describe('sanitizeForTitle', () => {
     })
 
     it('handles CJK characters alongside mentions', () => {
-      expect(sanitizeForTitle('[source:github] 修复这个问题')).toBe('修复这个问题')
+      expect(sanitizeForTitle('[skill:commit] 修复这个问题')).toBe('修复这个问题')
     })
 
     it('handles only whitespace after stripping', () => {
@@ -186,10 +176,10 @@ describe('sanitizeForTitle', () => {
     })
 
     it('substitutes multiple badges', () => {
-      let title = '[skill:ws:commit] and [source:github] review'
+      let title = '[skill:ws:commit] and [skill:ws:review] review'
       const badges = [
         { rawText: '[skill:ws:commit]', label: 'Commit' },
-        { rawText: '[source:github]', label: 'GitHub' },
+        { rawText: '[skill:ws:review]', label: 'Review' },
       ]
 
       for (const badge of badges) {
@@ -199,7 +189,7 @@ describe('sanitizeForTitle', () => {
       }
 
       const result = sanitizeForTitle(title)
-      expect(result).toBe('Commit and GitHub review')
+      expect(result).toBe('Commit and Review review')
     })
 
     it('strips unmatched mentions after badge substitution', () => {

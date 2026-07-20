@@ -11,14 +11,6 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const TOOL_ICONS_DIR = path.join(process.env.HOME!, '.mortise/tool-icons')
-// Workspace UUID is machine-specific; override via MORTISE_WORKSPACE_ID env var.
-const WORKSPACE_ID = process.env.MORTISE_WORKSPACE_ID ?? '046a02d0-6521-98eb-8756-95ec4bb8c41f'
-const SOURCES_DIR = path.join(
-  process.env.HOME!,
-  '.mortise/workspaces',
-  WORKSPACE_ID,
-  'sources'
-)
 const OUTPUT_FILE = path.join(__dirname, 'sample-icons.ts')
 
 // Native tools we want to include (mapped to their file names in tool-icons/)
@@ -40,15 +32,15 @@ const NATIVE_TOOLS: Record<string, string> = {
   prettier: 'prettier.png',
 }
 
-// Sources we want to include (mapped to their icon files)
-const SOURCES: Record<string, string> = {
-  slack: 'slack/icon.png',
-  gmail: 'gmail/icon.svg',
-  stripe: 'stripe/icon.svg',
-  clickup: 'clickup/icon.ico',
-  sentry: 'sentry/icon.png',
-  playwright: 'playwright/icon.png',
-  exa: 'exa/icon.png',
+// MCP tools we want to include (mapped to tool-icons files)
+const MCP_TOOLS: Record<string, string> = {
+  slack: 'slack.png',
+  gmail: 'gmail.svg',
+  stripe: 'stripe.png',
+  clickup: 'clickup.ico',
+  sentry: 'sentry.png',
+  playwright: 'playwright.png',
+  exa: 'exa.png',
 }
 
 function getMimeType(filePath: string): string {
@@ -86,7 +78,7 @@ function encodeIcon(filePath: string): string | null {
 
 function generateIconsFile() {
   const nativeIcons: Record<string, string> = {}
-  const sourceIcons: Record<string, string> = {}
+  const mcpToolIcons: Record<string, string> = {}
 
   // Encode native tool icons
   console.log('Encoding native tool icons...')
@@ -99,13 +91,13 @@ function generateIconsFile() {
     }
   }
 
-  // Encode source icons
-  console.log('\nEncoding source icons...')
-  for (const [name, relativePath] of Object.entries(SOURCES)) {
-    const filePath = path.join(SOURCES_DIR, relativePath)
+  // Encode MCP tool icons
+  console.log('\nEncoding MCP tool icons...')
+  for (const [name, fileName] of Object.entries(MCP_TOOLS)) {
+    const filePath = path.join(TOOL_ICONS_DIR, fileName)
     const encoded = encodeIcon(filePath)
     if (encoded) {
-      sourceIcons[name] = encoded
+      mcpToolIcons[name] = encoded
       console.log(`  ✓ ${name}`)
     }
   }
@@ -124,9 +116,9 @@ ${Object.entries(nativeIcons)
   .join('\n')}
 } as const
 
-// Source icons (from workspace sources)
-export const sourceIcons = {
-${Object.entries(sourceIcons)
+// MCP tool icons
+export const mcpToolIcons = {
+${Object.entries(mcpToolIcons)
   .map(([name, data]) => `  ${name}: '${data}',`)
   .join('\n')}
 } as const
@@ -148,7 +140,7 @@ export const internalIcons = {
   fs.writeFileSync(OUTPUT_FILE, output)
   console.log(`\n✓ Generated ${OUTPUT_FILE}`)
   console.log(`  - ${Object.keys(nativeIcons).length} native tool icons`)
-  console.log(`  - ${Object.keys(sourceIcons).length} source icons`)
+  console.log(`  - ${Object.keys(mcpToolIcons).length} MCP tool icons`)
 }
 
 generateIconsFile()

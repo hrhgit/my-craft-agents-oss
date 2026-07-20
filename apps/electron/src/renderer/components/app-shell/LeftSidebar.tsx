@@ -26,14 +26,10 @@ export interface SidebarContextMenuConfig {
   type: SidebarMenuType
   /** Handler for "Mark All Read" action - for allSessions type */
   onMarkAllRead?: () => void
-  /** Handler for "Add Source" action - for sources type */
-  onAddSource?: () => void
   /** Handler for "Add Skill" action - for skills type */
   onAddSkill?: () => void
   /** Handler for "Add Automation" action - for automations type */
   onAddAutomation?: () => void
-  /** Source type filter for "Learn More" link - determines which docs page to open */
-  sourceType?: 'api' | 'mcp' | 'local'
   /** Workspace actions for nested workspace rows. */
   isActiveWorkspace?: boolean
   onOpenWorkspaceInNewWindow?: () => void
@@ -243,10 +239,8 @@ function SidebarLinkRow({
     <SidebarMenu
       type={link.contextMenu.type}
       onMarkAllRead={link.contextMenu.onMarkAllRead}
-      onAddSource={link.contextMenu.onAddSource}
       onAddSkill={link.contextMenu.onAddSkill}
       onAddAutomation={link.contextMenu.onAddAutomation}
-      sourceType={link.contextMenu.sourceType}
       isActiveWorkspace={link.contextMenu.isActiveWorkspace}
       onOpenWorkspaceInNewWindow={link.contextMenu.onOpenWorkspaceInNewWindow}
       onRemoveWorkspace={link.contextMenu.onRemoveWorkspace}

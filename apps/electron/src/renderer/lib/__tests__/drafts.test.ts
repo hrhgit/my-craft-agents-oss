@@ -3,6 +3,7 @@ import type { FileAttachment } from '@mortise/shared/protocol'
 import {
   CONTENT_PERSIST_CAP,
   attachmentFromContentRef,
+  hasDraftContent,
   isAbsolutePath,
   toDraftRef,
 } from '../drafts'
@@ -36,6 +37,13 @@ describe('isAbsolutePath', () => {
     expect(isAbsolutePath('./image.png')).toBe(false)
     expect(isAbsolutePath('foo/bar.txt')).toBe(false)
     expect(isAbsolutePath('')).toBe(false)
+  })
+})
+
+describe('hasDraftContent', () => {
+  it('keeps attachment-only drafts alive', () => {
+    expect(hasDraftContent({ text: '', attachments: [{ path: '/tmp/a.png' }] })).toBe(true)
+    expect(hasDraftContent({ text: '   ', attachments: [] })).toBe(false)
   })
 })
 

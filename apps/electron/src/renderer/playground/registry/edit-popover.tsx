@@ -386,12 +386,12 @@ export const editPopoverComponents: ComponentEntry[] = [
         },
       },
       {
-        name: 'Add Source',
-        description: 'Styled for adding a new source',
+        name: 'Add Integration',
+        description: 'Styled for adding a new integration',
         props: {
           inlineExecution: true,
           example: 'Connect to my GitHub repo',
-          triggerLabel: "Add Source",
+          triggerLabel: "Add Integration",
         },
       },
       {
@@ -476,8 +476,8 @@ export const editPopoverComponents: ComponentEntry[] = [
         },
       },
       {
-        name: 'Add Source Context',
-        description: 'Using "add source" placeholder style',
+        name: 'Add Integration Context',
+        description: 'Using the add-integration placeholder style',
         props: {
           messages: emptyMessages,
           isProcessing: false,
@@ -499,4 +499,3 @@ export const editPopoverComponents: ComponentEntry[] = [
     }),
   },
 ]
-

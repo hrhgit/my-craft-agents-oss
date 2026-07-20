@@ -193,7 +193,6 @@ describe('text_complete → assistant Message field parity', () => {
     expect(mainMsg.parentToolUseId).toBe(rendererMsg.parentToolUseId)
   })
 })
-
 // ============================================================================
 // Tests: tool_start parity
 // ============================================================================
@@ -514,47 +513,5 @@ describe('background task events field parity', () => {
     expect(mainUpdate).toEqual(rendererUpdate)
     expect(mainUpdate.toolStatus).toBe('completed')
     expect(mainUpdate.toolResult).toBe('Background task stopped')
-  })
-})
-
-// ============================================================================
-// Tests: auth-request Message completeness
-// ============================================================================
-
-describe('auth-request Message field completeness', () => {
-  it('auth-request message carries all auth fields', () => {
-    // Both main and renderer receive the same Message object via IPC
-    // (auth_request event carries a pre-built Message from main process)
-    const authMessage: Message = {
-      id: 'auth-msg-1',
-      role: 'auth-request',
-      content: 'Authentication required',
-      timestamp: Date.now(),
-      authRequestId: 'req-1',
-      authRequestType: 'credential',
-      authSourceSlug: 'linear',
-      authSourceName: 'Linear',
-      authStatus: 'pending',
-      authCredentialMode: 'bearer',
-      authHeaderName: 'Authorization',
-      authHeaderNames: ['DD-API-KEY', 'DD-APP-KEY'],
-      authLabels: { credential: 'API Token' },
-      authDescription: 'Enter your Linear API key',
-      authHint: 'Settings > API',
-      authSourceUrl: 'https://linear.app',
-      authPasswordRequired: false,
-    }
-
-    // All auth fields should be defined
-    const authFields = [
-      'authRequestId', 'authRequestType', 'authSourceSlug', 'authSourceName',
-      'authStatus', 'authCredentialMode', 'authHeaderName', 'authHeaderNames',
-      'authLabels', 'authDescription', 'authHint', 'authSourceUrl',
-      'authPasswordRequired',
-    ] as const
-
-    for (const field of authFields) {
-      expect(authMessage[field]).toBeDefined()
-    }
   })
 })

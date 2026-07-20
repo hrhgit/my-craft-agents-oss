@@ -1,6 +1,5 @@
 export interface BranchRollbackManagedSession {
   agent?: { destroy?: () => void } | null
-  poolServer?: { stop?: () => void }
 }
 
 interface RollbackParams {
@@ -24,15 +23,6 @@ export async function rollbackFailedBranchCreation(params: RollbackParams): Prom
     // Best-effort cleanup
   }
   managed.agent = null
-
-  if (managed.poolServer) {
-    try {
-      managed.poolServer.stop?.()
-    } catch {
-      // Best-effort cleanup
-    }
-    managed.poolServer = undefined
-  }
 
   deleteFromRuntimeSessions(sessionId)
 

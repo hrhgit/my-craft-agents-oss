@@ -1,7 +1,7 @@
 /**
  * PermissionsDataTable
  *
- * Typed Data Table for displaying source permissions.
+ * Typed data table for displaying permission rules.
  * Features: searchable patterns, sortable columns, max-height scroll, fullscreen view.
  */
 
@@ -21,7 +21,7 @@ import { useTheme } from '@/hooks/useTheme'
 import { toast } from 'sonner'
 
 export type PermissionAccess = 'allowed' | 'blocked'
-export type PermissionType = 'tool' | 'bash' | 'api' | 'mcp'
+export type PermissionType = 'tool' | 'bash' | 'mcp'
 
 export interface PermissionRow {
   access: PermissionAccess
@@ -32,7 +32,7 @@ export interface PermissionRow {
 
 interface PermissionsDataTableProps {
   data: PermissionRow[]
-  /** Hide the type column (for MCP sources that only show pattern/comment) */
+  /** Hide the type column when every row has the same permission type. */
   hideTypeColumn?: boolean
   /** Show search input */
   searchable?: boolean

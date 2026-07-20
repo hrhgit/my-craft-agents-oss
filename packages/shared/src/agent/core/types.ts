@@ -6,7 +6,6 @@
  * provider-agnostic and shared across all agent implementations.
  */
 
-import type { LoadedSource } from '../../sources/types.ts';
 import type { Workspace } from '../../config/storage.ts';
 import type { SessionHeader } from '../../sessions/types.ts';
 
@@ -15,7 +14,6 @@ import type { SessionHeader } from '../../sessions/types.ts';
 export type {
   PermissionMode,
   ModeConfig,
-  CompiledApiEndpointRule,
   CompiledBashPattern,
   MismatchAnalysis,
   PermissionPaths,
@@ -70,14 +68,6 @@ export interface ToolPermissionResult {
 }
 
 /**
- * Configuration for SourceManager
- */
-export interface SourceManagerConfig {
-  /** Debug callback for logging */
-  onDebug?: (message: string) => void;
-}
-
-/**
  * Configuration for PromptBuilder
  */
 export interface PromptBuilderConfig {
@@ -106,12 +96,6 @@ export interface ContextBlockOptions {
   plansFolderPath?: string;
   /** Data folder path (transform_data tool output) */
   dataFolderPath?: string;
-  /** Active source slugs */
-  activeSources?: string[];
-  /** Inactive source slugs */
-  inactiveSources?: LoadedSource[];
-  /** Whether local MCP is enabled */
-  localMcpEnabled?: boolean;
 }
 
 /**

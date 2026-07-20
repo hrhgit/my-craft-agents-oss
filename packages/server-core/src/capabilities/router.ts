@@ -168,6 +168,11 @@ export class CapabilityRouter {
                 reportProgress: (progress) => {
                   if (controller.signal.aborted) return
                   const event = { version: 1 as const, requestId: request.requestId, sequence: ++progressSequence, progress }
+                  this.options.audit?.({
+                    phase: 'progress', requestId: request.requestId, capability: request.capability,
+                    operation: request.operation, sessionId: request.sessionId, runtimeId: request.runtimeId,
+                    extensionId: request.extensionId, sequence: progressSequence,
+                  })
                   this.options.onProgress?.(event)
                   onProgress?.(event)
                 },
@@ -200,6 +205,7 @@ export class CapabilityRouter {
       phase: 'finished', requestId: request.requestId, capability: request.capability,
       operation: request.operation, sessionId: request.sessionId, runtimeId: request.runtimeId,
       extensionId: request.extensionId, status: result.status, durationMs: Date.now() - startedAt,
+      errorCode: result.status === 'success' ? undefined : result.error?.code,
     })
     return result
   }

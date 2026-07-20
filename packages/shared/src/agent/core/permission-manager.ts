@@ -8,7 +8,6 @@
  * Key responsibilities:
  * - Evaluate tool calls against permission mode (explore/ask/execute)
  * - Check bash commands against read-only patterns
- * - Validate API endpoints against allowlists
  * - Provide detailed rejection reasons for blocked operations
  */
 
@@ -18,7 +17,6 @@ import {
   setPermissionMode,
   cyclePermissionMode,
   shouldAllowToolInMode,
-  isApiEndpointAllowed,
   getBashRejectionReason,
   formatBashRejectionMessage,
   type ToolCheckResult,
@@ -243,10 +241,6 @@ export class PermissionManager {
    * @param path - API endpoint path
    * @returns true if the endpoint is allowed
    */
-  isApiEndpointAllowed(method: string, path?: string): boolean {
-    return isApiEndpointAllowed(method, path, this.permissionsContext);
-  }
-
   // ============================================================
   // Command Analysis Utilities
   // ============================================================

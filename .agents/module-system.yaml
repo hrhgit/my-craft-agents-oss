@@ -1,0 +1,15 @@
+schema: module-agent-system/v1
+modules_dir: .agents/modules
+include:
+  - '**/*'
+exclude:
+  - '**/dist/**'
+  - '**/node_modules/**'
+  - output/**
+  - .playwright-cli/**
+  - events.jsonl
+history_limit: 20
+max_route_candidates: 5
+test_timeout_ms: 600000
+test_output_limit: 12000
+strict: true

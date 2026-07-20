@@ -20,7 +20,6 @@ import {
   buildSessionCookie,
   buildLogoutCookie,
 } from './auth'
-import { generateCallbackPage } from '@mortise/shared/auth'
 import type { PlatformServices } from '../runtime/platform'
 
 // ---------------------------------------------------------------------------
@@ -110,14 +109,6 @@ export function resolveWebSocketUrl(
 // Handler options (shared between embedded and standalone modes)
 // ---------------------------------------------------------------------------
 
-/** Dependencies for the /api/oauth/callback HTTP route (server-side OAuth completion). */
-export interface OAuthCallbackDeps {
-  flowStore: { getByState: (state: string) => any; remove: (state: string) => void }
-  credManager: { exchangeAndStore: (...args: any[]) => Promise<any> }
-  sessionManager: { completeAuthRequest: (...args: any[]) => Promise<void> }
-  pushSourcesChanged: (workspaceId: string) => void
-}
-
 export interface WebuiHandlerOptions {
   /** Path to built web UI dist/ directory. */
   webuiDir: string
@@ -139,8 +130,6 @@ export interface WebuiHandlerOptions {
   getHealthCheck: () => { status: string }
   /** Logger. */
   logger: PlatformServices['logger']
-  /** OAuth callback deps — when provided, enables /api/oauth/callback route. */
-  oauthCallbackDeps?: OAuthCallbackDeps
   /**
    * Trusted proxy IPs/CIDRs. When set, proxy headers (x-forwarded-for, x-forwarded-proto)
    * are only trusted from these sources. When empty/unset, proxy headers are ignored
@@ -158,8 +147,6 @@ export interface WebuiHandler {
   fetch: (req: Request) => Promise<Response>
   /** Call on shutdown to release timers. */
   dispose: () => void
-  /** Inject OAuth callback deps after bootstrap (lazy wiring). */
-  setOAuthCallbackDeps: (deps: OAuthCallbackDeps) => void
 }
 
 /**
@@ -304,67 +291,6 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       })
     }
 
-    // ── OAuth callback (no cookie auth — state param is CSRF protection) ──
-    // Receives redirect from the relay (or directly from OAuth provider for MCP sources).
-    // Completes the token exchange server-side and renders a success/error page.
-    if (path === '/api/oauth/callback' && req.method === 'GET' && options.oauthCallbackDeps) {
-      const code = url.searchParams.get('code')
-      const state = url.searchParams.get('state')
-      const error = url.searchParams.get('error')
-      const errorDescription = url.searchParams.get('error_description')
-
-      if (error) {
-        const flow = state ? options.oauthCallbackDeps.flowStore.getByState(state) : null
-        if (flow && state) options.oauthCallbackDeps.flowStore.remove(state)
-        const errorMsg = errorDescription || error
-        logger.warn(`[webui] OAuth callback error: ${errorMsg}`)
-        return new Response(generateCallbackPage({ title: 'Authorization Failed', isSuccess: false, errorDetail: errorMsg }), {
-          status: 200,
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
-        })
-      }
-
-      if (!code || !state) {
-        return new Response(generateCallbackPage({ title: 'Authorization Failed', isSuccess: false, errorDetail: 'Missing code or state parameter' }), {
-          status: 400,
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
-        })
-      }
-
-      try {
-        const { completeOAuthFlow } = await import('../handlers/rpc/oauth')
-        const result = await completeOAuthFlow({
-          code,
-          state,
-          flowStore: options.oauthCallbackDeps.flowStore,
-          credManager: options.oauthCallbackDeps.credManager as any,
-          sessionManager: options.oauthCallbackDeps.sessionManager,
-          pushSourcesChanged: options.oauthCallbackDeps.pushSourcesChanged,
-          logger,
-          // No clientId/workspaceId — HTTP callback skips ownership checks (state is auth)
-        })
-
-        if (result.success) {
-          return new Response(generateCallbackPage({ title: 'Authorization Successful', isSuccess: true }), {
-            status: 200,
-            headers: { 'Content-Type': 'text/html; charset=utf-8' },
-          })
-        } else {
-          return new Response(generateCallbackPage({ title: 'Authorization Failed', isSuccess: false, errorDetail: result.error }), {
-            status: 200,
-            headers: { 'Content-Type': 'text/html; charset=utf-8' },
-          })
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Token exchange failed'
-        logger.error(`[webui] OAuth callback failed: ${msg}`)
-        return new Response(generateCallbackPage({ title: 'Authorization Failed', isSuccess: false, errorDetail: msg }), {
-          status: 200,
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
-        })
-      }
-    }
-
     // ── Config endpoint (requires session cookie) ──
     if (path === '/api/config' && req.method === 'GET') {
       const configSession = await validateSession(req.headers.get('cookie'), secret)
@@ -425,9 +351,6 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
   return {
     fetch,
     dispose: () => clearInterval(cleanupTimer),
-    setOAuthCallbackDeps: (deps: OAuthCallbackDeps) => {
-      options.oauthCallbackDeps = deps
-    },
   }
 }
 

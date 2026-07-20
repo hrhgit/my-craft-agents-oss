@@ -20,18 +20,9 @@ import type { ToolResult } from './types.ts';
 import { handleConfigValidate } from './handlers/config-validate.ts';
 import { handleSkillValidate } from './handlers/skill-validate.ts';
 import { handleMermaidValidate } from './handlers/mermaid-validate.ts';
-import { handleSourceTest } from './handlers/source-test.ts';
-import {
-  handleSourceOAuthTrigger,
-  handleGoogleOAuthTrigger,
-  handleSlackOAuthTrigger,
-  handleMicrosoftOAuthTrigger,
-} from './handlers/source-oauth.ts';
-import { handleCredentialPrompt } from './handlers/credential-prompt.ts';
 import { handleUpdatePreferences } from './handlers/update-preferences.ts';
 import { handleTransformData } from './handlers/transform-data.ts';
 import { handleScriptSandbox } from './handlers/script-sandbox.ts';
-import { handleRenderTemplate } from './handlers/render-template.ts';
 import { handleSendDeveloperFeedback } from './handlers/send-developer-feedback.ts';
 import { handleGetSessionInfo } from './handlers/get-session-info.ts';
 import { handleListSessions } from './handlers/list-sessions.ts';
@@ -43,9 +34,8 @@ import { handleListMessagingChannels, handleUnbindMessagingChannel } from './han
 // ============================================================
 
 export const ConfigValidateSchema = z.object({
-  target: z.enum(['config', 'sources', 'preferences', 'permissions', 'automations', 'tool-icons', 'all'])
+  target: z.enum(['config', 'preferences', 'permissions', 'automations', 'tool-icons', 'all'])
     .describe('Which config file(s) to validate'),
-  sourceSlug: z.string().optional().describe('Validate a specific source by slug'),
 });
 
 export const SkillValidateSchema = z.object({
@@ -55,34 +45,6 @@ export const SkillValidateSchema = z.object({
 export const MermaidValidateSchema = z.object({
   code: z.string().describe('The mermaid diagram code to validate'),
   render: z.boolean().optional().describe('Also attempt to render (catches layout errors)'),
-});
-
-export const SourceTestSchema = z.object({
-  sourceSlug: z.string().describe('The slug of the source to test'),
-  autoEnable: z
-    .boolean()
-    .optional()
-    .describe(
-      'Automatically enable and activate the source in the current session on successful validation. Defaults to true. Pass false to keep pure validation behavior.'
-    ),
-});
-
-export const SourceOAuthTriggerSchema = z.object({
-  sourceSlug: z.string().describe('The slug of the source to authenticate'),
-});
-
-export const CredentialPromptSchema = z.object({
-  sourceSlug: z.string().describe('The slug of the source to authenticate'),
-  mode: z.enum(['bearer', 'basic', 'header', 'query', 'multi-header']).describe('Type of credential input'),
-  labels: z.object({
-    credential: z.string().optional(),
-    username: z.string().optional(),
-    password: z.string().optional(),
-  }).optional().describe('Custom field labels'),
-  description: z.string().optional().describe('Description shown to user'),
-  hint: z.string().optional().describe('Hint about where to find credentials'),
-  headerNames: z.array(z.string()).optional().describe('Header names for multi-header auth (e.g., ["DD-API-KEY", "DD-APPLICATION-KEY"])'),
-  passwordRequired: z.boolean().optional().describe('For basic auth: whether password is required'),
 });
 
 export const UpdatePreferencesSchema = z.object({
@@ -110,12 +72,6 @@ export const ScriptSandboxSchema = z.object({
   timeoutMs: z.number().min(1).max(15000).optional().describe('Optional timeout in milliseconds (default 5000, max 15000).'),
 });
 
-export const RenderTemplateSchema = z.object({
-  source: z.string().describe('Source slug (e.g., "linear", "gmail")'),
-  template: z.string().describe('Template ID (e.g., "issue-detail", "issue-list")'),
-  data: z.record(z.string(), z.unknown()).describe('JSON data to render into the template'),
-});
-
 export const SendDeveloperFeedbackSchema = z.object({
   message: z.string().describe('Freeform markdown feedback — be detailed, use headings, lists, code blocks. Include what happened, what you expected, what would help, or any ideas/suggestions.'),
 });
@@ -129,12 +85,11 @@ export const BrowserToolSchema = z.object({
 });
 
 export const SpawnSessionSchema = z.object({
-  help: z.boolean().optional().describe('If true, returns available providers, models, and sources instead of creating a session'),
+  help: z.boolean().optional().describe('If true, returns available providers and models instead of creating a session'),
   prompt: z.string().optional().describe('Instructions for the new session (required when not in help mode)'),
   name: z.string().optional().describe('Session name'),
   provider: z.string().optional().describe('Pi provider key (e.g., "anthropic", "openai")'),
   model: z.string().optional().describe('Model ID override'),
-  enabledSourceSlugs: z.array(z.string()).optional().describe('Source slugs to enable in the new session'),
   permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional().describe('Permission mode for the new session'),
   thinkingLevel: z.enum(['off', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
     .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the global default.'),
@@ -186,7 +141,6 @@ Returns structured validation results with errors, warnings, and suggestions.
 
 **Targets:**
 - \`config\`: Validates config.json (workspaces, model, settings)
-- \`sources\`: Validates all source config.json files
 - \`preferences\`: Validates preferences.json
 - \`permissions\`: Validates permissions.json files
 - \`automations\`: Validates automations.json configuration
@@ -210,65 +164,6 @@ Use this when:
 - Debugging a diagram that failed to render
 
 Returns validation result with specific error messages if invalid.`,
-
-  source_test: `Validate, test, and (by default) activate a source configuration.
-
-**This tool performs:**
-1. **Schema validation**: Validates config.json structure
-2. **Icon handling**: Checks/downloads icon if configured
-3. **Completeness check**: Warns about missing guide.md/icon/tagline
-4. **Connection test**: Tests if the source is reachable
-5. **Auth status**: Checks if source is authenticated
-6. **Auto-enable** (default): If validation passes, flip \`enabled: true\` in config (if needed) and activate the source in the running session so its tools become available without a restart.
-
-Pass \`autoEnable: false\` to keep pure validation behavior (no config or session mutations).`,
-
-  source_oauth_trigger: `Start OAuth authentication for an MCP source.
-
-This tool initiates the OAuth 2.0 + PKCE flow for sources that require authentication.
-
-**Prerequisites:**
-- Source must exist in the current workspace
-- Source must be type 'mcp' with authType 'oauth'
-- Source must have a valid MCP URL
-
-**IMPORTANT:** After calling this tool, execution will be paused while OAuth completes.`,
-
-  source_google_oauth_trigger: `Trigger Google OAuth authentication for a Google API source.
-
-Opens a browser window for the user to sign in with their Google account.
-
-**Supported services:** Gmail, Calendar, Drive, Docs, Sheets, YouTube, Search Console
-
-**IMPORTANT:** After calling this tool, execution will be paused while OAuth completes.`,
-
-  source_slack_oauth_trigger: `Trigger Slack OAuth authentication for a Slack API source.
-
-Opens a browser window for the user to sign in with their Slack account.
-
-**IMPORTANT:** After calling this tool, execution will be paused while OAuth completes.`,
-
-  source_microsoft_oauth_trigger: `Trigger Microsoft OAuth authentication for a Microsoft API source.
-
-Opens a browser window for the user to sign in with their Microsoft account.
-
-**Supported services:** Outlook, Calendar, OneDrive, Teams, SharePoint
-
-**IMPORTANT:** After calling this tool, execution will be paused while OAuth completes.`,
-
-  source_credential_prompt: `Prompt the user to enter credentials for a source.
-
-Use this when a source requires authentication that isn't OAuth.
-The user will see a secure input UI with appropriate fields based on the auth mode.
-
-**Auth Modes:**
-- \`bearer\`: Single token field (Bearer Token, API Key)
-- \`basic\`: Username and Password fields
-- \`header\`: API Key with custom header name shown
-- \`query\`: API Key for query parameter auth
-- \`multi-header\`: Multiple API keys with custom header names
-
-**IMPORTANT:** After calling this tool, execution will be paused for user input.`,
 
   update_user_preferences: `Update stored user preferences. Use this when you learn information about the user that would be helpful to remember for future conversations. This includes their name, timezone, location, or any other relevant notes. Only update fields you have confirmed information about - don't guess.`,
 
@@ -305,19 +200,6 @@ Use this for short Python/Node/Bun snippets when strict Explore-mode Bash parsin
 - Filesystem writes are restricted to the current session directory
 - Timeout is capped (default 5000ms, max 15000ms)
 - Network/filesystem isolation is required in all permission modes; if unavailable, execution is blocked`,
-
-  render_template: `Render a source's HTML template with data.
-
-Use this when a source provides HTML templates for rich rendering of its data (e.g., issue detail views, email threads, ticket summaries).
-
-**Workflow:**
-1. Fetch data from the source (via MCP tools or API calls)
-2. Call \`render_template\` with the source slug, template ID, and data
-3. Output an \`html-preview\` block with the returned file path as \`"src"\`
-
-**Available templates** are documented in each source's \`guide.md\` under the "Templates" section.
-
-Templates use Mustache syntax — the tool handles rendering and writes the output HTML to the session data folder.`,
 
   browser_tool: `Run browser actions using a CLI-like command (string or array input).
 
@@ -364,14 +246,14 @@ Examples:
 - \`close\` — close and destroy the browser window
 - \`hide\` — hide the window while preserving state`,
 
-  spawn_session: `Create a new session that runs independently with its own prompt, connection, model, and sources.
+  spawn_session: `Create a new session that runs independently with its own prompt, connection, and model.
 
 Use this to delegate tasks to parallel sessions — research, analysis, drafts, or any work that benefits from separate context.
 
-Call with help=true first to discover available providers, models, and sources.
+Call with help=true first to discover available providers and models.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, \`thinkingLevel\`, \`enabledSourceSlugs\`. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. \`workingDirectory\` is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
+Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, and \`thinkingLevel\`. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. \`workingDirectory\` is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
@@ -452,16 +334,9 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'config_validate', description: TOOL_DESCRIPTIONS.config_validate, inputSchema: ConfigValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleConfigValidate },
   { name: 'skill_validate', description: TOOL_DESCRIPTIONS.skill_validate, inputSchema: SkillValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleSkillValidate },
   { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: MermaidValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleMermaidValidate },
-  { name: 'source_test', description: TOOL_DESCRIPTIONS.source_test, inputSchema: SourceTestSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSourceTest },
-  { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
-  { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
-  { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },
-  { name: 'source_microsoft_oauth_trigger', description: TOOL_DESCRIPTIONS.source_microsoft_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleMicrosoftOAuthTrigger },
-  { name: 'source_credential_prompt', description: TOOL_DESCRIPTIONS.source_credential_prompt, inputSchema: CredentialPromptSchema, executionMode: 'registry', safeMode: 'block', handler: handleCredentialPrompt },
   { name: 'update_user_preferences', description: TOOL_DESCRIPTIONS.update_user_preferences, inputSchema: UpdatePreferencesSchema, executionMode: 'registry', safeMode: 'block', handler: handleUpdatePreferences },
   { name: 'transform_data', description: TOOL_DESCRIPTIONS.transform_data, inputSchema: TransformDataSchema, executionMode: 'registry', safeMode: 'allow', handler: handleTransformData },
   { name: 'script_sandbox', description: TOOL_DESCRIPTIONS.script_sandbox, inputSchema: ScriptSandboxSchema, executionMode: 'registry', safeMode: 'allow', handler: handleScriptSandbox },
-  { name: 'render_template', description: TOOL_DESCRIPTIONS.render_template, inputSchema: RenderTemplateSchema, executionMode: 'registry', safeMode: 'allow', handler: handleRenderTemplate },
   { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: SendDeveloperFeedbackSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSendDeveloperFeedback },
   { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: SpawnSessionSchema, executionMode: 'backend', safeMode: 'block', handler: null },
   // Browser tool (backend-specific — requires BrowserPaneManager in Electron)

@@ -267,7 +267,7 @@ export function resolveWebTarget(
 export function routeFromParams(params: Record<string, unknown>): { route: UiValidationRoute; query: URLSearchParams } {
   const raw = typeof params.route === 'object' && params.route !== null ? params.route as Record<string, unknown> : params
   const surface = raw.surface
-  if (!['chat', 'settings', 'sources', 'skills', 'automations', 'workspace-picker'].includes(String(surface))) {
+  if (!['chat', 'settings', 'skills', 'automations', 'workspace-picker'].includes(String(surface))) {
     throw new UiValidationError('INVALID_REQUEST', 'app.open requires a registered route surface.')
   }
   const route: UiValidationRoute = {

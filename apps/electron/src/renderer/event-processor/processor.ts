@@ -19,10 +19,8 @@ import {
   handleComplete,
   handleError,
   handleTypedError,
-  handleSourcesChanged,
   handleNameChanged,
   handlePermissionRequest,
-  handleCredentialRequest,
   handlePlanSubmitted,
   handlePlanArtifactChanged,
   handlePlanModeStateChanged,
@@ -39,8 +37,6 @@ import {
   handleMessageAnnotationsUpdated,
   handleSessionShared,
   handleSessionUnshared,
-  handleAuthRequest,
-  handleAuthCompleted,
   handleUsageUpdate,
 } from './handlers/session'
 
@@ -142,17 +138,11 @@ export function processEvent(
     case 'provider_changed':
       return handleProviderChanged(state, event)
 
-    case 'sources_changed':
-      return handleSourcesChanged(state, event)
-
     case 'name_changed':
       return handleNameChanged(state, event)
 
     case 'permission_request':
       return handlePermissionRequest(state, event)
-
-    case 'credential_request':
-      return handleCredentialRequest(state, event)
 
     case 'plan_submitted':
       return handlePlanSubmitted(state, event)
@@ -174,17 +164,6 @@ export function processEvent(
 
     case 'session_unshared':
       return handleSessionUnshared(state, event)
-
-    case 'auth_request':
-      return handleAuthRequest(state, event)
-
-    case 'auth_completed':
-      return handleAuthCompleted(state, event)
-
-    case 'source_activated':
-      // Server-side handles the auto-retry now (mortise-oss#804); the renderer
-      // just receives the event for UI feedback. See SessionManager.processEvent.
-      return { state, effects: [] }
 
     case 'usage_update':
       return handleUsageUpdate(state, event)

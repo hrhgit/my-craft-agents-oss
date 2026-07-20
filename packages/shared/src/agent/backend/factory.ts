@@ -33,8 +33,6 @@ import type { ModelFetchResult } from '../../config/model-fetcher.ts';
 // Model resolution utilities
 import { getModelProvider, DEFAULT_MODEL, normalizeDeprecatedModelId } from '../../config/models.ts';
 import { homedir } from 'node:os';
-import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
 import { getCredentialManager } from '../../credentials/index.ts';
 import type {
   BackendModelFetchCredentials,
@@ -428,24 +426,6 @@ export function resolveModelForProvider(
       return managedModel || providerDefault || '';
     default:
       return managedModel || providerDefault || DEFAULT_MODEL;
-  }
-}
-
-// ============================================================
-// Runtime Artifact Helpers
-// ============================================================
-
-/**
- * Remove backend runtime artifacts for disabled sources.
- * Currently removes bridge credential cache files in source directories.
- */
-export async function cleanupSourceRuntimeArtifacts(
-  workspaceRootPath: string,
-  disabledSourceSlugs: string[],
-): Promise<void> {
-  for (const sourceSlug of disabledSourceSlugs) {
-    const cachePath = join(workspaceRootPath, 'sources', sourceSlug, '.credential-cache.json');
-    await rm(cachePath, { force: true });
   }
 }
 

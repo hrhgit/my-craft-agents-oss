@@ -4,7 +4,7 @@
  */
 
 import type { ActivityItem, ResponseContent } from '@mortise/ui'
-import { nativeToolIcons, sourceIcons } from '../sample-icons'
+import { nativeToolIcons, mcpToolIcons } from '../sample-icons'
 
 const now = Date.now()
 
@@ -13,10 +13,9 @@ const gmailReadComplaint: ActivityItem = {
   id: 'support-1',
   type: 'tool',
   status: 'completed',
-  toolName: 'mcp__gmail__api_gmail',
+  toolName: 'mcp__gmail__get_message',
   toolInput: {
-    path: 'gmail/v1/users/me/messages/19abc123def',
-    method: 'GET',
+    messageId: '19abc123def',
     _intent: 'Reading customer complaint email about billing issue',
     _displayName: 'Read Email',
   },
@@ -24,8 +23,8 @@ const gmailReadComplaint: ActivityItem = {
   displayName: 'Read Email',
   toolDisplayMeta: {
     displayName: 'Gmail',
-    category: 'source',
-    iconDataUrl: sourceIcons.gmail,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.gmail,
   },
   timestamp: now - 60000,
 }
@@ -35,11 +34,9 @@ const stripeLookup: ActivityItem = {
   id: 'support-2',
   type: 'tool',
   status: 'completed',
-  toolName: 'mcp__stripe__api_stripe',
+  toolName: 'mcp__stripe__search_customers',
   toolInput: {
-    path: '/v1/customers/search',
-    method: 'GET',
-    query: { query: 'email:"sarah@example.com"' },
+    query: 'email:"sarah@example.com"',
     _intent: 'Looking up customer account and subscription details',
     _displayName: 'Search Customer',
   },
@@ -47,8 +44,8 @@ const stripeLookup: ActivityItem = {
   displayName: 'Search Customer',
   toolDisplayMeta: {
     displayName: 'Stripe',
-    category: 'source',
-    iconDataUrl: sourceIcons.stripe,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.stripe,
   },
   timestamp: now - 55000,
 }
@@ -58,10 +55,9 @@ const stripeGetSub: ActivityItem = {
   id: 'support-3',
   type: 'tool',
   status: 'completed',
-  toolName: 'mcp__stripe__api_stripe',
+  toolName: 'mcp__stripe__get_subscription',
   toolInput: {
-    path: '/v1/subscriptions/sub_1234567890',
-    method: 'GET',
+    subscriptionId: 'sub_1234567890',
     _intent: 'Fetching detailed subscription information',
     _displayName: 'Get Subscription',
   },
@@ -69,8 +65,8 @@ const stripeGetSub: ActivityItem = {
   displayName: 'Get Subscription',
   toolDisplayMeta: {
     displayName: 'Stripe',
-    category: 'source',
-    iconDataUrl: sourceIcons.stripe,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.stripe,
   },
   timestamp: now - 50000,
 }
@@ -80,11 +76,10 @@ const stripeInvoices: ActivityItem = {
   id: 'support-4',
   type: 'tool',
   status: 'completed',
-  toolName: 'mcp__stripe__api_stripe',
+  toolName: 'mcp__stripe__list_invoices',
   toolInput: {
-    path: '/v1/invoices',
-    method: 'GET',
-    query: { customer: 'cus_abc123', limit: 5 },
+    customerId: 'cus_abc123',
+    limit: 5,
     _intent: 'Retrieving recent invoices to verify billing issue',
     _displayName: 'List Invoices',
   },
@@ -92,8 +87,8 @@ const stripeInvoices: ActivityItem = {
   displayName: 'List Invoices',
   toolDisplayMeta: {
     displayName: 'Stripe',
-    category: 'source',
-    iconDataUrl: sourceIcons.stripe,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.stripe,
   },
   timestamp: now - 45000,
 }
@@ -132,8 +127,8 @@ const sentryErrors: ActivityItem = {
   displayName: 'Search Issues',
   toolDisplayMeta: {
     displayName: 'Sentry',
-    category: 'source',
-    iconDataUrl: sourceIcons.sentry,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.sentry,
   },
   timestamp: now - 35000,
 }
@@ -156,8 +151,8 @@ const clickupTicket: ActivityItem = {
   displayName: 'Create Task',
   toolDisplayMeta: {
     displayName: 'ClickUp',
-    category: 'source',
-    iconDataUrl: sourceIcons.clickup,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.clickup,
   },
   timestamp: now - 30000,
 }
@@ -178,8 +173,8 @@ const slackEscalate: ActivityItem = {
   displayName: 'Send Message',
   toolDisplayMeta: {
     displayName: 'Slack',
-    category: 'source',
-    iconDataUrl: sourceIcons.slack,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.slack,
   },
   timestamp: now - 25000,
 }
@@ -189,11 +184,10 @@ const stripeRefund: ActivityItem = {
   id: 'support-9',
   type: 'tool',
   status: 'completed',
-  toolName: 'mcp__stripe__api_stripe',
+  toolName: 'mcp__stripe__create_refund',
   toolInput: {
-    path: '/v1/refunds',
-    method: 'POST',
-    body: { charge: 'ch_duplicate123', reason: 'duplicate' },
+    chargeId: 'ch_duplicate123',
+    reason: 'duplicate',
     _intent: 'Processing refund for the duplicate charge',
     _displayName: 'Create Refund',
   },
@@ -201,8 +195,8 @@ const stripeRefund: ActivityItem = {
   displayName: 'Create Refund',
   toolDisplayMeta: {
     displayName: 'Stripe',
-    category: 'source',
-    iconDataUrl: sourceIcons.stripe,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.stripe,
   },
   timestamp: now - 15000,
 }
@@ -212,15 +206,11 @@ const gmailResponse: ActivityItem = {
   id: 'support-10',
   type: 'tool',
   status: 'completed',
-  toolName: 'mcp__gmail__api_gmail',
+  toolName: 'mcp__gmail__create_draft',
   toolInput: {
-    path: 'gmail/v1/users/me/drafts',
-    method: 'POST',
-    body: {
-      to: 'sarah@example.com',
-      subject: 'Re: Billing Issue - Refund Processed',
-      body: 'Dear Sarah, We apologize for the inconvenience...',
-    },
+    to: 'sarah@example.com',
+    subject: 'Re: Billing Issue - Refund Processed',
+    body: 'Dear Sarah, We apologize for the inconvenience...',
     _intent: 'Drafting apology and resolution email to customer',
     _displayName: 'Create Draft',
   },
@@ -228,8 +218,8 @@ const gmailResponse: ActivityItem = {
   displayName: 'Create Draft',
   toolDisplayMeta: {
     displayName: 'Gmail',
-    category: 'source',
-    iconDataUrl: sourceIcons.gmail,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.gmail,
   },
   timestamp: now - 5000,
 }

@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'bun:test'
 import { createBrowserTools, type BrowserPaneFns } from '../browser-tools'
+import { executeBrowserToolCommand, type BrowserCommandLifecycleEvent } from '../browser-tool-runtime'
 
 // ============================================================================
 // Mock BrowserPaneFns
@@ -70,6 +71,39 @@ function createMockFns(): BrowserPaneFns {
     detectChallenge: async () => ({ detected: false, provider: 'none', signals: [] }),
   }
 }
+
+describe('browser command lifecycle evidence', () => {
+  it('records completed steps and skipped commands after a navigation boundary', async () => {
+    const events: BrowserCommandLifecycleEvent[] = []
+    await executeBrowserToolCommand({
+      command: 'fill @e1 start; navigate https://example.com; fill @e2 skipped',
+      fns: createMockFns(),
+      sessionId: 'test-session',
+      onLifecycle: event => events.push(event),
+    })
+    expect(events.map(event => `${event.phase}:${event.command}:${event.index}`)).toEqual([
+      'started:fill:0', 'finished:fill:0',
+      'started:navigate:1', 'finished:navigate:1',
+      'skipped:fill:2',
+    ])
+  })
+
+  it('records a failed terminal event without exposing command arguments', async () => {
+    const events: BrowserCommandLifecycleEvent[] = []
+    const fns = createMockFns()
+    fns.click = async () => { throw new Error('click failed') }
+    await expect(executeBrowserToolCommand({
+      command: 'click @secret-ref',
+      fns,
+      sessionId: 'test-session',
+      onLifecycle: event => events.push(event),
+    })).rejects.toThrow('click failed')
+    expect(events.map(event => ({ phase: event.phase, command: event.command }))).toEqual([
+      { phase: 'started', command: 'click' },
+      { phase: 'failed', command: 'click' },
+    ])
+  })
+})
 
 // ============================================================================
 // Helper: execute a tool by name

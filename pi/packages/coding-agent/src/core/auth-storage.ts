@@ -26,8 +26,7 @@ export type OAuthCredential = {
 } & OAuthCredentials;
 
 /**
- * Mortise source credentials for non-pi providers (e.g. external APIs, data
- * sources, upstream services). These are stored under the "mortise.<slug>"
+ * Mortise-owned credentials for non-pi providers and app services. These are stored under the "mortise.<slug>"
  * namespace in auth.json and are opaque to pi's own auth flow.
  */
 export type BearerCredential = {
@@ -230,7 +229,7 @@ export class InMemoryAuthStorageBackend implements AuthStorageBackend {
  *
  * Namespace convention:
  * - `mortise.<slug>` keys store non-pi credentials written by the mortise shell
- *   (LLM API keys, OAuth tokens, source credentials, etc.) so that pi's
+ *   (LLM API keys, OAuth tokens, and app credentials) so that pi's
  *   auth.json is the single source of truth.
  * - When pi CLI runs standalone, it never reads from or writes to the
  *   `mortise.*` namespace; these entries are opaque to pi's own auth flow.

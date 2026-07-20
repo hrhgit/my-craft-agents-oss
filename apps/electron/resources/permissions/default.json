@@ -106,10 +106,6 @@
       "comment": "mortise label read-only operations"
     },
     {
-      "pattern": "^mortise\\s+source\\s+(list|get|validate|test|auth-help)\\b",
-      "comment": "mortise source read-only operations"
-    },
-    {
       "pattern": "^mortise\\s+skill\\s+(list|get|validate|where)\\b",
       "comment": "mortise skill read-only operations"
     },
@@ -885,7 +881,7 @@
   "allowedMcpPatterns": [
     {
       "pattern": "search",
-      "comment": "Search operations across MCP sources"
+      "comment": "Search operations across MCP servers"
     },
     {
       "pattern": "list",
@@ -944,6 +940,5 @@
       "comment": "Fetch/retrieve data"
     }
   ],
-  "allowedApiEndpoints": [],
   "allowedWritePaths": []
 }

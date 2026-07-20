@@ -6,7 +6,6 @@
  * Settings:
  * - Identity (Name, Icon)
  * - Permissions (Default mode, Mode cycling)
- * - Advanced (Local MCP servers)
  *
  * Note: AI settings (model, thinking, connection) have been moved to AiSettingsPage.
  */
@@ -23,10 +22,9 @@ import { cn } from '@/lib/utils'
 import { routes } from '@/lib/navigate'
 import { Spinner } from '@mortise/ui'
 import { RenameDialog } from '@/components/ui/rename-dialog'
-import type { PermissionMode, WorkspaceSettings, LoadedSource } from '../../../shared/types'
+import type { PermissionMode, WorkspaceSettings } from '../../../shared/types'
 import { PERMISSION_MODE_CONFIG } from '@mortise/shared/agent/mode-types'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
-import { SourceAvatar } from '@/components/ui/source-avatar'
 import { toast } from 'sonner'
 
 import {
@@ -65,12 +63,7 @@ export default function WorkspaceSettingsPage() {
   const [wsIconUrl, setWsIconUrl] = useState<string | null>(null)
   const [isUploadingIcon, setIsUploadingIcon] = useState(false)
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask')
-  const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
-
-  // Default sources state
-  const [availableSources, setAvailableSources] = useState<LoadedSource[]>([])
-  const [enabledSourceSlugs, setEnabledSourceSlugs] = useState<string[]>([])
 
   // Mode cycling state
   const [enabledModes, setEnabledModes] = useState<PermissionMode[]>(['safe', 'ask', 'allow-all'])
@@ -91,26 +84,11 @@ export default function WorkspaceSettingsPage() {
           setWsName(settings.name || '')
           setWsNameEditing(settings.name || '')
           setPermissionMode(settings.permissionMode || 'ask')
-          setLocalMcpEnabled(settings.localMcpEnabled ?? true)
           // Load cyclable permission modes from workspace settings
           if (settings.cyclablePermissionModes && settings.cyclablePermissionModes.length >= 2) {
             setEnabledModes(settings.cyclablePermissionModes)
           }
 
-          // Load default source slugs
-          const savedSlugs = settings.enabledSourceSlugs ?? []
-
-          // Load available sources and auto-heal stale slugs
-          const sources = await window.electronAPI.getSources(activeWorkspaceId)
-          setAvailableSources(sources)
-          const validSlugs = new Set(sources.map(s => s.config.slug))
-          const healedSlugs = savedSlugs.filter(s => validSlugs.has(s))
-          setEnabledSourceSlugs(healedSlugs)
-
-          // Persist cleaned list if stale slugs were removed
-          if (healedSlugs.length !== savedSlugs.length) {
-            window.electronAPI.updateWorkspaceSetting(activeWorkspaceId, 'enabledSourceSlugs', healedSlugs)
-          }
         }
 
         // Try to load workspace icon (check common extensions)
@@ -146,25 +124,6 @@ export default function WorkspaceSettingsPage() {
     }
 
     loadWorkspaceSettings()
-  }, [activeWorkspaceId])
-
-  // Subscribe to live source changes (additions/removals)
-  useEffect(() => {
-    if (!window.electronAPI) return
-    const cleanup = window.electronAPI.onSourcesChanged((workspaceId: string, sources: LoadedSource[]) => {
-      if (workspaceId !== activeWorkspaceId) return
-      setAvailableSources(sources)
-      // Auto-heal: remove slugs for sources that no longer exist
-      const validSlugs = new Set(sources.map(s => s.config.slug))
-      setEnabledSourceSlugs(prev => {
-        const healed = prev.filter(s => validSlugs.has(s))
-        if (healed.length !== prev.length && activeWorkspaceId) {
-          window.electronAPI.updateWorkspaceSetting(activeWorkspaceId, 'enabledSourceSlugs', healed)
-        }
-        return healed
-      })
-    })
-    return cleanup
   }, [activeWorkspaceId])
 
   // Save workspace setting
@@ -248,25 +207,6 @@ export default function WorkspaceSettingsPage() {
       await updateWorkspaceSetting('permissionMode', newMode)
     },
     [updateWorkspaceSetting]
-  )
-
-  const handleLocalMcpEnabledChange = useCallback(
-    async (enabled: boolean) => {
-      setLocalMcpEnabled(enabled)
-      await updateWorkspaceSetting('localMcpEnabled', enabled)
-    },
-    [updateWorkspaceSetting]
-  )
-
-  const handleSourceToggle = useCallback(
-    async (slug: string, checked: boolean) => {
-      const newSlugs = checked
-        ? [...enabledSourceSlugs, slug]
-        : enabledSourceSlugs.filter(s => s !== slug)
-      setEnabledSourceSlugs(newSlugs)
-      await updateWorkspaceSetting('enabledSourceSlugs', newSlugs)
-    },
-    [enabledSourceSlugs, updateWorkspaceSetting]
   )
 
   const handleModeToggle = useCallback(
@@ -463,45 +403,6 @@ export default function WorkspaceSettingsPage() {
                   </motion.p>
                 )}
               </AnimatePresence>
-            </SettingsSection>
-
-            {/* Default Sources */}
-            <SettingsSection
-              title={t("settings.workspace.defaultSources")}
-              description={t("settings.workspace.defaultSourcesDesc")}
-            >
-              {availableSources.length > 0 ? (
-                <SettingsCard>
-                  {availableSources.map((source) => (
-                    <SettingsToggle
-                      key={source.config.slug}
-                      label={
-                        <span className="inline-flex items-center gap-2">
-                          <SourceAvatar source={source} size="xs" />
-                          {source.config.name}
-                        </span>
-                      }
-                      description={source.config.tagline}
-                      checked={enabledSourceSlugs.includes(source.config.slug)}
-                      onCheckedChange={(checked) => handleSourceToggle(source.config.slug, checked)}
-                    />
-                  ))}
-                </SettingsCard>
-              ) : (
-                <p className="text-sm text-muted-foreground">{t("settings.workspace.noSourcesConfigured")}</p>
-              )}
-            </SettingsSection>
-
-            {/* Advanced */}
-            <SettingsSection title={t("settings.workspace.advanced")}>
-              <SettingsCard>
-                <SettingsToggle
-                  label={t("settings.workspace.localMcpServers")}
-                  description={t("settings.workspace.localMcpServersDesc")}
-                  checked={localMcpEnabled}
-                  onCheckedChange={handleLocalMcpEnabledChange}
-                />
-              </SettingsCard>
             </SettingsSection>
 
           </div>

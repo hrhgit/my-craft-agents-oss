@@ -182,12 +182,11 @@ export interface AutomationsConfig {
 // Action Results
 // ============================================================================
 
-/** References parsed from a prompt (@name for sources and skills) */
+/** Skill-style references parsed from a prompt. */
 export interface PromptReferences {
   /**
    * All @name references found in the prompt.
-   * These could be sources (@linear, @github) or skills (@commit, @review-pr).
-   * The caller should resolve which are sources vs skills based on available configurations.
+   * These are normally skills such as @commit or @review-pr.
    */
   mentions: string[];
 }
@@ -198,7 +197,7 @@ export interface PromptActionResult {
   prompt: string;
   /** The expanded prompt with environment variables substituted */
   expandedPrompt: string;
-  /** References to sources and skills found in the prompt */
+  /** Skill-style references found in the prompt */
   references: PromptReferences;
 }
 
@@ -234,8 +233,7 @@ export interface PendingPrompt {
   /** The expanded prompt text */
   prompt: string;
   /**
-   * All @mentions found in the prompt (sources and skills).
-   * The caller should resolve which are sources vs skills based on available configurations.
+   * All skill-style @mentions found in the prompt.
    */
   mentions: string[];
   /** Permission mode for the created session (from matcher config) */

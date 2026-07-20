@@ -1,0 +1,44 @@
+[
+  {
+    "name": "CloudEvents",
+    "source_url": "https://github.com/cloudevents/spec",
+    "stars": 5824,
+    "last_commit_days": 11,
+    "license": "Apache-2.0",
+    "release_recency": 1624,
+    "docs_score": 10,
+    "quality_signals": 10,
+    "fit_score": 10,
+    "archived": false,
+    "evidence_level": "L2",
+    "role_fit": "event envelope and external ingress identity"
+  },
+  {
+    "name": "AsyncAPI",
+    "source_url": "https://github.com/asyncapi/spec",
+    "stars": 5242,
+    "last_commit_days": 8,
+    "license": "Apache-2.0",
+    "release_recency": 169,
+    "docs_score": 10,
+    "quality_signals": 9,
+    "fit_score": 4,
+    "archived": false,
+    "evidence_level": "L2",
+    "role_fit": "describing event channels and contracts, not runtime automation state"
+  },
+  {
+    "name": "Open Workflow Specification",
+    "source_url": "https://github.com/open-workflow-specification/specification",
+    "stars": 906,
+    "last_commit_days": 4,
+    "license": "Apache-2.0",
+    "release_recency": 538,
+    "docs_score": 8,
+    "quality_signals": 8,
+    "fit_score": 3,
+    "archived": false,
+    "evidence_level": "L2",
+    "role_fit": "full workflow DSL; too broad for the first Mortise automation protocol"
+  }
+]

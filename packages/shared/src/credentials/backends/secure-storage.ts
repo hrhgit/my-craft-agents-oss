@@ -19,10 +19,6 @@
  *   - llm_iam::<providerKey>
  *   - llm_service_account::<providerKey>
  *   - workspace_oauth::<workspaceId>
- *   - source_oauth::<workspaceId>::<sourceId>
- *   - source_bearer::<workspaceId>::<sourceId>
- *   - source_apikey::<workspaceId>::<sourceId>
- *   - source_basic::<workspaceId>::<sourceId>
  *   - messaging_bearer::<workspaceId>::<platform>
  *   - <type>::global（legacy global credentials）
  *
@@ -48,9 +44,9 @@ type AuthCredential = Record<string, unknown>;
 /**
  * Envelope persisted in auth.json under `mortise.<slug>`.
  *
- * pi 的 AuthCredential 联合（ApiKeyCredential | OAuthCredential | SourceCredential）
+ * pi 的 AuthCredential 联合
  * 无法无损承载 mortise 的所有 StoredCredential 字段（如 IAM 的 awsAccessKeyId、
- * service_account 的 gcpProjectId、source_apikey 的任意 JSON value）。由于
+ * service_account 的 gcpProjectId 和任意 JSON value）。由于
  * `mortise.*` 命名空间对 pi 是 opaque（pi 不解析这些条目），我们用自定义 envelope
  * 保存原始 StoredCredential 与 mortise 凭证类型，保证零数据丢失。这与
  * Pi RpcClient 处理 IAM 凭证时的做法一致（`as unknown as AuthCredential`）。
@@ -87,10 +83,10 @@ function listCraftSlugs(): string[] {
 
 /**
  * Slug 点号转义：pi 的 setCraftCredential 校验 slug 不含 `.`（与 `mortise.<slug>`
- * 命名空间前缀冲突），而 mortise 的 scope 段（providerKey / sourceId / 自定义
+ * 命名空间前缀冲突），而 mortise 的 scope 段（providerKey / workspaceId / 自定义
  * 连接名）可能含 `.`。使用百分号编码 `%2E`——可逆且无碰撞风险。
  *
- * 例：`source_oauth::ws1::my.api.source` → `source_oauth::ws1::my%2Eapi%2Esource`
+ * 例：`messaging_bearer::ws1::my.platform` → `messaging_bearer::ws1::my%2Eplatform`
  */
 export function escapeSlugSegment(s: string): string {
   return s.replace(/\./g, '%2E');

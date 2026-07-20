@@ -1,4 +1,4 @@
-export type CliDomainNamespace = 'source' | 'skill' | 'automation' | 'permission' | 'theme'
+export type CliDomainNamespace = 'skill' | 'automation' | 'permission' | 'theme'
 
 export interface CliDomainPolicy {
   namespace: CliDomainNamespace
@@ -11,18 +11,6 @@ export interface CliDomainPolicy {
 }
 
 const POLICIES: Record<CliDomainNamespace, CliDomainPolicy> = {
-  source: {
-    namespace: 'source',
-    helpCommand: 'mortise source --help',
-    workspacePathScopes: ['sources/**'],
-    readActions: ['list', 'get', 'validate', 'test', 'auth-help'],
-    quickExamples: [
-      'mortise source list',
-      'mortise source get <slug>',
-      'mortise source update <slug> --json "{...}"',
-      'mortise source validate <slug>',
-    ],
-  },
   skill: {
     namespace: 'skill',
     helpCommand: 'mortise skill --help',
@@ -52,15 +40,15 @@ const POLICIES: Record<CliDomainNamespace, CliDomainPolicy> = {
   permission: {
     namespace: 'permission',
     helpCommand: 'mortise permission --help',
-    workspacePathScopes: ['permissions.json', 'sources/*/permissions.json'],
+    workspacePathScopes: ['permissions.json'],
     readActions: ['list', 'get', 'validate'],
     quickExamples: [
       'mortise permission list',
-      'mortise permission get --source linear',
-      'mortise permission add-mcp-pattern "list" --comment "All list ops" --source linear',
+      'mortise permission get',
+      'mortise permission add-mcp-pattern "list" --comment "All list ops"',
       'mortise permission validate',
     ],
-    bashGuardPaths: ['permissions.json', 'sources/*/permissions.json'],
+    bashGuardPaths: ['permissions.json'],
   },
   theme: {
     namespace: 'theme',

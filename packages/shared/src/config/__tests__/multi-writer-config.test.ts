@@ -22,15 +22,13 @@ function setupConfigDir(): string {
     defaults: {
       notificationsEnabled: true,
       colorTheme: 'default',
-      dataSourcesEnabled: false,
-      piExtensions: { delegatePromptAutomation: false, enabled: {}, config: {} },
+      piExtensions: { enabled: {}, config: {} },
       piShell: { fullPassthrough: true },
     },
     workspaceDefaults: {
       thinkingLevel: 'medium',
       permissionMode: 'ask',
       cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
-      localMcpServers: { enabled: true },
     },
   }, null, 2))
   return configDir

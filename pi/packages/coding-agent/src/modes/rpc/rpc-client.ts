@@ -36,6 +36,7 @@ import type {
 	RpcExtensionHostCapabilityProgress,
 	RpcExtensionHostCapabilityRequest,
 	RpcExtensionHostCapabilityResponse,
+	RpcExtensionHostCapabilityRouteRejected,
 	RpcExtensionUICancel,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
@@ -148,6 +149,7 @@ export type RpcClientEvent =
 	| RpcExtensionHostCapabilityDeclaration
 	| RpcExtensionHostCapabilityRequest
 	| RpcExtensionHostCapabilityCancel
+	| RpcExtensionHostCapabilityRouteRejected
 	| RpcExtensionUIValidationEvent
 	| RpcExtensionErrorEvent
 	| RpcProcessLifecycleEvent
@@ -463,6 +465,8 @@ export class RpcClient {
 		images?: ImageContent[],
 		options?: {
 			systemPrompt?: string;
+			clearSystemPrompt?: boolean;
+			appendSystemPrompt?: string;
 			clientMutationId?: string;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
 		},
@@ -472,6 +476,8 @@ export class RpcClient {
 			message,
 			images,
 			systemPrompt: options?.systemPrompt,
+			clearSystemPrompt: options?.clearSystemPrompt,
+			appendSystemPrompt: options?.appendSystemPrompt,
 			clientMutationId: options?.clientMutationId,
 			attachments: options?.attachments,
 		});
@@ -980,12 +986,20 @@ export class RpcClient {
 	}
 
 	/** @internal Send an extension host capability response to one runtime. */
-	respondToRuntimeExtensionHostCapability(runtimeId: string, response: RpcExtensionHostCapabilityResponse): void {
-		this.respondToExtensionHostCapability({ ...response, runtimeId });
+	respondToRuntimeExtensionHostCapability(
+		runtimeId: string,
+		sessionId: string,
+		response: RpcExtensionHostCapabilityResponse,
+	): void {
+		this.respondToExtensionHostCapability({ ...response, runtimeId, sessionId });
 	}
 
-	reportRuntimeExtensionHostCapabilityProgress(runtimeId: string, progress: RpcExtensionHostCapabilityProgress): void {
-		this.reportExtensionHostCapabilityProgress({ ...progress, runtimeId });
+	reportRuntimeExtensionHostCapabilityProgress(
+		runtimeId: string,
+		sessionId: string,
+		progress: RpcExtensionHostCapabilityProgress,
+	): void {
+		this.reportExtensionHostCapabilityProgress({ ...progress, runtimeId, sessionId });
 	}
 
 	/**
@@ -1169,7 +1183,8 @@ export class RpcClient {
 			if (
 				event.type === "extension_ui_request" ||
 				event.type === "extension_ui_cancel" ||
-				event.type === "extension_error"
+				event.type === "extension_error" ||
+				event.type === "extension_host_capability_route_rejected"
 			) {
 				return;
 			}
@@ -1468,6 +1483,10 @@ export class PiRuntimeHandle {
 		return this.requestData({ type: "get_state" });
 	}
 
+	getLastAssistantText(): Promise<string | null> {
+		return this.requestData<{ text: string | null }>({ type: "get_last_assistant_text" }).then((result) => result.text);
+	}
+
 	setActiveTools(toolNames: string[]): Promise<void> {
 		return this.requestVoid({ type: "set_active_tools", toolNames });
 	}
@@ -1481,6 +1500,8 @@ export class PiRuntimeHandle {
 		images?: ImageContent[],
 		options?: {
 			systemPrompt?: string;
+			clearSystemPrompt?: boolean;
+			appendSystemPrompt?: string;
 			clientMutationId?: string;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
 		},
@@ -1490,6 +1511,8 @@ export class PiRuntimeHandle {
 			message,
 			images,
 			systemPrompt: options?.systemPrompt,
+			clearSystemPrompt: options?.clearSystemPrompt,
+			appendSystemPrompt: options?.appendSystemPrompt,
 			clientMutationId: options?.clientMutationId,
 			attachments: options?.attachments,
 		});
@@ -1609,11 +1632,11 @@ export class PiRuntimeHandle {
 	}
 
 	respondToExtensionHostCapability(response: RpcExtensionHostCapabilityResponse): void {
-		this.client.respondToRuntimeExtensionHostCapability(this.runtimeId, response);
+		this.client.respondToRuntimeExtensionHostCapability(this.runtimeId, this.summary.sessionId, response);
 	}
 
 	reportExtensionHostCapabilityProgress(progress: RpcExtensionHostCapabilityProgress): void {
-		this.client.reportRuntimeExtensionHostCapabilityProgress(this.runtimeId, progress);
+		this.client.reportRuntimeExtensionHostCapabilityProgress(this.runtimeId, this.summary.sessionId, progress);
 	}
 
 	waitForIdle(timeout = 60_000): Promise<void> {

@@ -69,8 +69,8 @@ export function successResponse(text: string): ToolResult {
  * distinguishable from successes, we prefix the output text with "[ERROR]".
  * The model can then parse this prefix to understand the tool call failed.
  *
- * This covers all session host-tool errors (source_test, config_validate,
- * skill_validate, credential_prompt, oauth triggers, browser_tool,
+ * This covers all session host-tool errors (config_validate,
+ * skill_validate, browser_tool,
  * spawn_session, etc.).
  *
  * See also: blockWithReason() in packages/shared/src/agent/mode-manager.ts

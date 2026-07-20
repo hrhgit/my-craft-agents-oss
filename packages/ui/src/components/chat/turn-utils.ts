@@ -55,6 +55,10 @@ export interface AssistantTurn {
   completedAt?: number
   /** End-to-end request duration derived from startedAt/completedAt. */
   durationMs?: number
+  /** Input tokens consumed by all model calls grouped into this user-visible turn. */
+  inputTokens?: number
+  /** Output tokens produced by all model calls grouped into this user-visible turn. */
+  outputTokens?: number
   /** Extracted from TodoWrite tool - latest todo state in this turn */
   todos?: TodoItem[]
 }
@@ -73,14 +77,7 @@ export interface SystemTurn {
   timestamp: number
 }
 
-/** Represents an auth request (credential input, OAuth flow) */
-export interface AuthRequestTurn {
-  type: 'auth-request'
-  message: Message
-  timestamp: number
-}
-
-export type Turn = AssistantTurn | UserTurn | SystemTurn | AuthRequestTurn
+export type Turn = AssistantTurn | UserTurn | SystemTurn
 
 /**
  * Build a stable UI identity key for an assistant turn card.
@@ -428,19 +425,6 @@ export function groupMessagesByTurn(messages: Message[], options: GroupTurnsOpti
   }
 
   for (const message of sortedMessages) {
-    // Auth-request messages are standalone turns (credential input, OAuth flows)
-    if (message.role === 'auth-request') {
-      // If there's a current turn, it's complete (something follows it)
-      if (currentTurn) currentTurn.isComplete = true
-      flushCurrentTurn()
-      turns.push({
-        type: 'auth-request',
-        message,
-        timestamp: message.timestamp,
-      })
-      continue
-    }
-
     // User messages are their own turn
     if (message.role === 'user') {
       // If there's a current turn, it's complete (something follows it)

@@ -35,7 +35,7 @@ export const MORTISE_SESSION_METADATA_FIELDS = [
   // Read tracking
   'lastReadMessageId', 'hasUnread',
   // Config
-  'enabledSourceSlugs', 'permissionMode', 'previousPermissionMode', 'workingDirectory',
+  'permissionMode', 'previousPermissionMode', 'workingDirectory',
   // Model/Provider
   'model', 'provider', 'thinkingLevel',
   // Sharing
@@ -169,8 +169,6 @@ export interface MortiseSessionMetadata {
   // Mortise 配置
   // ============================================
 
-  /** Per-session source 选择（source slugs） */
-  enabledSourceSlugs?: string[];
   /** 权限模式（'safe', 'ask', 'allow-all'） */
   permissionMode?: PermissionMode;
   /** 前一次权限模式（保留 modeTransition 上下文跨重启） */

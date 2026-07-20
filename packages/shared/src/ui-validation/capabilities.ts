@@ -84,7 +84,6 @@ function actionSchema(id: string, native: boolean): Record<string, unknown> {
 const definitions: UiValidationCapabilityDefinition[] = [
   route('chat', 'Open the conversation surface.', { workspaceId: { type: 'string' }, sessionId: { type: 'string' } }),
   route('settings', 'Open a settings section.', { section: { type: 'string', maxLength: 128 } }),
-  route('sources', 'Open data sources.'),
   route('skills', 'Open skills.'),
   route('automations', 'Open automations.'),
   route('workspace-picker', 'Open the workspace picker.'),

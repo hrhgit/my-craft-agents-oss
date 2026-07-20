@@ -4,7 +4,7 @@
  */
 
 import type { ActivityItem, ResponseContent } from '@mortise/ui'
-import { nativeToolIcons, sourceIcons, internalIcons } from '../sample-icons'
+import { nativeToolIcons, mcpToolIcons, internalIcons } from '../sample-icons'
 
 const now = Date.now()
 
@@ -23,8 +23,8 @@ const sentryFetchError: ActivityItem = {
   displayName: 'Get Issue Details',
   toolDisplayMeta: {
     displayName: 'Sentry',
-    category: 'source',
-    iconDataUrl: sourceIcons.sentry,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.sentry,
   },
   timestamp: now - 60000,
 }
@@ -45,8 +45,8 @@ const slackPostAlert: ActivityItem = {
   displayName: 'Post Alert',
   toolDisplayMeta: {
     displayName: 'Slack',
-    category: 'source',
-    iconDataUrl: sourceIcons.slack,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.slack,
   },
   timestamp: now - 55000,
 }
@@ -188,8 +188,8 @@ const slackUpdateStatus: ActivityItem = {
   displayName: 'Update Status',
   toolDisplayMeta: {
     displayName: 'Slack',
-    category: 'source',
-    iconDataUrl: sourceIcons.slack,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.slack,
   },
   timestamp: now - 10000,
 }
@@ -210,8 +210,8 @@ const sentryResolve: ActivityItem = {
   displayName: 'Update Issue Status',
   toolDisplayMeta: {
     displayName: 'Sentry',
-    category: 'source',
-    iconDataUrl: sourceIcons.sentry,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.sentry,
   },
   timestamp: now - 5000,
 }

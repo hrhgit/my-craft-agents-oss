@@ -26,9 +26,7 @@ function createBaseContext(sessionId: string): SessionToolContext {
   return createSessionToolContext({
     sessionId,
     workspacePath: '/tmp/test-workspace',
-    workspaceId: 'test-ws',
     onPlanSubmitted: noop,
-    onAuthRequest: noop,
   });
 }
 

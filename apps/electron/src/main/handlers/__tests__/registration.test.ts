@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 import type { RpcServer } from '@mortise/server-core/transport'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import type { HandlerDeps } from '../handler-deps'
 
 const registeredChannels: string[] = []
@@ -56,7 +57,7 @@ function createMockServer(): RpcServer {
 
 function createMockDeps(): HandlerDeps {
   return {
-    sessionManager: {} as HandlerDeps['sessionManager'],
+    sessionManager: { reinitializeAuth: async () => {} } as HandlerDeps['sessionManager'],
     platform: {
       appRootPath: '',
       resourcesPath: '',
@@ -76,14 +77,6 @@ function createMockDeps(): HandlerDeps {
       onRemoved: () => {},
       onInteracted: () => {},
     } as unknown as NonNullable<HandlerDeps['browserPaneManager']>,
-    oauthFlowStore: {
-      store: () => {},
-      getByState: () => null,
-      remove: () => {},
-      cleanup: () => {},
-      dispose: () => {},
-      size: 0,
-    } as unknown as HandlerDeps['oauthFlowStore'],
   }
 }
 
@@ -94,11 +87,9 @@ async function getExpectedChannels(): Promise<Set<string>> {
     automations,
     files,
     llm,
-    oauth,
     sessions,
     coreSettings,
     skills,
-    sources,
     coreSystem,
     coreWorkspace,
     onboarding,
@@ -109,11 +100,9 @@ async function getExpectedChannels(): Promise<Set<string>> {
     import('@mortise/server-core/handlers/rpc/automations'),
     import('@mortise/server-core/handlers/rpc/files'),
     import('@mortise/server-core/handlers/rpc/pi-providers'),
-    import('@mortise/server-core/handlers/rpc/oauth'),
     import('@mortise/server-core/handlers/rpc/sessions'),
     import('@mortise/server-core/handlers/rpc/settings'),
     import('@mortise/server-core/handlers/rpc/skills'),
-    import('@mortise/server-core/handlers/rpc/sources'),
     import('@mortise/server-core/handlers/rpc/system'),
     import('@mortise/server-core/handlers/rpc/workspace'),
     import('@mortise/server-core/handlers/rpc/onboarding'),
@@ -135,16 +124,15 @@ async function getExpectedChannels(): Promise<Set<string>> {
     ...automations.HANDLED_CHANNELS,
     ...files.HANDLED_CHANNELS,
     ...llm.HANDLED_CHANNELS,
-    ...oauth.HANDLED_CHANNELS,
     ...sessions.HANDLED_CHANNELS,
     ...coreSettings.HANDLED_CHANNELS,
     ...skills.HANDLED_CHANNELS,
-    ...sources.HANDLED_CHANNELS,
     ...coreSystem.CORE_HANDLED_CHANNELS,
     ...coreWorkspace.CORE_HANDLED_CHANNELS,
     ...onboarding.HANDLED_CHANNELS,
     ...resources.HANDLED_CHANNELS,
     ...transfer.HANDLED_CHANNELS,
+    RPC_CHANNELS.workspaceCoordination.GET_STATUS,
     ...browser.HANDLED_CHANNELS,
     ...guiSystem.GUI_HANDLED_CHANNELS,
     ...guiWorkspace.GUI_HANDLED_CHANNELS,

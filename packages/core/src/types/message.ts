@@ -14,33 +14,7 @@ export type MessageRole =
   | 'info'
   | 'warning'
   /** @deprecated Read compatibility only. New plans are assistant messages with artifact.kind=plan. */
-  | 'plan'
-  | 'auth-request';
-
-/**
- * Credential input modes for different auth types
- */
-export type CredentialInputMode =
-  | 'bearer'       // Single token field (Bearer Token, API Key)
-  | 'basic'        // Username + Password fields
-  | 'header'       // API Key with custom header name
-  | 'query'        // API Key for query parameter
-  | 'multi-header'; // Multiple header fields
-
-/**
- * Auth request types
- */
-export type AuthRequestType =
-  | 'credential'
-  | 'oauth'
-  | 'oauth-google'
-  | 'oauth-slack'
-  | 'oauth-microsoft';
-
-/**
- * Auth request status
- */
-export type AuthStatus = 'pending' | 'completed' | 'cancelled' | 'failed';
+  | 'plan';
 
 /**
  * Tool execution status
@@ -52,14 +26,14 @@ export type ToolStatus = 'pending' | 'executing' | 'completed' | 'error' | 'back
  * Icons are base64-encoded to work in both Electron and web viewer
  */
 export interface ToolDisplayMeta {
-  /** Display name for the tool (e.g., "Commit", "Linear") */
+  /** Display name for the tool (e.g., "Commit") */
   displayName: string;
   /** Base64-encoded icon as data URL (e.g., "data:image/png;base64,...") - 32x32px */
   iconDataUrl?: string;
   /** Description of what this tool does */
   description?: string;
   /** Category for grouping/styling */
-  category?: 'skill' | 'source' | 'native' | 'mcp';
+  category?: 'skill' | 'native' | 'mcp';
 }
 
 /**
@@ -84,10 +58,10 @@ export interface MessageAttachment {
  */
 export interface ContentBadge {
   /** Badge type - used for fallback icon if iconBase64 not available */
-  type: 'source' | 'skill' | 'context' | 'command' | 'file' | 'folder';
-  /** Display label (e.g., "Linear", "Commit") */
+  type: 'skill' | 'context' | 'command' | 'file' | 'folder';
+  /** Display label (e.g., "Commit") */
   label: string;
-  /** Original text pattern (e.g., "@linear", "@commit") */
+  /** Original text pattern (e.g., "@commit") */
   rawText: string;
   /** Icon as data URL (e.g., "data:image/png;base64,...") - preserves mime type */
   iconDataUrl?: string;
@@ -274,7 +248,7 @@ export interface Message {
   isBackground?: boolean;   // Flag for UI differentiation
   // Stored attachments for user messages (persistent, no base64)
   attachments?: StoredAttachment[];
-  // Content badges for inline display (sources, skills)
+  // Content badges for inline display (skills and contextual references)
   badges?: ContentBadge[];
   /** Annotation payloads for this message */
   annotations?: AnnotationV1[];
@@ -309,33 +283,11 @@ export interface Message {
   errorActions?: Array<{
     key: string;
     label: string;
-    action?: 'retry' | 'settings' | 'reauth' | 'open_url' | 'reconnect_source';
+    action?: 'retry' | 'settings' | 'reauth' | 'open_url';
     url?: string;
-    sourceSlug?: string;
   }>;
   // Plan-specific fields (for role='plan')
   planPath?: string;  // Path to the plan markdown file
-  // Auth-request-specific fields (for role='auth-request')
-  authRequestId?: string;         // Unique ID for the auth request
-  authRequestType?: AuthRequestType;
-  authSourceSlug?: string;
-  authSourceName?: string;
-  authStatus?: AuthStatus;
-  authCredentialMode?: CredentialInputMode;  // For credential requests
-  authHeaderName?: string;        // For header auth - the header name
-  authHeaderNames?: string[];     // For multi-header auth (e.g., ["DD-API-KEY", "DD-APPLICATION-KEY"])
-  authLabels?: {                  // Custom field labels
-    credential?: string;
-    username?: string;
-    password?: string;
-  };
-  authDescription?: string;       // Description/instructions
-  authHint?: string;              // Hint about where to find credentials
-  authSourceUrl?: string;         // Source URL for password manager domain matching (1Password)
-  authPasswordRequired?: boolean; // For basic auth: whether password is required (default true)
-  authError?: string;             // Error message if auth failed
-  authEmail?: string;             // Authenticated email (for OAuth)
-  authWorkspace?: string;         // Authenticated workspace (for Slack)
 }
 
 /**
@@ -368,7 +320,7 @@ export interface StoredMessage {
   isError?: boolean;
   /** Stored attachments for user messages (persisted to disk) */
   attachments?: StoredAttachment[];
-  /** Content badges for inline display (sources, skills) */
+  /** Content badges for inline display (skills and contextual references) */
   badges?: ContentBadge[];
   /** Annotations persisted at message level */
   annotations?: AnnotationV1[];
@@ -394,33 +346,11 @@ export interface StoredMessage {
   errorActions?: Array<{
     key: string;
     label: string;
-    action?: 'retry' | 'settings' | 'reauth' | 'open_url' | 'reconnect_source';
+    action?: 'retry' | 'settings' | 'reauth' | 'open_url';
     url?: string;
-    sourceSlug?: string;
   }>;
   // Plan-specific fields (for role='plan')
   planPath?: string;
-  // Auth-request-specific fields (for role='auth-request')
-  authRequestId?: string;
-  authRequestType?: AuthRequestType;
-  authSourceSlug?: string;
-  authSourceName?: string;
-  authStatus?: AuthStatus;
-  authCredentialMode?: CredentialInputMode;
-  authHeaderName?: string;
-  authHeaderNames?: string[];
-  authLabels?: {
-    credential?: string;
-    username?: string;
-    password?: string;
-  };
-  authDescription?: string;
-  authHint?: string;
-  authSourceUrl?: string;
-  authPasswordRequired?: boolean;
-  authError?: string;
-  authEmail?: string;
-  authWorkspace?: string;
   // Queued: user message that is waiting to be processed (persisted for recovery)
   isQueued?: boolean;
 }
@@ -449,11 +379,9 @@ export interface RecoveryAction {
   /** Slash command to execute (e.g., '/settings') */
   command?: string;
   /** Custom action type for special handling */
-  action?: 'retry' | 'settings' | 'reauth' | 'open_url' | 'reconnect_source';
+  action?: 'retry' | 'settings' | 'reauth' | 'open_url';
   /** URL to open (for open_url action) */
   url?: string;
-  /** Source slug (for reconnect_source action) */
-  sourceSlug?: string;
 }
 
 /**
@@ -503,7 +431,7 @@ export interface TypedError {
 /**
  * Permission request type categories
  */
-export type PermissionRequestType = 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
+export type PermissionRequestType = 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval';
 
 /**
  * Permission request from agent (e.g., bash command approval)
@@ -583,7 +511,6 @@ export type AgentEvent =
   | { type: 'task_progress'; toolUseId: string; elapsedSeconds: number; turnId?: string }
   | { type: 'task_completed'; taskId: string; status: 'completed' | 'failed' | 'stopped'; outputFile?: string; summary?: string; turnId?: string }
   | { type: 'shell_killed'; shellId: string; turnId?: string }
-  | { type: 'source_activated'; sourceSlug: string; originalMessage: string }
   | { type: 'usage_update'; usage: Pick<AgentEventUsage, 'inputTokens' | 'contextWindow'> }
   | { type: 'steer_undelivered'; message: string };
 

@@ -81,6 +81,7 @@ import type {
 	RpcExtensionHostCapabilityProgress,
 	RpcExtensionHostCapabilityRequest,
 	RpcExtensionHostCapabilityResponse,
+	RpcExtensionHostCapabilityRouteRejected,
 	RpcExtensionUICancel,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
@@ -671,6 +672,29 @@ export async function runRpcMode(
 		onProgress?: (progress: unknown, sequence: number) => void;
 	};
 	const pendingHostCapabilityRequests = new Map<string, PendingHostCapabilityRequest>();
+	const reportHostCapabilityRouteRejected = (
+		phase: "progress" | "response",
+		message: { id: string; runtimeId?: string; sessionId?: string; clientId?: string },
+		pending: PendingHostCapabilityRequest | undefined,
+		forcedClientId?: string,
+	): void => {
+		const actualClientId = forcedClientId ?? message.clientId;
+		const event: RpcExtensionHostCapabilityRouteRejected = {
+			type: "extension_host_capability_route_rejected",
+			version: 1,
+			id: message.id,
+			phase,
+			reason: pending ? "routing_identity_mismatch" : "unknown_request",
+			actual: { runtimeId: message.runtimeId, sessionId: message.sessionId, clientId: actualClientId },
+		};
+		if (pending)
+			event.expected = { runtimeId: pending.runtimeId, sessionId: pending.sessionId, clientId: pending.clientId };
+		output(event, {
+			clientId: pending?.clientId ?? forcedClientId,
+			runtimeId: pending?.runtimeId ?? message.runtimeId,
+			sessionId: pending?.sessionId ?? message.sessionId,
+		});
+	};
 	const cancelHostCapabilityRequests = (
 		predicate: (pending: PendingHostCapabilityRequest) => boolean,
 		code: "runtime_closed" | "session_rebound" | "host_shutdown",
@@ -1889,7 +1913,12 @@ export async function runRpcMode(
 				return success(id, "open_runtime", runtimeSummary(binding));
 			}
 			let sessionManager: SessionManager;
-			if (command.forkFromSessionPath) {
+			if (command.inMemory) {
+				if (command.sessionPath || command.forkFromSessionPath || command.sessionDir || command.sessionId) {
+					return error(id, "open_runtime", "In-memory runtimes cannot specify persisted Session identity or paths");
+				}
+				sessionManager = SessionManager.inMemory(command.cwd);
+			} else if (command.forkFromSessionPath) {
 				sessionManager = SessionManager.forkFrom(command.forkFromSessionPath, command.cwd, command.sessionDir, {
 					id: command.sessionId,
 					parentSession: command.parentSession,
@@ -2031,6 +2060,8 @@ export async function runRpcMode(
 						clientMutationId: command.clientMutationId,
 						attachments: command.attachments,
 						systemPrompt: command.systemPrompt,
+						clearSystemPrompt: command.clearSystemPrompt,
+						appendSystemPrompt: command.appendSystemPrompt,
 						source: "rpc",
 						preflightResult: (didSucceed) => {
 							if (didSucceed) {
@@ -2614,14 +2645,17 @@ export async function runRpcMode(
 			const progress = parsed as RpcExtensionHostCapabilityProgress;
 			const pending = pendingHostCapabilityRequests.get(progress.id);
 			const actualClientId = forcedClientId ?? progress.clientId;
-			if (
+			const matches = Boolean(
 				pending &&
-				progress.runtimeId === pending.runtimeId &&
-				progress.sessionId === pending.sessionId &&
-				actualClientId === pending.clientId &&
-				(forcedClientId === undefined || progress.clientId === undefined || progress.clientId === forcedClientId)
-			)
-				pending.onProgress?.(progress.progress, progress.sequence);
+					progress.runtimeId === pending.runtimeId &&
+					progress.sessionId === pending.sessionId &&
+					actualClientId === pending.clientId &&
+					(forcedClientId === undefined ||
+						progress.clientId === undefined ||
+						progress.clientId === forcedClientId),
+			);
+			if (matches && pending) pending.onProgress?.(progress.progress, progress.sequence);
+			if (!matches) reportHostCapabilityRouteRejected("progress", progress, pending, forcedClientId);
 			return;
 		}
 
@@ -2690,14 +2724,17 @@ export async function runRpcMode(
 			const response = parsed as RpcExtensionHostCapabilityResponse;
 			const pending = pendingHostCapabilityRequests.get(response.id);
 			const actualClientId = forcedClientId ?? response.clientId;
-			if (
+			const matches = Boolean(
 				pending &&
-				response.runtimeId === pending.runtimeId &&
-				response.sessionId === pending.sessionId &&
-				actualClientId === pending.clientId &&
-				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId)
-			)
-				pending.resolve(response);
+					response.runtimeId === pending.runtimeId &&
+					response.sessionId === pending.sessionId &&
+					actualClientId === pending.clientId &&
+					(forcedClientId === undefined ||
+						response.clientId === undefined ||
+						response.clientId === forcedClientId),
+			);
+			if (matches && pending) pending.resolve(response);
+			if (!matches) reportHostCapabilityRouteRejected("response", response, pending, forcedClientId);
 			return;
 		}
 

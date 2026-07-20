@@ -21,12 +21,8 @@ import type { ExtensionUIValidationDeltaV1 } from '../../protocol/extension-ui-v
 import type { FileAttachment } from '../../utils/files.ts';
 import type { ThinkingLevel } from '../thinking-levels.ts';
 import type { PermissionMode } from '../mode-manager.ts';
-import type { LoadedSource } from '../../sources/types.ts';
-import type { AuthRequest } from '../session-scoped-tools.ts';
-import type { McpClientPool } from '../../mcp/mcp-pool.ts';
 import type { Workspace } from '../../config/storage.ts';
 import type { SessionHeader as Session } from '../../sessions/types.ts';
-import type { SourceManager } from '../core/source-manager.ts';
 import type { AgentRuntimeProfile } from '../../config/agent-settings.ts';
 
 // Import AbortReason and RecoveryMessage from core module (single source of truth)
@@ -35,18 +31,6 @@ export { AbortReason, type RecoveryMessage };
 
 /** Runtime backend provider. Mortise shells Pi; provider brands live in Pi config. */
 export type ModelProvider = 'pi';
-
-export interface AuthProjectionPromptRequest {
-  requestId: string;
-  authType: 'credential' | 'oauth' | 'oauth-google' | 'oauth-slack' | 'oauth-microsoft';
-  sourceSlug: string;
-  sourceName: string;
-  mode?: 'bearer' | 'basic' | 'header' | 'query' | 'multi-header';
-  labels?: { credential?: string; username?: string; password?: string };
-  headerNames?: string[];
-  passwordRequired?: boolean;
-  service?: string;
-}
 
 export interface HostRuntimeErrorProjection {
   phase: 'startup' | 'send' | 'queue' | 'recovery';
@@ -66,6 +50,14 @@ export interface HostQueuedUserProjection {
     mediaType?: string;
     size?: number;
   }>;
+}
+
+export interface IsolatedAgentRequest {
+  prompt: string;
+  provider?: string;
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
+  signal?: AbortSignal;
 }
 
 export type LlmProviderType = 'pi' | 'pi_compat';
@@ -91,7 +83,7 @@ export interface BackendRuntimeUpdate {
     [key: string]: unknown;
   };
 }
-import type { AutomationSystem } from '../../automations/index.ts';
+import type { AgentEvent as AutomationAgentEvent, AgentAutomationInput } from '../../automations/types.ts';
 
 // ============================================================
 // Callback Types
@@ -145,7 +137,7 @@ export interface PiExtensionCommand {
 /**
  * Permission prompt types for different tool categories.
  */
-export type PermissionRequestType = 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
+export type PermissionRequestType = 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval';
 
 /**
  * Permission request callback signature.
@@ -172,24 +164,6 @@ export type PermissionCallback = (request: {
  */
 export type PlanCallback = (planPath: string) => void;
 
-/**
- * Auth request callback signature.
- * Called when a source requires authentication.
- */
-export type AuthCallback = (request: AuthRequest) => void;
-
-/**
- * Source change callback signature.
- * Called when a source is activated, deactivated, or modified.
- */
-export type SourceChangeCallback = (slug: string, source: LoadedSource | null) => void;
-
-/**
- * Source activation request callback.
- * Returns true if source was successfully activated.
- */
-export type SourceActivationCallback = (sourceSlug: string) => Promise<boolean>;
-
 // ============================================================
 // Lifecycle Types
 // ============================================================
@@ -205,27 +179,6 @@ export interface PostInitResult {
   authWarning?: string;
   /** Severity level for the warning */
   authWarningLevel?: 'error' | 'warning' | 'info';
-}
-
-/**
- * Context for applying bridge/config updates mid-session.
- * Used when sources change, tokens refresh, or auth completes.
- */
-export interface BridgeUpdateContext {
-  /** Path to the session folder */
-  sessionPath: string;
-  /** Currently enabled sources */
-  enabledSources: LoadedSource[];
-  /** Pre-built MCP server configs */
-  mcpServers: Record<string, SdkMcpServerConfig>;
-  /** Session ID */
-  sessionId: string;
-  /** Workspace root path */
-  workspaceRootPath: string;
-  /** Descriptive context for logging (e.g., 'token refresh', 'source enable') */
-  context: string;
-  /** URL of the McpPoolServer HTTP endpoint */
-  poolServerUrl?: string;
 }
 
 /**
@@ -279,26 +232,14 @@ export interface CoreBackendConfig {
   /** System prompt preset ('default' | 'mini' | custom string) */
   systemPromptPreset?: 'default' | 'mini' | string;
 
-  /** Workspace-level automation system for user-defined automations (automations.json) */
-  automationSystem?: AutomationSystem;
+  /** Host-owned ingress for Agent lifecycle events. */
+  automationEventSink?: (event: AutomationAgentEvent, input: AgentAutomationInput, signal?: AbortSignal) => Promise<void>;
 
   /**
    * Per-session environment variable overrides for the SDK subprocess.
    * Spread after process.env in backend-specific option builders.
    */
   envOverrides?: Record<string, string>;
-
-  /**
-   * Centralized MCP client pool for source tool execution.
-   * Owns all MCP source connections in the main process.
-   */
-  mcpPool?: McpClientPool;
-
-  /**
-   * URL of the McpPoolServer HTTP endpoint for this session.
-   * External SDK subprocesses connect here to access pool-managed MCP tools.
-   */
-  poolServerUrl?: string;
 
   /** Callback when SDK session ID is captured/updated */
   onSdkSessionIdUpdate?: (sdkSessionId: string) => void;
@@ -380,16 +321,6 @@ export interface CoreBackendConfig {
   /** Release all in-flight capabilities owned by a stopped Pi runtime. */
   onHostCapabilityRuntimeReleased?: (runtimeId: string) => void;
 
-  /**
-   * Pre-computed source configurations for initial setup.
-   * Passed at construction so backends can set up sources in postInit().
-   */
-  initialSources?: {
-    enabledSources: LoadedSource[];
-    mcpServers: Record<string, SdkMcpServerConfig>;
-    apiServers: Record<string, unknown>;
-    enabledSlugs: string[];
-  };
 }
 
 // ============================================================
@@ -409,30 +340,6 @@ export interface ChatOptions {
   /** Sanitized display metadata forwarded to Pi; never include paths or contents. */
   attachmentRefs?: Array<{ id: string; name: string; mediaType?: string; size?: number }>;
 }
-
-/**
- * SDK-compatible MCP server configuration.
- * Supports HTTP/SSE (remote) and stdio (local subprocess) transports.
- */
-export type SdkMcpServerConfig =
-  | {
-      type: 'http' | 'sse';
-      url: string;
-      headers?: Record<string, string>;
-      /** Environment variable name containing bearer token (Codex-specific) */
-      bearerTokenEnvVar?: string;
-    }
-  | {
-      type: 'stdio';
-      command: string;
-      args?: string[];
-      /** Environment variables to set (literal values) */
-      env?: Record<string, string>;
-      /** Environment variable names to forward from parent process (Codex-specific) */
-      envVars?: string[];
-      /** Working directory for the server process (Codex-specific) */
-      cwd?: string;
-    };
 
 /**
  * Core backend interface - all AI providers must implement this.
@@ -512,8 +419,11 @@ export interface AgentBackend {
    */
   runMiniCompletion(prompt: string): Promise<string | null>;
 
+  /** Run a complete tool-capable Agent Loop without creating a persisted Session. */
+  runIsolatedAgent(request: IsolatedAgentRequest): Promise<string | null>;
+
   /**
-   * Clean up resources (MCP connections, watchers, etc.)
+   * Clean up backend resources and watchers.
    */
   destroy(): void;
 
@@ -528,16 +438,6 @@ export interface AgentBackend {
    * Called after construction and callback wiring, before first chat().
    */
   postInit(): Promise<PostInitResult>;
-
-  /**
-   * Apply bridge/config updates mid-session.
-   * Called when sources change, tokens refresh, or auth completes.
-   * Each backend implements its own strategy:
-   * - Codex: regenerates config.toml and queues reconnect
-   * - Copilot: writes bridge-config.json and credential cache
-   * - Claude/Pi: no-op (they don't use bridge-mcp-server)
-   */
-  applyBridgeUpdates(context: BridgeUpdateContext): Promise<void>;
 
   /**
    * Ensure branch sessions are backend-ready before first user message.
@@ -625,61 +525,6 @@ export interface AgentBackend {
     parentSessionId: string,
   ): Promise<import('../pi-agent.ts').PiChildSessionInfo[]>;
 
-  // ============================================================
-  // Source Management
-  // ============================================================
-
-  /**
-   * Set the MCP server configurations for sources.
-   * Called by facade when sources are activated/deactivated.
-   *
-   * @param mcpServers Pre-built MCP server configs with auth headers
-   * @param apiServers In-process MCP servers for REST APIs
-   * @param intendedSlugs Source slugs that should be considered active
-   */
-  setSourceServers(
-    mcpServers: Record<string, SdkMcpServerConfig>,
-    apiServers: Record<string, unknown>,
-    intendedSlugs?: string[]
-  ): void | Promise<void>;
-
-  /**
-   * Get currently active source slugs.
-   */
-  getActiveSourceSlugs(): string[];
-
-  /**
-   * Get the raw user message for the current turn (cleared between turns).
-   * Used by SessionManager.activateSourceInSessionFn to capture the message
-   * that should be re-sent after a source_test-triggered auto-restart.
-   */
-  getCurrentTurnUserMessage(): string | null;
-
-  /**
-   * Schedule a source-activation auto-restart. Consumed by the backend's
-   * event loop after the next tool_result, which yields `source_activated`
-   * and `forceAbort`s the turn. SessionManager's `source_activated` handler
-   * then schedules the server-side resend with a "[{slug} activated]" suffix
-   * (mortise-oss#804). Set by SessionManager after a successful mid-turn
-   * activation (source_test auto-enable).
-   */
-  setPendingSourceActivationRestart(pending: { sourceSlug: string; userMessage: string }): void;
-
-  /**
-   * Get all sources (for context injection).
-   */
-  getAllSources(): LoadedSource[];
-
-  /**
-   * Set all sources (for context injection).
-   */
-  setAllSources(sources: LoadedSource[]): void;
-
-  /**
-   * Mark a source as unseen (will show introduction text again).
-   */
-  markSourceUnseen(sourceSlug: string): void;
-
   /**
    * Get a bound summarize callback for passing to API tool builders.
    */
@@ -700,9 +545,6 @@ export interface AgentBackend {
 
   /** Set session ID */
   setSessionId(sessionId: string | null): void;
-
-  /** Get SourceManager for advanced queries */
-  getSourceManager(): SourceManager;
 
   /** Generate a session title from user message */
   generateTitle(message: string, options?: { language?: string }): Promise<string | null>;
@@ -749,15 +591,6 @@ export interface AgentBackend {
    */
   listExtensionCommands?(): Promise<PiExtensionCommand[]>;
 
-  /** Project a Host-owned auth prompt without exposing credential material. */
-  projectAuthPromptRequest?(request: AuthProjectionPromptRequest): void;
-
-  /** Resolve the stable Host-owned auth prompt entity. */
-  projectAuthPromptResolution?(
-    requestId: string,
-    resolution: 'completed' | 'failed' | 'cancelled',
-  ): void;
-
   /** Project a Host failure through Pi's sequence-owning projection builder. */
   projectRuntimeError?(error: HostRuntimeErrorProjection): void;
 
@@ -774,20 +607,11 @@ export interface AgentBackend {
   /** Called when agent submits a plan */
   onPlanSubmitted: PlanCallback | null;
 
-  /** Called when a source requires authentication */
-  onAuthRequest: AuthCallback | null;
-
-  /** Called when a source config changes */
-  onSourceChange: SourceChangeCallback | null;
-
   /** Called when permission mode changes */
   onPermissionModeChange: ((mode: PermissionMode) => void) | null;
 
   /** Called with debug messages */
   onDebug: ((message: string) => void) | null;
-
-  /** Called when a source tool is used but source isn't active */
-  onSourceActivationRequest: SourceActivationCallback | null;
 
   /**
    * Called when backend-specific authentication is required.
@@ -834,8 +658,8 @@ export interface BackendConfig extends CoreBackendConfig {
    */
   providerKey?: string;
 
-  /** Workspace-level automation system for user-defined SDK hooks (automations.json) */
-  automationSystem?: AutomationSystem;
+  /** Host-owned ingress for Agent lifecycle events. */
+  automationEventSink?: (event: AutomationAgentEvent, input: AgentAutomationInput, signal?: AbortSignal) => Promise<void>;
 
   /**
    * Opaque runtime payload resolved by backend drivers.

@@ -3,7 +3,6 @@ import { CapabilityRouter } from '../router.ts'
 import { createSystemNotificationProvider } from '../providers/system-notification.ts'
 import { createFilePreviewProvider, createFilesProvider, FILE_PREVIEW_MAX_BYTES } from '../providers/files.ts'
 import { createBrowserCommandProvider, createBrowserControlProvider, createBrowserProvider } from '../providers/browser.ts'
-import { createKeychainCapabilityProvider, createOAuthCapabilityProvider } from '../providers/oauth.ts'
 import type { CapabilityRequestV1 } from '../types.ts'
 
 function request(overrides: Partial<CapabilityRequestV1> = {}): CapabilityRequestV1 {
@@ -94,7 +93,8 @@ describe('CapabilityRouter', () => {
     })
     expect(await router.invoke(request())).toMatchObject({ status: 'success', output: { value: 'hello' } })
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'req-1', sequence: 1 }))
-    expect(audit).toHaveBeenCalledTimes(2)
+    expect(audit).toHaveBeenCalledTimes(3)
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ phase: 'progress', sequence: 1 }))
     expect(JSON.stringify(audit.mock.calls)).not.toContain('hello')
   })
 
@@ -239,65 +239,5 @@ describe('desktop capability providers', () => {
     expect(await router.invoke(request({
       requestId: 'browser-command-other', sessionId: 'session-2', capability: 'browser.command', operation: 'execute', input: { command: '--help' },
     }))).toMatchObject({ status: 'failed' })
-  })
-})
-
-describe('OAuth and keychain capability providers', () => {
-  it('exposes only a host-managed OAuth flow reference and binds session identity', async () => {
-    const begin = mock(async (input: { sourceSlug: string; sessionId: string }) => ({ flowId: 'flow-1', status: 'pending' as const, userAction: 'open_authorization' as const }))
-    const router = new CapabilityRouter({ authorize: () => ({ allowed: true }) })
-    router.register(createOAuthCapabilityProvider({
-      begin,
-      status: async ({ flowId }) => ({ flowId, status: 'completed' as const, accountLabel: 'user@example.test' }),
-      cancel: async ({ flowId }) => ({ flowId, status: 'cancelled' as const }),
-      revoke: async ({ sourceSlug }) => ({ sourceSlug, revoked: true }),
-    }))
-    const result = await router.invoke(request({ capability: 'oauth.flow', operation: 'begin', input: { sourceSlug: 'github' } }))
-    expect(result).toMatchObject({ status: 'success', output: { flowId: 'flow-1', status: 'pending' } })
-    expect(JSON.stringify(result)).not.toContain('authUrl')
-    expect(begin).toHaveBeenCalledWith({ sourceSlug: 'github', sessionId: 'session-1' }, expect.any(AbortSignal))
-  })
-
-  it('rejects malformed OAuth input and never accepts codes or tokens', async () => {
-    const audit = mock(() => {})
-    const router = new CapabilityRouter({ authorize: () => ({ allowed: true }), audit })
-    router.register(createOAuthCapabilityProvider({
-      begin: async () => ({ flowId: 'flow', status: 'pending' }),
-      status: async ({ flowId }) => ({ flowId, status: 'pending' }),
-      cancel: async ({ flowId }) => ({ flowId, status: 'cancelled' }),
-      revoke: async ({ sourceSlug }) => ({ sourceSlug, revoked: true }),
-    }))
-    expect(await router.invoke(request({ capability: 'oauth.flow', operation: 'begin', input: { sourceSlug: '' } }))).toMatchObject({ status: 'failed' })
-    expect(await router.invoke(request({ requestId: 'code', capability: 'oauth.flow', operation: 'complete', input: { code: 'secret' } }))).toMatchObject({ status: 'failed' })
-    expect(await router.invoke(request({ requestId: 'token', capability: 'oauth.flow', operation: 'begin', input: { sourceSlug: 'github', accessToken: 'secret-token' } }))).toMatchObject({ status: 'failed' })
-    expect(JSON.stringify(audit.mock.calls)).not.toContain('secret-token')
-    expect(JSON.stringify(audit.mock.calls)).not.toContain('secret')
-  })
-
-  it('keeps keychain operations secret-free and routes session identity to the Host', async () => {
-    const has = mock(async (id: { type: string }, sessionId: string) => ({ present: id.type === 'source_oauth' && sessionId === 'session-1' }))
-    const router = new CapabilityRouter({ authorize: () => ({ allowed: true }) })
-    router.register(createKeychainCapabilityProvider({
-      has,
-      remove: async () => ({ removed: true }),
-    }))
-    const result = await router.invoke(request({ capability: 'credentials.keychain', operation: 'has', input: { type: 'source_oauth' } }))
-    expect(result).toEqual({ requestId: 'req-1', status: 'success', output: { present: true } })
-    expect(has).toHaveBeenCalledWith({ type: 'source_oauth' }, 'session-1')
-    expect(await router.invoke(request({ requestId: 'secret', capability: 'credentials.keychain', operation: 'has', input: { type: 'source_oauth', value: 'do-not-forward' } })))
-      .toMatchObject({ status: 'failed' })
-  })
-
-  it('whitelists sensitive provider outputs at runtime', async () => {
-    const router = new CapabilityRouter({ authorize: () => ({ allowed: true }) })
-    router.register(createOAuthCapabilityProvider({
-      begin: async () => ({ flowId: 'flow-1', status: 'pending', accessToken: 'leak' } as never),
-      status: async ({ flowId }) => ({ flowId, status: 'completed', accountLabel: 'user', refreshToken: 'leak' } as never),
-      cancel: async ({ flowId }) => ({ flowId, status: 'cancelled', code: 'leak' } as never),
-      revoke: async ({ sourceSlug }) => ({ sourceSlug, revoked: true, credential: 'leak' } as never),
-    }))
-    const begin = await router.invoke(request({ capability: 'oauth.flow', operation: 'begin', input: { sourceSlug: 'github' } }))
-    const status = await router.invoke(request({ requestId: 'status', capability: 'oauth.flow', operation: 'status', input: { flowId: 'flow-1' } }))
-    expect(JSON.stringify([begin, status])).not.toContain('leak')
   })
 })

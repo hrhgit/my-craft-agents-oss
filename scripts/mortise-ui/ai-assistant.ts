@@ -1,6 +1,7 @@
 import type { MortiseUiArtifactManifest, MortiseUiHistoryEntry, MortiseUiRunManifest } from './protocol.ts'
 
-const MAX_TARGETS = 24
+const DEFAULT_MAX_TARGETS = 6
+const EXPANDED_MAX_TARGETS = 16
 const MAX_ATTENTION = 12
 
 type JsonRecord = Record<string, unknown>
@@ -28,16 +29,30 @@ export interface MortiseUiAiBriefing {
     suggestedAction?: JsonRecord
   }>
   nextActions: MortiseUiAiAction[]
+  disclosure: {
+    targets: {
+      shown: number
+      total: number
+      omitted: number
+      selection: string
+    }
+    details?: {
+      reason: string
+      command: string
+      argv: string[]
+    }
+  }
 }
 
-export function createSnapshotBriefing(snapshot: unknown): MortiseUiAiBriefing {
+export function createSnapshotBriefing(snapshot: unknown, options: { expanded?: boolean } = {}): MortiseUiAiBriefing {
   const value = record(snapshot)
   const window = record(value.window)
   const regions = record(value.regions)
   const route = record(value.route ?? record(value.state).route)
-  const targets: MortiseUiAiBriefing['targets'] = []
+  const candidates: Array<{ target: MortiseUiAiBriefing['targets'][number]; priority: number; order: number }> = []
   const attention: string[] = []
   let focused: string | undefined
+  let order = 0
 
   for (const [region, rawNodes] of Object.entries(regions)) {
     if (!Array.isArray(rawNodes)) continue
@@ -52,12 +67,11 @@ export function createSnapshotBriefing(snapshot: unknown): MortiseUiAiBriefing {
         attention.push(describeAttention(role, name, state))
       }
       if (state.disabled === true || actions.length === 0) continue
-      if (targets.length >= MAX_TARGETS) continue
       const ref = string(node.ref)
       const semanticId = string(node.semanticId)
       const testId = string(node.testId)
       const target = semanticId ? { semanticId } : testId ? { testId } : ref ? { ref } : { role, ...(name ? { name, exact: true } : {}) }
-      targets.push({
+      candidates.push({ target: {
         label: name || `${role} in ${region}`,
         role,
         region,
@@ -66,8 +80,41 @@ export function createSnapshotBriefing(snapshot: unknown): MortiseUiAiBriefing {
         ...(testId ? { testId } : {}),
         ...(Object.keys(state).length > 0 ? { state } : {}),
         actions,
-        suggestedAction: { target, action: preferredAction(actions) },
-      })
+        suggestedAction: { target, action: preferredAction(actions, role) },
+      }, priority: targetPriority(region, role, state), order: order++ })
+    }
+  }
+
+  const nativeRevision = number(value.revision)
+  for (const nativeWindow of array(value.windows)) {
+    const native = record(nativeWindow)
+    const windowName = bounded(native.name, 160) || 'native window'
+    for (const rawNode of array(native.nodes)) {
+      const node = record(rawNode)
+      const actions = stringArray(node.actions)
+      if (node.enabled === false || actions.length === 0) continue
+      const ref = string(node.ref)
+      if (!ref) continue
+      const name = bounded(node.name, 160)
+      const role = bounded(node.role, 60) || 'unknown'
+      const state = {
+        ...(node.focused === true ? { focused: true } : {}),
+        ...(node.enabled === false ? { disabled: true } : {}),
+      }
+      candidates.push({ target: {
+        label: name || `${role} in ${windowName}`,
+        role,
+        region: `native:${windowName}`,
+        ref,
+        ...(Object.keys(state).length > 0 ? { state } : {}),
+        actions,
+        suggestedAction: {
+          target: { kind: 'native', ref },
+          revision: nativeRevision,
+          action: preferredAction(actions, role),
+          mode: 'native',
+        },
+      }, priority: targetPriority('main', role, state), order: order++ })
     }
   }
 
@@ -77,49 +124,59 @@ export function createSnapshotBriefing(snapshot: unknown): MortiseUiAiBriefing {
     for (const rawNode of array(embedded.nodes)) {
       const node = record(rawNode)
       const actions = stringArray(node.actions)
-      if (actions.length === 0 || targets.length >= MAX_TARGETS) continue
+      if (actions.length === 0) continue
       const ref = string(node.ref)
       const name = bounded(node.name, 160)
       const role = bounded(node.role, 60) || 'unknown'
-      targets.push({
+      const revision = number(embedded.revision)
+      candidates.push({ target: {
         label: name || `${role} in ${surfaceId}`,
         role,
         region: `embedded:${surfaceId}`,
         ...(ref ? { ref } : {}),
         actions,
         suggestedAction: ref
-          ? { target: { kind: 'browser', instanceId: string(embedded.instanceId) ?? surfaceId, ref }, action: preferredAction(actions) }
+          ? { target: { kind: 'browser', instanceId: string(embedded.instanceId) ?? surfaceId, ref }, revision, action: preferredAction(actions, role) }
           : undefined,
-      })
+      }, priority: 45, order: order++ })
     }
   }
 
-  if (value.truncated === true) attention.push('The semantic snapshot was truncated; request a narrower window or surface when the target is absent.')
+  const maxTargets = options.expanded ? EXPANDED_MAX_TARGETS : DEFAULT_MAX_TARGETS
+  const targets = candidates
+    .sort((left, right) => right.priority - left.priority || left.order - right.order)
+    .slice(0, maxTargets)
+    .map(candidate => candidate.target)
+  const omittedTargetCount = Math.max(0, candidates.length - targets.length)
+
   const routeLabel = describeRoute(route)
   const windowTitle = bounded(window.title, 120)
+  const targetSummary = candidates.length === targets.length
+    ? `${targets.length} immediately actionable target${targets.length === 1 ? '' : 's'}`
+    : `${candidates.length} actionable targets; ${targets.length} decision-relevant targets shown`
   const summary = [
     windowTitle ? `Window "${windowTitle}"` : 'Selected UI window',
     routeLabel ? `is on ${routeLabel}` : undefined,
-    targets.length > 0 ? `with ${targets.length} immediately actionable target${targets.length === 1 ? '' : 's'}` : 'with no immediately actionable targets',
+    targets.length > 0 ? `with ${targetSummary}` : 'with no immediately actionable targets',
   ].filter(Boolean).join(' ')
 
   const nextActions: MortiseUiAiAction[] = []
   if (attention.length > 0) {
     nextActions.push({ label: 'Inspect the active attention state', reason: attention[0]!, command: 'snapshot' })
   }
-  for (const target of targets.slice(0, 6)) {
-    if (!target.suggestedAction) continue
+  if (attention.length === 0 && targets.length === 1 && targets[0]?.suggestedAction) {
+    const target = targets[0]
+    const suggestedAction = string(target.suggestedAction.action) ?? target.actions[0] ?? 'Use'
     nextActions.push({
-      label: `${target.actions[0] ?? 'Use'} ${target.label}`,
-      reason: `${target.role} is currently enabled in ${target.region}.`,
+      label: `${suggestedAction} ${target.label}`,
+      reason: 'This is the only currently disclosed actionable target.',
       command: 'action',
       params: target.suggestedAction,
     })
   }
-  if (nextActions.length === 0) {
+  if (targets.length === 0) {
     nextActions.push({ label: 'Wait for semantic readiness', reason: 'No actionable target is currently available.', command: 'wait', params: { predicate: { kind: 'semantic-ready' } } })
   }
-
   return {
     summary,
     context: {
@@ -136,6 +193,21 @@ export function createSnapshotBriefing(snapshot: unknown): MortiseUiAiBriefing {
     attention: [...new Set(attention)].slice(0, MAX_ATTENTION),
     targets,
     nextActions,
+    disclosure: {
+      targets: {
+        shown: targets.length,
+        total: candidates.length,
+        omitted: omittedTargetCount,
+        selection: 'Attention, focused state, and main-workflow targets are shown first.',
+      },
+      ...(omittedTargetCount > 0 || value.truncated === true ? { details: {
+        reason: value.truncated === true
+          ? 'The semantic source was truncated; inspect the full observation or request a narrower scope when the target is absent.'
+          : `${omittedTargetCount} lower-priority actionable target${omittedTargetCount === 1 ? ' is' : 's are'} not needed for the immediate decision.`,
+        command: 'snapshot',
+        argv: ['--full-observation'],
+      } } : {}),
+    },
   }
 }
 
@@ -144,7 +216,8 @@ export function createRunBriefing(args: {
   processAlive: boolean
   host?: unknown
   artifacts?: MortiseUiArtifactManifest
-}): JsonRecord {
+  artifactError?: string
+}, options: { includeRecentActivity?: boolean; recentActivityLimit?: number; maxNextActions?: number } = {}): JsonRecord {
   const { manifest, processAlive } = args
   const hostEnvelope = record(args.host)
   const hostResult = hostEnvelope.ok === true ? record(hostEnvelope.result) : record(args.host)
@@ -153,6 +226,7 @@ export function createRunBriefing(args: {
   const last = history.at(-1)
   const artifactCount = args.artifacts?.artifacts.length ?? 0
   const attention: string[] = []
+  if (args.artifactError) attention.push(`Evidence manifest is unavailable: ${bounded(args.artifactError, 240)}`)
   if (manifest.cleanupError) attention.push(`Cleanup is incomplete: ${manifest.cleanupError}`)
   if (manifest.error) attention.push(manifest.error)
   if (hostEnvelope.ok === false) attention.push(`Host reported ${bounded(record(hostEnvelope.error).message, 300) || 'an error'}.`)
@@ -185,14 +259,14 @@ export function createRunBriefing(args: {
       verificationLevel: manifest.verificationLevel ?? 'scenario-verified',
     },
     attention,
-    recentActivity: history.slice(-8),
+    ...(options.includeRecentActivity ? { recentActivity: history.slice(-(options.recentActivityLimit ?? 5)) } : {}),
     lastActivity: last,
     evidence: { artifactCount, manifestPath: `${manifest.artifactsDir}\\manifest.json` },
-    nextActions: nextActions.map(action => ({ ...action, run: manifest.runId })),
+    nextActions: nextActions.slice(0, options.maxNextActions ?? 2).map(action => ({ ...action, run: manifest.runId })),
   }
 }
 
-export function createActionObservation(actionResult: unknown, snapshotResult: unknown): JsonRecord {
+export function createActionObservation(actionResult: unknown, snapshotResult: unknown, includeFullObservation = false): JsonRecord {
   const action = record(actionResult)
   const snapshot = record(snapshotResult)
   const briefing = createSnapshotBriefing(snapshot)
@@ -200,17 +274,68 @@ export function createActionObservation(actionResult: unknown, snapshotResult: u
   const added = array(changes.added)
   const updated = array(changes.updated)
   const removed = array(changes.removed)
+  const stateChanges = array(action.stateChanges)
+  const observed = includeFullObservation ? snapshot : {
+      revision: snapshot.revision,
+      window: compactWindow(snapshot.window),
+      route: snapshot.route,
+      truncated: snapshot.truncated,
+    }
   return {
-    action,
-    observed: snapshot,
+    action: includeFullObservation ? action : compactAction(action),
+    observed,
     semanticDelta: {
       added: added.length,
       updated: updated.length,
       removed: removed.length,
       fullSnapshot: snapshot.full !== false,
-      ...(Object.keys(changes).length > 0 ? { changes } : {}),
+      stateChanges: stateChanges.length,
+      ...(includeFullObservation && Object.keys(changes).length > 0 ? { changes } : {}),
+      ...(includeFullObservation && stateChanges.length > 0 ? { stateChangeDetails: stateChanges } : {}),
     },
     briefing,
+    ...(!includeFullObservation && (Object.keys(changes).length > 0 || stateChanges.length > 0) ? { disclosure: {
+      omitted: ['node-level semantic changes', 'raw post-action snapshot'],
+      reason: 'The default result contains the outcome and decision-relevant post-action state; raw changes are useful only for deeper verification or diagnosis.',
+      command: 'action',
+      argv: ['--full-observation'],
+    } } : {}),
+  }
+}
+
+export function selectRelevantCapabilities(catalogValue: unknown, briefing: MortiseUiAiBriefing): JsonRecord {
+  const catalog = record(catalogValue)
+  const items = array(catalog.items).map(record)
+  const currentActions = new Set(briefing.targets.flatMap(target => target.actions))
+  const currentRoute = string(record(briefing.context.route).surface)
+  const relevant = items.filter(item => {
+    const kind = string(item.kind)
+    const id = string(item.id)
+    if (kind === 'route') return id === currentRoute
+    if (kind === 'action' && id) return currentActions.has(id) || currentActions.has(id.replace(/^native\./, ''))
+    return false
+  })
+  return {
+    protocolVersion: catalog.protocolVersion,
+    operation: 'relevant',
+    summary: `${relevant.length} of ${items.length} capabilities are relevant to the current UI observation.`,
+    currentActions: [...currentActions].sort(),
+    items: relevant.map(item => ({
+      kind: item.kind,
+      id: item.id,
+      description: item.description,
+      verificationLevel: item.verificationLevel,
+      surfaces: item.surfaces,
+      modes: item.modes,
+      describe: { command: 'capabilities describe', argv: ['--kind', item.kind, '--id', item.id] },
+    })),
+    disclosure: {
+      shown: relevant.length,
+      total: items.length,
+      omitted: Math.max(0, items.length - relevant.length),
+      reason: 'Only the current route and actions advertised by the selected targets are needed to compose the next interaction.',
+      details: { command: 'capabilities list', argv: [], purpose: 'Inspect navigation alternatives, scenarios, extension discovery, or actions not currently available.' },
+    },
   }
 }
 
@@ -243,9 +368,46 @@ function describeAttention(role: string, name: string, state: JsonRecord): strin
   return `${name || role} is visible.`
 }
 
-function preferredAction(actions: string[]): string {
+function preferredAction(actions: string[], role: string): string {
+  if (['textbox', 'searchbox'].includes(role) && actions.includes('fill')) return 'fill'
+  if (['combobox', 'listbox'].includes(role) && actions.includes('select')) return 'select'
   for (const action of ['click', 'fill', 'select', 'press']) if (actions.includes(action)) return action
   return actions[0] ?? 'click'
+}
+
+function targetPriority(region: string, role: string, state: JsonRecord): number {
+  if (role === 'alertdialog' || role === 'dialog' || role === 'alert') return 100
+  if (state.busy === true) return 95
+  if (state.focused === true) return 90
+  if (state.selected === true || state.checked === true || state.expanded === true) return 80
+  if (region === 'notification') return 75
+  if (region === 'main') return 60
+  if (region === 'navigation') return 50
+  if (region === 'sidebar') return 40
+  return 30
+}
+
+function compactWindow(value: unknown): JsonRecord | undefined {
+  const window = record(value)
+  if (Object.keys(window).length === 0) return undefined
+  return {
+    title: string(window.title),
+    role: string(window.role),
+    workspaceId: string(window.workspaceId),
+    sessionId: string(window.sessionId),
+  }
+}
+
+function compactAction(action: JsonRecord): JsonRecord {
+  return {
+    actionId: action.actionId,
+    beforeRevision: action.beforeRevision,
+    afterRevision: action.afterRevision,
+    targetResolved: action.targetResolved,
+    settledBy: action.settledBy,
+    warnings: action.warnings,
+    mode: action.mode,
+  }
 }
 
 function record(value: unknown): JsonRecord {

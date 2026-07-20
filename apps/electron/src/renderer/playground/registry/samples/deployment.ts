@@ -4,7 +4,7 @@
  */
 
 import type { ActivityItem, ResponseContent } from '@mortise/ui'
-import { nativeToolIcons, sourceIcons } from '../sample-icons'
+import { nativeToolIcons, mcpToolIcons } from '../sample-icons'
 
 const now = Date.now()
 
@@ -206,8 +206,8 @@ const playwrightE2E: ActivityItem = {
   displayName: 'E2E Tests',
   toolDisplayMeta: {
     displayName: 'Playwright',
-    category: 'source',
-    iconDataUrl: sourceIcons.playwright,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.playwright,
   },
   timestamp: now - 40000,
 }
@@ -266,8 +266,8 @@ const slackAnnounce: ActivityItem = {
   displayName: 'Announce Deployment',
   toolDisplayMeta: {
     displayName: 'Slack',
-    category: 'source',
-    iconDataUrl: sourceIcons.slack,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.slack,
   },
   timestamp: now - 10000,
 }
@@ -277,11 +277,10 @@ const gmailRelease: ActivityItem = {
   id: 'deploy-16',
   type: 'tool',
   status: 'completed',
-  toolName: 'mcp__gmail__api_gmail',
+  toolName: 'mcp__gmail__send_email',
   toolInput: {
-    path: 'gmail/v1/users/me/messages/send',
-    method: 'POST',
-    body: { to: 'stakeholders@company.com', subject: 'v1.2.0 Release Notes' },
+    to: 'stakeholders@company.com',
+    subject: 'v1.2.0 Release Notes',
     _intent: 'Sending release notes to stakeholders',
     _displayName: 'Send Release Notes',
   },
@@ -289,8 +288,8 @@ const gmailRelease: ActivityItem = {
   displayName: 'Send Release Notes',
   toolDisplayMeta: {
     displayName: 'Gmail',
-    category: 'source',
-    iconDataUrl: sourceIcons.gmail,
+    category: 'mcp',
+    iconDataUrl: mcpToolIcons.gmail,
   },
   timestamp: now - 5000,
 }

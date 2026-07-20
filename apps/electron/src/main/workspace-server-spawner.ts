@@ -188,6 +188,9 @@ function buildChildEnv(
     MORTISE_RESOURCES_PATH: options.resourcesPath,
     MORTISE_IS_PACKAGED: options.isPackaged ? 'true' : 'false',
     MORTISE_VERSION: options.version,
+    MORTISE_PROCESS_ROLE: 'workspace-server',
+    MORTISE_BACKEND_KIND: 'workspace-server',
+    MORTISE_PRODUCT_VERSION: options.version,
   }
   if (options.messagingWorkerPath) env.MORTISE_MESSAGING_WA_WORKER = options.messagingWorkerPath
   if (options.nodeBinary) env.MORTISE_MESSAGING_NODE_BIN = options.nodeBinary

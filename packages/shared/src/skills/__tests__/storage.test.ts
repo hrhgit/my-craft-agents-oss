@@ -47,7 +47,7 @@ const REAL_GLOBAL_SKILLS_DIR = join(homedir(), '.pi', 'agent', 'skills');
 function createSkill(
   skillsDir: string,
   slug: string,
-  opts: { name?: string; description?: string; globs?: string[]; content?: string; icon?: string; requiredSources?: string[] } = {}
+  opts: { name?: string; description?: string; globs?: string[]; content?: string; icon?: string } = {}
 ): string {
   const skillDir = join(skillsDir, slug);
   mkdirSync(skillDir, { recursive: true });
@@ -57,13 +57,9 @@ function createSkill(
   const content = opts.content ?? `Instructions for ${slug}`;
   const globs = opts.globs ? `\nglobs:\n${opts.globs.map(g => `  - "${g}"`).join('\n')}` : '';
   const icon = opts.icon ? `\nicon: "${opts.icon}"` : '';
-  const requiredSources = opts.requiredSources
-    ? `\nrequiredSources:\n${opts.requiredSources.map(source => `  - "${source}"`).join('\n')}`
-    : '';
-
   const skillMd = `---
 name: "${name}"
-description: "${description}"${globs}${icon}${requiredSources}
+description: "${description}"${globs}${icon}
 ---
 
 ${content}
@@ -177,57 +173,6 @@ describe('loadSkill', () => {
 
     expect(skill).not.toBeNull();
     expect(skill!.metadata.globs).toEqual(['*.tsx', '*.css']);
-  });
-
-  it('should load skill with normalized requiredSources', () => {
-    createSkill(getProjectSkillsDir(), 'with-sources', {
-      requiredSources: ['linear', ' github ', 'linear'],
-    });
-
-    const skill = loadSkill(workspaceRoot, 'with-sources', projectRoot);
-
-    expect(skill).not.toBeNull();
-    expect(skill!.metadata.requiredSources).toEqual(['linear', 'github']);
-  });
-
-  it('should normalize single-string requiredSources into an array', () => {
-    const skillDir = join(getProjectSkillsDir(), 'single-source');
-    mkdirSync(skillDir, { recursive: true });
-    writeFileSync(join(skillDir, 'SKILL.md'), `---
-name: "Single Source"
-description: "Skill with scalar requiredSources"
-requiredSources: linear
----
-
-Use linear tools.
-`);
-
-    const skill = loadSkill(workspaceRoot, 'single-source', projectRoot);
-
-    expect(skill).not.toBeNull();
-    expect(skill!.metadata.requiredSources).toEqual(['linear']);
-  });
-
-  it('should ignore invalid requiredSources entries', () => {
-    const skillDir = join(getProjectSkillsDir(), 'invalid-sources');
-    mkdirSync(skillDir, { recursive: true });
-    writeFileSync(join(skillDir, 'SKILL.md'), `---
-name: "Invalid Sources"
-description: "Skill with mixed requiredSources values"
-requiredSources:
-  - linear
-  - 123
-  - true
-  - "  "
----
-
-Use linear tools.
-`);
-
-    const skill = loadSkill(workspaceRoot, 'invalid-sources', projectRoot);
-
-    expect(skill).not.toBeNull();
-    expect(skill!.metadata.requiredSources).toEqual(['linear']);
   });
 
   it('should set iconPath when icon file exists', () => {

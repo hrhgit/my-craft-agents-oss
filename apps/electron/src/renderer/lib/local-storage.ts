@@ -22,7 +22,6 @@ export const KEYS = {
   expandedFolders: 'expanded-folders',
   collapsedWorkspaceSections: 'workspace-sections-collapsed.v1',
   workspaceSessionSummaryCache: 'workspace-session-summary-cache.v1',
-  whatsNewLastSeenVersion: 'whats-new-last-seen-version.v1',
   chatGroupingMode: 'chat-grouping-mode', // How to group chats: 'date' | 'status'
   collapsedSessionGroups: 'collapsed-session-groups', // Collapsed group keys in session list
 
@@ -66,6 +65,9 @@ export const KEYS = {
   // Workspace navigation state (workspace-scoped via suffix = workspaceSlug)
   // Stores the full URL search string so switching back restores panels/focus/sidebar
   workspaceUrl: 'workspace-url',
+
+  // Workspace-scoped composer state for routes that do not own a Session yet.
+  newConversationOptions: 'new-conversation.workspace-draft.v1',
 } as const
 
 export type StorageKey = typeof KEYS[keyof typeof KEYS]

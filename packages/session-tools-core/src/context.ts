@@ -7,30 +7,7 @@
  * This enables writing tool handlers once and running them in both environments.
  */
 
-import type {
-  AuthRequest,
-  ToolResult,
-  SourceConfig,
-  GoogleService,
-  SlackService,
-  MicrosoftService,
-  McpSourceConfig,
-} from './types.ts';
-
-// ============================================================
-// Source Credential Types
-// ============================================================
-
-/**
- * Loaded source with context for credential operations.
- * Note: guide field omitted as credential manager doesn't use it.
- */
-export interface LoadedSource {
-  config: SourceConfig;
-  folderPath: string;
-  workspaceRootPath: string;
-  workspaceId: string;
-}
+import type { ToolResult } from './types.ts';
 
 // ============================================================
 // Callback Interface
@@ -49,13 +26,6 @@ export interface SessionToolCallbacks {
    * Codex: sends __CALLBACK__ message to stderr
    */
   onPlanSubmitted(planPath: string): void;
-
-  /**
-   * Called when authentication is requested.
-   * Claude: calls onAuthRequest callback + forceAbort
-   * Codex: sends __CALLBACK__ message to stderr
-   */
-  onAuthRequest(request: AuthRequest): void;
 }
 
 // ============================================================
@@ -90,32 +60,6 @@ export interface FileSystemInterface {
 }
 
 // ============================================================
-// Credential Manager Interface
-// ============================================================
-
-/**
- * Credential manager abstraction.
- * Claude has full access to credential stores.
- * Codex may have limited or no access (relies on main process).
- */
-export interface CredentialManagerInterface {
-  /**
-   * Check if a source has valid, non-expired credentials
-   */
-  hasValidCredentials(source: LoadedSource): Promise<boolean>;
-
-  /**
-   * Get the current access token for a source (null if expired/missing)
-   */
-  getToken(source: LoadedSource): Promise<string | null>;
-
-  /**
-   * Refresh the access token for a source
-   */
-  refresh(source: LoadedSource): Promise<string | null>;
-}
-
-// ============================================================
 // Validator Interface
 // ============================================================
 
@@ -126,10 +70,8 @@ export interface CredentialManagerInterface {
  */
 export interface ValidatorInterface {
   validateConfig(): import('./types.js').ValidationResult;
-  validateSource(workspaceRootPath: string, sourceSlug: string): import('./types.js').ValidationResult;
-  validateAllSources(workspaceRootPath: string): import('./types.js').ValidationResult;
   validatePreferences(): import('./types.js').ValidationResult;
-  validatePermissions(workspaceRootPath: string, sourceSlug?: string): import('./types.js').ValidationResult;
+  validatePermissions(workspaceRootPath: string): import('./types.js').ValidationResult;
   validateAutomations(workspaceRootPath: string): import('./types.js').ValidationResult;
   validateToolIcons(): import('./types.js').ValidationResult;
   validateAll(workspaceRootPath: string): import('./types.js').ValidationResult;
@@ -157,9 +99,6 @@ export interface SessionToolContext {
 
   /** Absolute path to workspace folder (~/.mortise/workspaces/{id}) */
   workspacePath: string;
-
-  /** Path to sources folder within workspace */
-  get sourcesPath(): string;
 
   /** Path to skills folder within workspace */
   get skillsPath(): string;
@@ -190,104 +129,6 @@ export interface SessionToolContext {
   // ============================================================
 
   validators?: ValidatorInterface;
-
-  // ============================================================
-  // Optional Capabilities
-  // ============================================================
-
-  /**
-   * Get credential manager for source authentication checks.
-   * Only available in Claude (has keychain access).
-   */
-  credentialManager?: CredentialManagerInterface;
-
-  /**
-   * Load a source config from the workspace.
-   */
-  loadSourceConfig(sourceSlug: string): SourceConfig | null;
-
-  /**
-   * Save a source config to the workspace.
-   */
-  saveSourceConfig?(source: SourceConfig): void;
-
-  /**
-   * Infer Google service from URL.
-   */
-  inferGoogleService?(url?: string): GoogleService | undefined;
-
-  /**
-   * Infer Slack service from URL.
-   */
-  inferSlackService?(url?: string): SlackService | undefined;
-
-  /**
-   * Infer Microsoft service from URL.
-   */
-  inferMicrosoftService?(url?: string): MicrosoftService | undefined;
-
-  /**
-   * Check if Google OAuth is configured.
-   */
-  isGoogleOAuthConfigured?(clientId?: string, clientSecret?: string): boolean;
-
-  // ============================================================
-  // Icon Management (for source_test)
-  // ============================================================
-
-  /**
-   * Check if a value is a URL that can be used as an icon.
-   */
-  isIconUrl?(value: string): boolean;
-
-  /**
-   * Download an icon from URL to the source folder.
-   * Returns the path to the cached icon, or null if download failed.
-   */
-  downloadSourceIcon?(sourceSlug: string, iconUrl: string): Promise<string | null>;
-
-  /**
-   * Derive a service URL from a source config (for favicon fetching).
-   */
-  deriveServiceUrl?(source: SourceConfig): string | null;
-
-  /**
-   * Get a high-quality logo URL from a service URL.
-   */
-  getHighQualityLogoUrl?(serviceUrl: string, slug: string): Promise<string | null>;
-
-  /**
-   * Download an icon to a specific destination path.
-   */
-  downloadIcon?(destPath: string, url: string, tag: string): Promise<string | null>;
-
-  // ============================================================
-  // MCP Connection Validation (for source_test)
-  // ============================================================
-
-  /**
-   * Validate a stdio MCP connection by spawning the command.
-   */
-  validateStdioMcpConnection?(config: StdioMcpConfig): Promise<StdioValidationResult>;
-
-  /**
-   * Validate an HTTP/SSE MCP connection.
-   */
-  validateMcpConnection?(config: HttpMcpConfig): Promise<McpValidationResult>;
-
-  // ============================================================
-  // API Testing (for source_test)
-  // ============================================================
-
-  /**
-   * Test an API source connection with full credential handling.
-   */
-  testApiSource?(source: SourceConfig): Promise<ApiTestResult>;
-
-  /**
-   * Test a Google source (OAuth token validation).
-   */
-  testGoogleSource?(source: SourceConfig): Promise<ApiTestResult>;
 
   // ============================================================
   // Preferences (for update_user_preferences)
@@ -324,25 +165,6 @@ export interface SessionToolContext {
 
   /** Send a message to another session. Injected by backend (SessionManager). */
   sendAgentMessage?(sessionId: string, message: string, attachments?: Array<{ path: string; name?: string }>): Promise<void>;
-
-  /**
-   * Activate a source in the running session: add to enabledSourceSlugs,
-   * build its MCP/API servers, apply to the agent.
-   *
-   * Only available in backends that can coordinate with SessionManager (Pi subprocess today).
-   * Codex and other backends leave this undefined — callers should degrade gracefully (restart required).
-   *
-   * `availability` is always `'next-turn'` when activation succeeds: Pi reloads proxy
-   * tools on the next `handlePrompt`, so the current turn must end before new tools
-   * are callable. The backend handles this via the existing source_activated + auto_retry
-   * machinery — the current turn is aborted and the renderer resends the user's
-   * original message with a `[{slug} activated]` suffix.
-   */
-  activateSourceInSession?(sourceSlug: string): Promise<{
-    ok: boolean;
-    reason?: string;
-    availability?: 'next-turn';
-  }>;
 
   // ============================================================
   // Messaging Gateway (for list/unbind messaging channels)
@@ -415,67 +237,6 @@ export interface ListSessionsResult {
   total: number;
   returned: number;
   sessions: SessionListItem[];
-}
-
-// ============================================================
-// MCP Validation Types
-// ============================================================
-
-/**
- * Config for stdio MCP connection validation
- */
-export interface StdioMcpConfig {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
-/**
- * Config for HTTP/SSE MCP connection validation.
- * Derived from McpSourceConfig to stay in sync automatically (DRY).
- *
- * `accessToken` is the resolved OAuth / bearer token for sources whose
- * credential lives in the credential store (no `headerNames`). The probe
- * forwards it to the underlying impl, which builds an
- * `Authorization: Bearer …` header — matching the runtime path.
- */
-export type HttpMcpConfig = Required<Pick<McpSourceConfig, 'url'>>
-  & Pick<McpSourceConfig, 'authType' | 'headers' | 'headerNames' | 'transport'>
-  & { accessToken?: string };
-
-/**
- * Result from stdio MCP validation
- */
-export interface StdioValidationResult {
-  success: boolean;
-  error?: string;
-  toolCount?: number;
-  toolNames?: string[];
-  serverName?: string;
-  serverVersion?: string;
-}
-
-/**
- * Result from HTTP MCP validation
- */
-export interface McpValidationResult {
-  success: boolean;
-  error?: string;
-  needsAuth?: boolean;
-  toolCount?: number;
-  toolNames?: string[];
-  serverName?: string;
-  serverVersion?: string;
-}
-
-/**
- * Result from API source test
- */
-export interface ApiTestResult {
-  success: boolean;
-  status?: number;
-  error?: string;
-  hint?: string;
 }
 
 // ============================================================

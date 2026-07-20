@@ -35,7 +35,7 @@ export interface MortiseUiFixtureMessage {
   toolUseId?: string
   toolInput?: Record<string, unknown>
   toolResult?: string
-  toolStatus?: 'pending' | 'running' | 'completed' | 'error'
+  toolStatus?: 'pending' | 'executing' | 'completed' | 'error'
   isError?: boolean
 }
 
@@ -140,7 +140,7 @@ export const MORTISE_UI_FIXTURE_SCHEMA = {
                       toolUseId: { type: 'string', pattern: IDENTIFIER_PATTERN },
                       toolInput: { type: 'object' },
                       toolResult: { type: 'string', maxLength: LIMITS.messageBytes },
-                      toolStatus: { enum: ['pending', 'running', 'completed', 'error'] },
+                      toolStatus: { enum: ['pending', 'executing', 'completed', 'error'] },
                       isError: { type: 'boolean' },
                     },
                   },
@@ -442,7 +442,7 @@ function validateMessages(value: unknown, path: string): MortiseUiFixtureMessage
       toolUseId: item.toolUseId === undefined ? undefined : identifier(item.toolUseId, `${itemPath}.toolUseId`),
       toolInput: item.toolInput as Record<string, unknown> | undefined,
       toolResult: optionalText(item.toolResult, `${itemPath}.toolResult`, LIMITS.messageBytes, true),
-      toolStatus: optionalEnum(item.toolStatus, `${itemPath}.toolStatus`, ['pending', 'running', 'completed', 'error'] as const),
+      toolStatus: optionalEnum(item.toolStatus, `${itemPath}.toolStatus`, ['pending', 'executing', 'completed', 'error'] as const),
       isError: optionalBoolean(item.isError, `${itemPath}.isError`),
     })
   })

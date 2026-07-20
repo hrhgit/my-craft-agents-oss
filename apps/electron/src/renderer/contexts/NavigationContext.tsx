@@ -39,7 +39,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useSessionSelectionStore } from '@/hooks/useSession'
-import { singleSelect } from '@/hooks/useMultiSelect'
+import { createInitialState, singleSelect } from '@/hooks/useMultiSelect'
 import {
   parseRoute,
   parseRouteToNavigationState,
@@ -50,8 +50,12 @@ import { routes, type Route, type ViewRoute } from '../../shared/routes'
 import { parsePermissionMode } from '@mortise/shared/agent/mode-types'
 import { NAVIGATE_EVENT, type NavigateOptions } from '../lib/navigate'
 import { waitForRendererCommit } from '../lib/workspace-transition'
+import {
+  createNewConversationDraftId,
+  getNewConversationDraftStorageKey,
+} from '../lib/new-conversation'
 import { normalizePanelRouteForReconcile } from './navigation-reconcile'
-import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch, shouldNavigateToInitialDefault, type WorkspaceSwitchDestination } from './navigation-history'
+import { buildSemanticHistoryKey, canRunInitialRestore, resolveWorkspaceSwitchSearch, shouldAutoSelectSessionOnLoad, shouldNavigateToInitialDefault, type WorkspaceSwitchDestination } from './navigation-history'
 import {
   isPageSurfaceNavigation,
   isPageSurfaceRoute,
@@ -62,22 +66,18 @@ import {
 import * as storage from '@/lib/local-storage'
 import type {
   DeepLinkNavigation,
-  Session,
   NavigationState,
   SessionFilter,
-  SourceFilter,
   ContentBadge,
 } from '../../shared/types'
 import {
   isSessionsNavigation,
-  isSourcesNavigation,
   isSettingsNavigation,
   isSkillsNavigation,
   isAutomationsNavigation,
   DEFAULT_NAVIGATION_STATE,
 } from '../../shared/types'
 import { sessionMetaMapAtom, updateSessionMetaAtom, type SessionMeta } from '@/atoms/sessions'
-import { sourcesAtom } from '@/atoms/sources'
 import { skillsAtom } from '@/atoms/skills'
 import {
   panelStackAtom,
@@ -96,7 +96,7 @@ export type { Route }
 
 // Re-export navigation state types for consumers
 export type { NavigationState, SessionFilter }
-export { isSessionsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation, isAutomationsNavigation }
+export { isSessionsNavigation, isSettingsNavigation, isSkillsNavigation, isAutomationsNavigation }
 
 // =============================================================================
 // Context
@@ -117,8 +117,6 @@ interface NavigationContextValue {
   goBack: () => void
   /** Go forward in history */
   goForward: () => void
-  /** Navigate to a source (or source list if no slug), preserving the current filter type */
-  navigateToSource: (sourceSlug?: string) => void
   /** Navigate to a session, preserving the current filter type */
   navigateToSession: (sessionId: string) => void
 }
@@ -133,18 +131,24 @@ interface NavigationProviderProps {
   workspaceSlug: string | null
   /** Switch to a workspace by slug (called on popstate when ?ws= changes) */
   onSwitchWorkspaceBySlug?: (slug: string) => void
-  /** Session creation handler */
-  onCreateSession: (workspaceId: string, options?: import('../../shared/types').CreateSessionOptions) => Promise<Session>
+  /** Ordinary first turn transaction; resolves only after the Session is published. */
+  onCreateAndSendFirstTurn: (
+    input: import('@mortise/shared/protocol').CreateAndSendFirstTurnRequest,
+  ) => Promise<import('@mortise/shared/protocol').CreateAndSendFirstTurnResult>
   /** Input change handler for pre-filling chat input */
   onInputChange?: (sessionId: string, value: string) => void
   /** Get draft input text for a session (reads from ref, no re-render) */
   getDraft?: (sessionId: string) => string
+  /** Whether a draft has text or attachments. */
+  hasDraft?: (sessionId: string) => boolean
   /** Auto-delete an empty session (no confirmation needed) */
   onAutoDeleteEmptySession?: (sessionId: string) => void
   /** Whether the app is ready to navigate */
   isReady?: boolean
   /** Whether session metadata has been initialized (required for deterministic route restoration) */
   isSessionsReady?: boolean
+  /** Whether persisted drafts are available for deferred-session cleanup decisions. */
+  areDraftsReady?: boolean
   /** Remote workspace ID — when set, sessions with this ID are also considered part of the workspace */
   remoteWorkspaceId?: string | null
   /** One-shot destination for an explicit workspace list selection. */
@@ -157,12 +161,14 @@ export function NavigationProvider({
   workspaceId,
   workspaceSlug,
   onSwitchWorkspaceBySlug,
-  onCreateSession,
+  onCreateAndSendFirstTurn,
   onInputChange,
   getDraft,
+  hasDraft,
   onAutoDeleteEmptySession,
   isReady = true,
   isSessionsReady = true,
+  areDraftsReady = true,
   remoteWorkspaceId,
   workspaceSwitchDestination,
   onWorkspaceSwitchDestinationConsumed,
@@ -179,9 +185,6 @@ export function NavigationProvider({
 
   // Store reference for reading fresh atom values in callbacks (avoids stale closures)
   const store = useStore()
-
-  // Read sources from atom (populated by AppShell)
-  const sources = useAtomValue(sourcesAtom)
 
   // Read skills from atom (populated by AppShell)
   const skills = useAtomValue(skillsAtom)
@@ -502,11 +505,21 @@ export function NavigationProvider({
   const prevVisibleSessionIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
+    const currentPanelStack = store.get(panelStackAtom)
     const currentIds = new Set<string>()
-    for (const entry of panelStack) {
+    for (const entry of currentPanelStack) {
       const sessionId = parseSessionIdFromRoute(entry.route)
       if (sessionId) currentIds.add(sessionId)
     }
+
+    if (!isSessionsReady || !areDraftsReady) {
+      prevVisibleSessionIdsRef.current = currentIds
+      return
+    }
+
+    const draftHasContent = (sessionId: string) => (
+      hasDraft?.(sessionId) ?? Boolean(getDraft?.(sessionId)?.trim())
+    )
 
     // Only check after we've seen at least one set of IDs
     // (skip first render to avoid false positives during initialization)
@@ -515,8 +528,7 @@ export function NavigationProvider({
         if (!currentIds.has(prevId)) {
           const meta = store.get(sessionMetaMapAtom).get(prevId)
           const isEmpty = meta && !meta.lastFinalMessageId && !meta.name && !meta.isProcessing
-          const hasDraft = getDraft?.(prevId)?.trim()
-          if (isEmpty && !hasDraft) {
+          if (isEmpty && !draftHasContent(prevId)) {
             onAutoDeleteEmptySession(prevId)
           }
         }
@@ -524,7 +536,7 @@ export function NavigationProvider({
     }
 
     prevVisibleSessionIdsRef.current = currentIds
-  }, [panelStack, onAutoDeleteEmptySession, store, getDraft])
+  }, [areDraftsReady, getDraft, hasDraft, isSessionsReady, onAutoDeleteEmptySession, panelStack, sessionMetas, store, workspaceId])
 
   // =========================================================================
   // SESSION SELECTION SYNC
@@ -532,7 +544,7 @@ export function NavigationProvider({
 
   // Keep the global session selection in sync with the focused panel
   useEffect(() => {
-    if (isSessionsNavigation(navigationState) && navigationState.details) {
+    if (isSessionsNavigation(navigationState) && navigationState.details?.type === 'session') {
       setSession(singleSelect(navigationState.details.sessionId, -1))
       if (workspaceId) {
         // Only persist if the session belongs to this workspace (prevents cross-workspace
@@ -543,6 +555,8 @@ export function NavigationProvider({
           storage.set(storage.KEYS.lastSelectedSessionId, navigationState.details.sessionId, workspaceId)
         }
       }
+    } else if (isSessionsNavigation(navigationState) && navigationState.details?.type === 'new') {
+      setSession(createInitialState())
     }
   }, [navigationState, setSession, workspaceId, store])
 
@@ -587,17 +601,6 @@ export function NavigationProvider({
     [workspaceId, filterSessionsByFilter]
   )
 
-  const getFirstSourceSlug = useCallback(
-    (filter?: SourceFilter | null): string | null => {
-      if (!filter) {
-        return sources[0]?.config.slug ?? null
-      }
-      const filtered = sources.filter(s => s.config.type === filter.sourceType)
-      return filtered[0]?.config.slug ?? null
-    },
-    [sources]
-  )
-
   const getFirstSkillSlug = useCallback(
     (): string | null => {
       return skills[0]?.slug ?? null
@@ -619,7 +622,7 @@ export function NavigationProvider({
       let nextState = newState
 
       // Validate session exists in current workspace (local or remote ID)
-      if (isSessionsNavigation(nextState) && nextState.details) {
+      if (isSessionsNavigation(nextState) && nextState.details?.type === 'session') {
         const freshMetaMap = store.get(sessionMetaMapAtom)
         const meta = freshMetaMap.get(nextState.details.sessionId)
         const matchesWorkspace = !workspaceId
@@ -640,15 +643,6 @@ export function NavigationProvider({
         return nextState
       }
 
-      // Sources: auto-select first source
-      if (isSourcesNavigation(nextState) && !nextState.details && !options?.skipAutoSelect) {
-        const firstSourceSlug = getFirstSourceSlug(nextState.filter)
-        if (firstSourceSlug) {
-          return { ...nextState, details: { type: 'source', sourceSlug: firstSourceSlug } }
-        }
-        return nextState
-      }
-
       // Skills: auto-select first skill
       if (isSkillsNavigation(nextState) && !nextState.details && !options?.skipAutoSelect) {
         const firstSkillSlug = getFirstSkillSlug()
@@ -660,7 +654,7 @@ export function NavigationProvider({
 
       return nextState
     },
-    [store, workspaceId, remoteWorkspaceId, getLastSelectedSessionId, getFirstSessionId, getFirstSourceSlug, getFirstSkillSlug]
+    [store, workspaceId, remoteWorkspaceId, getLastSelectedSessionId, getFirstSessionId, getFirstSkillSlug]
   )
 
   // Ref keeps resolveAutoSelection fresh for reconcileFromUrlParams (defined earlier in the file)
@@ -677,50 +671,20 @@ export function NavigationProvider({
 
       switch (parsed.name) {
         case 'new-session': {
-          const createOptions: import('../../shared/types').CreateSessionOptions = {
-            deferListUntilFirstMessage: true,
-          }
-          if (parsed.params.mode) {
-            const parsedMode = parsePermissionMode(parsed.params.mode)
-            if (parsedMode) {
-              createOptions.permissionMode = parsedMode
-            }
-          }
-          if (parsed.params.workdir) {
-            createOptions.workingDirectory = parsed.params.workdir as 'user_default' | 'none' | string
-          }
-          if (parsed.params.model) {
-            createOptions.model = parsed.params.model
-          }
-          if (parsed.params.systemPrompt) {
-            createOptions.systemPromptPreset = parsed.params.systemPrompt as 'default' | 'mini' | string
-          }
-          const session = await onCreateSession(workspaceId, createOptions)
-
-          if (parsed.params.name) {
-            await window.electronAPI.sessionCommand(session.id, { type: 'rename', name: parsed.params.name })
-          }
-
-          const filter: import('../../shared/types').SessionFilter = { kind: 'allSessions' }
+          const draftId = options?.newPanel ? createNewConversationDraftId() : 'default'
+          const draftRoute = routes.view.newConversation(draftId) as ViewRoute
           setPageSurfaceRoute(null)
 
           if (options?.newPanel) {
-            // Open the new session in a new panel using lane-aware routing (pushPanel auto-focuses it)
             pushPanel({
-              route: routes.view.allSessions(session.id) as ViewRoute,
+              route: draftRoute,
               intent: 'explicit',
             })
           } else {
-            // Navigate the focused panel to the new session
-            const newState: NavigationState = {
-              navigator: 'sessions',
-              filter,
-              details: { type: 'session', sessionId: session.id },
-            }
-            const route = buildRouteFromNavigationState(newState) as ViewRoute
-            store.set(updateFocusedPanelRouteAtom, route)
-            // Session selection sync handled by effect
+            store.set(updateFocusedPanelRouteAtom, draftRoute)
           }
+
+          const draftStorageKey = getNewConversationDraftStorageKey(workspaceId, draftId)
 
           // Parse badges from params
           let badges: ContentBadge[] | undefined
@@ -732,23 +696,35 @@ export function NavigationProvider({
             }
           }
 
-          // Handle input: either auto-send or pre-fill
+          // Explicit programmatic send remains supported. Ordinary UI actions
+          // stop here and do not create a Session.
           if (parsed.params.input) {
             const shouldSend = parsed.params.send === 'true'
             if (shouldSend) {
-              setTimeout(() => {
-                window.electronAPI.sendMessage(
-                  session.id,
-                  parsed.params.input!,
-                  undefined,
-                  undefined,
-                  badges ? { badges } : undefined
-                )
-              }, 100)
+              const createOptions: import('../../shared/types').CreateSessionOptions = {
+                name: parsed.params.name,
+              }
+              const parsedMode = parsed.params.mode ? parsePermissionMode(parsed.params.mode) : undefined
+              if (parsedMode) createOptions.permissionMode = parsedMode
+              if (parsed.params.workdir) createOptions.workingDirectory = parsed.params.workdir
+              if (parsed.params.model) createOptions.model = parsed.params.model
+              if (parsed.params.systemPrompt) createOptions.systemPromptPreset = parsed.params.systemPrompt
+              onInputChange?.(draftStorageKey, parsed.params.input)
+              try {
+                const { session } = await onCreateAndSendFirstTurn({
+                  workspaceId,
+                  message: parsed.params.input,
+                  createOptions,
+                  sendOptions: badges ? { badges } : undefined,
+                })
+                onInputChange?.(draftStorageKey, '')
+                store.set(updateFocusedPanelRouteAtom, routes.view.allSessions(session.id) as ViewRoute)
+              } catch (error) {
+                console.error('[Navigation] Failed to create and send programmatic session:', error)
+                toast.error(t('toast.failedToCreateSession', 'Failed to create session'))
+              }
             } else if (onInputChange) {
-              setTimeout(() => {
-                onInputChange(session.id, parsed.params.input!)
-              }, 100)
+              onInputChange(draftStorageKey, parsed.params.input)
             }
           }
           break
@@ -763,18 +739,6 @@ export function NavigationProvider({
         case 'delete-session':
           if (parsed.id) {
             await window.electronAPI.deleteSession(parsed.id)
-          }
-          break
-
-        case 'oauth':
-          if (parsed.id) {
-            await window.electronAPI.performOAuth({ sourceSlug: parsed.id })
-          }
-          break
-
-        case 'delete-source':
-          if (parsed.id) {
-            await window.electronAPI.deleteSource(workspaceId, parsed.id)
           }
           break
 
@@ -802,7 +766,7 @@ export function NavigationProvider({
           console.warn('[Navigation] Unknown action:', parsed.name)
       }
     },
-    [workspaceId, onCreateSession, onInputChange, pushPanel, setPageSurfaceRoute, store, updateSessionMeta]
+    [workspaceId, onCreateAndSendFirstTurn, onInputChange, pushPanel, setPageSurfaceRoute, store, t, updateSessionMeta]
   )
 
   // =========================================================================
@@ -850,7 +814,7 @@ export function NavigationProvider({
         const finalRoute = buildRouteFromNavigationState(resolvedState) as ViewRoute
 
         // Persist last selected session for auto-select on next visit
-        if (isSessionsNavigation(resolvedState) && resolvedState.details && workspaceId) {
+        if (isSessionsNavigation(resolvedState) && resolvedState.details?.type === 'session' && workspaceId) {
           storage.set(storage.KEYS.lastSelectedSessionId, resolvedState.details.sessionId, workspaceId)
         }
 
@@ -1004,7 +968,7 @@ export function NavigationProvider({
 
     // If nothing was in the URL, navigate to default
     if (shouldNavigateToInitialDefault(params)) {
-      navigate(routes.view.allSessions())
+      navigate(routes.view.newConversation())
     }
 
     // Initialize history with seq=0 (replaceState so we don't create an extra entry)
@@ -1090,23 +1054,6 @@ export function NavigationProvider({
   // PRESERVE-FILTER NAVIGATION HELPERS
   // =========================================================================
 
-  const navigateToSource = useCallback((sourceSlug?: string) => {
-    if (isSourcesNavigation(navigationState) && navigationState.filter?.kind === 'type') {
-      switch (navigationState.filter.sourceType) {
-        case 'api':
-          navigate(routes.view.sourcesApi(sourceSlug))
-          return
-        case 'mcp':
-          navigate(routes.view.sourcesMcp(sourceSlug))
-          return
-        case 'local':
-          navigate(routes.view.sourcesLocal(sourceSlug))
-          return
-      }
-    }
-    navigate(routes.view.sources(sourceSlug ? { sourceSlug } : undefined))
-  }, [navigationState, navigate])
-
   const navigateToSession = useCallback((sessionId: string) => {
     if (!isSessionsNavigation(navigationState)) {
       navigate(routes.view.allSessions(sessionId))
@@ -1121,14 +1068,20 @@ export function NavigationProvider({
   // =========================================================================
 
   useEffect(() => {
-    if (suppressAutoSelectRef.current) return
-    if (!isReady || !workspaceId) return
-    // Don't auto-select when panel stack is empty (user closed all panels)
-    if (store.get(panelStackAtom).length === 0) return
-    if (!isSessionsNavigation(navigationState) || navigationState.details) return
+    if (pageSurfaceRouteRef.current) return
+    const liveRoute = store.get(focusedPanelRouteAtom)
+    const liveNavigationState = liveRoute ? parseRouteToNavigationState(liveRoute) : navigationState
+    if (!liveNavigationState || !isSessionsNavigation(liveNavigationState)) return
+    if (!shouldAutoSelectSessionOnLoad({
+      suppressed: suppressAutoSelectRef.current,
+      isReady,
+      workspaceId,
+      panelCount: store.get(panelStackAtom).length,
+      state: liveNavigationState,
+    })) return
 
-    const lastSelectedSessionId = getLastSelectedSessionId(navigationState.filter)
-    const fallbackSessionId = lastSelectedSessionId ?? getFirstSessionId(navigationState.filter)
+    const lastSelectedSessionId = getLastSelectedSessionId(liveNavigationState.filter)
+    const fallbackSessionId = lastSelectedSessionId ?? getFirstSessionId(liveNavigationState.filter)
     if (!fallbackSessionId) return
 
     navigateToSession(fallbackSessionId)
@@ -1155,7 +1108,6 @@ export function NavigationProvider({
         canGoForward,
         goBack,
         goForward,
-        navigateToSource,
         navigateToSession,
       }}
     >

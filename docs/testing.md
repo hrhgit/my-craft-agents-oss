@@ -49,7 +49,7 @@ The frozen clock virtualizes the registered application `timer`, `debounce`, `re
 
 ## Source UI Validation Control Plane
 
-`mortise-ui` is source-only and is excluded from production/package module graphs. It exposes a versioned JSON control plane; callers do not use Playwright, CDP, selectors, renderer evaluation, or Electron objects directly.
+`mortise-ui` is available from source or through the separately versioned Mortise Developer Kit. Windows offline installers include the kit as a default-selected optional component; it remains a separate Developer Host and control surface. It exposes an AI-facing validation assistant over the versioned UI control plane; callers do not use Playwright, CDP, selectors, renderer evaluation, or Electron objects directly.
 
 Cold starts and explicitly requested UI waits allow up to 10 minutes; the default cold-start budget is 10 minutes, ordinary host operations default to 2 minutes, and adapter-level waits default to 1 minute.
 
@@ -59,15 +59,20 @@ For Electron UI work, this CLI is also the primary AI-operated validation surfac
 
 ```bash
 bun run mortise-ui -- start --label settings-extension-reload --surface electron --profile fixture --json
+bun run mortise-ui -- runs list --json
+bun run mortise-ui -- runs resume --run settings-extension-reload --json
 bun run mortise-ui -- status --run settings-extension-reload --json
-bun run mortise-ui -- capabilities list --kind route --run settings-extension-reload --json
+bun run mortise-ui -- capabilities relevant --run settings-extension-reload --json
 bun run mortise-ui -- capabilities describe --kind scenario --id session.streaming --run settings-extension-reload --json
 bun run mortise-ui -- open --run settings-extension-reload --params '{"route":{"surface":"settings","section":"extensions"}}' --json
 bun run mortise-ui -- snapshot --run settings-extension-reload --json
 bun run mortise-ui -- wait --run settings-extension-reload --params '{"predicate":{"kind":"semantic-ready"}}' --json
 bun run mortise-ui -- evidence --run settings-extension-reload --params '{"label":"manual-check"}' --json
 bun run mortise-ui -- stop --run settings-extension-reload --json
+bun run mortise-ui -- runs prune --keep 20 --older-than-hours 168 --json
 ```
+
+`runs list` uses progressive disclosure: it shows every live, failed, or incompletely cleaned run, then fills the default view with the most recent inactive runs. Use `--limit` to narrow that view or `--all` when older inactive runs are relevant. Each entry contains only identity, lifecycle state, attention, the last activity, evidence count, and contextual next actions. `runs resume` adds the five most recent activities and evidence counts needed to continue work. `runs inspect` is the explicit deep view for the complete run manifest, raw host status, retained history, and artifact manifest. `runs prune` is preview-only unless `--apply` is passed and never removes an active run.
 
 Mount an extension package directly from its development directory with a repeatable `--extension` option:
 
@@ -112,17 +117,21 @@ Workspace files are materialized under the real disposable workspace root. Sessi
 
 Give AI-operated runs a short lowercase semantic label. The label is stored separately from the immutable run ID and may be passed to `--run`; exact run IDs remain available for protocol identity and disambiguation. If historical runs share a label, a single active match wins, while multiple active or stopped matches require the full run ID.
 
-The usual interactive loop uses the semantic label for routine commands while retaining the returned run ID as the exact fallback:
+The usual interactive loop uses the semantic label for routine commands while retaining the returned run ID as the exact fallback. Default output is selected by decision relevance rather than by a generic size threshold. `snapshot` returns an AI briefing with important state, attention-first actionable targets, contextual next actions, and a disclosure record explaining omitted lower-priority targets. Pass `--full-observation` only when raw semantic regions or a missing target must be investigated. `action` automatically observes the settled UI and returns a compact action receipt, change counts, and the post-action briefing; node-level changes and the raw post-action snapshot are disclosed only with `--full-observation`:
 
 ```bash
 bun run mortise-ui -- start --label changed-workflow --surface electron --profile fixture --json
-bun run mortise-ui -- capabilities list --kind action --run changed-workflow --json
+bun run mortise-ui -- capabilities relevant --run changed-workflow --json
 bun run mortise-ui -- snapshot --run changed-workflow --json
+bun run mortise-ui -- snapshot --run changed-workflow --full-observation --json
 bun run mortise-ui -- action --run changed-workflow \
-  --params '{"revision":<revision>,"target":{"ref":"<ref>"},"action":"click","mode":"physical"}' --json
+  --params '{"target":{"semanticId":"<semantic-id>"},"action":"click"}' --json
+bun run mortise-ui -- runs history --run changed-workflow --json
 bun run mortise-ui -- evidence --run changed-workflow --params '{"label":"changed-workflow"}' --json
 bun run mortise-ui -- stop --run changed-workflow --json
 ```
+
+Lifecycle commands follow the same boundary. `start`, `status`, and `stop` return the run identity, outcome, attention state, and next actions required for the normal workflow. Use `runs inspect` for manifest and host internals, or pass `--full` to a lifecycle command when a test or diagnostic specifically needs its raw response. `evidence` returns category counts and the newest representative artifact from each category; `--full-evidence` returns every artifact and the complete host evidence response. Every compact response identifies what was omitted, when it becomes useful, and the exact command that reveals it.
 
 Use Electron background mode when validation must not take over the active desktop:
 
@@ -132,11 +141,11 @@ bun run mortise-ui -- start --label background-validation --surface electron --p
 
 The run starts real source-development Electron windows with renderer background throttling disabled and keeps every managed window minimized. Semantic actions, renderer snapshots and waits, CDP-backed physical input, renderer screenshots, and background-safe Windows UIA patterns remain available. A native background snapshot advertises only operations that do not require a foreground window: `Invoke`, `Value`, and `SelectionItem` patterns plus window minimize/close. Coordinate mouse fallback, focus, restore, maximize, and native dialogs return `UNSUPPORTED` instead of restoring or focusing the window. `status.windowMode` and `status.nativeDriver.windowMode` report the active contract. WebUI runs do not accept this option because they have no Electron window lifecycle.
 
-For native Electron behavior, use the same run through either `snapshot --params '{"scope":"native"}'` or `request ui.native --params '{"operation":"snapshot"}'`, then send a `ui.action` request with `{"mode":"native","target":{"kind":"native","ref":"<native-ref>"},"action":"focus"}` or another action advertised by the native snapshot. In foreground mode, snapshots, actions, and native dialogs share the selected-window readiness boundary: the host reveals the window, matches its process-local UIA root by native handle or by title and DPI-scaled bounds, and only then returns `native-verified`. Background mode instead requires a minimized, UIA-verified selected window and filters each snapshot to background-safe actions. In `status.nativeDriver`, `available` means that the platform adapter exists; `ready` means the selected window has satisfied the active foreground or background contract. Native references and revisions must be refreshed after the window or dialog changes.
+For native Electron behavior, use the same run through either `snapshot --params '{"scope":"native"}'` or the first-class `native --params '{"operation":"snapshot"}'` command, then send a native action advertised by that snapshot. `windows`, `window`, `screenshot`, `logs`, `resize`, and `browser-key` are also first-class CLI commands. In foreground mode, snapshots, actions, and native dialogs share the selected-window readiness boundary: the host reveals the window, matches its process-local UIA root by native handle or by title and DPI-scaled bounds, and only then returns `native-verified`. Background mode instead requires a minimized, UIA-verified selected window and filters each snapshot to background-safe actions. In `status.nativeDriver`, `available` means that the platform adapter exists; `ready` means the selected window has satisfied the active foreground or background contract. Native references and revisions must be refreshed after the window or dialog changes.
 
 `start` returns only after both the application state and its semantic UI are ready. Route, session, transport, extension, and native waits are event-driven. Do not add fixed sleeps to validation flows.
 
-Use `capabilities list` before composing a flow and `capabilities describe` to obtain the bounded input schema, supported surfaces, modes, and expected verification level for one route, scenario, or action. The catalog is protocol V1 data and never exposes Playwright, CDP, selectors, JavaScript evaluation, or renderer state. Its `runtimeDiscovery.extensionDefinitions` entry also describes the dynamic extension discovery call. Read extension identities from the `scope: "extension"` entries returned by `status`, then call `snapshot --params '{"target":{"kind":"extension","sessionId":"...","extensionId":"..."}}'`. The result contains the host-validated readiness signals, actions, scenarios, and input schemas contributed by that running extension; callers do not inspect extension or renderer source.
+Use `capabilities relevant` to return only the current route and actions advertised by the currently disclosed targets. Use `capabilities list` for navigation alternatives, scenarios, runtime extension discovery, or actions not currently available, and `capabilities describe` for the bounded input schema, supported surfaces, modes, and expected verification level of one route, scenario, or action. The catalog is protocol V1 data and never exposes Playwright, CDP, selectors, JavaScript evaluation, or renderer state. The full catalog's `runtimeDiscovery.extensionDefinitions` entry describes the dynamic extension discovery call. Read extension identities from the `scope: "extension"` entries returned by `status --full` or `runs inspect`, then call `snapshot --params '{"target":{"kind":"extension","sessionId":"...","extensionId":"..."}}'`. The result contains the host-validated readiness signals, actions, scenarios, and input schemas contributed by that running extension; callers do not inspect extension or renderer source.
 
 `fixture` is the default profile. Without `--fixture`, it sets `setupDeferred` and opens the normal application on a populated product-release conversation. The preset contains three disposable workspaces: a product launch with code, release files, multiple sessions, a tool-call transcript, and plan data; customer research with Markdown/CSV/JSON inputs and analysis sessions; and support operations with runbooks, incident/ticket files, triage sessions, and unread state. A custom `--fixture` replaces that preset with the declared real data scene. Fixture profiles contain no provider credentials or live endpoints; use registered typed scenarios for transient loading, streaming, approval, extension, permission, and error states.
 

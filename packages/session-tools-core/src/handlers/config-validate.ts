@@ -17,11 +17,9 @@ import {
   validateJsonFileHasFields,
   mergeResults,
 } from '../validation.ts';
-import { getSourceConfigPath } from '../source-helpers.ts';
 
 export interface ConfigValidateArgs {
-  target: 'config' | 'sources' | 'preferences' | 'permissions' | 'automations' | 'tool-icons' | 'all';
-  sourceSlug?: string;
+  target: 'config' | 'preferences' | 'permissions' | 'automations' | 'tool-icons' | 'all';
 }
 
 /**
@@ -34,7 +32,7 @@ export async function handleConfigValidate(
   ctx: SessionToolContext,
   args: ConfigValidateArgs
 ): Promise<ToolResult> {
-  const { target, sourceSlug } = args;
+  const { target } = args;
   const mortiseAgentRoot = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise');
 
   // If full validators available (Claude), use them
@@ -46,18 +44,11 @@ export async function handleConfigValidate(
         case 'config':
           result = ctx.validators.validateConfig();
           break;
-        case 'sources':
-          if (sourceSlug) {
-            result = ctx.validators.validateSource(ctx.workspacePath, sourceSlug);
-          } else {
-            result = ctx.validators.validateAllSources(ctx.workspacePath);
-          }
-          break;
         case 'preferences':
           result = ctx.validators.validatePreferences();
           break;
         case 'permissions':
-          result = ctx.validators.validatePermissions(ctx.workspacePath, sourceSlug);
+          result = ctx.validators.validatePermissions(ctx.workspacePath);
           break;
         case 'automations':
           result = ctx.validators.validateAutomations(ctx.workspacePath);
@@ -86,43 +77,6 @@ export async function handleConfigValidate(
         ['workspaces']
       );
       return successResponse(formatValidationResult(result));
-    }
-
-    case 'sources': {
-      if (sourceSlug) {
-        const sourcePath = getSourceConfigPath(ctx.workspacePath, sourceSlug);
-        const result = validateJsonFileHasFields(sourcePath, ['slug', 'name', 'type']);
-        return successResponse(formatValidationResult(result));
-      } else {
-        // Validate all sources
-        const sourcesDir = join(ctx.workspacePath, 'sources');
-        if (!ctx.fs.exists(sourcesDir)) {
-          return successResponse('✓ No sources directory (no sources to validate)');
-        }
-
-        const results = [];
-        const entries = ctx.fs.readdir(sourcesDir);
-        for (const entry of entries) {
-          const entryPath = join(sourcesDir, entry);
-          if (ctx.fs.isDirectory(entryPath)) {
-            const sourceResult = validateJsonFileHasFields(
-              join(entryPath, 'config.json'),
-              ['slug', 'name', 'type']
-            );
-            if (!sourceResult.valid) {
-              // Prefix errors with source name
-              sourceResult.errors = sourceResult.errors.map(e => ({
-                ...e,
-                path: `${entry}/${e.path}`,
-              }));
-            }
-            results.push(sourceResult);
-          }
-        }
-
-        const merged = mergeResults(...results);
-        return successResponse(formatValidationResult(merged));
-      }
     }
 
     case 'preferences': {
@@ -175,7 +129,7 @@ export async function handleConfigValidate(
 
     default:
       return errorResponse(
-        `Unknown validation target: ${target}. Valid targets: config, sources, preferences, permissions, automations, tool-icons, all`
+        `Unknown validation target: ${target}. Valid targets: config, preferences, permissions, automations, tool-icons, all`
       );
   }
 }

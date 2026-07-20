@@ -5,7 +5,6 @@ import { registerAuthHandlers } from './auth'
 import { registerAutomationsHandlers } from './automations'
 import { cleanupWorkspaceFileWatchForClient, registerFilesHandlers } from './files'
 import { registerPiProviderHandlers } from './pi-providers'
-import { registerOAuthHandlers } from './oauth'
 import { registerResourcesHandlers } from './resources'
 import { registerOnboardingHandlers } from './onboarding'
 import { cleanupSessionFileWatchForClient, registerSessionsHandlers } from './sessions'
@@ -17,7 +16,6 @@ export type { ServerHandlerContext } from '../../bootstrap/headless-start'
 export { getHealthCheck } from './server'
 import { registerSettingsHandlers } from './settings'
 import { registerSkillsHandlers } from './skills'
-import { registerSourcesHandlers } from './sources'
 import { registerSystemCoreHandlers } from './system'
 import { registerTransferHandlers } from './transfer'
 import { registerWorkspaceCoreHandlers } from './workspace'
@@ -38,14 +36,12 @@ export function registerCoreRpcHandlers(
   registerAutomationsHandlers(server, deps)
   registerFilesHandlers(server, deps)
   registerPiProviderHandlers(server, deps)
-  registerOAuthHandlers(server, deps)
   registerOnboardingHandlers(server, deps)
   registerResourcesHandlers(server, deps)
   registerSessionsHandlers(server, deps)
   if (serverCtx) registerServerHandlers(server, deps, serverCtx)
   registerSettingsHandlers(server, deps)
   registerSkillsHandlers(server, deps)
-  registerSourcesHandlers(server, deps)
   registerSystemCoreHandlers(server, deps)
   registerTransferHandlers(server)
   registerWorkspaceCoreHandlers(server, deps)

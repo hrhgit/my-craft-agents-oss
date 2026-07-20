@@ -173,7 +173,6 @@ export const SkillMetadataSchema = z.object({
   globs: z.array(z.string()).optional(),
   alwaysAllow: z.array(z.string()).optional(),
   icon: z.string().optional(),
-  requiredSources: z.array(z.string()).optional(),
 }).passthrough();
 
 /**
@@ -327,61 +326,4 @@ export function validateMermaidSyntax(code: string): ValidationResult {
   }
 
   return validResult();
-}
-
-// ============================================================
-// Source Config Validation (Basic)
-// ============================================================
-
-/**
- * Required fields for source config.json
- */
-export const SOURCE_CONFIG_REQUIRED_FIELDS = ['slug', 'name', 'type'];
-
-/**
- * Valid source types
- */
-export const SOURCE_TYPES = ['mcp', 'api', 'local'] as const;
-
-/**
- * Basic source config validation (schema-level).
- * For full validation with Zod schemas, use the validators from packages/shared.
- */
-export function validateSourceConfigBasic(config: unknown): ValidationResult {
-  if (typeof config !== 'object' || config === null) {
-    return invalidResult('config', 'Config must be an object');
-  }
-
-  const errors: ValidationIssue[] = [];
-  const data = config as Record<string, unknown>;
-
-  // Check required fields
-  for (const field of SOURCE_CONFIG_REQUIRED_FIELDS) {
-    if (!(field in data)) {
-      errors.push({
-        path: field,
-        message: `Missing required field: ${field}`,
-      });
-    }
-  }
-
-  // Validate type if present
-  if ('type' in data && !SOURCE_TYPES.includes(data.type as typeof SOURCE_TYPES[number])) {
-    errors.push({
-      path: 'type',
-      message: `Invalid type: ${data.type}. Must be one of: ${SOURCE_TYPES.join(', ')}`,
-    });
-  }
-
-  // Validate slug format if present
-  if ('slug' in data && typeof data.slug === 'string') {
-    const slugResult = validateSlug(data.slug);
-    errors.push(...slugResult.errors);
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings: [],
-  };
 }

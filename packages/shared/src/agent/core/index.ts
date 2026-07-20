@@ -6,13 +6,12 @@
  *
  * Modules:
  * - PermissionManager: Tool permission evaluation and mode management
- * - SourceManager: External data source state tracking
  * - PromptBuilder: System prompt and context building
  * - PathProcessor: Path expansion and normalization
  * - ConfigValidator: Pre-write configuration validation
  * - ConfigWatcherManager: Hot-reload config file watching
  * - UsageTracker: Token usage and context window tracking
- * - PrerequisiteManager: Prerequisite reading enforcement (guide.md before source tools)
+ * - PrerequisiteManager: Prerequisite reading enforcement for skills and browser tools
  */
 
 // Types
@@ -21,7 +20,6 @@ export type {
   RecoveryMessage,
   PermissionManagerConfig,
   ToolPermissionResult,
-  SourceManagerConfig,
   PromptBuilderConfig,
   ContextBlockOptions,
   PathProcessorConfig,
@@ -31,7 +29,6 @@ export type {
   // Re-exported from mode-types
   PermissionMode,
   ModeConfig,
-  CompiledApiEndpointRule,
   CompiledBashPattern,
   MismatchAnalysis,
   PermissionPaths,
@@ -68,9 +65,6 @@ export {
 
 // Permission Manager
 export { PermissionManager } from './permission-manager.ts';
-
-// Source Manager
-export { SourceManager } from './source-manager.ts';
 
 // Prompt Builder
 export { PromptBuilder } from './prompt-builder.ts';

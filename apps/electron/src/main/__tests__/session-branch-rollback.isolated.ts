@@ -140,39 +140,13 @@ mock.module('@mortise/shared/agent/backend', () => ({
   createBackendFromResolvedContext: () => {
     throw new Error('not used in this test')
   },
-  cleanupSourceRuntimeArtifacts: async () => {},
   AGENT_PROVIDER: 'pi' as const,
   fetchBackendModels: async () => ({ models: [] }),
   initializeBackendHostRuntime: () => {},
   resolveBackendHostTooling: () => ({
-    sourceCredentialManager: null,
-    sourceServerBuilder: null,
-    sourcePoolFactory: null,
-    sourcePoolServerFactory: null,
   }),
   testBackendConnection: async () => ({ success: false, error: 'stub' }),
   validateStoredBackendConnection: async () => ({ success: false, error: 'stub' }),
-}))
-
-mock.module('@mortise/shared/sources', () => ({
-  loadWorkspaceSources: () => [],
-  loadAllSources: () => [],
-  getSourcesBySlugs: () => [],
-  isSourceUsable: () => true,
-  getSourcesNeedingAuth: () => [],
-  getSourceCredentialManager: () => ({
-    getCredentialStatus: async () => ({ status: 'ready' }),
-  }),
-  getSourceServerBuilder: () => ({ buildServers: async () => ({ mcpServers: {}, apiServers: {} }) }),
-  isApiOAuthProvider: () => false,
-  SERVER_BUILD_ERRORS: {},
-  TokenRefreshManager: class TokenRefreshManager {
-    constructor(_mgr: unknown, _opts: unknown) {}
-  },
-  createTokenGetter: () => async () => null,
-  // Targeted stubs: prevent SyntaxError in tests that import these from the barrel
-  loadSource: () => null,
-  API_OAUTH_PROVIDERS: [],
 }))
 
 mock.module('@mortise/shared/automations', () => ({

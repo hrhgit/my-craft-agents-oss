@@ -13,21 +13,6 @@ Custom permission rules let you allow specific operations that would otherwise b
 
 Permission files are located at:
 - Workspace: `~/.mortise/workspaces/{slug}/permissions.json`
-- Source: `~/.mortise/workspaces/{slug}/sources/{source}/permissions.json`
-
-## Auto-Scoping for Source Permissions
-
-**Important:** MCP patterns in a source's `permissions.json` are automatically scoped to that source.
-
-When you write:
-```json
-{ "pattern": "list", "comment": "Allow list operations" }
-```
-
-The system converts it to `mcp__<sourceSlug>__.*list` internally. This means:
-- Simple patterns like `list` only affect tools from that source
-- No risk of accidentally allowing `list` tools from other sources
-- Workspace-level patterns still apply globally (for intentional cross-source rules)
 
 ## permissions.json Schema
 
@@ -37,10 +22,6 @@ The system converts it to `mcp__<sourceSlug>__.*list` internally. This means:
     { "pattern": "list", "comment": "Allow list operations" },
     { "pattern": "get", "comment": "Allow get operations" },
     { "pattern": "search", "comment": "Allow search operations" }
-  ],
-  "allowedApiEndpoints": [
-    { "method": "GET", "path": ".*", "comment": "All GET requests" },
-    { "method": "POST", "path": "^/search", "comment": "Search POST" }
   ],
   "allowedBashPatterns": [
     { "pattern": "^ls\\s", "comment": "Allow ls commands" }
@@ -78,36 +59,11 @@ The system converts it to `mcp__<sourceSlug>__.*list` internally. This means:
 
 Regex patterns for MCP tool names to allow in Explore mode.
 
-For **source-level** permissions.json, use simple patterns (auto-scoped):
+Use full tool-name patterns in workspace permissions:
 ```json
 {
   "allowedMcpPatterns": [
-    { "pattern": "list", "comment": "All list operations for this source" },
-    { "pattern": "get", "comment": "All get operations for this source" },
-    { "pattern": "search", "comment": "All search operations for this source" }
-  ]
-}
-```
-
-For **workspace-level** permissions.json (global rules), use full patterns:
-```json
-{
-  "allowedMcpPatterns": [
-    { "pattern": "^mcp__.*__list", "comment": "List operations across all sources" }
-  ]
-}
-```
-
-### allowedApiEndpoints
-
-Fine-grained rules for API source requests.
-
-```json
-{
-  "allowedApiEndpoints": [
-    { "method": "GET", "path": ".*", "comment": "All GET requests" },
-    { "method": "POST", "path": "^/search", "comment": "Search POST" },
-    { "method": "POST", "path": "^/v1/query$", "comment": "Query endpoint" }
+    { "pattern": "^mcp__.*__list", "comment": "Read-only list operations" }
   ]
 }
 ```
@@ -250,10 +206,9 @@ Example: `git status > file.txt` is blocked because `>` could overwrite files.
 
 ## Cascading Rules
 
-Rules cascade from workspace → source → agent:
+Rules cascade from workspace → agent:
 1. Workspace rules apply globally
-2. Source rules extend workspace rules for that source
-3. Agent rules extend both for that agent's session
+2. Agent rules extend workspace rules for that agent's session
 
 Rules are additive - they can only allow more operations, not restrict further.
 
@@ -266,21 +221,11 @@ Rules are additive - they can only allow more operations, not restrict further.
 
 ## Examples
 
-### Read-only Linear access:
+### Read-only MCP access:
 ```json
 {
   "allowedMcpPatterns": [
     { "pattern": "^mcp__linear__(list|get|search)", "comment": "Read operations" }
-  ]
-}
-```
-
-### Search-only API:
-```json
-{
-  "allowedApiEndpoints": [
-    { "method": "GET", "path": ".*" },
-    { "method": "POST", "path": "^/search" }
   ]
 }
 ```

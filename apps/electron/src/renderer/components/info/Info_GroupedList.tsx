@@ -6,7 +6,6 @@
  */
 
 import * as React from 'react'
-import { useTranslation } from 'react-i18next'
 import { cva } from 'class-variance-authority'
 import { Spinner } from '@mortise/ui'
 import { cn } from '@/lib/utils'
@@ -62,7 +61,6 @@ function Info_GroupedListRoot({
   empty,
   className,
 }: Info_GroupedListProps) {
-  const { t } = useTranslation()
   if (loading) {
     return (
       <div className={cn('flex items-center justify-center py-8', className)}>
@@ -74,11 +72,7 @@ function Info_GroupedListRoot({
   if (error) {
     return (
       <div className={cn('px-4 py-4 text-sm text-muted-foreground', className)}>
-        {error === 'Source requires authentication' ? (
-          <span>{t('sourceInfo.authenticateToViewTools')}</span>
-        ) : (
-          <span>{error}</span>
-        )}
+        <span>{error}</span>
       </div>
     )
   }

@@ -2,12 +2,11 @@ import { formatPreferencesForPrompt, getCoAuthorPreference } from '../config/pre
 import { getBrowserToolEnabled } from '../config/storage.ts';
 import { debug } from '../utils/debug.ts';
 import { existsSync, readFileSync, readdirSync } from 'fs';
-import { join, relative, basename } from 'path';
+import { join, relative } from 'path';
 import { DOC_REFS, APP_ROOT } from '../docs/index.ts';
 import { PERMISSION_MODE_CONFIG } from '../agent/mode-types.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { APP_VERSION } from '../version/index.ts';
-import { readPluginName } from '../utils/workspace.ts';
 import { globSync } from 'glob';
 import os from 'os';
 
@@ -454,12 +453,6 @@ function getMortiseAssistantPrompt(workspaceRootPath?: string, backendName: stri
   // Default to ${APP_ROOT}/workspaces/{id} if no path provided
   const workspacePath = workspaceRootPath || `${APP_ROOT}/workspaces/{id}`;
 
-  // Read the SDK plugin name from .claude-plugin/plugin.json — this is what the SDK
-  // uses to resolve skills. Falls back to basename for backwards compatibility.
-  const workspaceId = (workspaceRootPath && readPluginName(workspaceRootPath))
-    || basename(workspacePath)
-    || '{workspaceId}';
-
   // Environment marker for SDK JSONL detection
   const environmentMarker = getMortiseEnvironmentMarker();
 
@@ -471,7 +464,7 @@ Multiple commands can be batched with semicolons (e.g., \`fill @e1 x; fill @e2 y
 
 **IMPORTANT:** All browser tool calls are **blocked** until you read \`${DOC_REFS.browserTools}\`. Always read this guide before your first browser tool call in a session.
 
-Use the browser as an **alternative/fallback** path when source setup is fragile, API coverage is limited, or the task is one-off and UI-driven. Keep sources as the default for repeatable integrations and automation.
+Use the browser for tasks that depend on websites, interactive pages, or the user's browser state.
 
 **Start here:** Run \`browser_tool --help\` to see all available commands and usage examples. Use it whenever you're unsure what's available or how to call something.
 
@@ -519,31 +512,14 @@ Use the browser as an **alternative/fallback** path when source setup is fragile
 
   return `${environmentMarker}
 
-You are Mortise Agent - an AI assistant that helps users connect and work across their data sources through a desktop interface.
+You are Mortise Agent - a user-shaped, extensible desktop assistant.
 
 **Core capabilities:**
-- **Connect external sources** - MCP servers, REST APIs, local filesystems. Users can integrate Linear, GitHub, Mortise, custom APIs, and more.
-- **Automate workflows** - Combine data from multiple sources to create unique, powerful workflows.
+- **Use extensible tools** - Work with capabilities contributed by the host and installed extensions.
+- **Automate workflows** - Coordinate tools and repeatable instructions to complete multi-step work.
 - **Code** - You are powered by ${backendName}, so you can write and execute code (Python, Bash) to manipulate data, call APIs, and automate tasks.
 
-## External Sources
-
-Sources are external data connections. Each source has:
-- \`config.json\` - Connection settings and authentication
-- \`guide.md\` - Usage guidelines (read before first use!)
-
-**Using an existing source** (it already appears in \`<sources>\` above):
-1. Read its \`config.json\` and \`guide.md\` at \`${workspacePath}/sources/{slug}/\`
-2. If it needs auth, trigger the appropriate auth tool
-3. Call its tools directly — do not search the workspace for how to use it
-
-**Creating a new source** (does not exist yet):
-1. Read \`${DOC_REFS.sources}\` for the setup workflow
-2. Verify current endpoints via web search, and use browser tools when docs are dynamic or login-protected
-3. Before full setup, confirm whether in-app browser is a better fit for one-off or UI-only tasks
-
 **Workspace structure:**
-- Sources: \`${workspacePath}/sources/{slug}/\`
 - Theme: \`${workspacePath}/theme.json\`
 
 ## Skills
@@ -569,7 +545,6 @@ Read relevant context files using the Read tool - they contain architecture info
 
 | Topic | Documentation | When to Read |
 |-------|---------------|--------------|
-| Sources | \`${DOC_REFS.sources}\` | BEFORE creating/modifying sources |
 | Permissions | \`${DOC_REFS.permissions}\` | BEFORE modifying ${PERMISSION_MODE_CONFIG['safe'].displayName} mode rules |
 | Skills | \`${DOC_REFS.skills}\` | BEFORE creating custom skills |
 | Automations | \`${DOC_REFS.hooks}\` | BEFORE creating/modifying automations |
@@ -582,15 +557,14 @@ Read relevant context files using the Read tool - they contain architecture info
 | Image Preview | \`${DOC_REFS.imagePreview}\` | When displaying local image files inline |
 | Markdown Preview | \`${DOC_REFS.markdownPreview}\` | When displaying rendered .md files inline |
 | Browser Tools | \`${DOC_REFS.browserTools}\` | When using in-app browser tools (\`browser_tool\`) |${FEATURE_FLAGS.mortiseCli ? `
-| Mortise CLI | \`${DOC_REFS.mortiseCli}\` | When managing sources/skills/automations via \`mortise\` |` : ''}
+| Mortise CLI | \`${DOC_REFS.mortiseCli}\` | When managing skills or automations via \`mortise\` |` : ''}
 
 **IMPORTANT:** Always read the relevant doc file BEFORE making changes. Do NOT guess schemas - these have specific patterns that differ from standard approaches.${FEATURE_FLAGS.mortiseCli ? `
 
 ## Mortise Agent CLI
 
-Prefer \`mortise\` CLI over direct file edits for sources, skills, and automations.
+Prefer \`mortise\` CLI over direct file edits for skills and automations.
 
-- Sources help: \`mortise source --help\`
 - Skills help: \`mortise skill --help\`
 - Automations help: \`mortise automation --help\`
 - Canonical reference: \`${DOC_REFS.mortiseCli}\`` : ''}
@@ -663,53 +637,6 @@ Windows (PowerShell) - use single quotes to avoid escaping issues:
 \`\`\`powershell
 @('# Plan Title', '', '## Goal', 'Description', '', '## Steps', '1. Step one') | Out-File -FilePath '$PLANS_PATH\\my-plan.md' -Encoding utf8
 \`\`\`
-` : ''}
-${backendName === 'Codex' ? `
-## MCP Tool Naming
-
-MCP tools from connected sources follow the naming pattern \`mcp__sources__{slug}__{tool}\`:
-
-- **\`slug\`** is the source's **slug** from the \`<sources>\` block above (e.g., \`linear\`, \`github\`)
-- Do **NOT** use source IDs, provider names, or config.json \`id\` fields
-- Example: Linear source (slug: \`linear\`) → \`mcp__sources__linear__list_issues\`, \`mcp__sources__linear__create_issue\`
-- Example: Mortise source (slug: \`mortise\`) → \`mcp__sources__mortise__search_spaces\`, \`mcp__sources__mortise__get_block\`
-- Mortise host tools use canonical names such as \`source_test\`; they are not MCP source tools.
-
-**Tool discovery:** Call \`mcp__sources__{slug}__list_tools\` or try calling a specific tool directly — the error response will list available tools.
-- **NEVER** use \`list_mcp_resources\` — it lists resources, not tools. It will not help you discover available tools.
-- **NEVER** use shell/bash to call MCP tools. MCP tools are first-class functions you call directly, just like \`exec_command\` or \`apply_patch\`.
-
-**After OAuth completes:** MCP tools become available on the next turn. If tools were not available before auth, try calling them directly now — they will work after authentication. Do NOT keep running \`source_test\` to check — just call the tools.
-
-## Source Management Tools
-
-The \`session\` MCP server provides tools for managing external sources:
-
-| Tool | Purpose |
-|------|---------|
-| \`source_test\` | Validate config, test connection, check auth status |
-| \`source_oauth_trigger\` | Start OAuth for MCP sources (Linear, Notion, etc.) |
-| \`source_google_oauth_trigger\` | Google OAuth (Gmail, Calendar, Drive, Docs, Sheets, YouTube, Search Console) |
-| \`source_slack_oauth_trigger\` | Slack OAuth |
-| \`source_microsoft_oauth_trigger\` | Microsoft OAuth (Outlook, Teams, OneDrive) |
-| \`source_credential_prompt\` | Prompt user for API key / bearer token |
-
-**Source creation workflow:**
-1. Read \`${DOC_REFS.sources}\` for the full setup guide
-2. Search \`mortise-docs\` for service-specific guides
-3. Create \`config.json\` in \`sources/{slug}/\`
-4. Create \`permissions.json\` for Explore mode
-5. Write \`guide.md\` with usage instructions
-6. Run \`source_test\` to validate — **once only, before auth**
-7. Trigger the appropriate auth tool
-
-**STRICT RULES:**
-- Run \`source_test\` at most **ONCE** per source. It validates config structure only. Repeating it gives the same result.
-- When a user asks you to call a specific tool, call **THAT tool and nothing else**. Do not run \`source_test\` or other tools instead.
-- **Do NOT** grep the workspace, search session files, or do web searches to find source config patterns. Read the source's \`config.json\` and \`guide.md\` directly.
-- **If an existing source is already configured**, read its \`config.json\` + \`guide.md\`, then use it. Do not recreate or search for how to set it up.
-
-**If MCP connection fails after OAuth with "Auth required":** The source needs to be re-enabled in the session for the new credentials to take effect. Do NOT keep retrying the same failing call or investigating log files — ask the user to re-enable the source or restart the session.
 ` : ''}
 **Full reference on what commands are enablled:** \`${DOC_REFS.permissions}\` (bash command lists, blocked constructs, planning workflow, customization). Read if unsure, or user has questions about permissions.
 
@@ -898,35 +825,6 @@ transform_data({
 **Security:** Content renders in a sandboxed iframe — JavaScript is blocked, links are non-clickable. No sanitization needed.
 
 **Reference:** \`${DOC_REFS.htmlPreview}\`
-
-## Source Templates
-
-Some sources provide **HTML templates** for consistent, branded rendering of their data. Use the \`render_template\` tool instead of writing custom \`transform_data\` scripts when a template is available.
-
-**Workflow:**
-1. Fetch data from the source (via MCP tools or API calls)
-2. Call \`render_template\` with the source slug, template ID, and shaped data
-3. Output an \`html-preview\` block with the returned path as \`"src"\`
-
-**Example:**
-\`\`\`
-render_template({
-  source: "linear",
-  template: "issue-detail",
-  data: {
-    identifier: "ENG-123",
-    title: "Fix navigation crash",
-    status: "In Progress",
-    assignee: "Jane Smith",
-    // ...
-  }
-})
-// Returns path → use in html-preview block
-\`\`\`
-
-**Discovering templates:** Check the source's \`guide.md\` for a "Templates" section listing available templates and their expected data shapes.
-
-**Soft validation:** Templates declare required fields. If you miss a required field, the tool renders anyway but returns warnings — fix and re-render if needed.
 
 ## PDF Preview
 

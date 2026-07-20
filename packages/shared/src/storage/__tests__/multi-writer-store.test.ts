@@ -242,6 +242,58 @@ describe('MultiWriterStore', () => {
     }
   })
 
+  it('registers and fences domain-specific capabilities independently', async () => {
+    const databasePath = createDatabasePath()
+    const current = await MultiWriterStore.open({
+      databasePath,
+      writerId: 'automation-v3-writer',
+      writerVersion: 1,
+      capabilities: { 'automations.definitions': { minWriteVersion: 3, maxWriteVersion: 3 } },
+    })
+    try {
+      expect(current.getCapabilityVersion('automations.definitions')).toBe(3)
+      expect(current.mutateRecord({
+        capability: 'automations.definitions',
+        namespace: 'automations',
+        key: 'definitions',
+        value: { schemaVersion: 3 },
+        expectedVersion: null,
+        operationId: 'automation-definition-v3',
+      }).status).toBe('applied')
+    } finally {
+      current.close()
+    }
+
+    const older = await MultiWriterStore.open({
+      databasePath,
+      writerId: 'automation-v2-writer',
+      writerVersion: 1,
+      capabilities: { 'automations.definitions': { minWriteVersion: 2, maxWriteVersion: 2 } },
+    })
+    try {
+      expect(older.getRecord('automations', 'definitions')?.value).toEqual({ schemaVersion: 3 })
+      expect(older.isCapabilityWritable('automations.definitions')).toBe(false)
+      expect(() => older.mutateRecord({
+        capability: 'automations.definitions',
+        namespace: 'automations',
+        key: 'definitions',
+        value: { schemaVersion: 2 },
+        expectedVersion: 1,
+        operationId: 'automation-definition-v2',
+      })).toThrow(CapabilityReadOnlyError)
+      expect(older.appendEvent({
+        streamId: 'compatible-events',
+        eventId: 'compatible-domain-event',
+        eventType: 'probe',
+        schemaVersion: 1,
+        payload: { ok: true },
+        operationId: 'compatible-domain-event-operation',
+      }).status).toBe('applied')
+    } finally {
+      older.close()
+    }
+  })
+
   it('rejects a modified known migration but ignores unknown newer migrations', async () => {
     const databasePath = createDatabasePath()
     const initial = await MultiWriterStore.open({ databasePath, writerId: 'writer-a', writerVersion: 1 })

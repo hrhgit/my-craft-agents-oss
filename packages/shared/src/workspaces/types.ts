@@ -1,29 +1,15 @@
 /**
  * Workspace Types
  *
- * Workspaces are the top-level organizational unit. Sources are scoped
- * to a workspace; sessions are stored at ~/.pi/agent/sessions/.
+ * Workspaces are the top-level organizational unit. Sessions are stored at
+ * ~/.pi/agent/sessions/.
  *
  * Directory structure:
  * ~/.mortise/workspaces/{slug}/
  *   ├── config.json      - Workspace settings
- *   └── sources/         - Data sources (MCP, API, local)
  */
 
 import type { PermissionMode } from '../agent/mode-manager.ts';
-
-/**
- * Local MCP server configuration
- * Controls whether stdio-based (local subprocess) MCP servers can be spawned.
- */
-export interface LocalMcpConfig {
-  /**
-   * Whether local (stdio) MCP servers are enabled for this workspace.
-   * When false, only HTTP-based MCP servers will be used.
-   * Default: true (can be overridden by MORTISE_LOCAL_MCP_ENABLED env var)
-   */
-  enabled: boolean;
-}
 
 /**
  * Workspace configuration (stored in config.json)
@@ -37,18 +23,10 @@ export interface WorkspaceConfig {
    * Default settings for new sessions in this workspace
    */
   defaults?: {
-    enabledSourceSlugs?: string[]; // Sources to enable by default
     permissionMode?: PermissionMode; // Default permission mode ('safe', 'ask', 'allow-all')
     cyclablePermissionModes?: PermissionMode[]; // Which modes can be cycled with SHIFT+TAB (min 2, default: all 3)
     colorTheme?: string; // Color theme override for this workspace (preset ID). Undefined = inherit from app default.
   };
-
-  /**
-   * Local MCP server configuration.
-   * Controls whether stdio-based MCP servers can be spawned in this workspace.
-   * Resolution order: ENV (MORTISE_LOCAL_MCP_ENABLED) > workspace config > default (true)
-   */
-  localMcpServers?: LocalMcpConfig;
 
   createdAt: number;
   updatedAt: number;
@@ -63,11 +41,10 @@ export interface CreateWorkspaceInput {
 }
 
 /**
- * Loaded workspace with resolved sources
+ * Loaded workspace with resolved session state
  */
 export interface LoadedWorkspace {
   config: WorkspaceConfig;
-  sourceSlugs: string[]; // Available source slugs (not fully loaded to save memory)
   sessionCount: number; // Number of sessions
 }
 
@@ -77,7 +54,6 @@ export interface LoadedWorkspace {
 export interface WorkspaceSummary {
   slug: string;
   name: string;
-  sourceCount: number;
   sessionCount: number;
   createdAt: number;
   updatedAt: number;

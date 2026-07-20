@@ -305,6 +305,17 @@ try {
 # 7. Package with electron-builder
 Write-Host "Packaging app with electron-builder..."
 
+# Build the independently versioned Developer Kit first, then stage its
+# immutable artifact as an optional payload for the offline NSIS installer.
+Write-Host "Staging offline Developer Kit..."
+Push-Location $RootDir
+try {
+    bun run scripts/stage-developer-kit-for-installer.ts
+    if ($LASTEXITCODE -ne 0) { throw "Developer Kit staging failed" }
+} finally {
+    Pop-Location
+}
+
 # Debug: Show bun.exe file info
 Write-Host ""
 Write-Host "=== Debug: bun.exe File Info ===" -ForegroundColor Magenta

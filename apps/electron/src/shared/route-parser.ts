@@ -12,7 +12,6 @@
 import type {
   NavigationState,
   SessionFilter,
-  SourceFilter,
   AutomationFilter,
 } from './types'
 import { isValidSettingsSubpage, type SettingsSubpage } from './settings-registry'
@@ -34,15 +33,13 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'settings'
+export type NavigatorType = 'sessions' | 'skills' | 'automations' | 'settings'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
   navigator: NavigatorType
   /** Session filter (only for sessions navigator) */
   sessionFilter?: SessionFilter
-  /** Source filter (only for sources navigator) */
-  sourceFilter?: SourceFilter
   /** Automation filter (only for automations navigator) */
   automationFilter?: AutomationFilter
   /** Details page info (null for empty state) */
@@ -60,7 +57,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'settings'
+  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'skills', 'automations', 'settings'
 ]
 
 /**
@@ -78,12 +75,6 @@ export function isCompoundRoute(route: string): boolean {
  *   'allSessions' -> { navigator: 'sessions', sessionFilter: { kind: 'allSessions' }, details: null }
  *   'allSessions/session/abc123' -> { navigator: 'sessions', sessionFilter: { kind: 'allSessions' }, details: { type: 'session', id: 'abc123' } }
  *   'flagged/session/abc123' -> { navigator: 'sessions', sessionFilter: { kind: 'allSessions' }, details: { type: 'session', id: 'abc123' } }
- *   'sources' -> { navigator: 'sources', details: null }
- *   'sources/api' -> { navigator: 'sources', sourceFilter: { kind: 'type', sourceType: 'api' }, details: null }
- *   'sources/mcp' -> { navigator: 'sources', sourceFilter: { kind: 'type', sourceType: 'mcp' }, details: null }
- *   'sources/local' -> { navigator: 'sources', sourceFilter: { kind: 'type', sourceType: 'local' }, details: null }
- *   'sources/source/github' -> { navigator: 'sources', details: { type: 'source', id: 'github' } }
- *   'sources/api/source/gmail' -> { navigator: 'sources', sourceFilter: { kind: 'type', sourceType: 'api' }, details: { type: 'source', id: 'gmail' } }
  *   'settings' -> { navigator: 'settings', details: null }  // navigator-only view
  *   'settings/shortcuts' -> { navigator: 'settings', details: { type: 'shortcuts', id: 'shortcuts' } }
  */
@@ -105,42 +96,6 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
       navigator: 'settings',
       details: { type: subpage, id: subpage },
     }
-  }
-
-  // Sources navigator - supports type filters (api, mcp, local)
-  if (first === 'sources') {
-    if (segments.length === 1) {
-      return { navigator: 'sources', details: null }
-    }
-
-    // Check for type filter: sources/api, sources/mcp, sources/local
-    const validSourceTypes = ['api', 'mcp', 'local']
-    if (validSourceTypes.includes(segments[1])) {
-      const sourceType = segments[1] as 'api' | 'mcp' | 'local'
-      const sourceFilter: SourceFilter = { kind: 'type', sourceType }
-
-      // Check for source selection within filtered view: sources/api/source/{sourceSlug}
-      if (segments[2] === 'source' && segments[3]) {
-        return {
-          navigator: 'sources',
-          sourceFilter,
-          details: { type: 'source', id: segments[3] },
-        }
-      }
-
-      // Just the filter, no selection
-      return { navigator: 'sources', sourceFilter, details: null }
-    }
-
-    // Unfiltered source selection: sources/source/{sourceSlug}
-    if (segments[1] === 'source' && segments[2]) {
-      return {
-        navigator: 'sources',
-        details: { type: 'source', id: segments[2] },
-      }
-    }
-
-    return null
   }
 
   // Skills navigator
@@ -243,6 +198,15 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
         details: { type: 'session', id: detailsId },
       }
     }
+    if (detailsType === 'new' && detailsId) {
+      const draftId = safeDecodeURIComponent(detailsId)
+      if (draftId === null) return null
+      return {
+        navigator: 'sessions',
+        sessionFilter,
+        details: { type: 'new', id: draftId },
+      }
+    }
   }
 
   return {
@@ -259,16 +223,6 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
   if (parsed.navigator === 'settings') {
     if (!parsed.details) return 'settings'
     return `settings/${parsed.details.type}`
-  }
-
-  if (parsed.navigator === 'sources') {
-    // Build base from filter (sources, sources/api, sources/mcp, sources/local)
-    let base = 'sources'
-    if (parsed.sourceFilter?.kind === 'type') {
-      base = `sources/${parsed.sourceFilter.sourceType}`
-    }
-    if (!parsed.details) return base
-    return `${base}/source/${parsed.details.id}`
   }
 
   if (parsed.navigator === 'skills') {
@@ -292,6 +246,7 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
   const base = 'allSessions'
 
   if (!parsed.details) return base
+  if (parsed.details.type === 'new') return `${base}/new/${encodeURIComponent(parsed.details.id)}`
   return `${base}/session/${parsed.details.id}`
 }
 
@@ -362,14 +317,6 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
     return { type: 'view', name: subpage, params: {} }
   }
 
-  // Sources
-  if (compound.navigator === 'sources') {
-    if (!compound.details) {
-      return { type: 'view', name: 'sources', params: {} }
-    }
-    return { type: 'view', name: 'source-info', id: compound.details.id, params: {} }
-  }
-
   // Skills
   if (compound.navigator === 'skills') {
     if (!compound.details) {
@@ -392,7 +339,7 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
     if (compound.details) {
       return {
         type: 'view',
-        name: 'session',
+        name: compound.details.type === 'new' ? 'new-conversation' : 'session',
         id: compound.details.id,
         params: { filter: 'allSessions' },
       }
@@ -418,7 +365,7 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
  * determines all 3 panels (sidebar, navigator, main content).
  *
  * Supports:
- * - Compound routes: allSessions, allSessions/session/abc, sources, sources/source/github, settings/shortcuts
+ * - Compound routes: allSessions, allSessions/session/abc, skills, settings/shortcuts
  * Returns null for action routes (they don't map to a navigation state) and invalid routes.
  */
 export function parseRouteToNavigationState(route: string): NavigationState | null {
@@ -453,22 +400,6 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     return { navigator: 'settings', subpage: compound.details.type as SettingsSubpage }
   }
 
-  // Sources - include filter if present
-  if (compound.navigator === 'sources') {
-    if (!compound.details) {
-      return {
-        navigator: 'sources',
-        filter: compound.sourceFilter,
-        details: null,
-      }
-    }
-    return {
-      navigator: 'sources',
-      filter: compound.sourceFilter,
-      details: { type: 'source', sourceSlug: compound.details.id },
-    }
-  }
-
   // Skills
   if (compound.navigator === 'skills') {
     if (!compound.details) {
@@ -499,6 +430,13 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
   // Sessions
   const filter = compound.sessionFilter || { kind: 'allSessions' as const }
   if (compound.details) {
+    if (compound.details.type === 'new') {
+      return {
+        navigator: 'sessions',
+        filter,
+        details: { type: 'new', draftId: compound.details.id },
+      }
+    }
     return {
       navigator: 'sessions',
       filter,
@@ -534,19 +472,6 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
       return { navigator: 'settings', subpage: 'shortcuts' }
     case 'preferences':
       return { navigator: 'settings', subpage: 'preferences' }
-    case 'sources':
-      return { navigator: 'sources', details: null }
-    case 'source-info':
-      if (parsed.id) {
-        return {
-          navigator: 'sources',
-          details: {
-            type: 'source',
-            sourceSlug: parsed.id,
-          },
-        }
-      }
-      return { navigator: 'sources', details: null }
     case 'skills':
       return { navigator: 'skills', details: null }
     case 'skill-info':
@@ -594,6 +519,12 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
     case 'label':
     case 'view':
       return { navigator: 'sessions', filter: { kind: 'allSessions' }, details: null }
+    case 'new-conversation':
+      return {
+        navigator: 'sessions',
+        filter: { kind: 'allSessions' },
+        details: { type: 'new', draftId: parsed.id || 'default' },
+      }
     default:
       return null
   }
@@ -610,14 +541,6 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
     return {
       navigator: 'settings',
       details: { type: state.subpage, id: state.subpage },
-    }
-  }
-
-  if (state.navigator === 'sources') {
-    return {
-      navigator: 'sources',
-      sourceFilter: state.filter ?? undefined,
-      details: state.details ? { type: 'source', id: state.details.sourceSlug } : null,
     }
   }
 
@@ -640,7 +563,19 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
   return {
     navigator: 'sessions',
     sessionFilter: state.filter,
-    details: state.details ? { type: 'session', id: state.details.sessionId } : null,
+    details: state.details
+      ? state.details.type === 'session'
+        ? { type: 'session', id: state.details.sessionId }
+        : { type: 'new', id: state.details.draftId }
+      : null,
+  }
+}
+
+function safeDecodeURIComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
   }
 }
 

@@ -152,6 +152,79 @@ export function createDefaultAppLayout(options: CreateDefaultLayoutOptions): App
   }
 }
 
+/** Focus an empty/new conversation without discarding the workspace's saved dock layout. */
+export function focusConversationRoute(layout: AppLayout, route: string): AppLayout {
+  const primary = layout.windows[PRIMARY_LAYOUT_WINDOW_ID]
+  if (!primary) return layout
+
+  const primaryTabIds = primary.groupIds.flatMap(groupId => layout.groups[groupId]?.tabIds ?? [])
+  const focused = layout.focusedTabId ? layout.tabs[layout.focusedTabId] : undefined
+  const primaryTabs = primaryTabIds.map(tabId => layout.tabs[tabId]).filter(Boolean)
+  const existingRoute = primaryTabs.find(tab => (
+    tab.ref.kind === 'conversation' && tab.ref.resourceId === route
+  ))
+  const conversation = existingRoute
+    ?? (focused?.ref.kind === 'conversation' && primaryTabIds.includes(focused.id) && canReplaceContentTab(focused)
+      ? focused
+      : primaryTabs.find(tab => tab.ref.kind === 'conversation' && canReplaceContentTab(tab)))
+
+  if (conversation) {
+    const group = layout.groups[conversation.groupId]
+    return {
+      ...layout,
+      tabs: {
+        ...layout.tabs,
+        [conversation.id]: {
+          ...conversation,
+          title: 'Conversation',
+          ref: {
+            kind: 'conversation',
+            serverId: conversation.ref.serverId,
+            workspaceId: conversation.ref.workspaceId,
+            resourceId: route,
+          },
+        },
+      },
+      groups: group ? {
+        ...layout.groups,
+        [group.id]: { ...group, activeTabId: conversation.id },
+      } : layout.groups,
+      focusedTabId: conversation.id,
+    }
+  }
+
+  const groupId = primary.groupIds[0]
+  const group = groupId ? layout.groups[groupId] : undefined
+  if (!group) return layout
+  let tabId = 'content:new-conversation'
+  let suffix = 1
+  while (layout.tabs[tabId]) tabId = `content:new-conversation-${suffix++}`
+  const serverId = primaryTabIds.map(id => layout.tabs[id]?.ref.serverId).find(Boolean) ?? 'local'
+  const tab: ContentTab = {
+    id: tabId,
+    title: 'Conversation',
+    ref: {
+      kind: 'conversation',
+      serverId,
+      workspaceId: layout.workspaceId,
+      resourceId: route,
+    },
+    groupId,
+    protection: { ...DEFAULT_PROTECTION },
+    instancePolicy: 'multiple',
+    allowDetach: true,
+  }
+  return {
+    ...layout,
+    tabs: { ...layout.tabs, [tabId]: tab },
+    groups: {
+      ...layout.groups,
+      [groupId]: { ...group, tabIds: [...group.tabIds, tabId], activeTabId: tabId },
+    },
+    focusedTabId: tabId,
+  }
+}
+
 export function canReplaceContentTab(tab: ContentTab | undefined): boolean {
   if (!tab) return false
   const { pinned, dirty, running, awaitingInput } = tab.protection
@@ -881,6 +954,11 @@ function sanitizeTab(id: string, value: unknown): ContentTab | null {
   const workspaceId = stringValue(value.ref.workspaceId, '')
   if (!serverId) return null
 
+  // Sources was retired as a navigation surface. Persisted tabs used its
+  // route as the resource id, so remove them here before the layout is
+  // reconstructed rather than restoring an unroutable blank panel.
+  if (kind === 'navigation' && isRetiredNavigationRoute(value.ref.resourceId)) return null
+
   const resourceId = typeof value.ref.resourceId === 'string'
     ? sanitizeResourceId(kind, value.ref.resourceId)
     : undefined
@@ -914,6 +992,10 @@ function sanitizeResourceId(kind: ContentKind, value: string): string | undefine
   if (!trimmed) return undefined
   if (kind === 'browser' && /^(?:https?|file):\/\//i.test(trimmed)) return undefined
   return trimmed
+}
+
+function isRetiredNavigationRoute(value: unknown): boolean {
+  return typeof value === 'string' && (value === 'sources' || value.startsWith('sources/'))
 }
 
 function sanitizeGeometry(value: unknown): unknown {

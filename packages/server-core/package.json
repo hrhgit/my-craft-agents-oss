@@ -12,6 +12,7 @@
     "./transport/client": "./src/transport/client.ts",
     "./runtime": "./src/runtime/index.ts",
     "./handlers": "./src/handlers/index.ts",
+    "./handlers/automation-workspace": "./src/handlers/automation-workspace.ts",
     "./bootstrap": "./src/bootstrap/index.ts",
     "./model-fetchers": "./src/model-fetchers/index.ts",
     "./domain": "./src/domain/index.ts",

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  applyInitialWindowNavigation,
   applyWindowRendererRuntimeQuery,
   buildInitialWindowRendererQuery,
   resolveWindowLayoutRuntime,
@@ -51,6 +52,19 @@ describe('window renderer query', () => {
 
     expect(search).toContain('sessionId=release-readiness')
     expect(new URLSearchParams(search).get('sessionId')).toBe('release-readiness')
+  })
+
+  it('lets an ordinary primary startup replace restored panels with the empty conversation route', () => {
+    expect(applyInitialWindowNavigation({
+      workspaceId: 'workspace-a',
+      route: 'allSessions/session/old',
+      panels: 'allSessions/session/old:1',
+      fi: '0',
+      sessionId: 'old',
+    }, 'allSessions/new/default')).toEqual({
+      workspaceId: 'workspace-a',
+      route: 'allSessions/new/default',
+    })
   })
 
   it('gives child sessions an isolated standalone layout instead of the primary model', () => {

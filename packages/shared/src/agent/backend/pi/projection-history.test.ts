@@ -101,7 +101,7 @@ describe('Pi HostSessionProjection history builder', () => {
       payload: { input: { path: 'note.txt' }, result: 'contents', status: 'completed' },
     })
     expect(snapshot.entities.find(entity => entity.entityId === 'content:text:assistant-final-entry:0')).toMatchObject({
-      turnId: 'pi-turn-1', payload: { text: 'done' },
+      turnId: 'pi-turn-1', payload: { text: 'done', usage: { inputTokens: 1, outputTokens: 1 } },
     })
     expect(snapshot.entities.find(entity => entity.entityId === 'artifact:plan-1')).toMatchObject({
       kind: 'plan_artifact', payload: { content: '# Plan' },

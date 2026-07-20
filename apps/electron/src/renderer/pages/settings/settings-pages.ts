@@ -19,6 +19,7 @@ import AiSettingsPage from './AiSettingsPage'
 import AgentSettingsPage from './AgentSettingsPage'
 import AppearanceSettingsPage from './AppearanceSettingsPage'
 import ExtensionsSettingsPage from './ExtensionsSettingsPage'
+import DeveloperSettingsPage from './DeveloperSettingsPage'
 import InputSettingsPage from './InputSettingsPage'
 import WorkspaceSettingsPage from './WorkspaceSettingsPage'
 import PermissionsSettingsPage from './PermissionsSettingsPage'
@@ -37,6 +38,7 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsSubpage, ComponentType> = 
   agents: AgentSettingsPage,
   appearance: AppearanceSettingsPage,
   extensions: ExtensionsSettingsPage,
+  developer: DeveloperSettingsPage,
   input: InputSettingsPage,
   workspace: WorkspaceSettingsPage,
   permissions: PermissionsSettingsPage,

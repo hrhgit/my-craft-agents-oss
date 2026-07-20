@@ -20,8 +20,8 @@ interface MockServer {
   close: () => void
   /** Channels invoked by the client, in order */
   invokedChannels: string[]
-  /** Arguments passed to sessions:create */
-  createSessionArgs?: unknown[]
+  /** Arguments passed to the ordinary first-turn transaction. */
+  createFirstTurnArgs?: unknown[]
   /** All invocation args, keyed by channel */
   invokeArgs: Record<string, unknown[][]>
 }
@@ -47,7 +47,7 @@ function createMockServer(opts?: MockServerOptions): MockServer {
   const token = 'test-token'
   const invokedChannels: string[] = []
   const invokeArgs: Record<string, unknown[][]> = {}
-  let createSessionArgs: unknown[] | undefined
+  let createFirstTurnArgs: unknown[] | undefined
   const providers = opts?.providers ?? []
 
   const server = Bun.serve({
@@ -97,9 +97,9 @@ function createMockServer(opts?: MockServerOptions): MockServer {
             case 'pi:setGlobalDefault':
               result = { success: true }
               break
-            case 'sessions:create':
-              createSessionArgs = envelope.args
-              result = { id: 'run-session-1', name: 'run-test' }
+            case 'sessions:createAndSendFirstTurn':
+              createFirstTurnArgs = envelope.args
+              result = { session: { id: 'run-session-1', name: 'run-test' }, messageId: 'first-message-1' }
               break
             case 'sessions:sendMessage': {
               ws.send(serializeEnvelope({
@@ -142,7 +142,7 @@ function createMockServer(opts?: MockServerOptions): MockServer {
     close: () => server.stop(),
     invokedChannels,
     invokeArgs,
-    get createSessionArgs() { return createSessionArgs },
+    get createFirstTurnArgs() { return createFirstTurnArgs },
   }
 }
 
@@ -180,18 +180,6 @@ describe('run command', () => {
     mockWsServer = null
   })
 
-  it('parseArgs: run with --source accumulates sources', () => {
-    const args = parseArgs([
-      'bun', 'index.ts',
-      '--source', 'mortise-kb',
-      '--source', 'github',
-      'run', 'do', 'stuff',
-    ])
-    expect(args.command).toBe('run')
-    expect(args.sources).toEqual(['mortise-kb', 'github'])
-    expect(args.rest).toEqual(['do', 'stuff'])
-  })
-
   it('parseArgs: --output-format stream-json', () => {
     const args = parseArgs([
       'bun', 'index.ts',
@@ -210,7 +198,7 @@ describe('run command', () => {
     expect(args.noCleanup).toBe(true)
   })
 
-  it('creates session with correct workspace and options', async () => {
+  it('starts the first turn with correct workspace and options', async () => {
     // We can't easily call cmdRun directly since it calls process.exit.
     // Instead, test the mock server interaction via CliRpcClient to verify
     // the channels and args that cmdRun would invoke.
@@ -222,29 +210,30 @@ describe('run command', () => {
     })
     await client.connect()
 
-    // Simulate what cmdRun does: resolve workspace, create session
+    // Simulate what cmdRun does: resolve workspace, then submit its first turn.
     const workspaces = await client.invoke('workspaces:get') as any[]
     expect(workspaces).toHaveLength(1)
 
     await client.invoke('window:switchWorkspace', workspaces[0].id)
 
-    const session = await client.invoke('sessions:create', 'ws-1', {
-      permissionMode: 'allow-all',
-      enabledSourceSlugs: ['mortise-kb'],
-    }) as { id: string }
-    expect(session.id).toBe('run-session-1')
+    const result = await client.invoke('sessions:createAndSendFirstTurn', {
+      workspaceId: 'ws-1',
+      message: 'test',
+      createOptions: { permissionMode: 'allow-all' },
+    }) as { session: { id: string } }
+    expect(result.session.id).toBe('run-session-1')
 
-    // Verify the create args
-    expect(mockWsServer!.createSessionArgs).toEqual([
-      'ws-1',
-      { permissionMode: 'allow-all', enabledSourceSlugs: ['mortise-kb'] },
-    ])
+    expect(mockWsServer!.createFirstTurnArgs).toEqual([{
+      workspaceId: 'ws-1',
+      message: 'test',
+      createOptions: { permissionMode: 'allow-all' },
+    }])
 
     // Verify channel order
     expect(mockWsServer!.invokedChannels).toEqual([
       'workspaces:get',
       'window:switchWorkspace',
-      'sessions:create',
+      'sessions:createAndSendFirstTurn',
     ])
 
     client.destroy()
@@ -294,10 +283,14 @@ describe('run command', () => {
     })
     await client.connect()
 
-    await client.invoke('sessions:create', 'ws-1', { permissionMode: 'allow-all' })
+    await client.invoke('sessions:createAndSendFirstTurn', {
+      workspaceId: 'ws-1',
+      message: 'test',
+      createOptions: { permissionMode: 'allow-all' },
+    })
     await client.invoke('sessions:delete', 'run-session-1')
 
-    expect(mockWsServer!.invokedChannels).toContain('sessions:create')
+    expect(mockWsServer!.invokedChannels).toContain('sessions:createAndSendFirstTurn')
     expect(mockWsServer!.invokedChannels).toContain('sessions:delete')
 
     client.destroy()
@@ -344,16 +337,17 @@ describe('run command', () => {
     // Then switchWorkspace is called with the returned ID
     await client.invoke('window:switchWorkspace', ws.id)
 
-    // Session is created with the bootstrapped workspace ID
-    await client.invoke('sessions:create', ws.id, {
-      permissionMode: 'allow-all',
-      enabledSourceSlugs: ['mortise-public'],
+    // The first turn is created with the bootstrapped workspace ID.
+    await client.invoke('sessions:createAndSendFirstTurn', {
+      workspaceId: ws.id,
+      message: 'test',
+      createOptions: { permissionMode: 'allow-all' },
     })
 
     expect(mockWsServer!.invokedChannels).toEqual([
       'workspaces:create',
       'window:switchWorkspace',
-      'sessions:create',
+      'sessions:createAndSendFirstTurn',
     ])
     expect(mockWsServer!.invokeArgs['workspaces:create']![0]).toEqual(['/tmp/ws', 'ci-workspace'])
 

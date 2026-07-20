@@ -19,6 +19,7 @@ const EXPECTED_CHANNELS: string[] = [
   'appearance:setRichToolDescriptions',
   'auth:showDeleteSessionConfirmation',
   'automations:changed',
+  'automations:command',
   'automations:delete',
   'automations:duplicate',
   'automations:get',
@@ -106,7 +107,6 @@ const EXPECTED_CHANNELS: string[] = [
   'layout:get',
   'layout:redockWindow',
   'layout:save',
-  'logo:getUrl',
   'menu:copy',
   'menu:cut',
   'menu:keyboardShortcuts',
@@ -170,10 +170,6 @@ const EXPECTED_CHANNELS: string[] = [
   'notification:navigate',
   'notification:setEnabled',
   'notification:show',
-  'oauth:cancel',
-  'oauth:complete',
-  'oauth:revoke',
-  'oauth:start',
   'onboarding:deferSetup',
   'onboarding:getAuthState',
   'onboarding:startMcpOAuth',
@@ -192,12 +188,10 @@ const EXPECTED_CHANNELS: string[] = [
   'pi:saveGlobalProvider',
   'pi:setGlobalDefault',
   'piExtensions:getCatalog',
-  'piExtensions:getDelegatePromptAutomation',
   'piExtensions:getExtensionStates',
   'piExtensions:getSettings',
   'piExtensions:patchExtensionConfig',
   'piExtensions:reload',
-  'piExtensions:setDelegatePromptAutomation',
   'piExtensions:setExtensionEnabled',
   'piExtensions:setSettings',
   'piExtensions:updateSettings',
@@ -205,8 +199,6 @@ const EXPECTED_CHANNELS: string[] = [
   'power:setKeepAwake',
   'preferences:read',
   'preferences:write',
-  'releaseNotes:get',
-  'releaseNotes:getLatestVersion',
   'remote:testConnection',
   'resources:export',
   'resources:import',
@@ -221,7 +213,9 @@ const EXPECTED_CHANNELS: string[] = [
   'sessions:cancel',
   'sessions:command',
   'sessions:create',
+  'sessions:createAndSendFirstTurn',
   'sessions:delete',
+  'sessions:discardFirstTurnAttachmentStaging',
   'sessions:export',
   'sessions:exportRemoteTransfer',
   'sessions:filesChanged',
@@ -238,7 +232,6 @@ const EXPECTED_CHANNELS: string[] = [
   'sessions:listChildSessions',
   'sessions:markAllRead',
   'sessions:readFile',
-  'sessions:respondToCredential',
   'sessions:respondToPermission',
   'sessions:searchContent',
   'sessions:sendMessage',
@@ -246,12 +239,15 @@ const EXPECTED_CHANNELS: string[] = [
   'sessions:unwatchFiles',
   'sessions:watchFiles',
   'sessions:writeFile',
+  'settings:discoverDeveloperKit',
   'settings:getDefaultThinkingLevel',
+  'settings:getDeveloperKit',
   'settings:getMidStreamBehavior',
   'settings:getNetworkProxy',
   'settings:getServerConfig',
   'settings:getServerStatus',
   'settings:setDefaultThinkingLevel',
+  'settings:setDeveloperKit',
   'settings:setMidStreamBehavior',
   'settings:setNetworkProxy',
   'settings:setServerConfig',
@@ -264,14 +260,6 @@ const EXPECTED_CHANNELS: string[] = [
   'skills:getFiles',
   'skills:openEditor',
   'skills:openFinder',
-  'sources:changed',
-  'sources:create',
-  'sources:delete',
-  'sources:get',
-  'sources:getMcpTools',
-  'sources:getPermissions',
-  'sources:saveCredentials',
-  'sources:startOAuth',
   'system:homeDir',
   'system:isDebugMode',
   'system:versions',
@@ -293,9 +281,7 @@ const EXPECTED_CHANNELS: string[] = [
   'theme:workspaceThemeChanged',
   'toolIcons:getMappings',
   'tools:getBrowserToolEnabled',
-  'tools:getDataSourcesEnabled',
   'tools:setBrowserToolEnabled',
-  'tools:setDataSourcesEnabled',
   'transfer:abort',
   'transfer:chunk',
   'transfer:commit',
@@ -355,18 +341,11 @@ describe('RPC_CHANNELS wire-format stability', () => {
 })
 
 // ── BroadcastEventMap payload shape assertions ──────────────────────────
-// These compile-time checks prevent the emitter/listener payload mismatch
-// that caused sources:changed to silently send undefined after OAuth flows.
+// These compile-time checks prevent emitter/listener payload mismatches.
 type AssertTuple<T extends readonly unknown[], N extends number> =
   T['length'] extends N ? true : false
 
 describe('BroadcastEventMap payload shapes', () => {
-  it('sources:changed carries (workspaceId, sources)', () => {
-    type Payload = BroadcastEventMap[typeof RPC_CHANNELS.sources.CHANGED]
-    const _check: AssertTuple<Payload, 2> = true
-    expect(_check).toBe(true)
-  })
-
   it('skills:changed carries (workspaceId, skills)', () => {
     type Payload = BroadcastEventMap[typeof RPC_CHANNELS.skills.CHANGED]
     const _check: AssertTuple<Payload, 2> = true

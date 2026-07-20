@@ -2,7 +2,7 @@
  * MultiSelectPanel - Panel shown when multiple items are selected.
  *
  * Displays the selection count and optional batch action buttons.
- * Used for sessions, sources, and skills.
+ * Used for sessions and other selectable entity lists.
  */
 
 import * as React from 'react'

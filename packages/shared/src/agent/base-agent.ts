@@ -5,7 +5,6 @@
  * Extracts common functionality including:
  * - Model/thinking configuration
  * - Permission mode management (via PermissionManager)
- * - Source management (via SourceManager)
  * - Planning heuristics (via PlanningAdvisor)
  * - Config watching (via ConfigWatcherManager)
  * - Usage tracking (via UsageTracker)
@@ -22,33 +21,23 @@ import { buildTransferredSessionContext } from './conversation-summary.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
 import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from './thinking-levels.ts';
 import type { PermissionMode } from './mode-manager.ts';
-import type { LoadedSource } from '../sources/types.ts';
 import { type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 import { readPiGlobalProviders, readPiGlobalSettings } from '../config/pi-global-config.ts';
-import { loadAllSources } from '../sources/storage.ts';
-import type { ApiServerConfig } from '../mcp/mcp-pool.ts';
 
 import type {
   AgentBackend,
   ChatOptions,
   PermissionCallback,
   PlanCallback,
-  AuthCallback,
-  SourceChangeCallback,
-  SourceActivationCallback,
-  SdkMcpServerConfig,
   BackendConfig,
   PostInitResult,
-  BridgeUpdateContext,
   RecoveryMessage,
 } from './backend/types.ts';
 import { AbortReason } from './backend/types.ts';
-import type { AuthRequest } from './session-scoped-tools.ts';
 import type { Workspace } from '../config/storage.ts';
 
 // Core modules
 import { PermissionManager } from './core/permission-manager.ts';
-import { SourceManager } from './core/source-manager.ts';
 import { PromptBuilder } from './core/prompt-builder.ts';
 import { PathProcessor } from './core/path-processor.ts';
 import { ConfigWatcherManager, type ConfigWatcherManagerCallbacks } from './core/config-watcher-manager.ts';
@@ -56,14 +45,13 @@ import { UsageTracker, type UsageUpdate } from './core/usage-tracker.ts';
 import { PrerequisiteManager } from './core/prerequisite-manager.ts';
 
 // Automation system for agent events
-import type { AutomationSystem } from '../automations/automation-system.ts';
 import type { AgentEvent as AutomationAgentEvent, AgentAutomationInput } from '../automations/types.ts';
 import { getSessionPlansPath, getSessionDataPath, getSessionPath } from '../sessions/storage.ts';
 import { getMiniAgentSystemPrompt } from '../prompts/system.ts';
 import { buildTitlePrompt, buildRegenerateTitlePrompt, validateTitle } from '../utils/title-generator.ts';
 
 // Skill extraction for Codex/Copilot backends (Claude uses native SDK Skill tool)
-import { parseMentions, resolveSkillMentions, resolveSourceMentions, resolveFileMentions } from '../mentions/index.ts';
+import { parseMentions, resolveSkillMentions, resolveFileMentions } from '../mentions/index.ts';
 import { loadAllSkills } from '../skills/storage.ts';
 
 // ============================================================
@@ -94,7 +82,6 @@ export interface SpawnSessionRequest {
   name?: string;
   provider?: string;
   model?: string;
-  enabledSourceSlugs?: string[];
   permissionMode?: PermissionMode;
   thinkingLevel?: ThinkingLevel;
   workingDirectory?: string;
@@ -117,12 +104,6 @@ export interface SpawnSessionHelpResult {
     models: string[];
     defaultModel?: string;
   }>;
-  sources: Array<{
-    slug: string;
-    name: string;
-    type: string;
-    enabled: boolean;
-  }>;
   defaults: {
     defaultProvider: string | null;
     permissionMode: string;
@@ -144,7 +125,7 @@ export const MINI_AGENT_MCP_KEYS = ['session'] as const;
  *
  * Provides:
  * - Common state management (model, thinking, workspace, session)
- * - Core module delegation (PermissionManager, SourceManager, etc.)
+ * - Core module delegation (PermissionManager, PromptBuilder, etc.)
  * - Callback declarations for UI integration
  *
  * Subclasses must implement:
@@ -183,13 +164,12 @@ export abstract class BaseAgent implements AgentBackend {
   // Core Modules (protected for subclass access)
   // ============================================================
   protected permissionManager: PermissionManager;
-  protected sourceManager: SourceManager;
   protected promptBuilder: PromptBuilder;
   protected pathProcessor: PathProcessor;
   protected configWatcherManager: ConfigWatcherManager | null = null;
   protected usageTracker: UsageTracker;
   protected prerequisiteManager: PrerequisiteManager;
-  protected automationSystem?: AutomationSystem;
+  protected automationEventSink?: BackendConfig['automationEventSink'];
 
   // ============================================================
   // Additional State (protected for subclass access)
@@ -197,64 +177,13 @@ export abstract class BaseAgent implements AgentBackend {
   protected temporaryClarifications: string | null = null;
 
   // ============================================================
-  // Source activation auto-retry (routed through the existing source_activated
-  // + forceAbort + auto_retry pipeline used for tool-call errors).
-  //
-  // When a session-scoped tool (source_test) successfully activates a new source
-  // mid-turn, the active tool registry is already frozen for the current query.
-  // The only way to
-  // expose the new tools is to end the current turn and auto-resend the user's
-  // original message with a "[{slug} activated]" suffix — same as what happens
-  // when a model directly calls an unknown tool on an inactive source.
-  //
-  // activateSourceInSessionFn in SessionManager sets this; the per-backend event
-  // loop consumes it after yielding the source_test tool_result.
-  // ============================================================
-  protected _pendingSourceActivationRestart: { sourceSlug: string; userMessage: string } | null = null;
-  protected _currentTurnUserMessage: string | null = null;
-
-  setPendingSourceActivationRestart(pending: { sourceSlug: string; userMessage: string }): void {
-    // First-writer-wins under parallel `source_test` calls. The
-    // overwrite race itself is harmless (each activation runs independently and
-    // succeeds), but the surviving slug is what the renderer displays in the
-    // "[{slug} activated]" suffix on the auto-resend. Keeping the first writer
-    // gives a stable user-facing label without forcing all source_tests to
-    // serialize. See #790.
-    if (this._pendingSourceActivationRestart) {
-      this.debug(
-        `source-activation restart already pending (${this._pendingSourceActivationRestart.sourceSlug}); ignoring overlapping activation of "${pending.sourceSlug}"`,
-      );
-      return;
-    }
-    this._pendingSourceActivationRestart = pending;
-  }
-
-  consumePendingSourceActivationRestart(): { sourceSlug: string; userMessage: string } | null {
-    const pending = this._pendingSourceActivationRestart;
-    this._pendingSourceActivationRestart = null;
-    return pending;
-  }
-
-  getCurrentTurnUserMessage(): string | null {
-    return this._currentTurnUserMessage;
-  }
-
-  protected setCurrentTurnUserMessage(message: string | null): void {
-    this._currentTurnUserMessage = message;
-  }
-
-  // ============================================================
   // Callbacks (public for facade wiring)
   // ============================================================
   onPermissionRequest: PermissionCallback | null = null;
   onPlanSubmitted: PlanCallback | null = null;
-  onAuthRequest: AuthCallback | null = null;
-  onSourceChange: SourceChangeCallback | null = null;
-  onSourcesListChange: ((sources: LoadedSource[]) => void) | null = null;
   onConfigValidationError: ((file: string, errors: string[]) => void) | null = null;
   onPermissionModeChange: ((mode: PermissionMode) => void) | null = null;
   onDebug: ((message: string) => void) | null = null;
-  onSourceActivationRequest: SourceActivationCallback | null = null;
   onUsageUpdate: ((update: UsageUpdate) => void) | null = null;
   onBackendAuthRequired: ((reason: string) => void) | null = null;
   onSpawnSession: ((request: SpawnSessionRequest) => Promise<SpawnSessionResult>) | null = null;
@@ -281,11 +210,6 @@ export abstract class BaseAgent implements AgentBackend {
       dataFolderPath: getSessionDataPath(config.workspace.rootPath, this._sessionId),
     });
 
-    // SourceManager: tracks active/inactive sources and formats state for context injection
-    this.sourceManager = new SourceManager({
-      onDebug: (msg) => this.debug(msg),
-    });
-
     // PromptBuilder: builds context blocks for user messages
     this.promptBuilder = new PromptBuilder({
       workspace: config.workspace,
@@ -305,14 +229,13 @@ export abstract class BaseAgent implements AgentBackend {
       onDebug: (msg) => this.debug(msg),
     });
 
-    // PrerequisiteManager: blocks source tool calls until guide.md is read
+    // PrerequisiteManager: enforces reading selected skill instructions.
     this.prerequisiteManager = new PrerequisiteManager({
       workspaceRootPath: config.workspace.rootPath,
       onDebug: (msg) => this.debug(msg),
     });
 
-    // AutomationSystem: workspace-level automations from automations.json
-    this.automationSystem = config.automationSystem;
+    this.automationEventSink = config.automationEventSink;
   }
 
   // ============================================================
@@ -333,14 +256,6 @@ export abstract class BaseAgent implements AgentBackend {
     }
 
     const callbacks: ConfigWatcherManagerCallbacks = {
-      onSourceChange: (slug, source) => {
-        this.debug(`Source changed: ${slug} ${source ? 'updated' : 'deleted'}`);
-        this.onSourceChange?.(slug, source);
-      },
-      onSourcesListChange: (sources) => {
-        this.debug(`Sources list changed: ${sources.length} sources`);
-        this.onSourcesListChange?.(sources);
-      },
       onValidationError: (file, errors) => {
         this.debug(`Config validation error: ${file}`);
         this.onConfigValidationError?.(file, errors);
@@ -382,7 +297,7 @@ export abstract class BaseAgent implements AgentBackend {
   }
 
   /**
-   * Fire an automation agent event (from automations.json) via AutomationSystem.
+   * Fire an Agent lifecycle event through the canonical host ingress.
    * Catches all errors — automations must never break the agent flow.
    *
    * Backends call this directly so automations stay outside provider SDK hooks.
@@ -391,66 +306,9 @@ export abstract class BaseAgent implements AgentBackend {
    */
   protected async emitAutomationEvent(event: AutomationAgentEvent, input: AgentAutomationInput, signal?: AbortSignal): Promise<void> {
     try {
-      await this.automationSystem?.executeAgentEvent(event, input, signal);
+      await this.automationEventSink?.(event, input, signal);
     } catch (err) {
       this.debug(`Automation event ${event} failed: ${err}`);
-    }
-  }
-
-  // ============================================================
-  // Session Host Tool Completion Handling
-  // ============================================================
-
-  /**
-   * Handle successful completion of a session host tool (auth tools).
-   *
-   * WHY THIS IS ON BaseAgent:
-   * -------------------------
-   * Session-scoped tools (source_oauth_trigger, etc.) run in an
-   * EXTERNAL MCP server subprocess (packages/session-mcp-server). That subprocess
-   * has its own process memory, so when it calls getSessionScopedToolCallbacks(),
-   * the callback registry is empty — it was populated in THIS process, not the subprocess.
-   *
-   * Instead, PiAgent detects session tool completions from its own event
-   * stream and calls THIS shared method to fire the appropriate callback.
-   *
-   * CALLBACKS FIRED:
-   * - Auth tools → this.onAuthRequest(authRequest)
-   *   → Electron shows auth dialog, calls interruptForHandoff(AuthRequest)
-   */
-  protected handleSessionToolCompletion(
-    toolName: string,
-    args: Record<string, unknown>
-  ): void {
-    // Auth tools — trigger auth request in the UI.
-    // Maps MCP tool names to auth request types.
-    const authToolTypes: Record<string, string> = {
-      'source_oauth_trigger': 'oauth',
-      'source_google_oauth_trigger': 'oauth-google',
-      'source_slack_oauth_trigger': 'oauth-slack',
-      'source_microsoft_oauth_trigger': 'oauth-microsoft',
-      'source_credential_prompt': 'credential',
-    };
-
-    const authType = authToolTypes[toolName];
-    if (authType && args.sourceSlug && this.onAuthRequest) {
-      const sourceSlug = args.sourceSlug as string;
-      const source = this.sourceManager.getAllSources().find(s => s.config.slug === sourceSlug);
-      const sourceName = source?.config.name || sourceSlug;
-      this.debug(`Auth tool completed: ${toolName} for ${sourceSlug}`);
-      this.onAuthRequest({
-        type: authType,
-        requestId: `${Date.now()}-auth`,
-        sessionId: this.config.session?.mortiseId || '',
-        sourceSlug,
-        sourceName,
-        ...(authType === 'credential' && {
-          mode: (args.mode as string) || 'bearer',
-          labels: args.labels as Record<string, string> | undefined,
-          description: args.description as string | undefined,
-          hint: args.hint as string | undefined,
-        }),
-      } as AuthRequest);
     }
   }
 
@@ -535,12 +393,10 @@ export abstract class BaseAgent implements AgentBackend {
   /**
    * Reset prerequisite read state (e.g., on context compaction).
    * After compaction the LLM no longer has guide content in context,
-   * so it must re-read before using source tools.
-   * Also resets seen sources so guide paths re-appear in source introductions.
+   * so it must re-read selected skill instructions.
    */
   resetPrerequisiteState(): void {
     this.prerequisiteManager.resetReadState();
-    this.sourceManager.resetSeenSources();
   }
 
   /**
@@ -574,76 +430,6 @@ export abstract class BaseAgent implements AgentBackend {
     this.debug(`SDK cwd updated: ${path}`);
   }
 
-  // ============================================================
-  // Source Management (delegated to SourceManager)
-  // ============================================================
-
-  /**
-   * Set the MCP server configurations for sources.
-   * Called by facade when sources are activated/deactivated.
-   *
-   * Subclasses may override to handle provider-specific MCP setup.
-   */
-  async setSourceServers(
-    mcpServers: Record<string, SdkMcpServerConfig>,
-    apiServers: Record<string, unknown>,
-    intendedSlugs?: string[]
-  ): Promise<void> {
-    // Update SourceManager state (common tracking)
-    this.sourceManager.updateActiveState(
-      Object.keys(mcpServers),
-      Object.keys(apiServers),
-      intendedSlugs
-    );
-
-    // Sync the centralized MCP client pool (if available)
-    // Both MCP sources and API sources are routed through the pool.
-    if (this.config.mcpPool) {
-      try {
-        await this.config.mcpPool.sync(mcpServers, apiServers as Record<string, ApiServerConfig>);
-      } catch (err) {
-        this.debug(`Failed to sync MCP pool: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-
-  getActiveSourceSlugs(): string[] {
-    return Array.from(this.sourceManager.getIntendedSlugs());
-  }
-
-  getAllSources(): LoadedSource[] {
-    return this.sourceManager.getAllSources();
-  }
-
-  /**
-   * Set all sources (for context injection).
-   * Uses SourceManager for state tracking.
-   */
-  setAllSources(sources: LoadedSource[]): void {
-    this.sourceManager.setAllSources(sources);
-  }
-
-  /**
-   * Mark a source as unseen (will show introduction text again).
-   */
-  markSourceUnseen(sourceSlug: string): void {
-    this.sourceManager.markSourceUnseen(sourceSlug);
-  }
-
-  /**
-   * Check if a source server is currently active.
-   */
-  isSourceServerActive(serverName: string): boolean {
-    return this.sourceManager.isSourceActive(serverName);
-  }
-
-  /**
-   * Get the set of active source server names.
-   */
-  getActiveSourceServerNames(): Set<string> {
-    return new Set(this.sourceManager.getActiveSlugs());
-  }
-
   /**
    * Set temporary clarifications for context injection.
    * These are injected into prompts but not yet persisted.
@@ -655,13 +441,6 @@ export abstract class BaseAgent implements AgentBackend {
   // ============================================================
   // Manager Accessors (for advanced queries)
   // ============================================================
-
-  /**
-   * Get SourceManager for advanced source state queries.
-   */
-  getSourceManager(): SourceManager {
-    return this.sourceManager;
-  }
 
   /**
    * Get PermissionManager for advanced permission queries.
@@ -842,15 +621,6 @@ ${formattedMessages}
   }
 
   /**
-   * Apply bridge/config updates mid-session.
-   * Default: no-op for backends that don't use bridge-mcp-server (Claude, Pi).
-   * Override in Codex/Copilot to regenerate config or write bridge files.
-   */
-  async applyBridgeUpdates(_context: BridgeUpdateContext): Promise<void> {
-    // No-op by default
-  }
-
-  /**
    * Ensure branch sessions are backend-ready before first user message.
    * Default implementation is a no-op.
    */
@@ -876,15 +646,7 @@ ${formattedMessages}
   destroy(): void {
     this.stopConfigWatcher();
     this.permissionManager.clearWhitelists();
-    this.sourceManager.resetSeenSources();
     this.usageTracker.reset();
-
-    // Disconnect MCP pool to avoid connection leaks
-    if (this.config.mcpPool) {
-      this.config.mcpPool.disconnectAll().catch(err => {
-        this.debug(`Failed to disconnect MCP pool: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
 
     this.debug('Base agent destroyed');
   }
@@ -918,7 +680,7 @@ ${formattedMessages}
 
     this.debug(`[extractSkillPaths] Available skills: ${skillSlugs.join(', ')}`);
 
-    const parsed = parseMentions(message, skillSlugs, []);
+    const parsed = parseMentions(message, skillSlugs);
     this.debug(`[extractSkillPaths] Parsed skills: ${JSON.stringify(parsed.skills)}`);
     if (parsed.invalidSkills && parsed.invalidSkills.length > 0) {
       this.debug(`[extractSkillPaths] Invalid skills: ${JSON.stringify(parsed.invalidSkills)}`);
@@ -944,9 +706,8 @@ ${formattedMessages}
     // becomes "find the bug in [Mentioned skill: Datadog API (slug: datadog-api)]"
     const skillNames = new Map(skills.map(s => [s.slug, s.metadata.name]));
     const withSkills = resolveSkillMentions(message, skillNames);
-    const withSources = resolveSourceMentions(withSkills);
     const workDir = this.config.session?.workingDirectory ?? this.workingDirectory;
-    const resolved = resolveFileMentions(withSources, workDir).trim();
+    const resolved = resolveFileMentions(withSkills, workDir).trim();
 
     // If user sent only skill mentions with no other text, add a directive
     const cleanMessage = (!resolved && skillPaths.size > 0)
@@ -1020,15 +781,7 @@ ${formattedMessages}
     const messageParts = [branchSeedContext, transferredSessionContext, directive, cleanMessage].filter(Boolean);
     const effectiveMessage = messageParts.join('\n\n');
 
-    // Capture the raw user message for source-activation auto-retry. `cleanMessage`
-    // has skill paths stripped but otherwise matches what the user typed — exactly
-    // what we want to resend when an activation forces a turn restart.
-    this.setCurrentTurnUserMessage(cleanMessage);
-    try {
-      yield* this.chatImpl(effectiveMessage, attachments, options);
-    } finally {
-      this.setCurrentTurnUserMessage(null);
-    }
+    yield* this.chatImpl(effectiveMessage, attachments, options);
   }
 
   // ============================================================
@@ -1101,6 +854,10 @@ ${formattedMessages}
    */
   abstract runMiniCompletion(prompt: string): Promise<string | null>;
 
+  async runIsolatedAgent(_request: import('./backend/types.ts').IsolatedAgentRequest): Promise<string | null> {
+    throw new Error('This backend does not support isolated Agent execution');
+  }
+
   /**
    * Execute an LLM query using the agent's auth infrastructure.
    * Used by runMiniCompletion (title generation, conversation summary, etc.).
@@ -1140,7 +897,6 @@ ${formattedMessages}
       name: input.name as string | undefined,
       provider: input.provider as string | undefined,
       model: input.model as string | undefined,
-      enabledSourceSlugs: input.enabledSourceSlugs as string[] | undefined,
       permissionMode: input.permissionMode as SpawnSessionRequest['permissionMode'],
       thinkingLevel: input.thinkingLevel as SpawnSessionRequest['thinkingLevel'],
       attachments: input.attachments as SpawnSessionRequest['attachments'],
@@ -1150,14 +906,11 @@ ${formattedMessages}
   }
 
   /**
-   * Get available providers, models, and sources for spawn_session help mode.
+   * Get available providers and models for spawn_session help mode.
    */
   protected getSpawnSessionHelp(): SpawnSessionHelpResult {
     const providers = readPiGlobalProviders();
     const settings = readPiGlobalSettings();
-    const allSources = loadAllSources(this.config.workspace.rootPath);
-    const activeSlugs = this.sourceManager.getActiveSlugs();
-
     return {
       providers: Object.entries(providers).map(([key, provider]) => ({
         key,
@@ -1165,12 +918,6 @@ ${formattedMessages}
         isDefault: key === settings.defaultProvider,
         models: (provider.models || []).map(model => model.id),
         defaultModel: key === settings.defaultProvider ? settings.defaultModel : undefined,
-      })),
-      sources: allSources.map(s => ({
-        slug: s.config.slug,
-        name: s.config.name,
-        type: s.config.type,
-        enabled: activeSlugs.has(s.config.slug),
       })),
       defaults: {
         defaultProvider: settings.defaultProvider ?? null,

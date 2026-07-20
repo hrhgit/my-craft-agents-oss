@@ -45,6 +45,18 @@ describe('deriveSortedRecent', () => {
     ])
   })
 
+  it('uses Windows basenames even when the renderer runs on another platform', () => {
+    const result = deriveSortedRecent(
+      ['C:\\workspace\\Zebra', 'C:\\workspace\\apple', 'C:\\workspace\\Banana'],
+      undefined,
+    )
+    expect(result).toEqual([
+      'C:\\workspace\\apple',
+      'C:\\workspace\\Banana',
+      'C:\\workspace\\Zebra',
+    ])
+  })
+
   it('does not mutate the input array', () => {
     const input = ['/Users/alice/Zebra', '/Users/alice/apple']
     const snapshot = [...input]
@@ -89,6 +101,11 @@ describe('deriveSelectionFlags', () => {
   it('returns hasFolder + folderName when a custom folder is selected', () => {
     const flags = deriveSelectionFlags('/Users/alice/code/project', undefined)
     expect(flags.hasFolder).toBe(true)
+    expect(flags.folderName).toBe('project')
+  })
+
+  it('derives the basename for a Windows path on every renderer platform', () => {
+    const flags = deriveSelectionFlags('C:\\workspace\\project', undefined)
     expect(flags.folderName).toBe('project')
   })
 

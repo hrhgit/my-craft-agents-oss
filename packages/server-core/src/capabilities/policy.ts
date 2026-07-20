@@ -55,21 +55,13 @@ export const ELECTRON_CAPABILITY_POLICY_V1: readonly CapabilityPolicyRule[] = [
   { capability: 'browser.command', operations: ['execute'], decision: 'allow', extensionIds: ['browser'] },
   { capability: 'browser.operate', operations: ['snapshot', 'screenshot', 'console', 'network', 'downloads', 'challenge'], decision: 'allow' },
   { capability: 'browser.operate', operations: ['click', 'click-at', 'drag', 'fill', 'type', 'select', 'screenshot-region', 'wait', 'key', 'scroll', 'resize'], decision: 'prompt' },
-  // OAuth mutates account state and always requires an explicit user decision.
-  { capability: 'oauth.flow', operations: ['begin', 'revoke'], decision: 'prompt' },
-  { capability: 'oauth.flow', operations: ['status', 'cancel'], decision: 'allow' },
-  // Keychain metadata is safe to query; removal still requires confirmation.
-  { capability: 'credentials.keychain', operations: ['has'], decision: 'allow' },
-  { capability: 'credentials.keychain', operations: ['remove'], decision: 'prompt' },
   { capability: 'session.share', operations: ['status'], decision: 'allow' },
   { capability: 'session.share', operations: ['publish', 'refresh', 'revoke'], decision: 'prompt' },
   { capability: 'session.transfer', operations: ['export-summary', 'import-summary'], decision: 'prompt' },
   { capability: 'messaging.session', operations: ['status', 'list-bindings'], decision: 'allow' },
   { capability: 'messaging.session', operations: ['pair', 'unbind'], decision: 'prompt' },
-  { capability: 'automation.workspace', operations: ['status', 'list'], decision: 'allow' },
-  { capability: 'automation.workspace', operations: ['set-enabled'], decision: 'prompt' },
-  { capability: 'scheduler.workspace', operations: ['status', 'list'], decision: 'allow' },
-  { capability: 'scheduler.workspace', operations: ['set-enabled'], decision: 'prompt' },
-  { capability: 'webhook.workspace', operations: ['status', 'list'], decision: 'allow' },
-  { capability: 'webhook.workspace', operations: ['set-enabled'], decision: 'prompt' },
+  { capability: 'automation.workspace', operations: ['describe', 'validate', 'simulate'], decision: 'allow' },
+  // Definitions and run snapshots contain prompts, webhook headers, and output summaries.
+  { capability: 'automation.workspace', operations: ['list', 'get', 'get-run', 'list-runs'], decision: 'prompt' },
+  { capability: 'automation.workspace', operations: ['create', 'update', 'delete', 'set-enabled', 'run', 'emit-event'], decision: 'prompt' },
 ] as const

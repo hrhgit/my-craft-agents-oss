@@ -62,6 +62,15 @@ describe('buildClientApi chunked invokes', () => {
     })
   })
 
+  it('allows the first-turn transaction to carry large attachments through one request', () => {
+    expect(CHANNEL_MAP.createAndSendFirstTurn).toMatchObject({
+      type: 'invoke',
+      channel: RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN,
+      largeArgIndex: 0,
+      timeoutMs: 300_000,
+    })
+  })
+
   it('allows extension reload to outlive per-runtime interruption cleanup', () => {
     expect(CHANNEL_MAP.reloadPiExtensions).toMatchObject({
       type: 'invoke',

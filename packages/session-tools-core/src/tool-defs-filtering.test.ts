@@ -58,8 +58,6 @@ describe('session tool filtering helpers', () => {
     expect(allowed.has('browser_tool')).toBe(true);
     expect(allowed.has('script_sandbox')).toBe(true);
 
-    expect(blocked.has('source_oauth_trigger')).toBe(true);
-    expect(blocked.has('source_credential_prompt')).toBe(true);
     expect(blocked.has('spawn_session')).toBe(true);
   });
 
@@ -69,14 +67,13 @@ describe('session tool filtering helpers', () => {
 
     expect(allowedPrefixed.has('mcp__session__send_developer_feedback')).toBe(true);
     expect(allowedPrefixed.has('mcp__session__script_sandbox')).toBe(true);
-    expect(blockedPrefixed.has('mcp__session__source_oauth_trigger')).toBe(true);
     expect(blockedPrefixed.has('mcp__session__spawn_session')).toBe(true);
   });
 
   it('normalizes canonical names and persisted legacy aliases', () => {
-    expect(normalizeSessionToolName('source_test')).toBe('source_test');
-    expect(normalizeSessionToolName('mcp__session__source_test')).toBe('source_test');
-    expect(normalizeSessionToolName('session__source_test')).toBe('source_test');
-    expect(normalizeSessionToolName('mcp__linear__source_test')).toBeNull();
+    expect(normalizeSessionToolName('config_validate')).toBe('config_validate');
+    expect(normalizeSessionToolName('mcp__session__config_validate')).toBe('config_validate');
+    expect(normalizeSessionToolName('session__config_validate')).toBe('config_validate');
+    expect(normalizeSessionToolName('mcp__linear__config_validate')).toBeNull();
   });
 });

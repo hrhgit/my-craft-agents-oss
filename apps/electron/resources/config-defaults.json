@@ -10,11 +10,9 @@
     "keepAwakeWhileRunning": false,
     "richToolDescriptions": true,
     "browserToolEnabled": true,
-    "dataSourcesEnabled": false,
     "allowRemoteEvaluate": true,
     "piExtensions": {
       "enabled": true,
-      "delegatePromptAutomation": false,
       "subagent": {
         "reviewEnabled": true,
         "reviewModel": "stepfun/step-3.7-flash"
@@ -41,9 +39,6 @@
   "workspaceDefaults": {
     "thinkingLevel": "think",
     "permissionMode": "allow-all",
-    "cyclablePermissionModes": ["safe", "allow-all"],
-    "localMcpServers": {
-      "enabled": true
-    }
+    "cyclablePermissionModes": ["safe", "allow-all"]
   }
 }

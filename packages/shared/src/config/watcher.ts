@@ -10,7 +10,6 @@
  * - ~/.mortise/theme.json - App-level theme overrides
  * - ~/.mortise/themes/*.json - Preset theme files (app-level)
  * - ~/.mortise/workspaces/{slug}/ - Workspace directory (recursive)
- *   - sources/{slug}/config.json, guide.md, permissions.json
  *   - .pi/skills/{slug}/SKILL.md, icon.*
  *   - permissions.json
  */
@@ -30,19 +29,10 @@ import { readPiGlobalAuth, readPiGlobalProviders, readPiGlobalSettings, watchPiG
 import {
   validateConfig,
   validatePreferences,
-  validateSource,
   type ValidationResult,
 } from './validators.ts';
-import type { LoadedSource, SourceGuide } from '../sources/types.ts';
-import {
-  loadSource,
-  loadWorkspaceSources,
-  loadSourceGuide,
-  sourceNeedsIconDownload,
-  downloadSourceIcon,
-} from '../sources/storage.ts';
 import { permissionsConfigCache, getAppPermissionsDir } from '../agent/permissions-config.ts';
-import { getWorkspacePath, getWorkspaceSourcesPath, getWorkspaceSkillsPath, getWorkspacePiSessionsDir } from '../workspaces/storage.ts';
+import { getWorkspacePath, getWorkspaceSkillsPath, getWorkspacePiSessionsDir } from '../workspaces/storage.ts';
 import type { LoadedSkill } from '../skills/types.ts';
 import { loadSkill, loadAllSkills, invalidateSkillsCache, skillNeedsIconDownload, downloadSkillIcon } from '../skills/storage.ts';
 import { readSessionHeader } from '../sessions/jsonl.ts';
@@ -114,14 +104,6 @@ export interface ConfigWatcherCallbacks {
   /** Called when Pi providers, credentials, or their defaults change. */
   onProvidersChange?: (providers: Record<string, PiGlobalProvider>) => void;
 
-  // Source callbacks
-  /** Called when a specific source config changes (null if deleted) */
-  onSourceChange?: (slug: string, source: LoadedSource | null) => void;
-  /** Called when a source's guide.md changes */
-  onSourceGuideChange?: (slug: string, guide: SourceGuide) => void;
-  /** Called when the sources list changes (add/remove folders) */
-  onSourcesListChange?: (sources: LoadedSource[]) => void;
-
   // Skill callbacks
   /** Called when a specific skill changes (null if deleted) */
   onSkillChange?: (slug: string, skill: LoadedSkill | null) => void;
@@ -133,8 +115,6 @@ export interface ConfigWatcherCallbacks {
   onDefaultPermissionsChange?: () => void;
   /** Called when workspace permissions.json changes */
   onWorkspacePermissionsChange?: (workspaceId: string) => void;
-  /** Called when a source's permissions.json changes */
-  onSourcePermissionsChange?: (sourceSlug: string) => void;
 
   // Automations callbacks
   /** Called when automations.json changes */
@@ -195,7 +175,6 @@ export class ConfigWatcher {
   private isRunning = false;
 
   // Track known items for detecting adds/removes
-  private knownSources: Set<string> = new Set();
   private knownSkills: Set<string> = new Set();
   private knownThemes: Set<string> = new Set();
 
@@ -203,7 +182,6 @@ export class ConfigWatcher {
 
   // Computed paths
   private workspaceDir: string;
-  private sourcesDir: string;
   private skillsDir: string;
 
   constructor(workspaceIdOrPath: string, callbacks: ConfigWatcherCallbacks) {
@@ -219,7 +197,6 @@ export class ConfigWatcher {
       this.workspaceId = workspaceIdOrPath;
       this.workspaceDir = getWorkspacePath(workspaceIdOrPath);
     }
-    this.sourcesDir = getWorkspaceSourcesPath(this.workspaceDir);
     this.skillsDir = getWorkspaceSkillsPath(this.workspaceDir);
   }
 
@@ -281,10 +258,7 @@ export class ConfigWatcher {
     this.watchAppPermissionsDir();
     span.mark('watchAppPermissionsDir');
 
-    // Initial scan to populate known sources, skills, and themes
-    this.scanSources();
-    span.mark('scanSources');
-
+    // Initial scan to populate known skills and themes.
     this.scanSkills();
     span.mark('scanSkills');
 
@@ -351,7 +325,6 @@ export class ConfigWatcher {
     }
     this.watchers = [];
 
-    this.knownSources.clear();
     this.knownSkills.clear();
     this.knownThemes.clear();
 
@@ -500,28 +473,6 @@ export class ConfigWatcher {
       return;
     }
 
-    // Sources changes: sources/{slug}/...
-    if (parts[0] === 'sources' && parts.length >= 2) {
-      const slug = parts[1]!;  // Safe: checked parts.length >= 2
-      const file = parts[2];
-
-      // Directory-level changes (new/removed source folders)
-      if (parts.length === 2) {
-        this.debounce('sources-dir', () => this.handleSourcesDirChange());
-        return;
-      }
-
-      // File-level changes
-      if (file === 'config.json') {
-        this.debounce(`source-config:${slug}`, () => this.handleSourceConfigChange(slug));
-      } else if (file === 'guide.md') {
-        this.debounce(`source-guide:${slug}`, () => this.handleSourceGuideChange(slug));
-      } else if (file === 'permissions.json') {
-        this.debounce(`source-permissions:${slug}`, () => this.handleSourcePermissionsChange(slug));
-      }
-      return;
-    }
-
     // Skills changes: .pi/skills/{slug}/...
     if (parts[0] === '.pi' && parts[1] === 'skills' && parts.length >= 3) {
       const slug = parts[2]!;
@@ -560,163 +511,6 @@ export class ConfigWatcher {
     }, delayMs);
 
     this.debounceTimers.set(key, timer);
-  }
-
-  // ============================================================
-  // Sources Handlers
-  // ============================================================
-
-  /**
-   * Scan sources directory to populate known sources
-   */
-  private scanSources(): void {
-    if (!existsSync(this.sourcesDir)) {
-      mkdirSync(this.sourcesDir, { recursive: true });
-      return;
-    }
-
-    try {
-      const entries = readdirSync(this.sourcesDir);
-
-      for (const entry of entries) {
-        const entryPath = join(this.sourcesDir, entry);
-        if (statSync(entryPath).isDirectory()) {
-          this.knownSources.add(entry);
-        }
-      }
-
-      debug('[ConfigWatcher] Known sources:', Array.from(this.knownSources));
-    } catch (error) {
-      debug('[ConfigWatcher] Error scanning sources:', error);
-    }
-  }
-
-  /**
-   * Handle sources directory change (add/remove folders)
-   */
-  private handleSourcesDirChange(): void {
-    debug('[ConfigWatcher] Sources directory changed');
-
-    if (!existsSync(this.sourcesDir)) {
-      // Directory was deleted
-      const removed = Array.from(this.knownSources);
-      this.knownSources.clear();
-
-      for (const slug of removed) {
-        this.callbacks.onSourceChange?.(slug, null);
-      }
-
-      this.callbacks.onSourcesListChange?.([]);
-      return;
-    }
-
-    try {
-      const entries = readdirSync(this.sourcesDir);
-      const currentFolders = new Set<string>();
-
-      for (const entry of entries) {
-        const entryPath = join(this.sourcesDir, entry);
-        if (statSync(entryPath).isDirectory()) {
-          currentFolders.add(entry);
-        }
-      }
-
-      // Find added folders
-      for (const folder of currentFolders) {
-        if (!this.knownSources.has(folder)) {
-          debug('[ConfigWatcher] New source folder:', folder);
-          this.knownSources.add(folder);
-
-          const source = loadSource(this.workspaceDir, folder);
-          if (source) {
-            this.callbacks.onSourceChange?.(folder, source);
-          }
-        }
-      }
-
-      // Find removed folders
-      for (const folder of this.knownSources) {
-        if (!currentFolders.has(folder)) {
-          debug('[ConfigWatcher] Removed source folder:', folder);
-          this.knownSources.delete(folder);
-          this.callbacks.onSourceChange?.(folder, null);
-        }
-      }
-
-      // Notify list change
-      const allSources = loadWorkspaceSources(this.workspaceDir);
-      this.callbacks.onSourcesListChange?.(allSources);
-    } catch (error) {
-      debug('[ConfigWatcher] Error handling sources dir change:', error);
-      this.callbacks.onError?.('sources/', error as Error);
-    }
-  }
-
-  /**
-   * Handle source config.json change
-   * Downloads icon if URL specified and no local icon exists
-   */
-  private handleSourceConfigChange(slug: string): void {
-    debug('[ConfigWatcher] Source config changed:', slug);
-
-    const validation = validateSource(this.workspaceDir, slug);
-    if (!validation.valid) {
-      debug('[ConfigWatcher] Source validation failed:', slug, validation.errors);
-      this.callbacks.onValidationError?.(`sources/${slug}/config.json`, validation);
-      return;
-    }
-
-    const source = loadSource(this.workspaceDir, slug);
-
-    // Check if icon needs to be downloaded (URL in config, no local file)
-    if (source && sourceNeedsIconDownload(this.workspaceDir, slug, source.config)) {
-      debug('[ConfigWatcher] Downloading source icon:', slug);
-      downloadSourceIcon(this.workspaceDir, slug, source.config.icon!)
-        .then((iconPath) => {
-          if (iconPath) {
-            debug('[ConfigWatcher] Source icon downloaded:', slug, iconPath);
-            // Re-emit source change with updated icon path
-            const updatedSource = loadSource(this.workspaceDir, slug);
-            this.callbacks.onSourceChange?.(slug, updatedSource);
-          }
-        })
-        .catch((err) => {
-          debug('[ConfigWatcher] Source icon download failed:', slug, err);
-        });
-    }
-
-    this.callbacks.onSourceChange?.(slug, source);
-  }
-
-  /**
-   * Handle source guide.md change
-   */
-  private handleSourceGuideChange(slug: string): void {
-    debug('[ConfigWatcher] Source guide changed:', slug);
-
-    const guide = loadSourceGuide(this.workspaceDir, slug);
-    if (guide) {
-      this.callbacks.onSourceGuideChange?.(slug, guide);
-    }
-
-    // Also emit full source change
-    const source = loadSource(this.workspaceDir, slug);
-    if (source) {
-      this.callbacks.onSourceChange?.(slug, source);
-    }
-  }
-
-  /**
-   * Handle source permissions.json change
-   */
-  private handleSourcePermissionsChange(slug: string): void {
-    debug('[ConfigWatcher] Source permissions.json changed:', slug);
-
-    // Invalidate cache
-    permissionsConfigCache.invalidateSource(this.workspaceDir, slug);
-
-    // Notify callback
-    this.callbacks.onSourcePermissionsChange?.(slug);
   }
 
   // ============================================================

@@ -26,6 +26,7 @@ import {
 import type {
   RpcServer,
   HandlerFn,
+  HandlerOptions,
   RequestContext,
   WorkspaceAuthorizationRequest,
   WorkspaceAuthMethod,
@@ -203,6 +204,7 @@ export class WsRpcServer implements RpcServer {
   private httpsServer: HttpsServer | null = null
   private clients = new Map<string, ClientConnection>()
   private handlers = new Map<string, HandlerFn>()
+  private handlerOptions = new Map<string, HandlerOptions>()
   private pendingInvokes = new Map<string, PendingInvoke>()
   private activeRequests = new Map<string, ActiveRequest>()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -261,11 +263,12 @@ export class WsRpcServer implements RpcServer {
   // RpcServer interface
   // -------------------------------------------------------------------------
 
-  handle(channel: string, handler: HandlerFn): void {
+  handle(channel: string, handler: HandlerFn, options?: HandlerOptions): void {
     if (this.handlers.has(channel)) {
       throw new Error(`Handler already registered for channel: ${channel}`)
     }
     this.handlers.set(channel, handler)
+    if (options) this.handlerOptions.set(channel, options)
   }
 
   push(channel: string, target: PushTarget, ...args: any[]): void {
@@ -876,6 +879,7 @@ export class WsRpcServer implements RpcServer {
     })
 
     let timeout: ReturnType<typeof setTimeout> | null = null
+    const handlerTimeoutMs = this.handlerOptions.get(channel)?.timeoutMs ?? WsRpcServer.HANDLER_TIMEOUT_MS
     const abortPromise = new Promise<never>((_, reject) => {
       controller.signal.addEventListener('abort', () => {
         const reason = controller.signal.reason
@@ -884,11 +888,11 @@ export class WsRpcServer implements RpcServer {
     })
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
-        const err = new Error(`Handler timeout: ${channel} (${WsRpcServer.HANDLER_TIMEOUT_MS}ms)`)
+        const err = new Error(`Handler timeout: ${channel} (${handlerTimeoutMs}ms)`)
         ;(err as any).code = 'REQUEST_TIMEOUT'
         controller.abort(err)
         reject(err)
-      }, WsRpcServer.HANDLER_TIMEOUT_MS)
+      }, handlerTimeoutMs)
     })
 
     try {

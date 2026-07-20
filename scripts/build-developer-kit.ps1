@@ -40,6 +40,27 @@ function Invoke-Checked {
   if ($LASTEXITCODE -ne 0) { throw "$Description failed with exit code $LASTEXITCODE" }
 }
 
+function Write-PackagedPiExtensionGuide {
+  param([string]$SourcePath, [string]$DestinationPath)
+  $content = (Get-Content -Raw -LiteralPath $SourcePath) -replace "`r`n", "`n"
+  $sourceInvocationPattern = '(?ms)\nFrom a Mortise source checkout:\n\n```bash\nbun run mortise-ui.*?```\n'
+  if ([regex]::Matches($content, $sourceInvocationPattern).Count -ne 1) {
+    throw "Expected one source-only mortise-ui invocation in $SourcePath"
+  }
+  $content = [regex]::Replace($content, $sourceInvocationPattern, "`n")
+
+  $sourceTestPattern = '(?ms)The repository''s `mortise-gui\.ts` example.*?```bash\nbun run test:ui-validation:extension\n```'
+  if ([regex]::Matches($content, $sourceTestPattern).Count -ne 1) {
+    throw "Expected one source-only extension E2E section in $SourcePath"
+  }
+  $content = [regex]::Replace(
+    $content,
+    $sourceTestPattern,
+    'The Developer Kit examples and `bin\mortise-ui.exe` workflow are the packaged executable references. Use the source-development guide only when contributing to Mortise itself.'
+  )
+  [IO.File]::WriteAllText($DestinationPath, "$content`n", [Text.UTF8Encoding]::new($false))
+}
+
 Assert-ChildPath $kitDir $outputRoot
 Assert-ChildPath $archivePath $outputRoot
 Assert-ChildPath $devHostOutput $electronDir
@@ -91,11 +112,18 @@ if (-not (Test-Path -LiteralPath $uiAutomationDriver)) {
 
 $cliOutput = Join-Path $kitDir "bin\mortise-ui.exe"
 Invoke-Checked { bun build (Join-Path $repoRoot "scripts\mortise-ui\developer-kit-entry.ts") --compile --outfile $cliOutput } "mortise-ui compilation"
+$logsCliOutput = Join-Path $kitDir "bin\mortise-logs.exe"
+Invoke-Checked { bun build (Join-Path $repoRoot "scripts\mortise-logs\cli.ts") --compile --outfile $logsCliOutput } "mortise-logs compilation"
 
 Copy-Item -LiteralPath (Join-Path $repoRoot "developer-kit\README.md") -Destination (Join-Path $kitDir "README.md")
-Copy-Item -LiteralPath (Join-Path $electronDir "resources\docs\pi-extensions.md") -Destination (Join-Path $kitDir "docs\pi-extensions.md")
+Copy-Item -LiteralPath (Join-Path $repoRoot "developer-kit\docs\ui-validation.md") -Destination (Join-Path $kitDir "docs\ui-validation.md")
+Copy-Item -LiteralPath (Join-Path $repoRoot "developer-kit\docs\logs.md") -Destination (Join-Path $kitDir "docs\logs.md")
+Copy-Item -LiteralPath (Join-Path $repoRoot "docs\testing.md") -Destination (Join-Path $kitDir "docs\source-development-testing.md")
+Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\smoke-developer-kit.ps1") -Destination (Join-Path $kitDir "bin\smoke.ps1")
+$piExtensionGuide = Join-Path $electronDir "resources\docs\pi-extensions.md"
+Copy-Item -LiteralPath $piExtensionGuide -Destination (Join-Path $kitDir "docs\source-development-pi-extensions.md")
+Write-PackagedPiExtensionGuide -SourcePath $piExtensionGuide -DestinationPath (Join-Path $kitDir "docs\pi-extensions.md")
 Copy-Item -LiteralPath (Join-Path $electronDir "resources\docs\mortise-cli.md") -Destination (Join-Path $kitDir "docs\mortise-cli.md")
-Copy-Item -LiteralPath (Join-Path $repoRoot "docs\testing.md") -Destination (Join-Path $kitDir "docs\ui-validation.md")
 Copy-Item -LiteralPath (Join-Path $repoRoot "developer-kit\examples") -Destination (Join-Path $kitDir "examples") -Recurse
 Copy-Item -LiteralPath (Join-Path $repoRoot "developer-kit\schemas") -Destination (Join-Path $kitDir "schemas") -Recurse
 
@@ -105,6 +133,7 @@ $kitManifest = [ordered]@{
   version = $kitPackage.version
   hostVersion = $hostPackage.version
   uiValidationProtocolVersion = 1
+  runtimeLogSchemaVersion = 1
   platform = "win32"
   arch = "x64"
   appId = "io.github.hrhgit.mortise.devhost"
@@ -114,6 +143,10 @@ $kitManifest = [ordered]@{
   "$kitManifest`n",
   [Text.UTF8Encoding]::new($false)
 )
+
+Invoke-Checked {
+  powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kitDir "bin\smoke.ps1") -KitDir $kitDir
+} "Packaged Developer Kit smoke"
 
 if (-not $NoArchive) {
   Compress-Archive -LiteralPath $kitDir -DestinationPath $archivePath -CompressionLevel Optimal

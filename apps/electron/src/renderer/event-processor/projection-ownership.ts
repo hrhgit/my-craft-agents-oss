@@ -11,8 +11,6 @@ const PROJECTION_OWNED_HOST_EVENTS = new Set([
   'plan_submitted',
   'plan_artifact_changed',
   'plan_mode_state_changed',
-  'auth_request',
-  'auth_completed',
 ])
 
 /** Pi projection is the sole owner of transcript and lifecycle presentation. */

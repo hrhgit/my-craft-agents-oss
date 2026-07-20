@@ -29,11 +29,9 @@ export interface RecoveryAction {
   /** Slash command to execute (e.g., '/settings') */
   command?: string;
   /** Custom action type for special handling */
-  action?: 'retry' | 'settings' | 'reauth' | 'open_url' | 'reconnect_source';
+  action?: 'retry' | 'settings' | 'reauth' | 'open_url';
   /** URL to open (for 'open_url' action) */
   url?: string;
-  /** Source slug (for 'reconnect_source' action) */
-  sourceSlug?: string;
 }
 
 export interface AgentError {

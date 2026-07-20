@@ -12,7 +12,6 @@ const IS_DEV_RUNTIME = !!process.env.MORTISE_DEV_RUNTIME;
 
 export interface ResolvedBackendRuntimePaths {
   sessionServerPath?: string;
-  bridgeServerPath?: string;
   nodeRuntimePath?: string;
   bundledRuntimePath?: string;
   piCliPath?: string;
@@ -157,7 +156,6 @@ export function resolveBackendRuntimePaths(hostRuntime: BackendHostRuntimeContex
 
   return {
     sessionServerPath: resolveServerPath(hostRuntime, 'session-mcp-server'),
-    bridgeServerPath: resolveServerPath(hostRuntime, 'bridge-mcp-server'),
     nodeRuntimePath: hostRuntime.nodeRuntimePath || bundledRuntimePath || process.execPath,
     bundledRuntimePath,
     piCliPath: resolvePiCliPath(hostRuntime),

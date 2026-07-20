@@ -2,15 +2,13 @@
  * Tests for BaseAgent abstract class
  *
  * Uses TestAgent (concrete implementation) to verify BaseAgent functionality.
- * Tests model/thinking configuration, permission mode, source management,
- * and lifecycle management.
+ * Tests model/thinking configuration, permission mode, and lifecycle management.
  */
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { AbortReason } from '../backend/types.ts';
 import {
   TestAgent,
   createMockBackendConfig,
-  createMockSource,
   collectEvents,
 } from './test-utils.ts';
 
@@ -105,48 +103,7 @@ describe('BaseAgent', () => {
     });
   });
 
-  describe('Source Management', () => {
-    it('should start with no active sources', () => {
-      expect(agent.getActiveSourceSlugs()).toEqual([]);
-    });
-
-    it('should track source servers', async () => {
-      await agent.setSourceServers(
-        { 'source-1': { type: 'http', url: 'http://test' } },
-        { 'source-2': {} },
-        ['source-1', 'source-2']
-      );
-
-      expect(agent.getActiveSourceSlugs()).toContain('source-1');
-      expect(agent.getActiveSourceSlugs()).toContain('source-2');
-    });
-
-    it('should check if source is active', async () => {
-      await agent.setSourceServers(
-        { 'active-source': { type: 'http', url: 'http://test' } },
-        {},
-        ['active-source']
-      );
-
-      expect(agent.isSourceServerActive('active-source')).toBe(true);
-      expect(agent.isSourceServerActive('inactive-source')).toBe(false);
-    });
-
-    it('should track all sources', () => {
-      const sources = [
-        createMockSource({ slug: 'source-1' }),
-        createMockSource({ slug: 'source-2' }),
-      ];
-
-      agent.setAllSources(sources);
-      expect(agent.getAllSources()).toHaveLength(2);
-    });
-
-    it('should allow marking source as unseen', () => {
-      // This should not throw
-      agent.markSourceUnseen('some-source');
-    });
-
+  describe('Clarifications', () => {
     it('should track temporary clarifications', () => {
       agent.setTemporaryClarifications('Test clarification');
       // Clarifications are internal state - verify via PromptBuilder if needed
@@ -154,11 +111,6 @@ describe('BaseAgent', () => {
   });
 
   describe('Manager Accessors', () => {
-    it('should provide access to SourceManager', () => {
-      const manager = agent.getSourceManager();
-      expect(manager).toBeTruthy();
-    });
-
     it('should provide access to PermissionManager', () => {
       const manager = agent.getPermissionManager();
       expect(manager).toBeTruthy();
@@ -190,12 +142,6 @@ describe('BaseAgent', () => {
       await agent.abort('test reason');
       expect(agent.abortCalls).toHaveLength(1);
       expect(agent.abortCalls[0]?.reason).toBe('test reason');
-    });
-
-    it('should delegate handoff interrupts to forceAbort by default', () => {
-      agent.interruptForHandoff(AbortReason.AuthRequest);
-      expect(agent.forceAbortCalls).toHaveLength(1);
-      expect(agent.forceAbortCalls[0]?.reason).toBe(AbortReason.AuthRequest);
     });
 
     it('should track respondToPermission calls', () => {

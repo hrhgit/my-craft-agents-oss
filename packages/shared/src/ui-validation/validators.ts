@@ -345,7 +345,7 @@ function parsePartialRoute(input: unknown, label: string): Partial<NonNullable<S
   const result: Partial<NonNullable<SemanticSnapshot['route']>> = {}
   if (value.surface !== undefined) {
     const surface = nonEmptyString(value.surface, `${label}.surface`)
-    if (!['chat', 'settings', 'sources', 'skills', 'automations', 'workspace-picker', 'unknown'].includes(surface)) invalid(`Unsupported route surface: ${surface}`)
+    if (!['chat', 'settings', 'skills', 'automations', 'workspace-picker', 'unknown'].includes(surface)) invalid(`Unsupported route surface: ${surface}`)
     result.surface = surface as NonNullable<SemanticSnapshot['route']>['surface']
   }
   for (const key of ['workspaceId', 'sessionId', 'section'] as const) {

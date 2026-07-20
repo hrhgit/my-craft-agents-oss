@@ -2,7 +2,7 @@
  * Documentation Utilities
  *
  * Provides access to built-in documentation that Claude can reference
- * when performing configuration tasks (sources, agents, permissions, etc.).
+ * when performing configuration tasks (skills, permissions, themes, etc.).
  *
  * Docs are stored at ~/.mortise/docs/ and synced from bundled assets.
  * Source content lives in apps/electron/resources/docs/*.md for easier editing.
@@ -87,7 +87,6 @@ export const APP_ROOT = '~/.mortise';
  */
 export const DOC_REFS = {
   appRoot: APP_ROOT,
-  sources: `${APP_ROOT}/docs/sources.md`,
   permissions: `${APP_ROOT}/docs/permissions.md`,
   skills: `${APP_ROOT}/docs/skills.md`,
   themes: `${APP_ROOT}/docs/themes.md`,

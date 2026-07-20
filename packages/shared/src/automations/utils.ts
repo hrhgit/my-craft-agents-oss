@@ -47,13 +47,12 @@ export function expandEnvVars(str: string, env: Record<string, string>): string 
 // ============================================================================
 
 /**
- * Parse @mentions from a prompt (sources and skills both use @name syntax).
+ * Parse skill-style @mentions from a prompt.
  *
  * Syntax:
- * - @name - references a source or skill (e.g., @linear, @github, @commit, @review-pr)
+ * - @name - references a skill (for example, @commit or @review-pr)
  *
- * References are case-insensitive and support hyphens (e.g., @my-source, @my-skill).
- * The caller should resolve which mentions are sources vs skills based on available configurations.
+ * References are case-insensitive and support hyphens (for example, @my-skill).
  */
 export function parsePromptReferences(prompt: string): PromptReferences {
   const mentions: string[] = [];

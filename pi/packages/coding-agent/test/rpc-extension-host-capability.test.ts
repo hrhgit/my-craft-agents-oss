@@ -140,7 +140,12 @@ describe("Pi RPC extension host capabilities", () => {
 		let receivedCancel: RpcExtensionHostCapabilityCancel | undefined;
 		let receivedLongRequest: RpcExtensionHostCapabilityRequest | undefined;
 		let receivedRebindCancel: RpcExtensionHostCapabilityCancel | undefined;
+		let receivedRouteRejection: { phase: string; reason: string } | undefined;
 		client.onClientEvent((event) => {
+			if (event.type === "extension_host_capability_route_rejected") {
+				receivedRouteRejection = event;
+				return;
+			}
 			if (event.type === "extension_ui_request" && event.method === "interact") {
 				client.respondToExtensionUI({
 					type: "extension_ui_response",
@@ -175,6 +180,17 @@ describe("Pi RPC extension host capabilities", () => {
 				id: event.id,
 				sequence: 1,
 				progress: { phase: "showing" },
+				runtimeId: event.runtimeId,
+				sessionId: event.sessionId,
+				clientId: event.clientId,
+			});
+			// A malformed response must be observable and must not settle another route.
+			client.respondToExtensionHostCapability({
+				type: "extension_host_capability_response",
+				version: 1,
+				id: event.id,
+				status: "success",
+				output: { ignored: true },
 			});
 			client.respondToExtensionHostCapability({
 				type: "extension_host_capability_response",
@@ -182,11 +198,17 @@ describe("Pi RPC extension host capabilities", () => {
 				id: event.id,
 				status: "success",
 				output: { shown: true },
+				runtimeId: event.runtimeId,
+				sessionId: event.sessionId,
+				clientId: event.clientId,
 			});
 		});
 
 		await client.start();
 		await expect(client.invokeExtensionCommandResult("notify-host")).resolves.toEqual({ invoked: true });
+		await vi.waitFor(() =>
+			expect(receivedRouteRejection).toMatchObject({ phase: "response", reason: "routing_identity_mismatch" }),
+		);
 
 		expect(receivedRequest).toMatchObject({
 			type: "extension_host_capability_request",
@@ -223,5 +245,5 @@ describe("Pi RPC extension host capabilities", () => {
 			id: receivedLongRequest?.id,
 			extensionId: expect.any(String),
 		});
-	});
+	}, 30_000);
 });

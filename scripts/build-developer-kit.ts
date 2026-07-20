@@ -9,14 +9,6 @@ import { writeJsonAtomic } from './mortise-ui/files.ts'
 const BUILD_SCHEMA_VERSION = 1
 const LOCK_TIMEOUT_MS = 10 * 60 * 1_000
 const DEFAULT_RETAIN_COUNT = 2
-const BUILD_ENV_KEYS = [
-  'GOOGLE_OAUTH_CLIENT_ID',
-  'GOOGLE_OAUTH_CLIENT_SECRET',
-  'SLACK_OAUTH_CLIENT_ID',
-  'SLACK_OAUTH_CLIENT_SECRET',
-  'MICROSOFT_OAUTH_CLIENT_ID',
-] as const
-
 interface DeveloperKitBuildManifest {
   schemaVersion: typeof BUILD_SCHEMA_VERSION
   buildId: string
@@ -91,7 +83,7 @@ try {
         immutable: true,
       }
       writeJsonAtomic(join(stagingDir, 'build.json'), completed)
-      renameSync(stagingDir, finalBuildDir)
+      renameDirectoryWithRetry(stagingDir, finalBuildDir)
       return completed
     } catch (error) {
       removeDirectory(stagingDir)
@@ -115,10 +107,6 @@ try {
 function developerKitBuildId(sourceId: string, archiveDisabled: boolean): string {
   const hash = createHash('sha256')
   hash.update(`mortise-developer-kit:${BUILD_SCHEMA_VERSION}\0${sourceId}\0${process.platform}\0${process.arch}\0${process.versions.bun ?? process.version}\0${archiveDisabled}\0`)
-  for (const key of BUILD_ENV_KEYS) {
-    hash.update(`${key}\0`)
-    hash.update(createHash('sha256').update(process.env[key] ?? '').digest())
-  }
   return hash.digest('hex')
 }
 
@@ -157,4 +145,19 @@ function cleanupCompletedBuilds(buildRoot: string, protectedBuildId: string): vo
 
 function removeDirectory(path: string): void {
   rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+}
+
+function renameDirectoryWithRetry(source: string, destination: string): void {
+  const retryableCodes = new Set(['EACCES', 'EBUSY', 'EPERM'])
+  const sleeper = new Int32Array(new SharedArrayBuffer(4))
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      renameSync(source, destination)
+      return
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined
+      if (attempt >= 19 || !code || !retryableCodes.has(code)) throw error
+      Atomics.wait(sleeper, 0, 0, 250)
+    }
+  }
 }

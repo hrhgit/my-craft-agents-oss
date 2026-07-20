@@ -102,10 +102,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.update.AVAILABLE,
   RPC_CHANNELS.update.DOWNLOAD_PROGRESS,
 
-  // releaseNotes — local app info
-  RPC_CHANNELS.releaseNotes.GET,
-  RPC_CHANNELS.releaseNotes.GET_LATEST_VERSION,
-
   // badge — local dock badge
   RPC_CHANNELS.badge.REFRESH,
   RPC_CHANNELS.badge.SET_ICON,
@@ -162,9 +158,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
 
-  // piExtensions — 本地 app 级 pi 扩展集成开关（不随 workspace 走）
-  RPC_CHANNELS.piExtensions.GET_DELEGATE_PROMPT_AUTOMATION,
-  RPC_CHANNELS.piExtensions.SET_DELEGATE_PROMPT_AUTOMATION,
   RPC_CHANNELS.piExtensions.GET_SETTINGS,
   RPC_CHANNELS.piExtensions.SET_SETTINGS,
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
@@ -213,6 +206,9 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.onboarding.DEFER_SETUP,
   RPC_CHANNELS.settings.GET_NETWORK_PROXY,
   RPC_CHANNELS.settings.SET_NETWORK_PROXY,
+  RPC_CHANNELS.settings.GET_DEVELOPER_KIT,
+  RPC_CHANNELS.settings.DISCOVER_DEVELOPER_KIT,
+  RPC_CHANNELS.settings.SET_DEVELOPER_KIT,
 
   // server config — local embedded server settings
   RPC_CHANNELS.settings.GET_SERVER_CONFIG,
@@ -237,6 +233,8 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.MARK_ALL_READ,
   RPC_CHANNELS.sessions.UNREAD_SUMMARY_CHANGED,
   RPC_CHANNELS.sessions.CREATE,
+  RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN,
+  RPC_CHANNELS.sessions.DISCARD_FIRST_TURN_ATTACHMENT_STAGING,
   RPC_CHANNELS.sessions.DELETE,
   RPC_CHANNELS.sessions.GET_MESSAGES,
   RPC_CHANNELS.sessions.GET_PI_PROJECTION_SNAPSHOT,
@@ -244,7 +242,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.CANCEL,
   RPC_CHANNELS.sessions.KILL_SHELL,
   RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION,
-  RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL,
   RPC_CHANNELS.sessions.COMMAND,
   RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION,
   RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE,
@@ -319,10 +316,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   // workspace coordination — shared activity and provenance ledger
   RPC_CHANNELS.workspaceCoordination.GET_STATUS,
 
-  // data-source feature flag — enforced by the workspace-owning runtime
-  RPC_CHANNELS.tools.GET_DATA_SOURCES_ENABLED,
-  RPC_CHANNELS.tools.SET_DATA_SOURCES_ENABLED,
-
   // pi — provider config on workspace server
   RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS,
   RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL,
@@ -347,22 +340,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.drafts.DELETE,
   RPC_CHANNELS.drafts.GET_ALL,
 
-  // sources — source config per-workspace
-  RPC_CHANNELS.sources.GET,
-  RPC_CHANNELS.sources.CREATE,
-  RPC_CHANNELS.sources.DELETE,
-  RPC_CHANNELS.sources.START_OAUTH,
-  RPC_CHANNELS.sources.SAVE_CREDENTIALS,
-  RPC_CHANNELS.sources.CHANGED,
-  RPC_CHANNELS.sources.GET_PERMISSIONS,
-  RPC_CHANNELS.sources.GET_MCP_TOOLS,
-
-  // oauth — OAuth state management
-  RPC_CHANNELS.oauth.START,
-  RPC_CHANNELS.oauth.COMPLETE,
-  RPC_CHANNELS.oauth.CANCEL,
-  RPC_CHANNELS.oauth.REVOKE,
-
   // workspace — workspace config + images (sharp on headless)
   RPC_CHANNELS.workspace.GET_PERMISSIONS,
   RPC_CHANNELS.workspace.READ_IMAGE,
@@ -384,9 +361,9 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.toolIcons.GET_MAPPINGS,
 
   // logo — workspace config
-  RPC_CHANNELS.logo.GET_URL,
 
   // automations — workspace automations
+  RPC_CHANNELS.automations.COMMAND,
   RPC_CHANNELS.automations.GET,
   RPC_CHANNELS.automations.TEST,
   RPC_CHANNELS.automations.SET_ENABLED,

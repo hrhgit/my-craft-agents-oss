@@ -304,6 +304,10 @@ export interface PromptOptions {
 	 * that turn (extensions layer on top of the host prompt).
 	 */
 	systemPrompt?: string;
+	/** Clear a previously persisted host override and rebuild from Pi resources. */
+	clearSystemPrompt?: boolean;
+	/** Append host-owned instructions without replacing the loader-built Pi prompt. */
+	appendSystemPrompt?: string;
 }
 
 /** Result from cycleModel() */
@@ -417,6 +421,8 @@ export class AgentSession {
 	private _toolResultHandler?: ToolResultHandler;
 	/** Host-set system prompt (PromptOptions.systemPrompt); wins over the loader-built prompt. */
 	private _hostSystemPromptOverride?: string;
+	/** Host-owned suffix appended after the loader prompt or host override. */
+	private _hostSystemPromptAppend?: string;
 	/** Host-set compaction prompt used by both manual and automatic compaction. */
 	private _compactionPromptOverride?: string;
 	private _extensionErrorUnsubscriber?: () => void;
@@ -1020,7 +1026,7 @@ export class AgentSession {
 	 * Register (or replace, by name) host-provided tools at runtime.
 	 *
 	 * Intended for embedders (GUI shells, RPC hosts) that proxy tool execution
-	 * to their own process (MCP servers, API sources). Tools land in the same
+	 * to their own process (for example, MCP servers). Tools land in the same
 	 * registry as `config.customTools` and become active immediately; the
 	 * system prompt is rebuilt to include them. Extension `tool_call` /
 	 * `tool_result` handlers and the host permission gate apply to these tools
@@ -1063,7 +1069,10 @@ export class AgentSession {
 	refreshSystemPrompt(): void {
 		// A host override (PromptOptions.systemPrompt) replaces the loader-built
 		// prompt entirely and must survive tool-set changes and extension reloads.
-		this._baseSystemPrompt = this._hostSystemPromptOverride ?? this._rebuildSystemPrompt(this.getActiveToolNames());
+		const basePrompt = this._hostSystemPromptOverride ?? this._rebuildSystemPrompt(this.getActiveToolNames());
+		this._baseSystemPrompt = this._hostSystemPromptAppend
+			? `${basePrompt}\n\n${this._hostSystemPromptAppend}`
+			: basePrompt;
 		this.agent.state.systemPrompt = this._baseSystemPrompt;
 	}
 
@@ -1307,11 +1316,17 @@ export class AgentSession {
 			// extension reloads) keeps the override instead of rebuilding from the
 			// resource loader. `undefined` means "no change"; an empty string is a
 			// valid (empty) prompt.
+			const hostPromptChanged = options?.clearSystemPrompt === true || options?.systemPrompt !== undefined || options?.appendSystemPrompt !== undefined;
+			if (options?.clearSystemPrompt === true) {
+				this._hostSystemPromptOverride = undefined;
+			}
 			if (options?.systemPrompt !== undefined) {
 				this._hostSystemPromptOverride = options.systemPrompt;
-				this._baseSystemPrompt = options.systemPrompt;
-				this.agent.state.systemPrompt = options.systemPrompt;
 			}
+			if (options?.appendSystemPrompt !== undefined) {
+				this._hostSystemPromptAppend = options.appendSystemPrompt.trim() || undefined;
+			}
+			if (hostPromptChanged) this.refreshSystemPrompt();
 
 			// Handle extension commands first (execute immediately, even during streaming)
 			// Extension commands manage their own LLM interaction via pi.sendMessage()

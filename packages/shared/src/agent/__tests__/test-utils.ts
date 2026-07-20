@@ -9,7 +9,6 @@ import type { BackendConfig, ChatOptions } from '../backend/types.ts';
 import { AbortReason } from '../backend/types.ts';
 import type { Workspace } from '../../config/storage.ts';
 import type { SessionHeader as Session } from '../../sessions/types.ts';
-import type { LoadedSource } from '../../sources/types.ts';
 import { BaseAgent } from '../base-agent.ts';
 
 // ============================================================
@@ -46,31 +45,6 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
     lastUsedAt: Date.now(),
     permissionMode: 'ask',
     ...overrides,
-  };
-}
-
-// ============================================================
-// Mock Source Factory
-// ============================================================
-
-/**
- * Create a mock LoadedSource object for testing.
- */
-export function createMockSource(overrides: Partial<LoadedSource['config']> = {}): LoadedSource {
-  return {
-    config: {
-      id: 'test-source-id',
-      name: 'Test Source',
-      slug: 'test-source',
-      enabled: true,
-      provider: 'test',
-      type: 'mcp',
-      ...overrides,
-    },
-    guide: null,
-    folderPath: '/test/source',
-    workspaceRootPath: '/test/workspace',
-    workspaceId: 'test-workspace-id',
   };
 }
 
