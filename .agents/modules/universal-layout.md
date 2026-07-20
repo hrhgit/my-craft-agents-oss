@@ -22,7 +22,7 @@ collaborates_with: [browser-runtime, file-workbench, native-desktop]
 validation:
   - { id: universal-layout-regression, kind: unit, command: "bun test apps/electron/src/renderer/components/app-shell apps/electron/src/shared/__tests__/app-layout.test.ts", description: "Run universal layout and app-shell regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: universal-layout-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise docking and layout behavior through the shared Developer Kit host.", triggers: [ui-change, layout-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: dcaa41c79b2880c417ed5d217943992f340c00dc
+scope_digest: 906913b2d927e8d175a2a9f982c7b9f0079c0e1b
 ---
 
 ## Purpose
@@ -53,6 +53,8 @@ Run unified dock, navigation, workspace sidebar, geometry, detach, and layout se
 Persisted layouts can reference removed content; native views can occlude drag targets and floating surfaces.
 
 ## Semantic history
+- 2026-07-21: Updated projection-owned processing and completion consumers to keep retrying Pi attempts active until `agent_settled`, while retaining legacy `agent_end` snapshot compatibility.
+- 2026-07-21: Added local skill discovery with default-all individual selection and explicit confirmed batch import into the bound workspace.
 - 2026-07-20: Removed the retired Sources navigator, detail type, and navigation-registry state from the current layout contract.
 - 2026-07-20: Made initial draft-route focus one-shot and kept programmatic first-message navigation on the draft until send succeeds.
 - 2026-07-18: Advanced workspace-scoped universal dock and layout validation.

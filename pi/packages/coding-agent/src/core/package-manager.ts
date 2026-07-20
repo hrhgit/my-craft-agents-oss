@@ -352,6 +352,8 @@ function assertValidExtensionUI(value: unknown, context: string): asserts value 
 					? ["minLength", "maxLength"]
 					: field.type === "select"
 						? ["options"]
+						: field.type === "model-reference"
+							? []
 						: [];
 		if (!hasOnlyKeys(field, [...commonKeys, ...typeKeys]))
 			throw new Error(`${context}: extension setting field contains unknown fields`);
@@ -360,10 +362,16 @@ function assertValidExtensionUI(value: unknown, context: string): asserts value 
 		keys.add(field.key);
 		if (typeof field.label !== "string" || field.label.length === 0 || field.label.length > 256)
 			throw new Error(`${context}: extension setting label is invalid`);
-		if (!["boolean", "string", "textarea", "number", "select", "model"].includes(String(field.type)))
+		if (!["boolean", "string", "textarea", "number", "select", "model", "model-reference"].includes(String(field.type)))
 			throw new Error(`${context}: extension setting type is invalid`);
 		if (field.type === "boolean" && typeof field.default !== "boolean")
 			throw new Error(`${context}: boolean settings require a default`);
+		if (
+			field.type === "model-reference" &&
+			field.default !== undefined &&
+			(typeof field.default !== "string" || !/^current-session$|^default:[1-9]\d*$|^model:[^/]+\/.+$/.test(field.default))
+		)
+			throw new Error(`${context}: model-reference default is invalid`);
 		if (
 			field.type === "select" &&
 			(!Array.isArray(field.options) || field.options.length === 0 || field.options.length > 128)

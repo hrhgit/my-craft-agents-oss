@@ -17,7 +17,7 @@ depends_on: [workspace-state, pi-agent-engine]
 collaborates_with: [conversation-ui]
 validation:
   - { id: session-lifecycle-regression, kind: unit, command: "bun test packages/shared/src/sessions packages/server-core/src/sessions apps/electron/src/renderer/lib/__tests__/drafts.test.ts", description: "Run session lifecycle and draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: bd2685992a1a433332049c736eef853de13713f3
+scope_digest: edcfd9fea7cbcbcd93362a39c265ce1de97ae911
 ---
 
 ## Purpose
@@ -48,6 +48,7 @@ Run session storage, persistence queue, projection, send durability, and draft t
 Publishing metadata or projection before Pi's assistant-backed JSONL exists can create visible phantom sessions; event ordering can make a running session appear terminated.
 
 ## Semantic history
+- 2026-07-21: Routed queued mid-stream delivery through Pi-native follow-up when available, retaining the Host FIFO only as an unsupported-backend fallback, and settled abort-terminal completion as interrupted.
 - 2026-07-20: Reserved the legacy empty-session RPC for hidden and branch internals; ordinary conversations must enter the assistant-backed first-turn publication transaction.
 - 2026-07-20: Added canonical automation prompt delivery through assistant-backed Session publication, exact same-workspace follow-up/steer targets, and isolated non-Session completion.
 - 2026-07-20: Replaced persisted deferred sessions with an internal provisional first-turn lifecycle published only after Pi's first assistant message.

@@ -17,13 +17,14 @@ owns:
   - apps/electron/resources/docs/sources.md
   - packages/server-core/src/handlers/rpc/resources.ts
   - packages/server-core/src/handlers/rpc/skills.ts
+  - packages/server-core/src/handlers/rpc/skills.test.ts
   - packages/server-core/src/handlers/rpc/sources.ts
 related: [packages/session-tools-core/**, apps/electron/src/renderer/components/settings/**]
 depends_on: [shared-contracts]
 collaborates_with: []
 validation:
-  - { id: skills-mcp-regression, kind: unit, command: "bun test packages/shared/src/skills", description: "Run skill storage and resolution regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 4af7a6d3833b318b6832a3f58af9e2e41f95048d
+  - { id: skills-mcp-regression, kind: unit, command: "bun test packages/shared/src/skills packages/server-core/src/handlers/rpc/skills.test.ts", description: "Run skill storage, discovery, and import regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
+scope_digest: 0ab3efaa9d7f0d48881a9e0c1d2d2a1d9b27eaf3
 ---
 
 ## Purpose
@@ -54,6 +55,7 @@ Run skill storage and resolution tests after owned changes.
 Skill discovery may vary by workspace and runtime target; preserve deterministic resolution and metadata boundaries.
 
 ## Semantic history
+- 2026-07-21: Added desktop-only bounded discovery of valid skills folders under the user home directory and explicit selective import with staged copy, workspace exclusion, home-path enforcement, and skip-on-conflict semantics.
 - 2026-05-21: Added remote extension and session settings synchronization foundations.
 - 2026-07-18: Moved Pi skill resolution into the unified Mortise runtime.
 - 2026-07-20: Removed the built-in Data Sources implementation, management surfaces, and source-only MCP connection runtime while preserving user data on disk.

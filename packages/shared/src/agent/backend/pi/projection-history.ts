@@ -18,6 +18,7 @@ export function buildPiProjectionSnapshotFromHostProjection(
   let agentOpen = false
   let turnOpen = false
   let turnMessage: Record<string, unknown> | undefined
+  let agentTerminalMessage: Record<string, unknown> | undefined
   let toolResultCount = 0
   let lastObservedAt: number | undefined
 
@@ -50,6 +51,7 @@ export function buildPiProjectionSnapshotFromHostProjection(
           : 'Pi runtime error',
       }))
     }
+    if (turnMessage) agentTerminalMessage = turnMessage
     turnOpen = false
     turnMessage = undefined
     toolResultCount = 0
@@ -58,8 +60,14 @@ export function buildPiProjectionSnapshotFromHostProjection(
   const closeAgent = (completedAt = lastObservedAt): void => {
     if (!agentOpen) return
     closeTurn(completedAt)
+    append(builder.acceptRuntimeEvent({
+      type: 'agent_end',
+      timestamp: completedAt,
+      messages: agentTerminalMessage ? [agentTerminalMessage] : [],
+    }))
     append(builder.accept({ type: 'complete' }))
     agentOpen = false
+    agentTerminalMessage = undefined
   }
 
   for (const entry of getActiveBranchEntries(projection)) {

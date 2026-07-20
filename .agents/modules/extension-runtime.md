@@ -16,7 +16,7 @@ depends_on: [pi-coding-runtime, shared-contracts, app-settings-security]
 collaborates_with: [extension-ui, session-tooling]
 validation:
   - { id: extension-runtime-regression, kind: unit, command: "bun test packages/shared/src/agent packages/server-core/src/handlers/pi-extension-bridge.test.ts", description: "Run extension runtime and bridge regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 6263004e6984f9b91e0f5dc52bcbf9185409a204
+scope_digest: 164334a5c0c9a0aaf2f7bf30d4fed5dc0b8ec839
 ---
 
 ## Purpose
@@ -47,6 +47,7 @@ Run host recovery, routing, extension bridge, reload, and capability tests.
 Subprocess failure can be misreported as session failure; extensions can evolve faster than a packaged host facade.
 
 ## Semantic history
+- 2026-07-21: Kept Pi retry and abort attempt events distinct from logical `agent_settled`, exposed native follow-up delivery, and preserved raw lifecycle projection through the Mortise host bridge.
 - 2026-07-12: Added the global Pi extension host runtime.
 - 2026-07-14: Hardened RPC extension lifecycle and recovery.
 - 2026-07-20: Unified legacy capability declaration, request, response, and cancellation runtime identities while preserving host-owned routing.

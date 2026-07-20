@@ -1806,6 +1806,10 @@ export type ExtensionUICategory =
 	| "search"
 	| "other";
 export type ExtensionSettingScalar = string | number | boolean;
+export type ExtensionModelReference =
+	| "current-session"
+	| `default:${number}`
+	| `model:${string}/${string}`;
 export interface ExtensionSettingConditionV1 {
 	key: string;
 	equals: ExtensionSettingScalar;
@@ -1832,7 +1836,8 @@ export type ExtensionSettingFieldV1 =
 			default?: string;
 			options: Array<{ value: string; label: string; description?: string }>;
 	  })
-	| (ExtensionSettingFieldCommonV1 & { type: "model"; default?: string });
+	| (ExtensionSettingFieldCommonV1 & { type: "model"; default?: string })
+	| (ExtensionSettingFieldCommonV1 & { type: "model-reference"; default?: ExtensionModelReference });
 export interface ExtensionSettingsSchemaV1 {
 	schemaVersion: 1;
 	groups?: Array<{ id: string; title: string; description?: string }>;

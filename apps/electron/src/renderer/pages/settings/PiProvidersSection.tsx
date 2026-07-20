@@ -15,9 +15,10 @@
 
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, MoreHorizontal, Pencil, Plus, Star, Trash2, AlertCircle } from 'lucide-react'
+import { AlertCircle, ChevronRight, Loader2, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -36,6 +37,7 @@ import {
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 import { PiProviderFormDialog } from './PiProviderFormDialog'
 import type { PiCustomApi, PiGlobalProvider, PiGlobalProviderForDisplay } from '../../../shared/types'
+import type { PiGlobalDefaultSlot } from '@mortise/shared/config'
 import {
   DEFAULT_THINKING_LEVEL,
   THINKING_LEVELS,
@@ -71,31 +73,20 @@ export function PiProvidersSection() {
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editingKey, setEditingKey] = React.useState<string | null>(null)
   const [editingProvider, setEditingProvider] = React.useState<PiGlobalProvider | undefined>(undefined)
-  const [defaultThinking, setDefaultThinking] = React.useState<ThinkingLevel>(DEFAULT_THINKING_LEVEL)
+  const [expandedSlot, setExpandedSlot] = React.useState<number | null>(1)
 
   const defaultProvider = settings.defaultProvider
-  const defaultModel = settings.defaultModel
+  const defaultSlots = settings.defaultSlots ?? []
 
-  React.useEffect(() => {
-    window.electronAPI.getDefaultThinkingLevel()
-      .then(setDefaultThinking)
-      .catch(error => console.error('Failed to load default thinking level:', error))
-  }, [])
-
-  // Models available under the current default provider (for the model switcher)
-  const defaultProviderEntry = React.useMemo(
-    () => providers.find(p => p.key === defaultProvider) ?? null,
-    [providers, defaultProvider],
-  )
-  const modelOptions = React.useMemo(() => {
-    if (!defaultProviderEntry) return []
-    const models = defaultProviderEntry.provider.models ?? []
+  const modelOptionsForProvider = React.useCallback((providerKey: string | undefined) => {
+    const entry = providers.find(p => p.key === providerKey)
+    const models = entry?.provider.models ?? []
     return models.map(m => ({
       value: m.id,
       label: m.name ?? m.id,
       description: m.id,
     }))
-  }, [defaultProviderEntry])
+  }, [providers])
 
   // Open the form dialog in "add" mode
   const handleAdd = React.useCallback(() => {
@@ -133,47 +124,65 @@ export function PiProvidersSection() {
   }, [refresh, t])
 
   // Switch default provider (keeps current model if it exists in the new provider, else first model)
-  const handleDefaultProviderChange = React.useCallback(async (nextProvider: string) => {
+  const saveDefaultSlot = React.useCallback(async (slot: number, next: Pick<PiGlobalDefaultSlot, 'provider' | 'model' | 'thinkingLevel'>) => {
+    const result = await window.electronAPI.setPiGlobalDefault({ slot, ...next })
+    if (result.success) {
+      await refresh()
+    } else {
+      toast.error(result.error || t('settings.piProviders.switchFailed'))
+    }
+  }, [refresh, t])
+
+  const handleDefaultProviderChange = React.useCallback(async (slot: PiGlobalDefaultSlot, nextProvider: string) => {
     const entry = providers.find(p => p.key === nextProvider)
     const firstModel = entry?.provider.models?.[0]?.id ?? ''
-    const nextModel = entry?.provider.models?.some(m => m.id === defaultModel) ? (defaultModel ?? firstModel) : firstModel
-    const result = await window.electronAPI.setPiGlobalDefault({
+    const nextModel = entry?.provider.models?.some(m => m.id === slot.model) ? slot.model : firstModel
+    if (!nextModel) return
+    await saveDefaultSlot(slot.slot, {
       provider: nextProvider,
       model: nextModel,
+      thinkingLevel: slot.thinkingLevel,
     })
-    if (result.success) {
-      await refresh()
-    } else {
-      toast.error(result.error || t('settings.piProviders.switchFailed'))
-    }
-  }, [providers, defaultModel, refresh, t])
+  }, [providers, saveDefaultSlot])
 
-  // Switch default model (within the current default provider)
-  const handleDefaultModelChange = React.useCallback(async (nextModel: string) => {
-    if (!defaultProvider) return
-    const result = await window.electronAPI.setPiGlobalDefault({
-      provider: defaultProvider,
+  const handleDefaultModelChange = React.useCallback(async (slot: PiGlobalDefaultSlot, nextModel: string) => {
+    await saveDefaultSlot(slot.slot, {
+      provider: slot.provider,
       model: nextModel,
+      thinkingLevel: slot.thinkingLevel,
     })
+  }, [saveDefaultSlot])
+
+  const handleDefaultThinkingChange = React.useCallback(async (slot: PiGlobalDefaultSlot, thinkingLevel: ThinkingLevel) => {
+    await saveDefaultSlot(slot.slot, {
+      provider: slot.provider,
+      model: slot.model,
+      thinkingLevel,
+    })
+  }, [saveDefaultSlot])
+
+  const handleAddDefault = React.useCallback(async () => {
+    const provider = providers[0]
+    const model = provider?.provider.models?.[0]
+    if (!provider || !model) return
+    const slot = defaultSlots.length + 1
+    await saveDefaultSlot(slot, {
+      provider: provider.key,
+      model: model.id,
+      thinkingLevel: DEFAULT_THINKING_LEVEL,
+    })
+    setExpandedSlot(slot)
+  }, [defaultSlots.length, providers, saveDefaultSlot])
+
+  const handleRemoveDefault = React.useCallback(async (slot: number) => {
+    const result = await window.electronAPI.setPiGlobalDefault({ slot, remove: true })
     if (result.success) {
+      setExpandedSlot(null)
       await refresh()
     } else {
       toast.error(result.error || t('settings.piProviders.switchFailed'))
     }
-  }, [defaultProvider, refresh, t])
-
-  const handleDefaultThinkingChange = React.useCallback(async (value: string) => {
-    const next = value as ThinkingLevel
-    const previous = defaultThinking
-    setDefaultThinking(next)
-    try {
-      const result = await window.electronAPI.setDefaultThinkingLevel(next)
-      if (!result.success) setDefaultThinking(previous)
-    } catch (error) {
-      setDefaultThinking(previous)
-      console.error('Failed to update default thinking level:', error)
-    }
-  }, [defaultThinking])
+  }, [refresh, t])
 
   const existingKeys = React.useMemo(() => providers.map(p => p.key), [providers])
 
@@ -200,7 +209,7 @@ export function PiProvidersSection() {
           title={t('settings.ai.defaultSection')}
           description={t('settings.ai.defaultSectionDesc')}
         >
-          <SettingsCard>
+          <SettingsCard divided={false}>
             {isLoading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
@@ -212,42 +221,96 @@ export function PiProvidersSection() {
                     {t('settings.piProviders.noProviders')}
                   </div>
                 ) : (
-                  <>
-                    <SettingsMenuSelectRow
-                      label={t('settings.piProviders.provider')}
-                      description={t('settings.piProviders.providerDesc')}
-                      value={defaultProvider ?? ''}
-                      onValueChange={handleDefaultProviderChange}
-                      options={providers.map(p => ({
-                        value: p.key,
-                        label: p.key,
-                        description: hostOf(p.provider.baseUrl),
-                      }))}
-                    />
-                    <SettingsMenuSelectRow
-                      label={t('settings.piProviders.model')}
-                      description={t('settings.piProviders.modelDesc')}
-                      value={defaultModel ?? ''}
-                      onValueChange={handleDefaultModelChange}
-                      options={modelOptions}
-                      disabled={modelOptions.length === 0}
-                    />
-                  </>
+                  defaultSlots.map((slot, index) => {
+                    const modelOptions = modelOptionsForProvider(slot.provider)
+                    const open = expandedSlot === slot.slot
+                    return (
+                      <Collapsible
+                        key={slot.slot}
+                        open={open}
+                        onOpenChange={(nextOpen) => setExpandedSlot(nextOpen ? slot.slot : null)}
+                        className={index > 0 ? 'border-t border-border/50' : undefined}
+                      >
+                        <CollapsibleTrigger asChild>
+                          <button
+                            type="button"
+                            data-mortise-semantic-id={`settings.ai.default.${slot.slot}.toggle`}
+                            className="flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left hover:bg-foreground/[0.025]"
+                          >
+                            <ChevronRight className={`size-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-sm font-medium">
+                                {t('settings.ai.defaultSlotLabel', { slot: slot.slot })}
+                              </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {slot.provider}/{slot.model} · {t(`thinking.${slot.thinkingLevel}`)}
+                              </span>
+                            </span>
+                          </button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                          <div className="border-t border-border/40 bg-muted/15 pb-2 pl-8">
+                            <SettingsMenuSelectRow
+                              label={t('settings.piProviders.provider')}
+                              description={t('settings.piProviders.providerDesc')}
+                              value={slot.provider}
+                              onValueChange={(value) => void handleDefaultProviderChange(slot, value)}
+                              options={providers.map(p => ({
+                                value: p.key,
+                                label: p.key,
+                                description: hostOf(p.provider.baseUrl),
+                              }))}
+                            />
+                            <SettingsMenuSelectRow
+                              label={t('settings.piProviders.model')}
+                              description={t('settings.piProviders.modelDesc')}
+                              value={slot.model}
+                              onValueChange={(value) => void handleDefaultModelChange(slot, value)}
+                              options={modelOptions}
+                              disabled={modelOptions.length === 0}
+                            />
+                            <SettingsMenuSelectRow
+                              label={t('settings.ai.thinking')}
+                              description={t('settings.ai.thinkingDesc')}
+                              value={slot.thinkingLevel}
+                              onValueChange={(value) => void handleDefaultThinkingChange(slot, value as ThinkingLevel)}
+                              options={THINKING_LEVELS.map(({ id, nameKey, descriptionKey }) => ({
+                                value: id,
+                                label: t(nameKey),
+                                description: t(descriptionKey),
+                              }))}
+                            />
+                            {slot.slot > 1 && (
+                              <div className="flex justify-end px-4 pb-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  semanticId={`settings.ai.default.${slot.slot}.remove`}
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => void handleRemoveDefault(slot.slot)}
+                                >
+                                  <Trash2 />
+                                  {t('settings.ai.removeDefault')}
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )
+                  })
                 )}
-                <SettingsMenuSelectRow
-                  label={t('settings.ai.thinking')}
-                  description={t('settings.ai.thinkingDesc')}
-                  value={defaultThinking}
-                  onValueChange={handleDefaultThinkingChange}
-                  options={THINKING_LEVELS.map(({ id, nameKey, descriptionKey }) => ({
-                    value: id,
-                    label: t(nameKey),
-                    description: t(descriptionKey),
-                  }))}
-                />
               </>
             )}
           </SettingsCard>
+          {providers.length > 0 && (
+            <div className="pt-0">
+              <Button variant="outline" size="sm" onClick={() => void handleAddDefault()}>
+                <Plus />
+                {t('settings.ai.addDefault')}
+              </Button>
+            </div>
+          )}
         </SettingsSection>
 
         {/* Providers list */}
@@ -298,7 +361,10 @@ export function PiProvidersSection() {
                       </DropdownMenuTrigger>
                       <StyledDropdownMenuContent align="end">
                         {entry.key !== defaultProvider && (
-                          <StyledDropdownMenuItem onClick={() => handleDefaultProviderChange(entry.key)}>
+                          <StyledDropdownMenuItem onClick={() => {
+                            const primary = defaultSlots[0]
+                            if (primary) void handleDefaultProviderChange(primary, entry.key)
+                          }}>
                             <Star className="h-3.5 w-3.5" />
                             <span>{t('settings.piProviders.setAsDefault')}</span>
                           </StyledDropdownMenuItem>

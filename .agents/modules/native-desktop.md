@@ -53,7 +53,7 @@ validation:
   - { id: native-desktop-regression, kind: unit, command: "bun test --isolate apps/electron/src/main apps/electron/src/transport", description: "Run Electron main-process and transport regressions with per-file module isolation.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: electron-native-contract, kind: contract, command: "bun run typecheck:electron", description: "Verify Electron native contracts compile.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
   - { id: native-desktop-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise native desktop behavior through the shared Developer Kit host.", triggers: [native-change, release], required: false, evidence: "Developer Kit run output and retained native UI evidence." }
-scope_digest: 1de1726e6ed8b97e81eb9bdd349d6f9580504869
+scope_digest: f4200d3e4f0904df42ac67133077cc049ac08ec6
 ---
 
 ## Purpose
@@ -84,6 +84,7 @@ Run main, IPC, transport parity, window lifecycle, close flushing, and Electron 
 Windows process and file semantics differ from Unix; IPC surface expansion can cross a privilege boundary.
 
 ## Semantic history
+- 2026-07-21: Extended the Electron skill API and channel map for a local folder picker import action while keeping the privileged path out of WebUI.
 - 2026-07-18: Stabilized native window readiness and source-development validation.
 - 2026-07-19: Hardened Mortise UI process identity and concurrent run safety.
 - 2026-07-20: Updated handler registration coverage for workspace coordination and isolated Electron test files from cross-module mocks.

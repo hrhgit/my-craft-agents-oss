@@ -414,6 +414,12 @@ export interface AgentBackend {
   redirect(message: string, clientMutationId?: string): boolean;
 
   /**
+   * Queue a native follow-up inside the current logical agent run.
+   * Returns false when the backend cannot preserve native follow-up semantics.
+   */
+  followUp(message: string, attachments?: FileAttachment[], options?: ChatOptions): Promise<boolean>;
+
+  /**
    * Run a simple text completion using the backend's auth infrastructure.
    * Used for connection testing, title generation, and summarization.
    */

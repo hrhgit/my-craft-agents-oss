@@ -22,7 +22,7 @@ collaborates_with: [headless-server-cli]
 validation:
   - { id: web-client-regression, kind: unit, command: "bun test apps/webui apps/viewer scripts/webui-process-utils.test.ts", description: "Run WebUI, viewer, and process utility regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: web-client-contract, kind: contract, command: "bun run lint:webui", description: "Verify WebUI client contracts and lint rules.", triggers: [contract-change], required: true, evidence: "Lint exit status and diagnostics." }
-scope_digest: b8da1c0c5c4533f94f4a371c793bbf666e97ec32
+scope_digest: 4c193efd5618fa963941b8f2e5ef4967f5efc29f
 ---
 
 ## Purpose
@@ -53,6 +53,7 @@ Run WebUI type/lint tests, adapter tests, launcher process tests, and browser in
 Browser security policy differs from Electron; development auto-login must never escape the localhost launcher boundary.
 
 ## Semantic history
+- 2026-07-21: Kept local skill import explicitly desktop-only in the WebUI adapter.
 - 2026-07-20: Removed the WebUI adapter's retired Data Sources OAuth orchestration.
 - 2026-07-12: Unified WebUI session projection with the shared runtime.
 - 2026-07-18: Stabilized WebUI launch and process cleanup in monorepo validation.

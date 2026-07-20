@@ -184,12 +184,17 @@ export function buildPiTimelineItems(entities: readonly PiProjectionEntityV1[]):
 export function selectPiRuntimeState(entities: readonly PiProjectionEntityV1[]): PiRuntimeState {
   const lifecycle = entities
     .filter(entity => entity.kind === 'agent_start' || entity.kind === 'agent_end'
+      || entity.kind === 'agent_settled'
       || entity.kind === 'turn_start' || entity.kind === 'turn_end'
       || entity.kind === 'compaction_start' || entity.kind === 'compaction_end'
       || entity.kind === 'runtime_error')
     .sort((a, b) => b.lastSeq - a.lastSeq)[0]
+  const payload = lifecycle ? record(lifecycle.payload) : null
   return {
-    isProcessing: lifecycle?.kind === 'agent_start' || lifecycle?.kind === 'turn_start' || lifecycle?.kind === 'compaction_start',
+    isProcessing: lifecycle?.kind === 'agent_start'
+      || lifecycle?.kind === 'turn_start'
+      || lifecycle?.kind === 'compaction_start'
+      || (lifecycle?.kind === 'agent_end' && payload?.settlementPending === true),
     isCompacting: lifecycle?.kind === 'compaction_start',
   }
 }

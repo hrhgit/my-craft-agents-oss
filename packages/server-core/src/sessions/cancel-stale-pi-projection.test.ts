@@ -34,8 +34,12 @@ describe('SessionManager cancellation', () => {
 
     expect(abort).toHaveBeenCalledTimes(1)
     const snapshot = await manager.getPiProjectionSnapshot(managed.id)
+    expect(snapshot?.entities.slice(-2)).toEqual([
+      expect.objectContaining({ kind: 'agent_end', payload: expect.objectContaining({ status: 'interrupted', settlementPending: true }) }),
+      expect.objectContaining({ kind: 'agent_settled', payload: expect.objectContaining({ status: 'interrupted' }) }),
+    ])
     expect(snapshot?.entities.at(-1)).toMatchObject({
-      kind: 'agent_end',
+      kind: 'agent_settled',
       payload: { status: 'interrupted' },
     })
   })

@@ -213,6 +213,8 @@ export function createWebApi(options: WebApiOptions): {
     setGitBashPath: () => Promise.resolve({ success: true }),
 
     // Skills — open in browser not possible
+    discoverSkills: () => Promise.reject(new Error('Skill discovery requires the desktop app')),
+    importSkills: () => Promise.reject(new Error('Skill import requires the desktop app')),
     openSkillInEditor: () => Promise.resolve(),
     openSkillInFinder: () => Promise.resolve(),
 

@@ -35,7 +35,7 @@ collaborates_with: [conversation-ui]
 validation:
   - { id: shared-ui-regression, kind: unit, command: "bun test packages/ui", description: "Run shared UI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: i18n-contract, kind: contract, command: "bun run lint:i18n:parity && bun run lint:i18n:sorted", description: "Verify locale parity and deterministic sorting.", triggers: [locale-change, contract-change], required: true, evidence: "Lint exit status and diagnostics." }
-scope_digest: 56bf33e5d6e9a97c364f2ac037015581922f8962
+scope_digest: 368baadbb8260f8817d51ed089e963cc1517ddc9
 ---
 
 ## Purpose
@@ -66,6 +66,7 @@ Run package tests, ESLint rules, type checking, locale parity, and locale orderi
 Primitive changes have a wide visual blast radius; translation drift and focus regressions are easy to miss in unit tests.
 
 ## Semantic history
+- 2026-07-21: Added locale-parity strings for discovered-skill selection and confirmed subset-import feedback.
 - 2026-07-12: Consolidated reusable renderer presentation for Electron and WebUI use.
 - 2026-07-14: Added stable semantic identities to UI primitives for validation.
 - 2026-07-20: Removed the Data Sources locale contract and narrowed mention-menu copy to files and skills.

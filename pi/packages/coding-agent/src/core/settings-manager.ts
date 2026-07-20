@@ -6,6 +6,7 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import type { ExtensionActivation, ExtensionTarget } from "./extensions/types.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import type { NetworkSettings } from "./network-types.ts";
+import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -99,6 +100,14 @@ export interface ExtensionNamespaceSettings {
 	concurrency?: number;
 }
 
+export type HostModelDefaultSlot = number;
+export type ModelDefaultThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export interface ModelDefaultConfig {
+	provider: string;
+	model: string;
+	thinkingLevel: ModelDefaultThinkingLevel;
+}
+
 /**
  * Per-namespace GUI preferences for mortise shell, stored under
  * `shellGui.<name>` in settings.json (the `shell.gui.<name>.*` namespace).
@@ -121,7 +130,9 @@ export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
-	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	defaultThinkingLevel?: ModelDefaultThinkingLevel;
+	/** Slots 2+ extend the legacy top-level default (slot 1). */
+	modelDefaultSlots?: Record<string, ModelDefaultConfig>;
 	webSearch?: boolean;
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
@@ -691,6 +702,90 @@ export class SettingsManager {
 		this.markModified("defaultProvider");
 		this.markModified("defaultModel");
 		this.save();
+	}
+
+	getModelDefaultSlot(slot: HostModelDefaultSlot): ModelDefaultConfig | undefined {
+		if (!Number.isInteger(slot) || slot < 1) return undefined;
+		if (slot === 1) {
+			if (!this.globalSettings.defaultProvider || !this.globalSettings.defaultModel) return undefined;
+			return {
+				provider: this.globalSettings.defaultProvider,
+				model: this.globalSettings.defaultModel,
+				thinkingLevel: this.globalSettings.defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL,
+			};
+		}
+		const value = this.globalSettings.modelDefaultSlots?.[String(slot)];
+		if (!value || typeof value.provider !== "string" || typeof value.model !== "string") return undefined;
+		return {
+			provider: value.provider,
+			model: value.model,
+			thinkingLevel: value.thinkingLevel ?? DEFAULT_THINKING_LEVEL,
+		};
+	}
+
+	setModelDefaultSlot(slot: HostModelDefaultSlot, config: ModelDefaultConfig): void {
+		if (!Number.isInteger(slot) || slot < 1) throw new Error(`Invalid model default slot: ${slot}`);
+		if (slot === 1) {
+			this.setDefaultModelAndProvider(config.provider, config.model);
+			this.setDefaultThinkingLevel(config.thinkingLevel);
+			return;
+		}
+		const existing = this.getModelDefaultSlots();
+		if (slot > existing.length + 1) throw new Error(`Cannot skip model default slot ${slot}`);
+		existing[slot - 1] = {
+			provider: config.provider,
+			model: config.model,
+			thinkingLevel: config.thinkingLevel,
+		};
+		this.writeModelDefaultSlots(existing);
+		this.save();
+	}
+
+	getModelDefaultSlots(): ModelDefaultConfig[] {
+		const slots: ModelDefaultConfig[] = [];
+		const primary = this.getModelDefaultSlot(1);
+		if (primary) slots.push(primary);
+		const extras = Object.keys(this.globalSettings.modelDefaultSlots ?? {})
+			.map(Number)
+			.filter((slot) => Number.isInteger(slot) && slot >= 2)
+			.sort((a, b) => a - b)
+			.map((slot) => this.getModelDefaultSlot(slot))
+			.filter((slot): slot is ModelDefaultConfig => Boolean(slot));
+		return slots.concat(extras);
+	}
+
+	removeModelDefaultSlot(slot: HostModelDefaultSlot): void {
+		if (!Number.isInteger(slot) || slot < 2) throw new Error(`Invalid removable model default slot: ${slot}`);
+		const existing = this.getModelDefaultSlots();
+		if (slot > existing.length) return;
+		existing.splice(slot - 1, 1);
+		this.writeModelDefaultSlots(existing);
+		this.save();
+	}
+
+	replaceModelDefaultSlots(slots: ModelDefaultConfig[]): void {
+		this.writeModelDefaultSlots(slots);
+		this.save();
+	}
+
+	private writeModelDefaultSlots(slots: ModelDefaultConfig[]): void {
+		const [primary, ...extras] = slots;
+		if (primary) {
+			this.globalSettings.defaultProvider = primary.provider;
+			this.globalSettings.defaultModel = primary.model;
+			this.globalSettings.defaultThinkingLevel = primary.thinkingLevel;
+		} else {
+			delete this.globalSettings.defaultProvider;
+			delete this.globalSettings.defaultModel;
+		}
+		this.globalSettings.modelDefaultSlots = Object.fromEntries(
+			extras.map((config, index) => [String(index + 2), { ...config }]),
+		);
+		if (extras.length === 0) delete this.globalSettings.modelDefaultSlots;
+		this.markModified("defaultProvider");
+		this.markModified("defaultModel");
+		this.markModified("defaultThinkingLevel");
+		this.markModified("modelDefaultSlots");
 	}
 
 	getSteeringMode(): "all" | "one-at-a-time" {

@@ -61,3 +61,22 @@ export interface LoadedSkill {
   /** Where this skill was loaded from */
   source: SkillSource;
 }
+
+/** Result of importing one local skill directory into the current workspace. */
+export type SkillImportResult =
+  | { status: 'imported'; slug: string; name: string }
+  | { status: 'skipped'; slug: string; name: string };
+
+/** A skill found under a user-level skills directory and ready for import. */
+export interface DiscoveredSkill {
+  sourcePath: string;
+  skillsRoot: string;
+  slug: string;
+}
+
+/** Aggregate result for a confirmed multi-skill import. */
+export interface SkillImportBatchResult {
+  imported: Array<{ slug: string; name: string }>;
+  skipped: Array<{ slug: string; name: string }>;
+  failed: Array<{ sourcePath: string; error: string }>;
+}

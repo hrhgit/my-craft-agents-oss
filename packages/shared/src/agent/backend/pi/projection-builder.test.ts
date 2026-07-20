@@ -160,7 +160,7 @@ describe('PiProjectionBuilder', () => {
     const error = builder.accept({ type: 'error', message: 'boom' })[0]!
     const end = builder.accept({ type: 'complete' })[0]!
     expect(error).toMatchObject({ entityId: 'error:1', kind: 'runtime_error', payload: { message: 'boom' } })
-    expect(end).toMatchObject({ entityId: 'lifecycle:agent_end:2', kind: 'agent_end', payload: { status: 'completed' } })
+    expect(end).toMatchObject({ entityId: 'lifecycle:agent_settled:2', kind: 'agent_settled', payload: { status: 'completed' } })
   })
 
   it('finalizes running tools before terminal lifecycle events', () => {
@@ -171,7 +171,7 @@ describe('PiProjectionBuilder', () => {
       entityId: 'tool:call-1', turnId: 'turn-1', entityVersion: 2,
       kind: 'tool_execution_end', payload: { status: 'completed', result: '', isError: false },
     })
-    expect(completion[1]).toMatchObject({ kind: 'agent_end' })
+    expect(completion[1]).toMatchObject({ kind: 'agent_settled' })
 
     const failed = new PiProjectionBuilder('session-1', 'runtime-1')
     failed.accept({ type: 'tool_start', toolName: 'Bash', toolUseId: 'call-2', input: {} })
@@ -275,6 +275,35 @@ sessionId: session-1
     expect(compacting).toMatchObject({ entityType: 'conversation', entityVersion: 1, kind: 'compaction_start' })
     expect(compacted).toMatchObject({ entityType: 'conversation', entityVersion: 1, kind: 'compaction_end', payload: { status: 'completed', willRetry: true } })
     expect(new Set([agent.entityId, compacting.entityId, compacted.entityId]).size).toBe(3)
+  })
+
+  it('preserves retrying attempts until logical settlement', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    const start = builder.acceptRuntimeEvent({ type: 'agent_start' })[0]!
+    const retryingEnd = builder.acceptRuntimeEvent({
+      type: 'agent_end', willRetry: true,
+      messages: [{ role: 'assistant', stopReason: 'error' }],
+    })[0]!
+    const settled = builder.accept({ type: 'complete' })[0]!
+
+    expect(start).toMatchObject({ kind: 'agent_start', payload: { status: 'running' } })
+    expect(retryingEnd).toMatchObject({
+      kind: 'agent_end',
+      payload: { status: 'failed', stopReason: 'error', willRetry: true, settlementPending: true },
+    })
+    expect(settled).toMatchObject({ kind: 'agent_settled', payload: { status: 'failed' } })
+  })
+
+  it('projects aborted and failed turn terminal states', () => {
+    const aborted = new PiProjectionBuilder('session-1', 'runtime-aborted')
+    aborted.acceptRuntimeEvent({ type: 'turn_start' })
+    expect(aborted.acceptRuntimeEvent({ type: 'turn_end', message: { stopReason: 'aborted' } })[0])
+      .toMatchObject({ kind: 'turn_end', payload: { status: 'aborted', stopReason: 'aborted' } })
+
+    const failed = new PiProjectionBuilder('session-1', 'runtime-failed')
+    failed.acceptRuntimeEvent({ type: 'turn_start' })
+    expect(failed.acceptRuntimeEvent({ type: 'turn_end', message: { stopReason: 'error' } })[0])
+      .toMatchObject({ kind: 'turn_end', payload: { status: 'failed', stopReason: 'error' } })
   })
 
   it('projects validated Pi plan custom messages as artifact entities', () => {

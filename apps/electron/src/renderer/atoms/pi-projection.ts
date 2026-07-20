@@ -247,6 +247,7 @@ export const piProjectionAtomFamily = atomFamily(
 const PI_PROCESSING_LIFECYCLE_KINDS = new Set([
   'agent_start',
   'agent_end',
+  'agent_settled',
   'turn_start',
   'turn_end',
   'compaction_start',
@@ -265,9 +266,13 @@ export function isPiProjectionProcessing(state: PiProjectionState): boolean {
     if (!latest || entity.lastSeq > latest.lastSeq) latest = entity
   }
 
+  const payload = latest?.payload && typeof latest.payload === 'object'
+    ? latest.payload as Record<string, unknown>
+    : undefined
   return latest?.kind === 'agent_start'
     || latest?.kind === 'turn_start'
     || latest?.kind === 'compaction_start'
+    || (latest?.kind === 'agent_end' && payload?.settlementPending === true)
 }
 
 export const piProjectionIsProcessingAtomFamily = atomFamily(

@@ -35,7 +35,12 @@ export function getPiAgentEndHandoff(
   current: PiProjectionState,
   event: PiProjectionEventV1,
 ): PiAgentEndHandoff | null {
-  if (event.kind !== 'agent_end' || event.entityType !== 'conversation') return null
+  const payload = event.payload && typeof event.payload === 'object'
+    ? event.payload as Record<string, unknown>
+    : undefined
+  const isLogicalEnd = event.kind === 'agent_settled'
+    || (event.kind === 'agent_end' && payload?.settlementPending !== true)
+  if (!isLogicalEnd || event.entityType !== 'conversation') return null
   if (current.syncState !== 'synced' || current.lastSeq !== event.seq) return null
   if (previous.lastSeq >= event.seq || previous.seenEventIds.has(event.eventId)) return null
 

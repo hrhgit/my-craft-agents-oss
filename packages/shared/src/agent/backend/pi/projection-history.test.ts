@@ -128,7 +128,7 @@ describe('Pi HostSessionProjection history builder', () => {
     const second = buildPiProjectionSnapshotFromHostProjection('session-1', 'history-runtime', projection())
 
     expect(second).toEqual(first)
-    expect(first.entities.at(-1)).toMatchObject({ kind: 'agent_end', payload: { status: 'completed' } })
+    expect(first.entities.at(-1)).toMatchObject({ kind: 'agent_settled', payload: { status: 'completed' } })
   })
 
   it('recovers string assistant history with the canonical Pi entry identity', () => {
@@ -146,6 +146,29 @@ describe('Pi HostSessionProjection history builder', () => {
     expect(snapshot.entities.find(entity => entity.entityId === 'content:text:assistant-entry:0')).toMatchObject({
       kind: 'assistant_text',
       payload: { messageId: 'assistant-entry', text: 'plain answer', isFinal: true },
+    })
+  })
+
+  it.each([
+    ['error', 'failed'],
+    ['aborted', 'aborted'],
+  ] as const)('preserves a %s terminal assistant status', (stopReason, status) => {
+    const snapshot = buildPiProjectionSnapshotFromHostProjection('session-1', 'history-runtime', {
+      leafId: 'assistant-entry',
+      entries: [{
+        type: 'message', id: 'user-entry', parentId: null, timestamp: new Date(100).toISOString(),
+        message: { role: 'user', content: 'hello', timestamp: 100 },
+      }, {
+        type: 'message', id: 'assistant-entry', parentId: 'user-entry', timestamp: new Date(200).toISOString(),
+        message: {
+          role: 'assistant', content: [], timestamp: 200, stopReason,
+          errorMessage: stopReason === 'error' ? 'provider failed' : undefined,
+        } as never,
+      }],
+    })
+
+    expect(snapshot.entities.at(-1)).toMatchObject({
+      kind: 'agent_settled', payload: { status },
     })
   })
 

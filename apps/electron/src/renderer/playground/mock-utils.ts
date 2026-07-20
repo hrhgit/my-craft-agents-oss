@@ -227,6 +227,9 @@ export const mockElectronAPI = {
     return null
   },
 
+  discoverSkills: async () => [],
+  importSkills: async () => ({ imported: [], skipped: [], failed: [] }),
+
   getTaskOutput: async (taskId: string) => {
     console.log('[Playground] getTaskOutput called:', taskId)
     return `Output for task ${taskId}:\n\nThis is a mock output in the playground.\nIn the real app, this would show the actual task output.`

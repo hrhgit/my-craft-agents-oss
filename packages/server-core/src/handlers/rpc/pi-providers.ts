@@ -102,11 +102,27 @@ export function registerPiProviderHandlers(server: RpcServer, deps: HandlerDeps)
       return { success: false, error: error instanceof Error ? error.message : String(error) }
     }
   })
-  server.handle(RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT, async (_ctx, args: { provider: string; model: string; thinkingLevel?: string }) => {
+  server.handle(RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT, async (_ctx, args: {
+    provider?: string
+    model?: string
+    thinkingLevel?: string
+    slot?: number
+    remove?: boolean
+  }) => {
     try {
-      const { setPiGlobalDefault } = await import('@mortise/shared/config')
+      const { removePiGlobalDefaultSlot, setPiGlobalDefault, setPiGlobalDefaultSlot } = await import('@mortise/shared/config')
       await serializePiSettingsWrite(async () => {
-        await setPiGlobalDefault(args.provider, args.model, args.thinkingLevel)
+        const slot = args.slot ?? 1
+        if (!Number.isInteger(slot) || slot < 1) throw new Error(`Invalid model default slot: ${slot}`)
+        if (args.remove) {
+          await removePiGlobalDefaultSlot(slot)
+        } else if (!args.provider || !args.model || !args.thinkingLevel) {
+          throw new Error('Provider, model, and thinking level are required.')
+        } else if (slot === 1) {
+          await setPiGlobalDefault(args.provider, args.model, args.thinkingLevel)
+        } else {
+          await setPiGlobalDefaultSlot(slot, args.provider, args.model, args.thinkingLevel)
+        }
         await runPiGlobalSync('setGlobalDefault')
         await sessionManager.reloadProviderRuntime()
       })

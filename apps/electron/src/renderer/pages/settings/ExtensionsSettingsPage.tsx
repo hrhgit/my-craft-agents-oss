@@ -31,7 +31,7 @@ function isSettingScalar(value: unknown): value is PiExtensionSettingScalar {
 
 export default function ExtensionsSettingsPage() {
   const { t } = useTranslation()
-  const { providers } = usePiGlobalConfig()
+  const { providers, settings: piSettings } = usePiGlobalConfig()
   const [extensionCatalog, setExtensionCatalog] = useState<PiExtensionCatalogEntry[]>([])
   const [extensionErrors, setExtensionErrors] = useState<PiExtensionCatalogError[]>([])
   const [extensionStates, setExtensionStates] = useState<Record<string, boolean>>({})
@@ -63,14 +63,16 @@ export default function ExtensionsSettingsPage() {
     })
   }, [loadCatalog, t])
 
-  const handleConfigPatch = useCallback(async (key: string, value: PiExtensionSettingScalar) => {
+  const handleConfigPatch = useCallback(async (key: string, value?: PiExtensionSettingScalar) => {
     if (!selectedExtensionId) return
     const extensionId = selectedExtensionId
     const fieldId = configFieldId(extensionId, key)
     const version = (configPatchVersions.current.get(fieldId) ?? 0) + 1
     configPatchVersions.current.set(fieldId, version)
     setExtensionCatalog((entries) => entries.map((entry) => entry.id === extensionId
-      ? { ...entry, config: { ...(entry.config ?? {}), [key]: value } }
+      ? { ...entry, config: value === undefined
+        ? Object.fromEntries(Object.entries(entry.config ?? {}).filter(([entryKey]) => entryKey !== key))
+        : { ...(entry.config ?? {}), [key]: value } }
       : entry))
 
     // The backend persists an extension config with read-modify-write semantics,
@@ -81,15 +83,15 @@ export default function ExtensionsSettingsPage() {
         const result = await window.electronAPI.patchPiExtensionConfig({
           schemaVersion: 1,
           extensionId,
-          set: { [key]: value },
+          ...(value === undefined ? { unset: [key] } : { set: { [key]: value } }),
         })
         if (result.reload?.status === 'confirmation_required') {
           setReloadConfirmation(result.reload.activeSessions)
         }
-        const confirmedValue = isSettingScalar(result.config[key]) ? result.config[key] : value
-        confirmedConfig.current.set(fieldId, { present: true, value: confirmedValue })
+        const confirmedValue = isSettingScalar(result.config[key]) ? result.config[key] : undefined
+        confirmedConfig.current.set(fieldId, confirmedValue === undefined ? { present: false } : { present: true, value: confirmedValue })
         if (configPatchVersions.current.get(fieldId) === version) {
-          setExtensionCatalog((entries) => patchCatalogField(entries, extensionId, key, { present: true, value: confirmedValue }))
+          setExtensionCatalog((entries) => patchCatalogField(entries, extensionId, key, confirmedValue === undefined ? { present: false } : { present: true, value: confirmedValue }))
         }
       } catch (error) {
         let fallback = confirmedConfig.current.get(fieldId) ?? { present: false }
@@ -183,7 +185,9 @@ export default function ExtensionsSettingsPage() {
             <ExtensionDetailPanel
               extension={selectedExtension!}
               providers={providers}
+              defaultSlots={piSettings.defaultSlots ?? []}
               onPatch={handleConfigPatch}
+              onUnset={(key) => handleConfigPatch(key)}
               onBack={handleBack}
             />
           ) : (

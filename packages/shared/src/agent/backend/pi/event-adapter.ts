@@ -36,7 +36,8 @@ type PiEvent = PiAgentEvent | AgentSessionEvent;
  * - message_end → text_complete
  * - tool_execution_start → tool_start
  * - tool_execution_end → tool_result
- * - agent_end → complete
+ * - agent_end → ignored (one logical run may contain multiple attempts)
+ * - agent_settled → complete
  * - compaction_start → status (with "Compacting" keyword)
  * - compaction_end → info/error
  * - auto_retry_start → status
@@ -60,7 +61,7 @@ export class PiEventAdapter extends BaseEventAdapter {
   // Model context window for usage_update events
   private contextWindow: number | undefined;
 
-  // Track last usage for emitting with complete event
+  // Track last usage for emitting when the logical run settles.
   private lastUsage: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost: { total: number } } | undefined;
 
   constructor() {
@@ -110,21 +111,30 @@ export class PiEventAdapter extends BaseEventAdapter {
         break;
 
       case 'agent_end':
-        if (this.lastUsage) {
-          const inputTokens = this.lastUsage.input + (this.lastUsage.cacheRead || 0);
+        // AgentSession may retry or compact after an agent_end. The only
+        // logical completion boundary is agent_settled.
+        break;
+
+      case 'agent_settled':
+        {
+          const usage = this.lastUsage;
+          this.lastUsage = undefined;
+          if (usage) {
+          const inputTokens = usage.input + (usage.cacheRead || 0);
           yield {
             type: 'complete',
             usage: {
               inputTokens,
-              outputTokens: this.lastUsage.output,
-              cacheReadTokens: this.lastUsage.cacheRead,
-              cacheCreationTokens: this.lastUsage.cacheWrite,
-              costUsd: this.lastUsage.cost.total,
+              outputTokens: usage.output,
+              cacheReadTokens: usage.cacheRead,
+              cacheCreationTokens: usage.cacheWrite,
+              costUsd: usage.cost.total,
               contextWindow: this.contextWindow,
             },
           };
-        } else {
-          yield { type: 'complete' };
+          } else {
+            yield { type: 'complete' };
+          }
         }
         break;
 
@@ -138,7 +148,7 @@ export class PiEventAdapter extends BaseEventAdapter {
         break;
 
       case 'turn_end':
-        // Don't emit 'complete' here — agent_end handles it.
+        // Don't emit 'complete' here — agent_settled handles it.
         // Emitting from both causes duplicate messages in session persistence.
         this.currentTurnId = null;
         this.hasStreamedDeltas = false;

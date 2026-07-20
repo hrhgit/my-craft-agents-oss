@@ -28,6 +28,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  FolderInput,
 } from "lucide-react"
 import { TopBar } from "./TopBar"
 import { WorkspaceCoordinationStatusPopover } from "./WorkspaceCoordinationStatusPopover"
@@ -84,7 +85,7 @@ import { useFocusZone } from "@/hooks/keyboard"
 import { useFocusContext } from "@/context/FocusContext"
 import { getSessionTitle } from "@/utils/session"
 import { useSetAtom } from "jotai"
-import type { Session, Workspace, FileAttachment, PermissionRequest, LoadedSkill, PermissionMode, AutomationFilter } from "../../../shared/types"
+import type { Session, Workspace, FileAttachment, PermissionRequest, DiscoveredSkill, LoadedSkill, PermissionMode, AutomationFilter } from "../../../shared/types"
 import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/atoms/sessions"
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
 import { skillsAtom } from "@/atoms/skills"
@@ -106,6 +107,7 @@ import {
 } from "@/contexts/NavigationContext"
 import type { SettingsSubpage } from "../../../shared/types"
 import { SkillsListPanel } from "./SkillsListPanel"
+import { SkillImportDialog } from "./SkillImportDialog"
 import { AutomationsListPanel } from "../automations/AutomationsListPanel"
 import { type AutomationFilterKind, AUTOMATION_TYPE_TO_FILTER_KIND } from "../automations/types"
 import { useAutomations } from "@/hooks/useAutomations"
@@ -399,6 +401,85 @@ function AppShellContent({
   }, [skills, setSkillsAtom])
   // Automations — state, handlers, loading, subscriptions
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
+  const canImportSkill = window.electronAPI.getRuntimeEnvironment() === 'electron' && !activeWorkspace?.remoteServer
+  const activeWorkspaceIdRef = React.useRef(activeWorkspaceId)
+  activeWorkspaceIdRef.current = activeWorkspaceId
+  const skillDiscoveryRequestRef = React.useRef(0)
+  const skillImportInFlightRef = React.useRef(false)
+  const [skillImportCandidates, setSkillImportCandidates] = React.useState<DiscoveredSkill[]>([])
+  const [skillImportWorkspaceId, setSkillImportWorkspaceId] = React.useState<string | null>(null)
+  const [skillImportDialogOpen, setSkillImportDialogOpen] = React.useState(false)
+  const [isDiscoveringSkills, setIsDiscoveringSkills] = React.useState(false)
+  const [isImportingSkills, setIsImportingSkills] = React.useState(false)
+
+  const handleImportSkill = useCallback(async () => {
+    if (!activeWorkspaceId) return
+    const workspaceId = activeWorkspaceId
+    const requestId = ++skillDiscoveryRequestRef.current
+    setSkillImportDialogOpen(false)
+    setSkillImportCandidates([])
+    setSkillImportWorkspaceId(null)
+    setIsDiscoveringSkills(true)
+    try {
+      const discovered = await window.electronAPI.discoverSkills(workspaceId)
+      if (skillDiscoveryRequestRef.current !== requestId || activeWorkspaceIdRef.current !== workspaceId) return
+      if (discovered.length === 0) {
+        toast.info(t('skillsImport.noneFound'))
+        return
+      }
+      setSkillImportCandidates(discovered)
+      setSkillImportWorkspaceId(workspaceId)
+      setSkillImportDialogOpen(true)
+    } catch (error) {
+      if (skillDiscoveryRequestRef.current !== requestId || activeWorkspaceIdRef.current !== workspaceId) return
+      toast.error(t('skillsList.importFailed'), {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      if (skillDiscoveryRequestRef.current === requestId) setIsDiscoveringSkills(false)
+    }
+  }, [activeWorkspaceId, t])
+
+  const handleConfirmSkillImport = useCallback(async (sourcePaths: string[]) => {
+    if (!skillImportWorkspaceId || skillImportInFlightRef.current) return
+    const workspaceId = skillImportWorkspaceId
+    skillImportInFlightRef.current = true
+    setIsImportingSkills(true)
+    try {
+      const result = await window.electronAPI.importSkills(workspaceId, sourcePaths)
+      if (result.imported.length > 0 && activeWorkspaceIdRef.current === workspaceId) {
+        const loaded = await window.electronAPI.getSkills(workspaceId)
+        if (activeWorkspaceIdRef.current === workspaceId) setSkills(loaded || [])
+      }
+      setSkillImportDialogOpen(false)
+      setSkillImportCandidates([])
+      setSkillImportWorkspaceId(null)
+      toast.success(t('skillsImport.completed', {
+        imported: result.imported.length,
+        skipped: result.skipped.length,
+      }))
+      if (result.failed.length > 0) {
+        toast.error(t('skillsImport.failedCount', { count: result.failed.length }), {
+          description: result.failed[0]?.error,
+        })
+      }
+    } catch (error) {
+      toast.error(t('skillsList.importFailed'), {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      skillImportInFlightRef.current = false
+      setIsImportingSkills(false)
+    }
+  }, [skillImportWorkspaceId, t])
+
+  React.useEffect(() => {
+    skillDiscoveryRequestRef.current += 1
+    setSkillImportDialogOpen(false)
+    setSkillImportCandidates([])
+    setSkillImportWorkspaceId(null)
+    setIsDiscoveringSkills(false)
+  }, [activeWorkspaceId])
 
   // Send to Workspace dialog state (driven by sendToWorkspaceAtom set from SessionMenu/BatchSessionMenu)
   const sendToWorkspaceIds = useAtomValue(sendToWorkspaceAtom)
@@ -1643,16 +1724,29 @@ function AppShellContent({
                   )}
                   {/* Add Skill button (only for skills mode) */}
                   {isSkillsNavigation(navState) && activeWorkspace && (
-                    <EditPopover
-                      trigger={
+                    <>
+                      {canImportSkill && (
                         <HeaderIconButton
-                          icon={<Plus className="h-4 w-4" />}
-                          tooltip={t("sidebarMenu.addSkill")}
-                          data-tutorial="add-skill-button"
+                          icon={isDiscoveringSkills
+                            ? <Spinner className="text-[14px]" />
+                            : <FolderInput className="h-4 w-4" />}
+                          tooltip={t('skillsList.importSkill')}
+                          aria-label={t('skillsList.importSkill')}
+                          onClick={handleImportSkill}
+                          disabled={isDiscoveringSkills || isImportingSkills}
                         />
-                      }
-                      {...getEditConfig('add-skill', activeWorkspace.rootPath)}
-                    />
+                      )}
+                      <EditPopover
+                        trigger={
+                          <HeaderIconButton
+                            icon={<Plus className="h-4 w-4" />}
+                            tooltip={t("sidebarMenu.addSkill")}
+                            data-tutorial="add-skill-button"
+                          />
+                        }
+                        {...getEditConfig('add-skill', activeWorkspace.rootPath)}
+                      />
+                    </>
                   )}
                   {/* Add Automation button (only for automations mode) */}
                   {isAutomationsNavigation(navState) && activeWorkspace && (
@@ -1903,6 +1997,15 @@ function AppShellContent({
       {/* Messaging dialogs (pairing-code + WA connect) — driven by messagingDialogAtom.
           Mounted here so they survive context-menu / dropdown close. */}
       <MessagingDialogHost />
+      {skillImportCandidates.length > 0 && (
+        <SkillImportDialog
+          open={skillImportDialogOpen}
+          candidates={skillImportCandidates}
+          importing={isImportingSkills}
+          onOpenChange={setSkillImportDialogOpen}
+          onImport={handleConfirmSkillImport}
+        />
+      )}
 
     </AppShellProvider>
   )

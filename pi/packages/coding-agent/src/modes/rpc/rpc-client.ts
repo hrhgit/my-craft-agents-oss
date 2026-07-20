@@ -7,9 +7,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { connect, type Socket } from "node:net";
-import type { AgentEvent, AgentMessage, ThinkingLevel } from "@mortise/pi-agent-core";
+import type { AgentMessage, ThinkingLevel } from "@mortise/pi-agent-core";
 import type { ImageContent } from "@mortise/pi-ai/types";
-import type { SessionStats } from "../../core/agent-session.ts";
+import type { AgentSessionEvent, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import { PI_GLOBAL_HOST_INSTANCE_ID_ENV, readPiGlobalHostState } from "../../core/global-host-state.ts";
@@ -141,8 +141,9 @@ export type RpcProcessLifecycleEvent =
 	| { type: "process_error"; message: string; stderr: string }
 	| { type: "stdin_error"; message: string; stderr: string };
 
+export type RpcAgentEvent = AgentSessionEvent & RpcEnvelope;
 export type RpcClientEvent =
-	| (AgentEvent & RpcEnvelope)
+	| RpcAgentEvent
 	| RpcBackgroundTaskEvent
 	| RpcExtensionUIRequest
 	| RpcExtensionUICancel
@@ -156,7 +157,7 @@ export type RpcClientEvent =
 	| RpcToolPermissionRequest
 	| RpcToolResultRequest
 	| RpcToolExecuteRequest;
-export type RpcEventListener = (event: AgentEvent & RpcEnvelope) => void;
+export type RpcEventListener = (event: RpcAgentEvent) => void;
 export type RpcClientEventListener = (event: RpcClientEvent) => void;
 
 /** Host-side permission handler invoked for every tool_permission_request. */
@@ -493,8 +494,16 @@ export class RpcClient {
 	/**
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 */
-	async followUp(message: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
-		await this.send({ type: "follow_up", message, images, clientMutationId: options?.clientMutationId });
+	async followUp(
+		message: string,
+		images?: ImageContent[],
+		options?: { clientMutationId?: string; attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[] },
+	): Promise<void> {
+		await this.send({
+			type: "follow_up", message, images,
+			clientMutationId: options?.clientMutationId,
+			attachments: options?.attachments,
+		});
 	}
 
 	/**
@@ -1003,8 +1012,7 @@ export class RpcClient {
 	}
 
 	/**
-	 * Wait for agent to become idle (no streaming).
-	 * Resolves when agent_end event is received.
+	 * Wait for the full logical agent run to settle, including retry and compaction recovery.
 	 */
 	waitForIdle(timeout = 60000): Promise<void> {
 		return new Promise((resolve, reject) => {
@@ -1014,7 +1022,7 @@ export class RpcClient {
 			}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
-				if (event.type === "agent_end") {
+				if (event.type === "agent_settled") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve();
@@ -1024,11 +1032,11 @@ export class RpcClient {
 	}
 
 	/**
-	 * Collect events until agent becomes idle.
+	 * Collect events through logical settlement, including intermediate retry runs.
 	 */
-	collectEvents(timeout = 60000): Promise<AgentEvent[]> {
+	collectEvents(timeout = 60000): Promise<RpcAgentEvent[]> {
 		return new Promise((resolve, reject) => {
-			const events: AgentEvent[] = [];
+			const events: RpcAgentEvent[] = [];
 			const timer = setTimeout(() => {
 				unsubscribe();
 				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
@@ -1036,7 +1044,7 @@ export class RpcClient {
 
 			const unsubscribe = this.onEvent((event) => {
 				events.push(event);
-				if (event.type === "agent_end") {
+				if (event.type === "agent_settled") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve(events);
@@ -1048,7 +1056,7 @@ export class RpcClient {
 	/**
 	 * Send prompt and wait for completion, returning all events.
 	 */
-	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<AgentEvent[]> {
+	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<RpcAgentEvent[]> {
 		const eventsPromise = this.collectEvents(timeout);
 		await this.prompt(message, images);
 		return eventsPromise;
@@ -1192,7 +1200,7 @@ export class RpcClient {
 				return;
 			}
 			for (const listener of [...this.eventListeners]) {
-				listener(event as AgentEvent);
+				listener(event as RpcAgentEvent);
 			}
 		} catch {
 			// Ignore non-JSON lines
@@ -1522,8 +1530,16 @@ export class PiRuntimeHandle {
 		return this.requestVoid({ type: "steer", message, images, clientMutationId: options?.clientMutationId });
 	}
 
-	followUp(message: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
-		return this.requestVoid({ type: "follow_up", message, images, clientMutationId: options?.clientMutationId });
+	followUp(
+		message: string,
+		images?: ImageContent[],
+		options?: { clientMutationId?: string; attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[] },
+	): Promise<void> {
+		return this.requestVoid({
+			type: "follow_up", message, images,
+			clientMutationId: options?.clientMutationId,
+			attachments: options?.attachments,
+		});
 	}
 
 	abort(): Promise<void> {
@@ -1639,6 +1655,7 @@ export class PiRuntimeHandle {
 		this.client.reportRuntimeExtensionHostCapabilityProgress(this.runtimeId, this.summary.sessionId, progress);
 	}
 
+	/** Wait for this runtime's full logical agent run to settle. */
 	waitForIdle(timeout = 60_000): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -1648,13 +1665,40 @@ export class PiRuntimeHandle {
 				);
 			}, timeout);
 			const unsubscribe = this.onEvent((event) => {
-				if (event.type === "agent_end") {
+				if (event.type === "agent_settled") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve();
 				}
 			});
 		});
+	}
+
+	/** Collect this runtime's events through logical settlement. */
+	collectEvents(timeout = 60_000): Promise<RpcAgentEvent[]> {
+		return new Promise((resolve, reject) => {
+			const events: RpcAgentEvent[] = [];
+			const timer = setTimeout(() => {
+				unsubscribe();
+				reject(
+					new Error(`Timeout collecting events for runtime ${this.runtimeId}. Stderr: ${this.getStderr()}`),
+				);
+			}, timeout);
+			const unsubscribe = this.onEvent((event) => {
+				events.push(event);
+				if (event.type === "agent_settled") {
+					clearTimeout(timer);
+					unsubscribe();
+					resolve(events);
+				}
+			});
+		});
+	}
+
+	async promptAndWait(message: string, images?: ImageContent[], timeout = 60_000): Promise<RpcAgentEvent[]> {
+		const eventsPromise = this.collectEvents(timeout);
+		await this.prompt(message, images);
+		return eventsPromise;
 	}
 
 	async close(): Promise<void> {

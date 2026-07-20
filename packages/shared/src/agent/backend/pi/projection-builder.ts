@@ -34,6 +34,7 @@ export class PiProjectionBuilder {
   private seq = 0
   private turnIndex = 0
   private activeTurnId: string | null = null
+  private lastAgentEndStatus: 'completed' | 'failed' | 'aborted' | null = null
   private readonly entities = new Map<string, EntityState>()
   private readonly pendingTurnEntityIds: string[] = []
 
@@ -180,11 +181,14 @@ export class PiProjectionBuilder {
           droppedEvents: event.droppedEvents,
           maxQueueSize: event.maxQueueSize,
         })]
-      case 'complete':
+      case 'complete': {
+        const settledStatus = this.lastAgentEndStatus ?? 'completed'
+        this.lastAgentEndStatus = null
         return [
           ...this.finalizeRunningTools(false),
-          this.lifecycleEvent('agent_end', { status: 'completed', usage: event.usage }),
+          this.lifecycleEvent('agent_settled', { status: settledStatus, usage: event.usage }),
         ]
+      }
       case 'error':
         return [
           ...this.finalizeRunningTools(true),
@@ -227,6 +231,21 @@ export class PiProjectionBuilder {
     if (event.type === 'agent_start') {
       return [this.lifecycleEvent('agent_start', { status: 'running' }, this.projectionTimestamp(event))]
     }
+    if (event.type === 'agent_end') {
+      const messages = Array.isArray(event.messages) ? event.messages : []
+      const assistant = [...messages].reverse().find(candidate => (
+        candidate && typeof candidate === 'object' && (candidate as { role?: unknown }).role === 'assistant'
+      )) as { stopReason?: unknown } | undefined
+      const stopReason = typeof assistant?.stopReason === 'string' ? assistant.stopReason : undefined
+      const status = stopReason === 'aborted' ? 'aborted' : stopReason === 'error' ? 'failed' : 'completed'
+      this.lastAgentEndStatus = status
+      return [this.lifecycleEvent('agent_end', {
+        status,
+        stopReason,
+        willRetry: event.willRetry === true,
+        settlementPending: true,
+      }, this.projectionTimestamp(event))]
+    }
     if (event.type === 'turn_start') {
       const turnId = `pi-turn-${this.turnIndex++}`
       this.activeTurnId = turnId
@@ -267,9 +286,11 @@ export class PiProjectionBuilder {
       const message = event.message && typeof event.message === 'object'
         ? event.message as { stopReason?: unknown }
         : undefined
+      const stopReason = typeof message?.stopReason === 'string' ? message.stopReason : undefined
+      const status = stopReason === 'aborted' ? 'aborted' : stopReason === 'error' ? 'failed' : 'completed'
       return [this.createEvent(entityId, 'turn', state.version, 'turn_end', {
-        status: 'completed',
-        stopReason: typeof message?.stopReason === 'string' ? message.stopReason : undefined,
+        status,
+        stopReason,
         toolResultCount: Array.isArray(event.toolResults) ? event.toolResults.length : 0,
       }, turnId, this.projectionTimestamp(event))]
     }

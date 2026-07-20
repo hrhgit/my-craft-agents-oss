@@ -283,6 +283,8 @@ export {
 	readGlobalProviders,
 	readGlobalProvidersForDisplay,
 	readGlobalSettings,
+	readGlobalModelDefaultSlots,
+	removeGlobalModelDefaultSlot,
 	readMortiseSettings,
 	readShellGuiEntry,
 	readShellGuiNamespace,
@@ -294,6 +296,7 @@ export {
 	setExtensionConfig,
 	setGlobalApiKey,
 	setGlobalDefault,
+	setGlobalModelDefaultSlot,
 	setShellGuiEntry,
 	toHostErrorPayload,
 	upsertCraftLlmConnection,
@@ -302,6 +305,12 @@ export {
 } from "./core/host-facade.ts";
 export { convertToLlm } from "./core/messages.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
+export {
+	CURRENT_SESSION_MODEL_REFERENCE,
+	resolveModelReference,
+	type ModelReference,
+	type ResolvedModelReference,
+} from "./core/model-reference.ts";
 export type {
 	PackageManager,
 	PathMetadata,
@@ -382,7 +391,10 @@ export {
 export {
 	type CompactionSettings,
 	type ExtensionPathSource,
+	type HostModelDefaultSlot,
 	type ImageSettings,
+	type ModelDefaultConfig,
+	type ModelDefaultThinkingLevel,
 	type PackageSource,
 	type RetrySettings,
 	SettingsManager,
@@ -475,6 +487,7 @@ export {
 	type PrintModeOptions,
 	parseRpcHostUICapabilities,
 	type RpcBackgroundTaskEvent,
+	type RpcAgentEvent,
 	type RpcCapabilities,
 	type RpcChildSessionInfo,
 	RpcClient,

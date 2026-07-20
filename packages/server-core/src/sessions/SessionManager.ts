@@ -3489,8 +3489,8 @@ export class SessionManager implements ISessionManager {
 
         const result = await agent.spawnChildSession(parentSessionId, {
           prompt: request.prompt,
-          connection: request.provider,
-          model: request.model,
+          connection: request.provider ?? managed.provider,
+          model: request.model ?? managed.model,
           permissionMode: request.permissionMode,
           thinkingLevel: request.thinkingLevel,
           name: request.name,
@@ -4584,9 +4584,8 @@ export class SessionManager implements ISessionManager {
     //   Claude emulates via PreToolUse hook. If `redirect()` returns false
     //   (Claude with no live query, or backend can't steer), the backend has
     //   already called forceAbort(Redirect) and we queue for replay.
-    // - 'queue': hold the message untouched; the current turn keeps running
-    //   to natural completion; replay as a new turn afterwards. NO call to
-    //   `agent.redirect()`, NO forceAbort, NO interruption.
+    // - 'queue': prefer Pi's native follow-up queue. If the backend does not
+    //   support it, hold the message in Mortise's FIFO and replay afterwards.
     if (managed.isProcessing && !isQueuedReplay) {
       const configuredBehavior = getMidStreamBehavior()
       const behavior = options?.midStreamSendIntent === 'alternate'
@@ -4596,16 +4595,33 @@ export class SessionManager implements ISessionManager {
       const agent = managed.agent
       const messageId = options?.optimisticMessageId ?? generateMessageId()
       let steered = false
+      let followedUp = false
       if (behavior === 'steer') {
         steered = agent?.redirect(message, messageId) ?? false
+      } else {
+        try {
+          followedUp = await agent?.followUp(message, attachments, {
+            clientMutationId: messageId,
+            attachmentRefs: storedAttachments?.map(attachment => ({
+              id: attachment.id,
+              name: attachment.name,
+              mediaType: attachment.mimeType,
+              size: attachment.size,
+            })),
+          }) ?? false
+        } catch (error) {
+          sessionLog.warn(
+            `Native follow-up rejected for ${sessionId}; falling back to host queue: ${error instanceof Error ? error.message : error}`,
+          )
+        }
       }
-      // For 'queue': skip redirect entirely. The current turn is undisturbed.
 
       sessionLog.info('mid-stream send', {
         sessionId,
         behavior,
         sendIntent: options?.midStreamSendIntent ?? 'default',
         steered,
+        followedUp,
         queueLengthBefore: managed.messageQueue.length,
         backend: agent ? agent.constructor.name : 'none',
         provider: managed.provider,
@@ -4637,23 +4653,22 @@ export class SessionManager implements ISessionManager {
           })),
         })
         await this.piProjectionWrites.get(managed.id)
-        // Push for FIFO replay on next onProcessingStopped tick. Same shape
-        // for both queue-direct (current turn still running) and
-        // queue-after-abort (backend already aborted) — the replay path in
-        // processNextQueuedMessage is identical.
-        const queuedOptions = {
-          ...(options ?? {}),
-          optimisticMessageId: options?.optimisticMessageId ?? messageId,
+        if (!followedUp) {
+          // Unsupported backends retain the existing host FIFO fallback.
+          const queuedOptions = {
+            ...(options ?? {}),
+            optimisticMessageId: options?.optimisticMessageId ?? messageId,
+          }
+          managed.messageQueue.push({
+            message,
+            attachments,
+            storedAttachments,
+            options: queuedOptions,
+            messageId,
+            optimisticMessageId: queuedOptions.optimisticMessageId,
+          })
+          managed.wasInterrupted = true
         }
-        managed.messageQueue.push({
-          message,
-          attachments,
-          storedAttachments,
-          options: queuedOptions,
-          messageId,
-          optimisticMessageId: queuedOptions.optimisticMessageId,
-        })
-        managed.wasInterrupted = true
       }
 
       if (!managed.publicationState) onAck?.(messageId)
@@ -4898,6 +4913,14 @@ export class SessionManager implements ISessionManager {
         // Handle complete event - SDK always sends this (even after interrupt)
         // This is the central place where processing ends
         if (event.type === 'complete') {
+          // Pi can acknowledge an abort by yielding its terminal event. The
+          // host stop request is authoritative for settlement in that race.
+          if (managed.stopRequested) {
+            sendSpan.mark('chat.complete.after_stop')
+            sendSpan.end()
+            this.onProcessingStopped(sessionId, 'interrupted')
+            return
+          }
           // Defensive fallback: Pi should emit pi_user_message_persisted after
           // SessionManager.appendMessage(user), but never leave the caller
           // hanging if an older subprocess misses that bridge event.
@@ -5549,13 +5572,18 @@ export class SessionManager implements ISessionManager {
     if (!snapshot) return false
     const lifecycle = snapshot.entities
       .filter(entity => entity.kind === 'agent_start' || entity.kind === 'agent_end'
+        || entity.kind === 'agent_settled'
         || entity.kind === 'turn_start' || entity.kind === 'turn_end'
         || entity.kind === 'compaction_start' || entity.kind === 'compaction_end'
         || entity.kind === 'runtime_error')
       .sort((a, b) => b.lastSeq - a.lastSeq)[0]
+    const payload = lifecycle?.payload && typeof lifecycle.payload === 'object'
+      ? lifecycle.payload as Record<string, unknown>
+      : undefined
     return lifecycle?.kind === 'agent_start'
       || lifecycle?.kind === 'turn_start'
       || lifecycle?.kind === 'compaction_start'
+      || (lifecycle?.kind === 'agent_end' && payload?.settlementPending === true)
   }
 
   private closeStalePiProjection(sessionId: string): void {
@@ -5572,6 +5600,18 @@ export class SessionManager implements ISessionManager {
       entityType: 'conversation',
       entityVersion: 1,
       kind: 'agent_end',
+      payload: { status: 'interrupted', settlementPending: true },
+    })
+    this.applyPiProjectionEvent({
+      schemaVersion: 1,
+      eventId: `${snapshot.runtimeId}:host-settled:${seq + 1}`,
+      seq: seq + 1,
+      sessionId,
+      runtimeId: snapshot.runtimeId,
+      entityId: `lifecycle:agent_settled:host:${seq + 1}`,
+      entityType: 'conversation',
+      entityVersion: 1,
+      kind: 'agent_settled',
       payload: { status: 'interrupted' },
     })
   }

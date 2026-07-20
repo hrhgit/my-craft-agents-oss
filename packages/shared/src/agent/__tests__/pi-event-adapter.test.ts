@@ -43,10 +43,28 @@ describe('PiEventAdapter', () => {
       expect(events).toHaveLength(0);
     });
 
-    it('should emit complete for agent_end', () => {
+    it('should not emit complete for agent_end', () => {
       const events = collect(adapter.adaptEvent({ type: 'agent_end' } as any));
-      expect(events).toHaveLength(1);
-      expect(events[0]).toMatchObject({ type: 'complete' });
+      expect(events).toHaveLength(0);
+    });
+
+    it('should emit complete only when the logical run settles', () => {
+      expect(collect(adapter.adaptEvent({ type: 'agent_end', willRetry: true } as any))).toEqual([]);
+      expect(collect(adapter.adaptEvent({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3 } as any)))
+        .toEqual([expect.objectContaining({ type: 'status' })]);
+      expect(collect(adapter.adaptEvent({ type: 'agent_end', willRetry: false } as any))).toEqual([]);
+      expect(collect(adapter.adaptEvent({ type: 'agent_settled' } as any)))
+        .toEqual([expect.objectContaining({ type: 'complete' })]);
+    });
+
+    it('does not reuse usage from a previous logical run', () => {
+      collect(adapter.adaptEvent({
+        type: 'message_end',
+        message: { role: 'assistant', stopReason: 'stop', content: 'first', usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 12, cost: { total: 1 } } },
+      } as any));
+      const first = collect(adapter.adaptEvent({ type: 'agent_settled' } as any));
+      expect(first[0]).toMatchObject({ type: 'complete', usage: { inputTokens: 10 } });
+      expect(collect(adapter.adaptEvent({ type: 'agent_settled' } as any))).toEqual([{ type: 'complete' }]);
     });
   });
 

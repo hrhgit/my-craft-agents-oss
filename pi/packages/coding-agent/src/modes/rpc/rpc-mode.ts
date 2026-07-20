@@ -2084,7 +2084,10 @@ export async function runRpcMode(
 			}
 
 			case "follow_up": {
-				await session.followUp(command.message, command.images, { clientMutationId: command.clientMutationId });
+				await session.followUp(command.message, command.images, {
+					clientMutationId: command.clientMutationId,
+					attachments: command.attachments,
+				});
 				return success(id, "follow_up");
 			}
 

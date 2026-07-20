@@ -18,6 +18,7 @@ import type { FileAttachment } from '../utils/files.ts';
 import { createSanitizedEnv } from '../utils/env.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
 import { PI_AGENT_DIR } from '../config/paths.ts';
+import { isPiModelReference, resolvePiModelReference } from '../config/pi-global-config.ts';
 import {
   RpcClient as PiRpcClient,
   type PiRuntimeHandle,
@@ -330,9 +331,23 @@ export class PiAgent extends BaseAgent {
   private projectionEpoch = randomUUID();
   /** Ignore late content events while Pi is acknowledging an abort. */
   private suppressAbortedTurnEvents = false;
+  private readonly agentSettledWaiters = new Set<() => void>();
 
   // Event queue for streaming (AsyncGenerator pattern over RpcClient events)
   private eventQueue = new EventQueue();
+
+  private waitForAgentSettled(): Promise<void> {
+    return new Promise(resolve => {
+      const finish = () => resolve();
+      this.agentSettledWaiters.add(finish);
+    });
+  }
+
+  private resolveAgentSettledWaiters(): void {
+    const waiters = [...this.agentSettledWaiters];
+    this.agentSettledWaiters.clear();
+    for (const resolve of waiters) resolve();
+  }
 
   // Error deduplication — suppress identical consecutive errors after a threshold.
   private lastRpcError: string | null = null;
@@ -1576,9 +1591,10 @@ export class PiAgent extends BaseAgent {
 
     // Detect canonical or persisted legacy session tool completions.
     const eventType = event.type as string;
-    if (this.suppressAbortedTurnEvents && eventType !== 'turn_end' && eventType !== 'agent_end') {
-      return;
-    }
+    const suppressCompatibilityEvent = this.suppressAbortedTurnEvents
+      && eventType !== 'turn_end'
+      && eventType !== 'agent_end'
+      && eventType !== 'agent_settled';
     let adaptedEvent = event;
 
     if (eventType === 'tool_execution_start') {
@@ -1613,34 +1629,37 @@ export class PiAgent extends BaseAgent {
     // Adapt event to MortiseAgentEvents
     // The event adapter expects typed PiAgentEvent/AgentSessionEvent objects,
     // but since we're receiving plain JSON, we cast through unknown.
-    for (const agentEvent of this.adapter.adaptEvent(adaptedEvent as any)) {
-      this.emitPiProjectionEvents(agentEvent);
-      // Track Read tool calls for prerequisite checking
-      if (agentEvent.type === 'tool_start' && agentEvent.toolName === 'Read') {
-        this.prerequisiteManager.trackReadTool(agentEvent.input as Record<string, unknown>);
-      }
-      // Reset prerequisite state on compaction (LLM loses guide content)
-      if (agentEvent.type === 'info' && typeof agentEvent.message === 'string' && agentEvent.message.startsWith('Compacted')) {
-        this.resetPrerequisiteState();
-      }
+    if (!suppressCompatibilityEvent) {
+      for (const agentEvent of this.adapter.adaptEvent(adaptedEvent as any)) {
+        this.emitPiProjectionEvents(agentEvent);
+        // Track Read tool calls for prerequisite checking
+        if (agentEvent.type === 'tool_start' && agentEvent.toolName === 'Read') {
+          this.prerequisiteManager.trackReadTool(agentEvent.input as Record<string, unknown>);
+        }
+        // Reset prerequisite state on compaction (LLM loses guide content)
+        if (agentEvent.type === 'info' && typeof agentEvent.message === 'string' && agentEvent.message.startsWith('Compacted')) {
+          this.resetPrerequisiteState();
+        }
 
-      // Fire PostToolUse / PostToolUseFailure hook events (fire-and-forget)
-      if (agentEvent.type === 'tool_result') {
-        const hookEvent = agentEvent.isError ? 'PostToolUseFailure' : 'PostToolUse';
-        this.emitAutomationEvent(hookEvent, {
-          hook_event_name: hookEvent,
-          tool_name: agentEvent.toolName ?? (event.toolName as string) ?? 'unknown',
-          tool_input: agentEvent.input,
-          ...(agentEvent.isError
-            ? { error: typeof agentEvent.result === 'string' ? agentEvent.result : undefined }
-            : { tool_response: typeof agentEvent.result === 'string' ? agentEvent.result : undefined }),
-        });
-      }
+        // Fire PostToolUse / PostToolUseFailure hook events (fire-and-forget)
+        if (agentEvent.type === 'tool_result') {
+          const hookEvent = agentEvent.isError ? 'PostToolUseFailure' : 'PostToolUse';
+          this.emitAutomationEvent(hookEvent, {
+            hook_event_name: hookEvent,
+            tool_name: agentEvent.toolName ?? (event.toolName as string) ?? 'unknown',
+            tool_input: agentEvent.input,
+            ...(agentEvent.isError
+              ? { error: typeof agentEvent.result === 'string' ? agentEvent.result : undefined }
+              : { tool_response: typeof agentEvent.result === 'string' ? agentEvent.result : undefined }),
+          });
+        }
 
-      this.eventQueue.enqueue(agentEvent);
+        this.eventQueue.enqueue(agentEvent);
+      }
     }
 
-    if (eventType === 'agent_end') {
+    if (eventType === 'agent_settled') {
+      this.resolveAgentSettledWaiters();
       this.coordinationBridge?.completeTurn();
       this.eventQueue.complete();
     }
@@ -1959,14 +1978,29 @@ export class PiAgent extends BaseAgent {
       if (options.name) {
         await client.setSessionName(options.name);
       }
-      if (options.thinkingLevel) {
-        await client.setThinkingLevel(options.thinkingLevel as any);
-      }
+      let semanticModel: ReturnType<typeof resolvePiModelReference>;
       if (options.model) {
-        const provider = options.connection || getBackendRuntime(this.config).piAuthProvider || previous.model?.provider;
-        if (provider) {
-          await client.setModel(provider, options.model);
+        semanticModel = isPiModelReference(options.model)
+          ? resolvePiModelReference(options.model, {
+              current: previous.model ? {
+                provider: previous.model.provider,
+                model: previous.model.id,
+                thinkingLevel: previous.thinkingLevel,
+              } : undefined,
+            })
+          : undefined;
+        if (isPiModelReference(options.model) && !semanticModel) {
+          throw new Error(`Model reference is unavailable: ${options.model}`);
         }
+        const provider = semanticModel?.provider || options.connection || getBackendRuntime(this.config).piAuthProvider || previous.model?.provider;
+        const model = semanticModel?.model ?? options.model;
+        if (provider) {
+          await client.setModel(provider, model);
+        }
+      }
+      const thinkingLevel = options.thinkingLevel ?? semanticModel?.thinkingLevel;
+      if (thinkingLevel) {
+        await client.setThinkingLevel(thinkingLevel as any);
       }
       if (options.prompt) {
         await client.prompt(options.prompt);
@@ -2597,11 +2631,12 @@ export class PiAgent extends BaseAgent {
     try {
       const client = this.rpcClient;
       if (client) {
+        const settled = this.waitForAgentSettled();
         await Promise.race([
-          client.abort(),
+          Promise.all([client.abort(), settled]),
           new Promise<never>((_, reject) => {
             abortTimeout = setTimeout(() => {
-              reject(new Error(`Pi abort acknowledgment timed out after ${PI_ABORT_ACK_TIMEOUT_MS}ms`));
+              reject(new Error(`Pi abort acknowledgment or settlement timed out after ${PI_ABORT_ACK_TIMEOUT_MS}ms`));
             }, PI_ABORT_ACK_TIMEOUT_MS);
           }),
         ]);
@@ -2611,11 +2646,12 @@ export class PiAgent extends BaseAgent {
       // If the cooperative abort command fails, release this runtime so the
       // stopped generation cannot continue publishing events in the background.
       await this.stopRpcClient();
+      this.resolveAgentSettledWaiters();
     } finally {
       if (abortTimeout) clearTimeout(abortTimeout);
-      this.coordinationBridge?.completeTurn();
-      // Wake the chat consumer even if the transport failed while aborting.
-      this.eventQueue.complete();
+      // A successful abort waits for Pi's agent_settled event, which closes the
+      // queue. Failure paths close it in catch after the runtime is stopped.
+      if (!this.rpcClient) this.eventQueue.complete();
     }
 
     // Clear bridge cache for this interrupted turn.
@@ -2630,7 +2666,6 @@ export class PiAgent extends BaseAgent {
     this.abortReason = reason;
     this._isProcessing = false;
     this.suppressAbortedTurnEvents = true;
-    this.coordinationBridge?.completeTurn();
 
     // Reject all pending permissions
     for (const [, pending] of this.pendingPermissions) {
@@ -2638,19 +2673,32 @@ export class PiAgent extends BaseAgent {
     }
     this.pendingPermissions.clear();
 
-    // Signal turn complete to wake up any waiting consumers
-    this.eventQueue.complete();
-
     // Clear bridge cache for aborted turn.
     this.preToolMetadataByCallId.clear();
 
     // Plan review hands control back to the host UI.
     if (reason === AbortReason.PlanSubmitted) {
+      this.coordinationBridge?.completeTurn();
+      this.eventQueue.complete();
       return;
     }
 
     // For other reasons, send abort to Pi.
-    void this.rpcClient?.abort().catch(error => this.handleRpcError(error));
+    const client = this.rpcClient;
+    if (!client) {
+      this.coordinationBridge?.completeTurn();
+      this.eventQueue.complete();
+      return;
+    }
+    const settled = this.waitForAgentSettled();
+    void Promise.race([
+      Promise.all([client.abort(), settled]),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Pi force-abort settlement timed out')), PI_ABORT_ACK_TIMEOUT_MS)),
+    ]).catch(error => {
+      this.handleRpcError(error);
+      this.resolveAgentSettledWaiters();
+      this.eventQueue.complete();
+    });
   }
 
   /**
@@ -2668,6 +2716,38 @@ export class PiAgent extends BaseAgent {
     this.debug(`Steering mid-stream: "${message.slice(0, 100)}"`);
     void this.rpcClient.steer(message, undefined, { clientMutationId }).catch(error => this.handleRpcError(error));
     return true;
+  }
+
+  override async followUp(message: string, attachments?: FileAttachment[], options?: ChatOptions): Promise<boolean> {
+    if (!this._isProcessing || !this.rpcClient) return false;
+    this.debug(`Queueing native Pi follow-up: "${message.slice(0, 100)}"`);
+    const attachmentParts: string[] = [];
+    const images: Array<{ type: 'image'; data: string; mimeType: string }> = [];
+    for (const attachment of attachments ?? []) {
+      if (attachment.mimeType?.startsWith('image/') && attachment.base64) {
+        images.push({ type: 'image', data: attachment.base64, mimeType: attachment.mimeType });
+      } else if (attachment.mimeType?.startsWith('image/') && (attachment.storedPath || attachment.path)) {
+        attachmentParts.push(`[Attached image: ${attachment.name}]\n[Stored at: ${attachment.storedPath || attachment.path}]`);
+      } else if (attachment.mimeType === 'application/pdf' && attachment.storedPath) {
+        attachmentParts.push(`[Attached PDF: ${attachment.name}]\n[Stored at: ${attachment.storedPath}]`);
+      } else if (attachment.storedPath) {
+        let pathInfo = `[Attached file: ${attachment.name}]\n[Stored at: ${attachment.storedPath}]`;
+        if (attachment.markdownPath) pathInfo += `\n[Markdown version: ${attachment.markdownPath}]`;
+        attachmentParts.push(pathInfo);
+      }
+    }
+    const userMessage = [...attachmentParts, message].filter(Boolean).join('\n\n');
+    try {
+      await this.rpcClient.followUp(
+        userMessage,
+        images.length > 0 ? images : undefined,
+        { clientMutationId: options?.clientMutationId, attachments: options?.attachmentRefs },
+      );
+      return true;
+    } catch (error) {
+      this.debug(`Native Pi follow-up was rejected: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
   }
 
   // ============================================================
@@ -2709,6 +2789,7 @@ export class PiAgent extends BaseAgent {
     }
 
     this._sessionToolContext = null;
+    this.resolveAgentSettledWaiters();
     // Pool clients are owned by the main process — don't close them here.
     void this.stopRpcClient();
     this.debug('PiAgent destroyed');

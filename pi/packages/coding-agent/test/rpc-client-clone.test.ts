@@ -12,6 +12,21 @@ type RpcClientInternals = {
 	handleLine: (line: string) => void;
 };
 
+function emitAgentEnd(internals: RpcClientInternals, runtimeId?: string): void {
+	internals.handleLine(
+		JSON.stringify({
+			type: "agent_end",
+			messages: [],
+			willRetry: true,
+			...(runtimeId ? { runtimeId } : {}),
+		}),
+	);
+}
+
+function emitAgentSettled(internals: RpcClientInternals, runtimeId?: string): void {
+	internals.handleLine(JSON.stringify({ type: "agent_settled", ...(runtimeId ? { runtimeId } : {}) }));
+}
+
 describe("RpcClient clone", () => {
 	it("forwards clientMutationId in prompt metadata", async () => {
 		const client = new RpcClient();
@@ -63,6 +78,39 @@ describe("RpcClient clone", () => {
 
 		expect(send).toHaveBeenCalledWith({ type: "clone" });
 		expect(result).toEqual({ cancelled: false });
+	});
+});
+
+describe("RpcClient logical settlement", () => {
+	it("waitForIdle ignores retrying agent_end and resolves on agent_settled", async () => {
+		const client = new RpcClient();
+		const internals = client as unknown as RpcClientInternals;
+		let settled = false;
+		const waiting = client.waitForIdle().then(() => {
+			settled = true;
+		});
+
+		emitAgentEnd(internals);
+		await Promise.resolve();
+		expect(settled).toBe(false);
+
+		emitAgentSettled(internals);
+		await waiting;
+		expect(settled).toBe(true);
+	});
+
+	it("collectEvents retains intermediate agent_end events through agent_settled", async () => {
+		const client = new RpcClient();
+		const internals = client as unknown as RpcClientInternals;
+		const collecting = client.collectEvents();
+
+		emitAgentEnd(internals);
+		emitAgentSettled(internals);
+
+		await expect(collecting).resolves.toEqual([
+			expect.objectContaining({ type: "agent_end", willRetry: true }),
+			expect.objectContaining({ type: "agent_settled" }),
+		]);
 	});
 });
 
@@ -231,6 +279,50 @@ describe("RpcClient Pi shell API methods", () => {
 });
 
 describe("PiRuntimeHandle", () => {
+	it("waitForIdle ignores retrying agent_end and resolves on runtime agent_settled", async () => {
+		const client = new RpcClient();
+		const internals = client as unknown as RpcClientInternals;
+		const handle = new PiRuntimeHandle(client, {
+			runtimeId: "runtime-a",
+			cwd: "E:/project",
+			sessionId: "session-a",
+			isStreaming: true,
+		});
+		let settled = false;
+		const waiting = handle.waitForIdle().then(() => {
+			settled = true;
+		});
+
+		emitAgentEnd(internals, "runtime-a");
+		emitAgentSettled(internals, "runtime-b");
+		await Promise.resolve();
+		expect(settled).toBe(false);
+
+		emitAgentSettled(internals, "runtime-a");
+		await waiting;
+		expect(settled).toBe(true);
+	});
+
+	it("collectEvents retains intermediate runtime agent_end through agent_settled", async () => {
+		const client = new RpcClient();
+		const internals = client as unknown as RpcClientInternals;
+		const handle = new PiRuntimeHandle(client, {
+			runtimeId: "runtime-a",
+			cwd: "E:/project",
+			sessionId: "session-a",
+			isStreaming: true,
+		});
+		const collecting = handle.collectEvents();
+
+		emitAgentEnd(internals, "runtime-a");
+		emitAgentSettled(internals, "runtime-a");
+
+		await expect(collecting).resolves.toEqual([
+			expect.objectContaining({ type: "agent_end", willRetry: true, runtimeId: "runtime-a" }),
+			expect.objectContaining({ type: "agent_settled", runtimeId: "runtime-a" }),
+		]);
+	});
+
 	it("sends structured interaction responses through the runtime envelope", () => {
 		const client = new RpcClient();
 		const internals = client as unknown as RpcClientInternals;

@@ -617,7 +617,20 @@ Declare extension settings on the Mortise-target manifest entry:
 
 Supported categories: `ui`, `automation`, `agent`, `shell`, `diagnostics`, `memory`, `search`, `other`.
 
-Supported field types: `boolean`, `string`, `textarea`, `number`, `select`, `model`.
+Supported field types: `boolean`, `string`, `textarea`, `number`, `select`, `model`, `model-reference`.
+
+Use `model-reference` when an extension launches an agent and should follow runtime model choices. Mortise renders the current Session model as the default, followed by the configured ordered global defaults and explicit provider-qualified models. Values are semantic references: `current-session`, `default:<positive-index>`, or `model:<provider>/<model-id>`. Resolving a global default also applies that preset's thinking level.
+
+Resolve the stored value when the agent starts so later Session or default-slot changes take effect:
+
+```typescript
+import { resolveModelReference } from "@mortise/pi-coding-agent";
+
+const selected = resolveModelReference(config?.model as string | undefined, {
+  currentModel: ctx.model,
+  cwd: ctx.cwd,
+});
+```
 
 Manifest validation rules:
 

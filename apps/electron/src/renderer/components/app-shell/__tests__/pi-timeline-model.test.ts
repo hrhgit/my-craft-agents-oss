@@ -103,6 +103,18 @@ describe('buildPiTimelineItems', () => {
       .toEqual([{ type: 'error', id: 'error:3', turnId: undefined, seq: 3, message: 'boom' }])
   })
 
+  it('keeps retry attempts processing until logical settlement', () => {
+    const start = entity({ entityId: 'agent-start', entityType: 'conversation', kind: 'agent_start', payload: { status: 'running' }, lastSeq: 1 })
+    const attemptEnd = entity({
+      entityId: 'agent-attempt-end', entityType: 'conversation', kind: 'agent_end',
+      payload: { status: 'failed', willRetry: true, settlementPending: true }, lastSeq: 2,
+    })
+    const settled = entity({ entityId: 'agent-settled', entityType: 'conversation', kind: 'agent_settled', payload: { status: 'completed' }, lastSeq: 3 })
+
+    expect(selectPiRuntimeState([start, attemptEnd])).toEqual({ isProcessing: true, isCompacting: false })
+    expect(selectPiRuntimeState([start, attemptEnd, settled])).toEqual({ isProcessing: false, isCompacting: false })
+  })
+
   it('selects processing status only from the current projected runtime', () => {
     const oldStatus = entity({ entityId: 'status-old', kind: 'host_status', payload: { message: 'Old status' }, lastSeq: 1 })
     const start = entity({ entityId: 'agent-start', entityType: 'conversation', kind: 'agent_start', payload: { status: 'running' }, lastSeq: 2 })

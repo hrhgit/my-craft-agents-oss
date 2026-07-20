@@ -35,7 +35,7 @@ collaborates_with: []
 validation:
   - { id: shared-regression, kind: unit, command: "bun test packages/shared/src/protocol packages/shared/src/utils", description: "Run shared protocol and utility regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: shared-contract, kind: contract, command: "bun run typecheck:shared", description: "Verify shared contracts compile for consumers.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: 1fae253fe83b9565c4aab2e03b880f066d98a1ab
+scope_digest: 9cdf79d5e239e1db766bad0316acf600c5cc140a
 ---
 
 ## Purpose
@@ -66,6 +66,7 @@ Run protocol and utility tests, shared type checking, and channel-map parity che
 A convenient shared helper can accumulate feature policy; protocol changes can compile locally while breaking older concurrent backends.
 
 ## Semantic history
+- 2026-07-21: Added local-only home skill discovery and selective batch-import RPC contracts, plus bundle-file collection for staged resource imports.
 - 2026-07-20: Added the strict versioned `automation.workspace` request and result DTO boundary for unified Automations V3.
 - 2026-07-12: Unified session projection and WebUI runtime contracts.
 - 2026-07-19: Renamed project-owned protocol and package identity to Mortise.

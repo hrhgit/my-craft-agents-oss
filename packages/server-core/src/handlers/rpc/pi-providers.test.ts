@@ -8,6 +8,8 @@ import type { PlatformServices } from '../../runtime/platform'
 const deleteGlobalProvider = mock(async (_key: string) => {})
 const saveGlobalProvider = mock((_key: string, _provider: unknown, _apiKey?: string) => {})
 const setGlobalDefault = mock(async (_provider: string, _model: string, _thinkingLevel?: string) => {})
+const setGlobalDefaultSlot = mock(async (_slot: number, _provider: string, _model: string, _thinkingLevel: string) => {})
+const removeGlobalDefaultSlot = mock(async (_slot: number) => {})
 const clearDeletedProviderReferences = mock(async (_key: string) => {})
 const reinitializeAuth = mock(async (_provider?: string) => {})
 const reloadProviderRuntime = mock(async (_provider?: string) => {})
@@ -20,6 +22,8 @@ mock.module('@mortise/shared/config', () => ({
   savePiGlobalProvider: (key: string, provider: unknown, apiKey?: string) => saveGlobalProvider(key, provider, apiKey),
   sanitizePiGlobalProvider: <T>(provider: T) => provider,
   setPiGlobalDefault: (provider: string, model: string, thinkingLevel?: string) => setGlobalDefault(provider, model, thinkingLevel),
+  setPiGlobalDefaultSlot: (slot: number, provider: string, model: string, thinkingLevel: string) => setGlobalDefaultSlot(slot, provider, model, thinkingLevel),
+  removePiGlobalDefaultSlot: (slot: number) => removeGlobalDefaultSlot(slot),
 }))
 
 const { registerPiProviderHandlers } = await import('./pi-providers.ts')
@@ -81,12 +85,16 @@ describe('Pi provider RPC handlers', () => {
     deleteGlobalProvider.mockReset()
     saveGlobalProvider.mockReset()
     setGlobalDefault.mockReset()
+    setGlobalDefaultSlot.mockReset()
+    removeGlobalDefaultSlot.mockReset()
     clearDeletedProviderReferences.mockReset()
     reinitializeAuth.mockReset()
     reloadProviderRuntime.mockReset()
     deleteGlobalProvider.mockImplementation(async () => {})
     saveGlobalProvider.mockImplementation(() => {})
     setGlobalDefault.mockImplementation(async () => {})
+    setGlobalDefaultSlot.mockImplementation(async () => {})
+    removeGlobalDefaultSlot.mockImplementation(async () => {})
     clearDeletedProviderReferences.mockImplementation(async () => {})
     reinitializeAuth.mockImplementation(async () => {})
     reloadProviderRuntime.mockImplementation(async () => {})
@@ -129,6 +137,35 @@ describe('Pi provider RPC handlers', () => {
     })).resolves.toEqual({ success: true })
 
     expect(setGlobalDefault).toHaveBeenCalledWith('default-provider', 'default-model', 'high')
+    expect(reloadProviderRuntime).toHaveBeenCalledWith()
+  })
+
+  it('writes secondary defaults without replacing the Pi primary default', async () => {
+    const server = new TestRpcServer()
+    registerPiProviderHandlers(server, createDeps())
+
+    const handler = server.handlers.get(RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT)
+    await expect(handler!(ctx, {
+      provider: 'review-provider',
+      model: 'review-model',
+      thinkingLevel: 'xhigh',
+      slot: 5,
+    })).resolves.toEqual({ success: true })
+
+    expect(setGlobalDefaultSlot).toHaveBeenCalledWith(5, 'review-provider', 'review-model', 'xhigh')
+    expect(setGlobalDefault).not.toHaveBeenCalled()
+    expect(reloadProviderRuntime).toHaveBeenCalledWith()
+  })
+
+  it('removes and compacts a secondary default', async () => {
+    const server = new TestRpcServer()
+    registerPiProviderHandlers(server, createDeps())
+
+    const handler = server.handlers.get(RPC_CHANNELS.pi.SET_GLOBAL_DEFAULT)
+    await expect(handler!(ctx, { slot: 2, remove: true })).resolves.toEqual({ success: true })
+
+    expect(removeGlobalDefaultSlot).toHaveBeenCalledWith(2)
+    expect(setGlobalDefault).not.toHaveBeenCalled()
     expect(reloadProviderRuntime).toHaveBeenCalledWith()
   })
 })

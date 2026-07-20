@@ -13,6 +13,7 @@ export {
 	type PiChildSessionInfo,
 	PiRuntimeHandle,
 	RpcClient,
+	type RpcAgentEvent,
 	type RpcClientEvent,
 	type RpcClientEventListener,
 	type RpcClientOptions,

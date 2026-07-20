@@ -183,7 +183,14 @@ export type RpcCommand = RpcEnvelope &
 				appendSystemPrompt?: string;
 		  }
 		| { id?: string; type: "steer"; message: string; images?: ImageContent[]; clientMutationId?: string }
-		| { id?: string; type: "follow_up"; message: string; images?: ImageContent[]; clientMutationId?: string }
+		| {
+				id?: string;
+				type: "follow_up";
+				message: string;
+				images?: ImageContent[];
+				clientMutationId?: string;
+				attachments?: UserAttachmentMetadata[];
+		  }
 		| { id?: string; type: "abort" }
 		| { id?: string; type: "new_session"; parentSession?: string }
 		| { id?: string; type: "run_mini_completion"; prompt: string }

@@ -297,13 +297,20 @@ function assistantTimelineSeq(
 
 function latestRuntimeTerminal(entities: readonly PiProjectionEntityV1[]): PiProjectionEntityV1 | undefined {
   return entities
-    .filter(entity => entity.kind === 'agent_start' || entity.kind === 'agent_end' || entity.kind === 'runtime_error')
+    .filter(entity => entity.kind === 'agent_start' || entity.kind === 'agent_end'
+      || entity.kind === 'agent_settled' || entity.kind === 'runtime_error')
     .sort((a, b) => b.lastSeq - a.lastSeq)[0]
 }
 
+function isRuntimeTerminalEntity(entity: PiProjectionEntityV1 | undefined): boolean {
+  if (!entity) return false
+  if (entity.kind === 'agent_settled' || entity.kind === 'runtime_error') return true
+  if (entity.kind !== 'agent_end') return false
+  return record(entity.payload)?.settlementPending !== true
+}
+
 function isRuntimeStopped(entities: readonly PiProjectionEntityV1[]): boolean {
-  const latest = latestRuntimeTerminal(entities)
-  return latest?.kind === 'agent_end' || latest?.kind === 'runtime_error'
+  return isRuntimeTerminalEntity(latestRuntimeTerminal(entities))
 }
 
 function buildAssistantTurn(
@@ -739,10 +746,11 @@ export function buildPiTurns(
   }
 
   const runtimeTerminal = latestRuntimeTerminal(entities)
-  const runtimeStopped = runtimeTerminal?.kind === 'agent_end' || runtimeTerminal?.kind === 'runtime_error'
+  const runtimeStopped = isRuntimeTerminalEntity(runtimeTerminal)
   const runtimeCompletedAt = wallClockTimestamp(runtimeTerminal?.updatedAt)
   const hasAgentLifecycle = entities.some(entity =>
-    entity.kind === 'agent_start' || entity.kind === 'agent_end' || entity.kind === 'runtime_error'
+    entity.kind === 'agent_start' || entity.kind === 'agent_end'
+      || entity.kind === 'agent_settled' || entity.kind === 'runtime_error'
   )
   const sortedUsers = [...users.values()].sort((a, b) => a.seq - b.seq)
   for (const batch of batchAssistantRecords(assistants.values(), sortedUsers)) {

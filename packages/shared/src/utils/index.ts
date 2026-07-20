@@ -12,4 +12,5 @@ export * from './runtime-log.ts';
 export * from './title-generator.ts';
 export * from './toolNames.ts';
 export * from './workspace.ts';
+export * from './bundle-files.ts';
 export { sanitizeFilename } from './binary-detection.ts';

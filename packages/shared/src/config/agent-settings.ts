@@ -45,6 +45,8 @@ export interface SubagentDefinition {
   description: string;
   systemPrompt: string;
   tools: string[];
+  /** Semantic model reference. Omitted means current session model. */
+  model?: string;
 }
 
 export interface AgentSettingsSnapshot {
@@ -164,6 +166,7 @@ function parseSubagentFile(filePath: string): SubagentDefinition | null {
       description: frontmatter.description.trim(),
       systemPrompt: body.trim(),
       tools,
+      ...(typeof frontmatter.model === 'string' && frontmatter.model.trim() ? { model: frontmatter.model.trim() } : {}),
     };
   } catch {
     return null;
@@ -241,6 +244,7 @@ function serializeSubagent(agent: SubagentDefinition): string {
     `name: ${JSON.stringify(agent.name.trim())}`,
     `description: ${JSON.stringify(agent.description.trim())}`,
     `tools: ${JSON.stringify(normalizeToolNames(agent.tools).join(', ') || 'none')}`,
+    ...(agent.model?.trim() ? [`model: ${JSON.stringify(agent.model.trim())}`] : []),
     '---',
   ];
   return `${frontmatter.join('\n')}\n\n${agent.systemPrompt.trim()}\n`;

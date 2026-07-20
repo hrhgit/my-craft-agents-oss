@@ -1,22 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { SettingsCard, SettingsInputRow, SettingsSection, SettingsSelectRow, SettingsTextarea, SettingsToggle } from '@/components/settings'
-import type { PiExtensionCatalogEntry, PiExtensionSettingField, PiExtensionSettingScalar, PiGlobalProviderForDisplay } from '@mortise/shared/config'
+import { SettingsCard, SettingsInputRow, SettingsSection, SettingsSelectRow, SettingsTextarea, SettingsToggle, useModelReferenceOptions } from '@/components/settings'
+import type { PiExtensionCatalogEntry, PiExtensionSettingField, PiExtensionSettingScalar, PiGlobalDefaultSlot, PiGlobalProviderForDisplay } from '@mortise/shared/config'
+import { PI_MODEL_REFERENCE_CURRENT_SESSION } from '@mortise/shared/config/pi-extension-settings'
 
 interface ExtensionDetailPanelProps {
   extension: PiExtensionCatalogEntry
   providers: PiGlobalProviderForDisplay[]
+  defaultSlots: PiGlobalDefaultSlot[]
   onPatch: (key: string, value: PiExtensionSettingScalar) => Promise<void>
+  onUnset: (key: string) => Promise<void>
   onBack: () => void
 }
 
-export function ExtensionDetailPanel({ extension, providers, onPatch, onBack }: ExtensionDetailPanelProps) {
+export function ExtensionDetailPanel({ extension, providers, defaultSlots, onPatch, onUnset, onBack }: ExtensionDetailPanelProps) {
   const modelOptions = useMemo(() => providers.flatMap((entry) => (entry.provider.models ?? []).map((model) => ({
     value: model.id,
     label: model.name ?? model.id,
     description: entry.key,
   }))), [providers])
+  const modelReferenceOptions = useModelReferenceOptions(providers, defaultSlots)
   const values = extension.config ?? {}
   const fields = extension.ui?.settings?.fields ?? []
   const effectiveValues = Object.assign(Object.fromEntries(fields.filter((field) => field.default !== undefined).map((field) => [field.key, field.default])), values)
@@ -38,6 +42,8 @@ export function ExtensionDetailPanel({ extension, providers, onPatch, onBack }: 
                 value={effectiveValues[field.key] as PiExtensionSettingScalar | undefined}
                 modelOptions={modelOptions}
                 onChange={(value) => onPatch(field.key, value)}
+                onUnset={() => onUnset(field.key)}
+                modelReferenceOptions={modelReferenceOptions}
               />
             ))}
           </SettingsCard>
@@ -87,11 +93,13 @@ export function buildExtensionSettingSections(extension: PiExtensionCatalogEntry
   return sections
 }
 
-function ExtensionSettingControl({ field, value, modelOptions, onChange }: {
+function ExtensionSettingControl({ field, value, modelOptions, onChange, onUnset, modelReferenceOptions }: {
   field: PiExtensionSettingField
   value: PiExtensionSettingScalar | undefined
   modelOptions: Array<{ value: string; label: string; description?: string }>
   onChange: (value: PiExtensionSettingScalar) => void
+  onUnset: () => void
+  modelReferenceOptions: Array<{ value: string; label: string; description?: string }>
 }) {
   if (field.type === 'boolean') {
     return <SettingsToggle label={field.label} description={field.description} checked={value === true} onCheckedChange={onChange} />
@@ -99,6 +107,13 @@ function ExtensionSettingControl({ field, value, modelOptions, onChange }: {
   if (field.type === 'select' || field.type === 'model') {
     const options = field.type === 'select' ? field.options : modelOptions
     return <SettingsSelectRow label={field.label} description={field.description} value={typeof value === 'string' ? value : ''} options={options} onValueChange={onChange} />
+  }
+  if (field.type === 'model-reference') {
+    const selected = typeof value === 'string' && value ? value : PI_MODEL_REFERENCE_CURRENT_SESSION
+    return <SettingsSelectRow label={field.label} description={field.description} value={selected} options={modelReferenceOptions} onValueChange={(next) => {
+      if (next === PI_MODEL_REFERENCE_CURRENT_SESSION && (!field.default || field.default === PI_MODEL_REFERENCE_CURRENT_SESSION)) onUnset()
+      else onChange(next)
+    }} />
   }
   if (field.type === 'textarea') {
     return <SettingsTextarea inCard label={field.label} description={field.description} value={typeof value === 'string' ? value : ''} maxLength={field.maxLength} onChange={onChange} />

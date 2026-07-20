@@ -15,7 +15,7 @@ collaborates_with: []
 validation:
   - { id: pi-coding-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-coding-agent", description: "Run Pi coding runtime regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
   - { id: pi-workspace-contract, kind: contract, command: "npm --prefix pi run build:workspace", description: "Build Pi workspaces to verify package contracts.", triggers: [contract-change], required: true, evidence: "Workspace build exit status and diagnostics." }
-scope_digest: f19d8b0e97f525c47c304bea7fe6a03ef6d9b272
+scope_digest: 9b37b73f760501d313db0e5df7a66b844a46c227
 ---
 
 ## Purpose
@@ -46,6 +46,7 @@ Build the Pi workspace, run coding-agent tests, and exercise downstream RPC host
 RPC compatibility spans embedded binaries and source builds; extension flexibility can bypass assumptions made by interactive mode.
 
 ## Semantic history
+- 2026-07-21: Made RPC completion helpers wait for logical `agent_settled` after retry and compaction recovery rather than stopping at an intermediate `agent_end`.
 - 2026-07-20: Removed Mortise Data Sources host events and session activation plumbing from the Pi RPC contract while preserving generic extension and MCP capabilities.
 - 2026-07-14: Added versioned extension UI validation and closed RPC interaction lifecycle gaps.
 - 2026-07-18: Integrated the Pi coding runtime into the Mortise monorepo.

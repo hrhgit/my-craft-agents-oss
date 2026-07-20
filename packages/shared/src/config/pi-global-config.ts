@@ -25,6 +25,8 @@ import {
   readGlobalProviders as readPiHostGlobalProviders,
   readGlobalProvidersForDisplay as readPiHostGlobalProvidersForDisplay,
   readGlobalSettings as readPiHostGlobalSettings,
+  readGlobalModelDefaultSlots as readPiHostGlobalModelDefaultSlots,
+  removeGlobalModelDefaultSlot as removePiHostGlobalModelDefaultSlot,
   readShellGuiEntry as readPiHostShellGuiEntry,
   readShellGuiNamespace as readPiHostShellGuiNamespace,
   saveGlobalProvider as savePiHostGlobalProvider,
@@ -32,13 +34,15 @@ import {
   setExtensionConfig as setPiHostExtensionConfig,
   setGlobalApiKey as setPiHostGlobalApiKey,
   setGlobalDefault as setPiHostGlobalDefault,
+  setGlobalModelDefaultSlot as setPiHostGlobalModelDefaultSlot,
   setShellGuiEntry as setPiHostShellGuiEntry,
   writeMortiseSettingsBulk as writePiHostMortiseSettingsBulk,
   type HostGlobalProvider,
 } from '@mortise/pi-coding-agent/host-facade';
-import type { PiExtensionCatalogEntry, PiExtensionCatalogResult, PiExtensionConfigPatch, PiExtensionSettingField, PiExtensionSettingScalar } from './pi-extension-settings.ts';
+import { PI_MODEL_REFERENCE_CURRENT_SESSION, type PiExtensionCatalogEntry, type PiExtensionCatalogResult, type PiExtensionConfigPatch, type PiExtensionSettingField, type PiExtensionSettingScalar } from './pi-extension-settings.ts';
 import type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
 import { PI_AGENT_DIR } from './paths';
+import { DEFAULT_THINKING_LEVEL, type ThinkingLevel } from '../agent/thinking-levels.ts';
 
 export {
   piProviderModelSupportsImages,
@@ -55,11 +59,77 @@ export interface PiGlobalSettings {
   defaultProvider?: string;
   defaultModel?: string;
   defaultThinkingLevel?: string;
+  /** Normalized ordered model defaults. Slot 1 mirrors Pi's top-level fields. */
+  defaultSlots?: PiGlobalDefaultSlot[];
   mortise?: {
     agent?: Record<string, unknown>;
     [key: string]: unknown;
   };
   [key: string]: unknown;
+}
+
+export interface PiGlobalDefaultSlot {
+  slot: number;
+  provider: string;
+  model: string;
+  thinkingLevel: ThinkingLevel;
+}
+
+export { PI_MODEL_REFERENCE_CURRENT_SESSION } from './pi-extension-settings.ts';
+export function piModelReferenceForDefault(slot: number): string {
+  return `default:${slot}`;
+}
+
+export function isPiModelReference(value: string): boolean {
+  return value === PI_MODEL_REFERENCE_CURRENT_SESSION || /^default:[1-9]\d*$/.test(value) || /^model:[^/]+\/.+$/.test(value);
+}
+
+export function resolvePiModelReference(
+  reference: string | undefined,
+  options: { current?: { provider?: string; model?: string; thinkingLevel?: ThinkingLevel }; settings?: PiGlobalSettings } = {},
+): { provider: string; model: string; thinkingLevel?: ThinkingLevel } | undefined {
+  if (!reference || reference === PI_MODEL_REFERENCE_CURRENT_SESSION) {
+    return options.current?.provider && options.current.model
+      ? {
+          provider: options.current.provider,
+          model: options.current.model,
+          ...(options.current.thinkingLevel ? { thinkingLevel: options.current.thinkingLevel } : {}),
+        }
+      : undefined;
+  }
+  const defaultMatch = /^default:([1-9]\d*)$/.exec(reference);
+  if (defaultMatch) {
+    const slot = getPiGlobalDefaultSlots(options.settings ?? readPiGlobalSettings())
+      .find((candidate) => candidate.slot === Number(defaultMatch[1]));
+    return slot ? { provider: slot.provider, model: slot.model, thinkingLevel: slot.thinkingLevel } : undefined;
+  }
+  if (reference.startsWith('model:')) {
+    const canonical = reference.slice('model:'.length);
+    const separator = canonical.indexOf('/');
+    if (separator > 0 && separator < canonical.length - 1) {
+      return { provider: canonical.slice(0, separator), model: canonical.slice(separator + 1) };
+    }
+  }
+  return undefined;
+}
+
+export function getPiGlobalDefaultSlots(settings: PiGlobalSettings): PiGlobalDefaultSlot[] {
+  const slots: PiGlobalDefaultSlot[] = [];
+  if (settings.defaultProvider?.trim() && settings.defaultModel?.trim()) {
+    slots.push({
+      slot: 1,
+      provider: settings.defaultProvider.trim(),
+      model: settings.defaultModel.trim(),
+      thinkingLevel: (settings.defaultThinkingLevel as ThinkingLevel | undefined) ?? DEFAULT_THINKING_LEVEL,
+    });
+  }
+  for (const configured of settings.defaultSlots ?? []) {
+    if (configured.slot > 1 && Number.isInteger(configured.slot) && configured.provider && configured.model) {
+      slots.push({ ...configured, thinkingLevel: configured.thinkingLevel ?? DEFAULT_THINKING_LEVEL });
+    }
+  }
+  slots.sort((a, b) => a.slot - b.slot);
+  return slots;
 }
 
 // ===== Reads =====
@@ -83,7 +153,17 @@ export function getPiGlobalProvider(key: string): PiGlobalProvider | null {
 
 export function readPiGlobalSettings(): PiGlobalSettings {
   try {
-    return readPiHostGlobalSettings() as PiGlobalSettings;
+    const settings = readPiHostGlobalSettings() as PiGlobalSettings;
+    const configured = readPiHostGlobalModelDefaultSlots();
+    const defaultSlots = configured.flatMap((value) => {
+      const slot = value.slot;
+      const provider = value?.provider?.trim();
+      const model = value?.model?.trim();
+      return provider && model
+        ? [{ slot, provider, model, thinkingLevel: value.thinkingLevel ?? DEFAULT_THINKING_LEVEL }]
+        : [];
+    });
+    return { ...settings, defaultSlots };
   } catch (error) {
     console.error('[pi-global-config] Failed to read Pi settings config:', error);
     return {};
@@ -416,6 +496,25 @@ export async function setPiGlobalDefault(
   });
 }
 
+/** Persist one of the ordered defaults. Slot 1 remains Pi's native default. */
+export async function setPiGlobalDefaultSlot(
+  slot: number,
+  provider: string,
+  model: string,
+  thinkingLevel: string,
+): Promise<void> {
+  await setPiHostGlobalModelDefaultSlot({
+    slot,
+    provider,
+    model,
+    thinkingLevel,
+  });
+}
+
+export async function removePiGlobalDefaultSlot(slot: number): Promise<void> {
+  await removePiHostGlobalModelDefaultSlot(slot);
+}
+
 /**
  * Set only the top-level `defaultThinkingLevel` in ~/.pi/agent/settings.json
  * without touching defaultProvider/defaultModel. This is the authoritative
@@ -624,6 +723,7 @@ function validateSettingValue(field: PiExtensionSettingField, value: PiExtension
     return null;
   }
   if (typeof value !== 'string') return `${field.key} must be a string`;
+  if (field.type === 'model-reference' && !/^current-session$|^default:[1-9]\d*$|^model:[^/]+\/.+$/.test(value)) return `${field.key} must be a valid model reference`;
   if ((field.type === 'string' || field.type === 'textarea') && field.minLength !== undefined && value.length < field.minLength) return `${field.key} is too short`;
   if ((field.type === 'string' || field.type === 'textarea') && field.maxLength !== undefined && value.length > field.maxLength) return `${field.key} is too long`;
   if (field.type === 'select' && !field.options.some((option) => option.value === value)) return `${field.key} must use a declared option`;

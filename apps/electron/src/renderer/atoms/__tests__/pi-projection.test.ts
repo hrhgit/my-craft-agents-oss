@@ -272,4 +272,31 @@ describe('Pi projection reducer', () => {
 
     expect(store.get(piProjectionIsProcessingAtomFamily('session-1'))).toBe(false)
   })
+
+  it('keeps a retrying agent_end processing until agent_settled', () => {
+    const store = createStore()
+    store.set(applyPiProjectionSnapshotAtom, snapshot({
+      lastSeq: 2,
+      entities: [
+        {
+          entityId: 'lifecycle:start', entityType: 'conversation', entityVersion: 1,
+          createdSeq: 1, kind: 'agent_start', payload: { status: 'running' },
+          lastEventId: 'event-1', lastSeq: 1,
+        },
+        {
+          entityId: 'lifecycle:attempt-end', entityType: 'conversation', entityVersion: 1,
+          createdSeq: 2, kind: 'agent_end',
+          payload: { status: 'failed', willRetry: true, settlementPending: true },
+          lastEventId: 'event-2', lastSeq: 2,
+        },
+      ],
+    }))
+    expect(store.get(piProjectionIsProcessingAtomFamily('session-1'))).toBe(true)
+
+    store.set(applyPiProjectionEventAtom, event({
+      eventId: 'event-3', seq: 3, entityId: 'lifecycle:settled',
+      entityType: 'conversation', kind: 'agent_settled', payload: { status: 'completed' },
+    }))
+    expect(store.get(piProjectionIsProcessingAtomFamily('session-1'))).toBe(false)
+  })
 })

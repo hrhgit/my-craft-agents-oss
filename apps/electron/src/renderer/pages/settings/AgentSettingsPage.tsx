@@ -8,6 +8,7 @@ import type {
   MainAgentSettings,
   SubagentDefinition,
 } from '@mortise/shared/config'
+import { PI_MODEL_REFERENCE_CURRENT_SESSION } from '@mortise/shared/config/pi-extension-settings'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -19,7 +20,8 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { SettingsCard, SettingsCardContent, SettingsCardFooter, SettingsSection } from '@/components/settings'
+import { SettingsCard, SettingsCardContent, SettingsCardFooter, SettingsSection, SettingsSelectRow, useModelReferenceOptions } from '@/components/settings'
+import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 import { routes } from '@/lib/navigate'
 import { getRaw, KEYS, remove, setRaw, type StorageKey } from '@/lib/local-storage'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
@@ -250,6 +252,7 @@ function SubagentDialog({
   open,
   agent,
   availableTools,
+  modelOptions,
   saving,
   onOpenChange,
   onSave,
@@ -258,6 +261,7 @@ function SubagentDialog({
   open: boolean
   agent: SubagentDefinition | null
   availableTools: MainAgentSettings['tools']
+  modelOptions: Array<{ value: string; label: string; description?: string }>
   saving: boolean
   onOpenChange: (open: boolean) => void
   onSave: (draft: SubagentDraft) => void
@@ -346,6 +350,15 @@ function SubagentDialog({
               onChange={(event) => updateDraft({ systemPrompt: event.target.value })}
             />
           </div>
+          <div className="rounded-md border border-border/70">
+            <SettingsSelectRow
+              label={t('settings.agents.model')}
+              description={t('settings.agents.modelDesc')}
+              value={draft.model ?? PI_MODEL_REFERENCE_CURRENT_SESSION}
+              options={modelOptions}
+              onValueChange={(value) => updateDraft({ model: value === PI_MODEL_REFERENCE_CURRENT_SESSION ? undefined : value })}
+            />
+          </div>
           <div className="space-y-2">
             <Label>{t('settings.agents.toolAccess')}</Label>
             <div className="max-h-56 overflow-y-auto rounded-md border border-border/70">
@@ -416,6 +429,7 @@ function SubagentDialog({
 
 export default function AgentSettingsPage() {
   const { t } = useTranslation()
+  const { providers, settings: piSettings } = usePiGlobalConfig()
   const [snapshot, setSnapshot] = useState<AgentSettingsSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -425,6 +439,7 @@ export default function AgentSettingsPage() {
   const [selectedSubagent, setSelectedSubagent] = useState<SubagentDefinition | null>(null)
   const [subagentDialogOpen, setSubagentDialogOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<SubagentDefinition | null>(null)
+  const modelOptions = useModelReferenceOptions(providers, piSettings.defaultSlots ?? [])
 
   const loadSettings = useCallback(async () => {
     setLoading(true)
@@ -635,6 +650,7 @@ export default function AgentSettingsPage() {
           open={subagentDialogOpen}
           agent={selectedSubagent}
           availableTools={snapshot.mainAgent.tools}
+          modelOptions={modelOptions}
           saving={saving}
           onOpenChange={(open) => { setSubagentDialogOpen(open); if (!open) setSelectedSubagent(null) }}
           onSave={(draft) => void saveSubagent(draft)}

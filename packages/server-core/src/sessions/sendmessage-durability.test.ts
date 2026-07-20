@@ -405,7 +405,8 @@ describe('sendMessage durability', () => {
         },
       })
     })
-    managed.agent = { redirect: () => false, projectQueuedUser } as never
+    const followUp = mock(() => false)
+    managed.agent = { redirect: () => false, followUp, projectQueuedUser } as never
 
     let ackedMessageId: string | null = null
     let onDiskAtAck = false
@@ -427,9 +428,110 @@ describe('sendMessage durability', () => {
     )
 
     expect(projectQueuedUser).toHaveBeenCalledTimes(1)
+    expect(followUp).toHaveBeenCalledTimes(1)
+    expect(managed.messageQueue).toHaveLength(1)
     expect(ackedMessageId).not.toBeNull()
     expect(onDiskAtAck).toBe(true)
     expect(projectionOnDiskAtAck).toBe(true)
+  })
+
+  it('uses native follow-up without adding a host replay queue entry', async () => {
+    const sessionId = 'durability-native-follow-up'
+    const managed = buildSession(sessionId)
+    managed.isProcessing = true
+    const followUp = mock(() => true)
+    const projectQueuedUser = mock((input: { message: string; clientMutationId: string; messageId?: string; timestamp?: number }) => {
+      sm.applyPiProjectionEvent({
+        schemaVersion: 1,
+        eventId: 'native-follow-up-event',
+        seq: 1,
+        sessionId,
+        runtimeId: 'runtime-1',
+        entityId: `content:user:${input.clientMutationId}`,
+        entityType: 'content_block',
+        entityVersion: 1,
+        kind: 'user_text',
+        occurredAt: input.timestamp,
+        payload: {
+          role: 'user', text: input.message,
+          messageId: input.messageId ?? input.clientMutationId,
+          clientMutationId: input.clientMutationId,
+          queueStatus: 'queued', source: 'host', timestamp: input.timestamp,
+        },
+      })
+    })
+    managed.agent = { followUp, projectQueuedUser } as never
+
+    await sm.sendMessage(sessionId, 'native queued message')
+
+    expect(followUp).toHaveBeenCalledTimes(1)
+    expect(projectQueuedUser).toHaveBeenCalledTimes(1)
+    expect(managed.messageQueue).toHaveLength(0)
+    expect(managed.wasInterrupted).not.toBe(true)
+  })
+
+  it('falls back to the durable host queue when native follow-up is rejected', async () => {
+    const sessionId = 'durability-native-follow-up-rejected'
+    const managed = buildSession(sessionId)
+    managed.isProcessing = true
+    const followUp = mock(async () => { throw new Error('Pi runtime settled before follow-up') })
+    managed.agent = { followUp, projectQueuedUser: mock(() => undefined) } as never
+
+    await sm.sendMessage(sessionId, 'fallback queued message')
+
+    expect(followUp).toHaveBeenCalledTimes(1)
+    expect(managed.messageQueue).toHaveLength(1)
+    expect(managed.messageQueue[0]?.message).toBe('fallback queued message')
+  })
+
+  it('passes native follow-up attachments through the backend contract', async () => {
+    const sessionId = 'durability-native-follow-up-attachments'
+    const managed = buildSession(sessionId)
+    managed.isProcessing = true
+    const attachment = {
+      type: 'image', path: 'C:/tmp/image.png', name: 'image.png', mimeType: 'image/png',
+      base64: 'aW1hZ2U=', size: 5,
+    }
+    const stored = { id: 'attachment-1', name: 'image.png', mimeType: 'image/png', size: 5, originalSize: 5 }
+    const followUp = mock(async (_message: string, attachments?: unknown[], options?: { attachmentRefs?: unknown[] }) => {
+      expect(attachments).toHaveLength(1)
+      expect(options?.attachmentRefs).toEqual([
+        expect.objectContaining({ id: 'attachment-1', name: 'image.png', mediaType: 'image/png' }),
+      ])
+      return true
+    })
+    managed.agent = { followUp, projectQueuedUser: mock(() => undefined) } as never
+
+    await sm.sendMessage(sessionId, 'inspect image', [attachment as never], [stored as never])
+
+    expect(followUp).toHaveBeenCalledTimes(1)
+    expect(managed.messageQueue).toHaveLength(0)
+  })
+
+  it('settles a terminal complete after a stop request as interrupted', async () => {
+    const sessionId = 'durability-stop-settlement'
+    const managed = buildSession(sessionId)
+    const originalOnProcessingStopped = (sm as unknown as {
+      onProcessingStopped: (id: string, reason: 'complete' | 'interrupted' | 'error' | 'timeout') => Promise<void>
+    }).onProcessingStopped.bind(sm)
+    const stopped = mock(originalOnProcessingStopped)
+    ;(sm as unknown as { onProcessingStopped: typeof stopped }).onProcessingStopped = stopped
+    const fakeAgent = {
+      getModel: () => 'pi-test-model',
+      setAllSources: mock(() => undefined),
+      getSessionId: () => null,
+      chat: mock(async function* () {
+        yield { type: 'complete' } as const
+      }),
+    }
+    managed.agent = fakeAgent as never
+    managed.stopRequested = true
+    ;(sm as unknown as { getOrCreateAgent: () => Promise<unknown> }).getOrCreateAgent = mock(async () => fakeAgent)
+
+    await sm.sendMessage(sessionId, 'stop race')
+
+    expect(stopped).toHaveBeenCalledTimes(1)
+    expect(stopped).toHaveBeenCalledWith(sessionId, 'interrupted')
   })
 
   it('keeps new sends queued behind a shifted replay message', async () => {

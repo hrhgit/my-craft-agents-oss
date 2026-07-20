@@ -1566,7 +1566,11 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async followUp(text: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
+	async followUp(
+		text: string,
+		images?: ImageContent[],
+		options?: { clientMutationId?: string; attachments?: UserAttachmentMetadata[] },
+	): Promise<void> {
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -1576,7 +1580,7 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueFollowUp(expandedText, images, options?.clientMutationId);
+		await this._queueFollowUp(expandedText, images, options?.clientMutationId, options?.attachments);
 	}
 
 	/**
@@ -1600,7 +1604,12 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[], clientMutationId?: string): Promise<void> {
+	private async _queueFollowUp(
+		text: string,
+		images?: ImageContent[],
+		clientMutationId?: string,
+		attachments?: UserAttachmentMetadata[],
+	): Promise<void> {
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -1612,6 +1621,7 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 			clientMutationId,
+			attachments,
 		});
 	}
 

@@ -53,6 +53,8 @@ import {
 } from "./session-manager.ts";
 import {
 	type ExtensionNamespaceSettings,
+	type HostModelDefaultSlot,
+	type ModelDefaultConfig,
 	type Settings,
 	SettingsManager,
 	type ShellGuiNamespaceSettings,
@@ -744,11 +746,13 @@ export async function deleteGlobalProvider(key: string): Promise<void> {
 	});
 	deleteGlobalApiKey(key);
 
-	withJsonFileLock(settingsPath(), SETTINGS_FILE_FALLBACK, normalizeSettingsFile, (settings) => {
-		if (settings.defaultProvider !== key) return false;
-		delete settings.defaultProvider;
-		delete settings.defaultModel;
-	});
+	const settings = createSettingsManager();
+	const defaults = settings.getModelDefaultSlots();
+	const retained = defaults.filter((item) => item.provider !== key);
+	if (retained.length !== defaults.length) {
+		settings.replaceModelDefaultSlots(retained);
+		await settings.flush();
+	}
 }
 
 export async function setGlobalDefault(args: {
@@ -774,6 +778,49 @@ export async function setGlobalDefault(args: {
 	if (errors.length > 0) {
 		throw new HostFacadeError("config_write", errors.map((item) => item.error.message).join("; "));
 	}
+}
+
+export function readGlobalModelDefaultSlots(cwd?: string): Array<ModelDefaultConfig & { slot: HostModelDefaultSlot }> {
+	const settings = createSettingsManager(cwd);
+	return settings.getModelDefaultSlots().map((config, index) => ({ slot: index + 1, ...config }));
+}
+
+export async function setGlobalModelDefaultSlot(args: {
+	slot: HostModelDefaultSlot;
+	provider: string;
+	model: string;
+	thinkingLevel: string;
+	cwd?: string;
+}): Promise<void> {
+	if (!Number.isInteger(args.slot) || args.slot < 1) {
+		throw new HostFacadeError("invalid_input", `Invalid model default slot: ${args.slot}`);
+	}
+	if (args.slot === 1) {
+		await setGlobalDefault({ provider: args.provider, model: args.model, thinkingLevel: args.thinkingLevel, cwd: args.cwd });
+		return;
+	}
+	const thinkingLevel = normalizeHostThinkingLevel(args.thinkingLevel);
+	if (thinkingLevel === undefined) throw new HostFacadeError("invalid_input", "Thinking level is required.");
+	const settings = createSettingsManager(args.cwd);
+	settings.setModelDefaultSlot(args.slot, {
+		provider: args.provider,
+		model: args.model,
+		thinkingLevel,
+	});
+	await settings.flush();
+	const errors = settings.drainErrors();
+	if (errors.length > 0) throw new HostFacadeError("config_write", errors.map((item) => item.error.message).join("; "));
+}
+
+export async function removeGlobalModelDefaultSlot(slot: HostModelDefaultSlot, cwd?: string): Promise<void> {
+	if (!Number.isInteger(slot) || slot < 2) {
+		throw new HostFacadeError("invalid_input", `Invalid removable model default slot: ${slot}`);
+	}
+	const settings = createSettingsManager(cwd);
+	settings.removeModelDefaultSlot(slot);
+	await settings.flush();
+	const errors = settings.drainErrors();
+	if (errors.length > 0) throw new HostFacadeError("config_write", errors.map((item) => item.error.message).join("; "));
 }
 
 export async function setDefaultThinkingLevel(level: string, cwd?: string): Promise<void> {

@@ -24,6 +24,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	getMarkdownTheme,
+	resolveModelReference,
 	withFileMutationQueue,
 } from "@mortise/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mortise/pi-tui";
@@ -342,8 +343,37 @@ async function runSingleAgent(
 		};
 	}
 
+	const effectiveCwd = cwd ?? defaultCwd;
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	const configuredModel = agent.model ?? "current-session";
+	const isReference = configuredModel === "current-session" || /^default:[1-9]\d*$/.test(configuredModel) || configuredModel.startsWith("model:");
+	const resolvedReference = isReference
+		? resolveModelReference(configuredModel, {
+			currentModel: ctx.model,
+			currentThinkingLevel: ctx.getThinkingLevel(),
+			modelRegistry: ctx.modelRegistry,
+			cwd: effectiveCwd,
+		})
+		: undefined;
+	if (isReference) {
+		if (!resolvedReference) {
+			return {
+				agent: agentName,
+				agentSource: agent.source,
+				task,
+				exitCode: 1,
+				messages: [],
+				stderr: `Model reference is unavailable: ${configuredModel}`,
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+				model: configuredModel,
+				step,
+			};
+		}
+		args.push("--model", `${resolvedReference.provider}/${resolvedReference.model}`);
+		if (resolvedReference.thinkingLevel) args.push("--thinking", resolvedReference.thinkingLevel);
+	} else if (agent.model) {
+		args.push("--model", agent.model);
+	}
 	if (agent.tools) {
 		if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 		else args.push("--no-tools");
@@ -352,8 +382,6 @@ async function runSingleAgent(
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
 	let stopActivity: (() => Promise<void>) | undefined;
-	const effectiveCwd = cwd ?? defaultCwd;
-
 	const currentResult: SingleResult = {
 		agent: agentName,
 		agentSource: agent.source,
@@ -362,7 +390,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: resolvedReference ? `${resolvedReference.provider}/${resolvedReference.model}` : agent.model,
 		step,
 	};
 
@@ -385,7 +413,7 @@ async function runSingleAgent(
 
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
-		stopActivity = await startSubagentActivity(ctx, agent.name, task, effectiveCwd, agent.model);
+		stopActivity = await startSubagentActivity(ctx, agent.name, task, effectiveCwd, currentResult.model);
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);

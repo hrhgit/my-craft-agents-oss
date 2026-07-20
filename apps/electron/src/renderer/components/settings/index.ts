@@ -78,6 +78,12 @@ export {
   type SettingsMenuSelectRowProps,
 } from './SettingsMenuSelect'
 
+export {
+  ModelReferenceSelectRow,
+  useModelReferenceOptions,
+  type ModelReferenceSelectRowProps,
+} from './ModelReferenceSelect'
+
 // Inputs
 export {
   SettingsInput,

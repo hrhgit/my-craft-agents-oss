@@ -25,6 +25,44 @@ describe("SettingsManager", () => {
 		}
 	});
 
+	it("round-trips ordered model defaults without duplicating the legacy slot", async () => {
+		const settingsPath = join(agentDir, "settings.json");
+		writeFileSync(settingsPath, JSON.stringify({
+			defaultProvider: "anthropic",
+			defaultModel: "claude-sonnet",
+			defaultThinkingLevel: "medium",
+			theme: "dark",
+		}));
+
+		const manager = SettingsManager.create(projectDir, agentDir);
+		manager.setModelDefaultSlot(2, {
+			provider: "openai",
+			model: "gpt-5",
+			thinkingLevel: "high",
+			...({ legacyField: "drop" } as Record<string, string>),
+		});
+		await manager.flush();
+
+		const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+		expect(saved.defaultProvider).toBe("anthropic");
+		expect(saved.defaultModel).toBe("claude-sonnet");
+		expect(saved.modelDefaultSlots).toEqual({ 2: { provider: "openai", model: "gpt-5", thinkingLevel: "high" } });
+		expect(manager.getModelDefaultSlot(1)).toMatchObject({ provider: "anthropic", model: "claude-sonnet" });
+		expect(manager.getModelDefaultSlot(2)).toMatchObject({ provider: "openai", model: "gpt-5" });
+		expect(manager.getModelDefaultSlot(3)).toBeUndefined();
+
+		manager.setModelDefaultSlot(3, { provider: "google", model: "gemini", thinkingLevel: "low" });
+		manager.removeModelDefaultSlot(2);
+		await manager.flush();
+		expect(manager.getModelDefaultSlot(2)).toMatchObject({ provider: "google", model: "gemini", thinkingLevel: "low" });
+
+		manager.setModelDefaultSlot(3, { provider: "openai", model: "gpt-5.1", thinkingLevel: "medium" });
+		manager.setModelDefaultSlot(4, { provider: "openai", model: "gpt-5.2", thinkingLevel: "high" });
+		manager.setModelDefaultSlot(5, { provider: "openai", model: "gpt-5.3", thinkingLevel: "xhigh" });
+		await manager.flush();
+		expect(manager.getModelDefaultSlot(5)).toEqual({ provider: "openai", model: "gpt-5.3", thinkingLevel: "xhigh" });
+	});
+
 	describe("preserves externally added settings", () => {
 		it("should preserve enabledModels when changing thinking level", async () => {
 			// Create initial settings file

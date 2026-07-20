@@ -15,6 +15,42 @@ function createAgent(): PiAgent {
 }
 
 describe('PiAgent abort', () => {
+  it('keeps the Mortise event stream open across retry attempts until agent_settled', () => {
+    const emitted: PiProjectionEventV1[] = []
+    const agent = new PiAgent({
+      provider: 'pi',
+      workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/mortise-test' } as any,
+      session: { id: 'session-test', mortiseId: 'session-test', workspaceRootPath: '/tmp/mortise-test', createdAt: 0, lastUsedAt: 0 } as any,
+      isHeadless: true,
+      onPiProjectionEvent: event => emitted.push(event),
+    } satisfies BackendConfig)
+    ;(agent as any).rpcClient = { runtimeId: 'runtime-test' }
+    ;(agent as any).eventQueue.reset()
+
+    ;(agent as any).handlePiEvent({ type: 'agent_start' })
+    ;(agent as any).handlePiEvent({
+      type: 'agent_end', willRetry: true,
+      messages: [{ role: 'assistant', stopReason: 'error' }],
+    })
+    expect((agent as any).eventQueue.isComplete).toBe(false)
+    expect(emitted.at(-1)).toMatchObject({
+      kind: 'agent_end', payload: { status: 'failed', willRetry: true, settlementPending: true },
+    })
+
+    ;(agent as any).handlePiEvent({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3 })
+    ;(agent as any).handlePiEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    expect((agent as any).eventQueue.isComplete).toBe(false)
+
+    ;(agent as any).handlePiEvent({ type: 'agent_settled' })
+    expect((agent as any).eventQueue.isComplete).toBe(true)
+    expect(emitted.filter(event => event.kind === 'agent_settled')).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ status: 'completed' }) }),
+    ])
+    expect(((agent as any).eventQueue.queue as Array<{ type: string }>).filter(event => event.type === 'complete')).toHaveLength(1)
+
+    agent.destroy()
+  })
+
   it('uses a fresh projection runtime identity for each host connection', () => {
     const first = createAgent()
     const second = createAgent()
@@ -91,6 +127,7 @@ describe('PiAgent abort', () => {
     expect(adaptedEvents).toBe(1)
 
     releaseAbort()
+    ;(agent as any).handlePiEvent({ type: 'agent_settled' })
     await aborting
     expect(settled).toBe(true)
 

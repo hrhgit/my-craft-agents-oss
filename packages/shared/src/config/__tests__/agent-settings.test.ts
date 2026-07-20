@@ -103,6 +103,7 @@ describe('agent settings storage', () => {
           description: 'Reviews code changes',
           systemPrompt: 'Review changes carefully.',
           tools: ['read', 'grep'],
+          model: 'default:2',
         },
       });
       console.log(JSON.stringify(settings.listSubagents()));
@@ -113,10 +114,12 @@ describe('agent settings storage', () => {
       description: 'Reviews code changes',
       systemPrompt: 'Review changes carefully.',
       tools: ['read', 'grep'],
+      model: 'default:2',
     }])
     const markdown = readFileSync(join(piAgentDir, 'agents', 'code-reviewer.md'), 'utf8')
     expect(markdown).toContain('name: "Code Reviewer"')
     expect(markdown).toContain('tools: "read, grep"')
+    expect(markdown).toContain('model: "default:2"')
   })
 
   it('migrates legacy session tool names in subagent allowlists', () => {

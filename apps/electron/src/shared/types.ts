@@ -59,8 +59,8 @@ import type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIss
 export type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType };
 
 // Skill types
-import type { LoadedSkill, SkillMetadata } from '@mortise/shared/skills/types';
-export type { LoadedSkill, SkillMetadata };
+import type { DiscoveredSkill, LoadedSkill, SkillImportBatchResult, SkillMetadata } from '@mortise/shared/skills/types';
+export type { DiscoveredSkill, LoadedSkill, SkillImportBatchResult, SkillMetadata };
 
 // Resource bundle types (cross-workspace export/import)
 import type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult } from '@mortise/shared/resources';
@@ -444,7 +444,7 @@ export interface ElectronAPI {
   getPiGlobalProviderApiKey(key: string): Promise<string | null>
   savePiGlobalProvider(args: { key: string; provider: PiGlobalProvider; apiKey?: string }): Promise<{ success: boolean; error?: string }>
   deletePiGlobalProvider(key: string): Promise<{ success: boolean; error?: string }>
-  setPiGlobalDefault(args: { provider: string; model: string; thinkingLevel?: string }): Promise<{ success: boolean; error?: string }>
+  setPiGlobalDefault(args: { provider?: string; model?: string; thinkingLevel?: string; slot?: number; remove?: boolean }): Promise<{ success: boolean; error?: string }>
   fetchModelsForEndpoint(args: { baseUrl: string; apiKey?: string; api?: PiCustomApi; authHeader?: boolean }): Promise<{ success: boolean; models: FetchedEndpointModel[]; resolvedBaseUrl?: string; error?: string }>
   onPiGlobalChanged(callback: () => void): () => void
 
@@ -488,6 +488,8 @@ export interface ElectronAPI {
   // Skills
   getSkills(workspaceId: string, workingDirectory?: string): Promise<LoadedSkill[]>
   getSkillFiles?(workspaceId: string, skillSlug: string): Promise<SkillFile[]>
+  discoverSkills(workspaceId: string): Promise<DiscoveredSkill[]>
+  importSkills(workspaceId: string, sourcePaths: string[]): Promise<SkillImportBatchResult>
   deleteSkill(workspaceId: string, skillSlug: string): Promise<void>
   openSkillInEditor(workspaceId: string, skillSlug: string): Promise<void>
   openSkillInFinder(workspaceId: string, skillSlug: string): Promise<void>

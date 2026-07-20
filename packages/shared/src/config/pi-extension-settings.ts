@@ -30,6 +30,15 @@ export type PiExtensionCategory =
   | 'other';
 
 export type PiExtensionSettingScalar = string | number | boolean;
+export const PI_MODEL_REFERENCE_CURRENT_SESSION = 'current-session' as const;
+export type PiExtensionModelReference =
+  | typeof PI_MODEL_REFERENCE_CURRENT_SESSION
+  | `default:${number}`
+  | `model:${string}/${string}`;
+export function isPiExtensionModelReference(value: unknown): value is PiExtensionModelReference {
+  return typeof value === 'string'
+    && (value === 'current-session' || /^default:[1-9]\d*$/.test(value) || /^model:[^/]+\/.+$/.test(value));
+}
 export type PiExtensionSettingField = {
   key: string;
   label: string;
@@ -43,6 +52,7 @@ export type PiExtensionSettingField = {
   | { type: 'number'; default?: number; min?: number; max?: number; step?: number }
   | { type: 'select'; default?: string; options: Array<{ value: string; label: string; description?: string }> }
   | { type: 'model'; default?: string }
+  | { type: 'model-reference'; default?: PiExtensionModelReference }
 );
 export interface PiExtensionSettingsSchema {
   schemaVersion: 1;

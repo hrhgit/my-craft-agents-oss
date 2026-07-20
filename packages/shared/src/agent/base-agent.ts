@@ -834,6 +834,11 @@ ${formattedMessages}
     return false;
   }
 
+  /** Queue a follow-up without interrupting the active run. */
+  async followUp(_message: string, _attachments?: FileAttachment[], _options?: ChatOptions): Promise<boolean> {
+    return false;
+  }
+
   /**
    * Check if currently processing a query.
    */
